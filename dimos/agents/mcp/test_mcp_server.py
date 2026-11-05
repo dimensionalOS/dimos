@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
 
@@ -69,7 +70,7 @@ def test_mcp_module_request_flow() -> None:
     )
     assert response is not None
     assert response["result"]["content"][0]["text"] == "5"
-    rpc_calls["add"].assert_called_once_with(x=2, y=3)
+    rpc_calls["add"].assert_called_once_with(x=2, y=3, _mcp_context={"meta": {}})
 
 
 def test_mcp_module_injects_progress_token_as_mcp_context() -> None:
@@ -96,12 +97,13 @@ def test_mcp_module_injects_progress_token_as_mcp_context() -> None:
         )
     )
 
-    rpc_calls["echo"].assert_called_once_with(x=42, _mcp_context={"progress_token": "pt-srv-test"})
+    rpc_calls["echo"].assert_called_once_with(
+        x=42,
+        _mcp_context={"meta": {"progressToken": "pt-srv-test"}, "progress_token": "pt-srv-test"},
+    )
 
 
-def test_mcp_module_without_progress_token_does_not_inject_context() -> None:
-    """Absence of `progressToken` preserves the legacy call shape. The skill
-    sees only the arguments it declared."""
+def test_mcp_module_without_meta_passes_empty_meta() -> None:
     schema = json.dumps({"type": "object", "properties": {}})
     skills = [SkillInfo(class_name="TestSkills", func_name="ping", args_schema=schema)]
     rpc_calls = _make_rpc_calls(skills, {"ping": "pong"})
@@ -118,7 +120,7 @@ def test_mcp_module_without_progress_token_does_not_inject_context() -> None:
         )
     )
 
-    rpc_calls["ping"].assert_called_once_with()
+    rpc_calls["ping"].assert_called_once_with(_mcp_context={"meta": {}})
 
 
 def test_mcp_module_handles_errors() -> None:
@@ -138,7 +140,7 @@ def test_mcp_module_handles_errors() -> None:
     assert "ok_skill" in tool_names
     assert "fail_skill" in tool_names
 
-    # Error skill returns error text
+    # A raised skill error is a failed tool call carrying the exception text.
     response = asyncio.run(
         handle_request(
             {"method": "tools/call", "id": 2, "params": {"name": "fail_skill", "arguments": {}}},
@@ -147,8 +149,22 @@ def test_mcp_module_handles_errors() -> None:
         )
     )
     assert response is not None
-    assert "Error running tool" in response["result"]["content"][0]["text"]
-    assert "boom" in response["result"]["content"][0]["text"]
+    assert response["result"]["isError"] is True
+    text = response["result"]["content"][0]["text"]
+    assert "Error running tool 'fail_skill'" in text
+    assert "RuntimeError: boom" in text
+
+    # A skill that returns is not flagged.
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 4, "params": {"name": "ok_skill", "arguments": {}}},
+            skills,
+            rpc_calls,
+        )
+    )
+    assert response is not None
+    assert "isError" not in response["result"]
+    assert response["result"]["content"][0]["text"] == "done"
 
     # Unknown skill returns not found
     response = asyncio.run(
@@ -159,7 +175,34 @@ def test_mcp_module_handles_errors() -> None:
         )
     )
     assert response is not None
+    assert response["result"]["isError"] is True
     assert "not found" in response["result"]["content"][0]["text"].lower()
+
+
+def test_skill_result_without_strict_json_answers_with_text_only() -> None:
+    """Strict JSON has no Infinity, so the endpoint could not render it as structuredContent."""
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [SkillInfo(class_name="TestSkills", func_name="measure", args_schema=schema)]
+
+    def measure(**_: object) -> SkillResult:
+        return SkillResult("distance inf", metadata={"distance": float("inf")})
+
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 5, "params": {"name": "measure", "arguments": {}}},
+            skills,
+            {"measure": measure},
+        )
+    )
+    assert response is not None
+    assert response["result"] == {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"message": "distance inf", "duration_ms": 0.0, "metadata": {"distance": Infinity}}',
+            }
+        ]
+    }
 
 
 def test_mcp_module_initialize_and_unknown() -> None:

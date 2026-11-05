@@ -18,36 +18,43 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
+from dimos.robot.manipulators.common.blueprints import (
+    coordinator,
+    eef_twist_task,
+    trajectory_task,
+)
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
+    XARM_HEURISTIC_AIM,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
+from dimos.robot.raw_robot_bridge import RawRobotBridge
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 _xarm7_sim_model = make_xarm7_sim_robot_config()
-_xarm7_sim_scene = global_config.mujoco_scene or XARM7_SIM_PATH
-_xarm7_sim_hw = make_xarm7_sim_hardware(_xarm7_sim_scene)
+_xarm7_sim_hw = make_xarm7_sim_hardware()
+_xarm7_sim_kwargs = make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)
 
 xarm_perception_sim = autoconnect(
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "viser"},
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
-    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(_xarm7_sim_scene)),
+    PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
+    HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
+    MujocoSimModule.blueprint(**_xarm7_sim_kwargs),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",
@@ -67,4 +74,40 @@ xarm_perception_sim = autoconnect(
         ],
     ),
     RerunBridgeModule.blueprint(),
+)
+
+# Robot-only stack: control and sensors, exposed as plain Zenoh topics for agents without dimOS.
+xarm_sim = autoconnect(
+    MujocoSimModule.blueprint(
+        **{
+            **_xarm7_sim_kwargs,
+            "base_frame_id": "world",
+        }
+    ),
+    coordinator(
+        hardware=[_xarm7_sim_hw],
+        tasks=[
+            eef_twist_task(
+                _xarm7_sim_hw,
+                robot_model=_xarm7_sim_model,
+                target_frame="link_tcp",
+                max_joint_velocity_rad_s=0.5,
+            ),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
+        cls=ArmTwistCoordinator,
+        instance_name="ControlCoordinator",
+        publish_frame_poses=True,
+    ),
+    RawRobotBridge.blueprint(
+        camera_frame="wrist_camera_color_optical_frame",
+        ee_frame="link_tcp",
+        gripper_joint="arm/gripper",
+        gripper_range=(0.0, 0.85),
+    ),
 )

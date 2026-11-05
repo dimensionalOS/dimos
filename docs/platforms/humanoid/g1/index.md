@@ -1,7 +1,5 @@
 # Unitree G1
 
-![output](assets/g1_rerun.webp)
-
 ## Requirements
 
 - Unitree G1 EDU (need SDK/SSH access)
@@ -132,7 +130,7 @@ In the ssh terminal `ssh -L 3030:localhost:3030 unitree@192.168.123.164`
 
 ```sh skip
 source .venv/bin/activate
-uv run dimos --rerun-host 0.0.0.0 run unitree-g1-nav-simple
+uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
 # should print out something like:
 # ============================================================
 # Rerun gRPC server running (no viewer opened)

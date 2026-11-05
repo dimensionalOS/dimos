@@ -21,9 +21,8 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import TransportSpec
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Stream, Transport
+from dimos.core.stream import Stream, Transport, TransportSpec
 
 
 class NestedConfig(BaseModel):
@@ -38,6 +37,14 @@ class PrimaryConfig(ModuleConfig):
 
 class PrimaryModule(Module):
     config: PrimaryConfig
+
+
+class SecondaryConfig(ModuleConfig):
+    count: int = 1
+
+
+class SecondaryModule(Module):
+    config: SecondaryConfig
 
 
 @dataclass

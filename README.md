@@ -108,7 +108,6 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   <tr>
     <td align="center" width="20%">
       🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
-      🟥 <a href="dimos/robot/unitree/b1">Unitree B1</a><br>
     </td>
     <td align="center" width="20%">
       🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
@@ -317,7 +316,7 @@ if __name__ == "__main__":
 - [Modules](docs/usage/modules.md)
 - [LCM](docs/usage/lcm.md)
 - [Blueprints](docs/usage/blueprints.md)
-- [Transports](docs/usage/transports/index.md) — LCM, SHM, DDS, Zenoh, ROS 2
+- [Transports](docs/usage/transports/index.md) — Zenoh, LCM, DDS, ROS 2
 - [Data Streams](docs/usage/data_streams/index.md)
 - [Configuration](docs/usage/configuration.md)
 - [Visualization](docs/usage/visualization.md)

@@ -61,11 +61,21 @@ def render_voxel_map(
 
 @keyed_by_seq
 def render_map_region(
-    msg: PointCloud2, voxel_size: float, height_range: tuple[float, float]
+    msg: PointCloud2,
+    voxel_size: float,
+    height_range: tuple[float, float],
+    z_band: tuple[float, float] | None = None,
+    static: bool = True,
 ) -> RerunMulti:
-    """One region of the voxel map on its own static entity, empty when the region emptied."""
-    cell = voxel_map_points(msg.points_f32(), voxel_size, height_range)
-    return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=True)]
+    """One region of the voxel map on its own entity, empty when the region emptied.
+
+    Points outside z_band (world frame) are dropped, to show one storey.
+    """
+    pts = msg.points_f32()
+    if z_band is not None:
+        pts = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] < z_band[1])]
+    cell = voxel_map_points(pts, voxel_size, height_range)
+    return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=static)]
 
 
 def log_loaded_map(points: NDArray[np.float32]) -> None:

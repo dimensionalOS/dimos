@@ -4,10 +4,21 @@
 import { parseArgs } from "@std/cli";
 import { PROTOCOL_VERSION } from "@dimos/shared";
 import { loadAuthFile } from "./auth.ts";
+import { loadRtcFile } from "./cloudflare.ts";
 import { CERT_KEY_PAIR_ERROR, startRelay } from "./server.ts";
 
 const args = parseArgs(Deno.args, {
-  string: ["host", "cockpit-dir", "sdk-dir", "serve-dir", "cert", "key", "auth-file"],
+  string: [
+    "host",
+    "cockpit-dir",
+    "sdk-dir",
+    "serve-dir",
+    "cert",
+    "key",
+    "auth-file",
+    "rtc-file",
+    "congestion",
+  ],
   // Non-loopback binds without --cert, --key and --auth-file need this
   // explicit acknowledgment (see RelayOptions.unsafeNonLoopback).
   boolean: ["unsafe-non-loopback"],
@@ -16,6 +27,12 @@ const args = parseArgs(Deno.args, {
 
 if ((args.cert === undefined) !== (args.key === undefined)) {
   throw new Error(CERT_KEY_PAIR_ERROR);
+}
+const congestion = args.congestion;
+if (congestion !== undefined && congestion !== "throughput" && congestion !== "low-latency") {
+  throw new Error(
+    `--congestion must be throughput (Cubic) or low-latency (BBR), got ${congestion}`,
+  );
 }
 const host = args.host as string;
 const tls = args.cert !== undefined;
@@ -40,6 +57,8 @@ const relay = await startRelay({
   cert: args.cert === undefined ? undefined : await Deno.readTextFile(args.cert),
   key: args.key === undefined ? undefined : await Deno.readTextFile(args.key),
   auth: args["auth-file"] === undefined ? undefined : await loadAuthFile(args["auth-file"]),
+  rtc: args["rtc-file"] === undefined ? undefined : await loadRtcFile(args["rtc-file"]),
+  congestionControl: congestion,
 });
 
 console.log(JSON.stringify({
@@ -60,6 +79,12 @@ if (args["serve-dir"] !== undefined) {
 }
 if (args["sdk-dir"] !== undefined) {
   console.log(`[relay] sdk: ${pageBase}sdk.js`);
+}
+if (args["rtc-file"] !== undefined) {
+  console.log("[relay] WebRTC video through the Cloudflare Realtime SFU: on");
+}
+if (congestion !== undefined) {
+  console.log(`[relay] congestion control: ${congestion === "low-latency" ? "BBR" : "Cubic"}`);
 }
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   try {

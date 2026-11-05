@@ -197,7 +197,7 @@ unknown stream 'front_cam'; this robot bridge supports: color_image, global_cost
 
 `Video(stream="color_image", *, max_hz=30.0, quality=75, title="")`
 
-One `Image` stream as JPEG frames. `max_hz` caps the frame rate and `quality` is the JPEG quality (0 to 100).
+One `Image` stream as JPEG frames. `max_hz` caps the frame rate and `quality` is the JPEG quality (0 to 100). Behind a relay with Cloudflare video ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)) the panel plays the channel's WebRTC track in a `<video>` element instead.
 
 ### Map2D
 
@@ -213,9 +213,13 @@ The Go2 blueprints use `path="path"`, `click="clicked_point"` and `stop="stop_mo
 
 ### Map3D
 
-`Map3D(cloud="global_map", pose="odom", *, res=0.05, max_hz=1.0, pose_hz=20.0, title="")`
+`Map3D(cloud="global_map", pose="odom", *, path=None, click=None, res=0.05, max_hz=1.0, pose_hz=20.0, title="")`
 
 The world in 3D: a `PointCloud2` stream drawn as one point per voxel, coloured by height, with the robot's pose (`PoseStamped`) as a red cone. `pose=None` drops the cone and the follow toggle. Drag to orbit, wheel to zoom, right-drag to pan. The `follow` toggle keeps the camera a few metres behind and above the robot as it drives. Orbit, zoom and pan then hold relative to the robot.
+
+Set `click="clicked_point"` to publish 2D navigation goals, as the Go2 cockpit blueprints do. Clicking a voxel sprite uses that voxel's x/y; clicking elsewhere intersects the click ray with the ground plane at `z=0`. A ray that misses the ground sends no goal. Dragging the camera does not send goals.
+
+Set `path="path"` to draw the planner's current route as a green line on the ground plane, matching the 2D map. The Go2 cockpit blueprints enable this in both maps. An empty path clears the line.
 
 `cloud` is any point cloud, the mapper's whole-world map by default. The bridge quantizes it to `res` metres (the mapper's own voxel size by default) and sends occupancy bits, not points: the Go2's office-sized map costs about 100 KB per frame instead of the 6 MB of its LCM encoding. A map over a million voxels is sent coarser. An empty cloud clears the panel. `max_hz` caps the frame rate. The renderer (three.js) is downloaded only by pages that show this panel.
 
@@ -229,7 +233,7 @@ Keyboard driving. Publishes `Twist` messages on `stream`. `max_linear` (m/s) and
 
 `Chat(input="human_input", messages="agent", idle="agent_idle", audio="audio_in", *, title="")`
 
-The conversation with the robot's agent (the same streams the `humancli` tool uses). Typed text goes out on `input`, the agent's messages come back on `messages`, `idle` drives the thinking indicator, and the push-to-talk microphone sends recordings on `audio`. The blueprint needs the agent modules (the `agents` extra) and ffmpeg for the audio. The microphone button appears only on a secure page.
+The conversation with the robot's agent (the same streams the `humancli` tool uses). Typed text goes out on `input`, the agent's messages come back on `messages`, `idle` drives the thinking indicator, and the push-to-talk microphone sends recordings on `audio`. The blueprint needs the agent modules (the `agents` extra). The microphone button appears only on a secure page.
 
 ### Stats
 
@@ -284,11 +288,11 @@ The mechanism on the bridge side (generation numbers, clamps, why zeros are sent
 
 ## Which channels the page reads
 
-The page subscribes to every channel it can use as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels.
+The page subscribes to every cheap channel as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. An expensive channel is subscribed only while a panel that binds it is on screen: in the grid, or as the open page tab. Switching to another page or to the channels tab releases it, and the channels tab lists it as `not subscribed (its panel is off screen)`. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels, and a video panel nobody is looking at costs nothing.
 
-Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Video frames, costmaps, voxel maps and LCM messages with variable-length arrays (point clouds, scans, paths) are read only when a panel binds them or a [web SDK](/docs/web/web_sdk.md) page subscribes. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
+Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Expensive means video frames, costmaps, voxel maps and LCM messages with variable-length arrays (point clouds, scans, paths). A [web SDK](/docs/web/web_sdk.md) page subscribes to whatever it asks for. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
 
-The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are espensive, so only those are excluded.
+The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are expensive, so only those are excluded.
 
 ## Ready-made blueprints
 

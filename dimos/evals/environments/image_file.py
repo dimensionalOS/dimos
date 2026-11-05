@@ -20,16 +20,16 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from dimos.evals.environments.base import Environment
+from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.types import RunningEnvironment
-from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
 
 
-class ImageFileConfig(BaseConfig):
+class ImageFileConfig(EnvironmentConfig):
     path: Path
+    agent_artifacts: tuple[str, ...] = ("image",)
 
 
 class ImageFile(Environment):
@@ -40,7 +40,7 @@ class ImageFile(Environment):
     def __init__(self, path: Path, **kwargs: Any) -> None:
         super().__init__(path=path, **kwargs)
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalSubject) -> None:
         if agent.config.modules:
             raise RuntimeError(
                 f"ImageFile({self.config.path}) launches nothing; "

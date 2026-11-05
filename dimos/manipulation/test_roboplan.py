@@ -51,6 +51,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
+from dimos.utils.testing.cbor import roundtrip
 from dimos.utils.transform_utils import pose_to_matrix
 
 
@@ -191,27 +192,28 @@ class FakeScene:
     position_limits_upper: ClassVar[list[float]] = [1.0, 2.0]
     valid_frames: ClassVar[set[str]] = {"dimos_world"}
 
-    def __init__(
-        self,
-        *,
-        name: str,
-        urdf: str,
-        srdf: str,
-        package_paths: list[str],
-    ) -> None:
+    def __init__(self, name: str, description: tuple[str, list[str]]) -> None:
+        urdf, package_paths = description
         self.constructor_kwargs = {
             "name": name,
             "urdf": urdf,
-            "srdf": srdf,
+            "srdf": "",
             "package_paths": package_paths,
         }
         self.models: list[tuple[str, str, dict[str, str]]] = []
         self.geometry: dict[str, np.ndarray] = {}
         self.geometry_shapes: dict[str, object] = {}
         self.collision_settings: dict[tuple[str, str], bool] = {}
-        self.groups = self._read_groups(srdf)
+        self.groups: dict[str, list[str]] = {}
         self.native_joint_names = self._read_joint_names(urdf)
         self.current_positions = np.zeros(len(self.native_joint_names), dtype=np.float64)
+
+    def importSrdf(self, srdf: str) -> None:
+        self.constructor_kwargs["srdf"] = srdf
+        self.groups = self._read_groups(srdf)
+
+    def importJointLimitsFromConfig(self, config: Any) -> None:
+        self.imported_limits = config
 
     def _require_frame(self, parent_frame: str) -> None:
         if parent_frame not in self.valid_frames:
@@ -397,12 +399,39 @@ class FakePathShortcutter:
         return path
 
 
+class FakeSceneContext:
+    def __init__(self, scene: FakeScene) -> None:
+        self.scene = scene
+        self.current_positions = scene.current_positions.copy()
+
+    def getScene(self) -> FakeScene:
+        return self.scene
+
+    def isGeometryCurrent(self) -> bool:
+        return True
+
+    def toFullJointPositions(self, group_name: str, q: np.ndarray) -> np.ndarray:
+        full = self.current_positions.copy()
+        for name, value in zip(self.scene.groups[group_name], q, strict=True):
+            full[self.scene.native_joint_names.index(name)] = value
+        return full
+
+    def forwardKinematics(self, q: np.ndarray, frame_name: str, base_frame: str = "") -> np.ndarray:
+        return self.scene.forwardKinematics(q, frame_name, base_frame)
+
+    def hasCollisions(self, q: np.ndarray) -> bool:
+        return self.scene.hasCollisions(q)
+
+
 def _install_fake_roboplan(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeCartesianPathPlanner.instances.clear()
     FakePathShortcutter.instances.clear()
     roboplan_pkg = ModuleType("roboplan")
     roboplan_pkg.__path__ = []  # type: ignore[attr-defined]
     core = ModuleType("roboplan.core")
+    core.loadUrdfSceneDescriptionFromXml = lambda urdf, paths: (urdf, paths)  # type: ignore[attr-defined]
+    core.loadJointLimitsConfig = lambda path: Path(path).read_text()  # type: ignore[attr-defined]
+    core.SceneContext = FakeSceneContext  # type: ignore[attr-defined]
     core.Scene = FakeScene  # type: ignore[attr-defined]
     core.JointConfiguration = FakeJointConfiguration  # type: ignore[attr-defined]
     core.JointPath = FakeJointPath  # type: ignore[attr-defined]
@@ -747,9 +776,8 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
     fake_roboplan: None,
     robot_config: RobotModelConfig,
 ) -> None:
-    # The world snapshots obstacles with deepcopy and hands copies back out. A
-    # raw ndarray field would make that snapshot uncomparable, so the points
-    # stay plain tuples.
+    # The world snapshots obstacles with deepcopy and hands copies back out. The
+    # points are an ndarray, so Obstacle.__eq__ has to keep the snapshot comparable.
     world = _make_world(fake_roboplan, robot_config)
     obstacle = Obstacle(
         name="voxel-map",
@@ -762,8 +790,18 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
 
     stored = world.get_obstacles()[0]
     assert stored == world.get_obstacles()[0]
-    assert stored.points == ((0.0, 0.0, 0.0),)
+    assert stored == obstacle
+    assert stored != Obstacle(
+        name="voxel-map",
+        obstacle_type=ObstacleType.OCTREE,
+        pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+        points=((0.0, 0.0, 1.0),),
+        octree_resolution=0.05,
+    )
+    np.testing.assert_array_equal(stored.points, [(0.0, 0.0, 0.0)])
     assert stored.octree_resolution == 0.05
+    # The reason for the array: the map crosses worker RPC as one ndarray tag.
+    assert roundtrip(stored) == stored
 
 
 def test_octree_obstacle_rejects_geometry_it_cannot_build(

@@ -95,7 +95,7 @@ class Step:
 
 @dataclass(frozen=True, kw_only=True)
 class AgentInfo:
-    name: str  # the Agent class
+    name: str  # the EvalSubject class
     version: str
     model_name: str  # what actually ran, as reported by the provider
     tool_definitions: tuple[dict[str, Any], ...] | None = None
@@ -149,6 +149,7 @@ class RunningEnvironment:
     streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
     artifacts: Mapping[str, Path]  # files produced by the environment, by name
     raw_endpoint: str | None = None  # vendor-shaped robot topics for agents without dimOS
+    raw_guide: str | None = None  # ROBOT.md template for raw_endpoint, required with it
 
 
 @dataclass(frozen=True, kw_only=True)

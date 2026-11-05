@@ -47,25 +47,26 @@ def current_skill_context() -> dict[str, Any] | None:
 
 
 def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
-    """If ``result`` is a ``SkillResult``, attach the elapsed duration and log.
+    """Log a finished skill call and, for a ``SkillResult``, fill in ``duration_ms``.
 
-    Returns the (possibly new) result. Skills returning non-SkillResult values
-    still get logged with the duration, but no result mutation happens.
+    Args:
+        func_name: Name of the skill, for the log line.
+        result: Whatever the skill returned.
+        elapsed_ms: Wall time the call took, in milliseconds.
+
+    Returns ``result``, replaced by a copy with ``duration_ms`` set when it is
+    a ``SkillResult``.
     """
     # Lazy import to avoid a hard dependency cycle on package init.
     from dimos.agents.skill_result import SkillResult
 
     if isinstance(result, SkillResult):
         result = replace(result, duration_ms=elapsed_ms)
-        if result.success:
-            code = "OK"
-        else:
-            # success=False is authoritative; error_code may be unset.
-            code = result.error_code if result.error_code is not None else "FAILED"
+        logger.info(
+            "SKILL %s duration_ms=%.1f message=%s", func_name, elapsed_ms, result.message[:200]
+        )
     else:
-        # Not a SkillResult — we can't verify the outcome, so don't claim "OK".
-        code = "UNKNOWN"
-    logger.info("SKILL %s result=%s duration_ms=%.1f", func_name, code, elapsed_ms)
+        logger.info("SKILL %s duration_ms=%.1f", func_name, elapsed_ms)
     return result
 
 

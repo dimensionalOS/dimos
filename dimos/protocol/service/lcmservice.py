@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import copy
 import os
 import platform
+import selectors
 import threading
 import traceback
 from typing import Any, ClassVar
@@ -25,6 +27,7 @@ import lcm as lcm_mod
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import TransportBackend
+from dimos.protocol.service.call_pool import CallPool
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.protocol.service.system_configurator.base import configure_system
 from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
@@ -66,13 +69,10 @@ class LCMService(Service):
     config: LCMConfig
     l: lcm_mod.LCM | None
     _stop_event: threading.Event
-    _loop_running: threading.Event
-    _l_lock: threading.Lock
+    _startup_complete: threading.Event
+    _l_lock: threading.RLock
     _pending_unsubs: list[lcm_mod.LCMSubscription]
-    _start_lock: threading.Lock
     _thread: threading.Thread | None
-    _call_thread_pool: ThreadPoolExecutor | None = None
-    _call_thread_pool_lock: threading.RLock = threading.RLock()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -83,63 +83,58 @@ class LCMService(Service):
         else:
             self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
-        self._l_lock = threading.Lock()
-        self._start_lock = threading.Lock()
+        # Re-entrant: a dispatch callback on the loop thread may subscribe.
+        self._l_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._pending_unsubs = []
-        self._loop_running = threading.Event()
+        self._startup_complete = threading.Event()
         self._thread = None
+        self._call_pool = CallPool(max_workers=4)
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Exclude unpicklable runtime attributes when serializing."""
-        state = self.__dict__.copy()
-        # Remove unpicklable attributes
-        state.pop("l", None)
-        state.pop("_stop_event", None)
-        state.pop("_loop_running", None)
-        state.pop("_thread", None)
-        state.pop("_l_lock", None)
-        state.pop("_pending_unsubs", None)
-        state.pop("_start_lock", None)
-        state.pop("_call_thread_pool", None)
-        state.pop("_call_thread_pool_lock", None)
-        return state
+    # Services ride into workers as blueprint config (``pubsubs=[LCM(...)]``): only
+    # their settings cross, and a copy is a fresh, unstarted service. RPC services are
+    # never sent, so their rpc_timeouts have no place here.
+    def cbor_encode(self) -> dict[str, Any]:
+        return self.config.model_dump(exclude={"lcm"})
 
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        """Restore object from pickled state."""
-        self.__dict__.update(state)
-        # Reinitialize runtime attributes
-        self.l = None
-        self._stop_event = threading.Event()
-        self._loop_running = threading.Event()
-        self._thread = None
-        self._l_lock = threading.Lock()
-        self._start_lock = threading.Lock()
-        self._pending_unsubs = []
-        self._call_thread_pool = None
-        self._call_thread_pool_lock = threading.RLock()
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> LCMService:
+        return cls(**data)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> LCMService:
+        return type(self).cbor_decode(copy.deepcopy(self.cbor_encode(), memo))
 
     def start(self) -> None:
-        with self._start_lock:
-            if self._thread is not None and self._thread.is_alive():
-                return
+        """Start dispatch, or raise if a previous shutdown is still in progress.
 
-            # Reinitialize LCM if it's None (e.g., after unpickling)
-            if self.l is None:
-                # Any pending unsubscribes reference the destroyed instance.
-                self._pending_unsubs.clear()
-                if self.config.lcm:
-                    self.l = self.config.lcm
-                else:
-                    self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
+        Wait for the first poll to finish (or for its callback to stop dispatch).
+        After callback shutdown or a join timeout, retry only once dispatch exits.
+        """
+        with self._call_pool.lock:
+            if self._thread is not None and self._thread.is_alive() and self._stop_event.is_set():
+                raise RuntimeError("LCM service is still stopping; cannot restart yet")
+            self._call_pool.start()
+            if self._thread is None or not self._thread.is_alive():
+                # Reinitialize LCM if it's None (e.g. after stop())
+                if self.l is None:
+                    # Any pending unsubscribes reference the destroyed instance.
+                    self._pending_unsubs.clear()
+                    if self.config.lcm:
+                        self.l = self.config.lcm
+                    else:
+                        self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
-            self._stop_event.clear()
-            self._loop_running.clear()
-            self._thread = threading.Thread(target=self._lcm_loop)
-            self._thread.daemon = True
-            self._thread.start()
-            if not self._loop_running.wait(timeout=5.0):
-                raise RuntimeError("LCM handler thread failed to start within 5s")
+                self._stop_event = threading.Event()
+                # Waiters retain their own run's event across a later restart.
+                self._startup_complete = threading.Event()
+                self._thread = threading.Thread(target=self._lcm_loop)
+                self._thread.daemon = True
+                self._thread.start()
+            thread = self._thread
+            startup_complete = self._startup_complete
+        # The first dispatch may call stop(), which also needs the lifecycle lock.
+        if threading.current_thread() is not thread and not startup_complete.wait(timeout=5.0):
+            raise RuntimeError("LCM handler thread failed to start within 5s")
 
     def _defer_unsubscribe(self, subscription: lcm_mod.LCMSubscription) -> None:
         """Queue an unsubscribe for the loop thread to apply between polls.
@@ -157,69 +152,85 @@ class LCMService(Service):
         self._pending_unsubs.append(subscription)
 
     def _lcm_loop(self) -> None:
-        """LCM message handling loop."""
+        """LCM message handling loop.
+
+        Dispatches under _l_lock, which subscribe() takes for its native
+        call, but waits for traffic outside it: a waiter loses every handoff
+        to a loop that re-acquires the lock the moment it releases it.
+        """
         primed = False
-        while not self._stop_event.is_set():
-            try:
-                with self._l_lock:
-                    if self.l is None:
-                        break
-                    while self._pending_unsubs:
-                        self.l.unsubscribe(self._pending_unsubs.pop())
-                    self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
-            except Exception as e:
-                stack_trace = traceback.format_exc()
-                print(f"Error in LCM handling: {e}\n{stack_trace}")
-            if not primed:
-                # Signal start() only after one full poll cycle, so callers
-                # don't race the first handle_timeout dispatch.
-                primed = True
-                self._loop_running.set()
+        selector = selectors.DefaultSelector()
+        try:
+            with self._l_lock:
+                if self.l is not None:
+                    selector.register(self.l.fileno(), selectors.EVENT_READ)
+            while not self._stop_event.is_set():
+                try:
+                    with self._l_lock:
+                        if self.l is None:
+                            break
+                        while self._pending_unsubs:
+                            self.l.unsubscribe(self._pending_unsubs.pop())
+                    if selector.select(_LCM_LOOP_TIMEOUT / 1000):
+                        with self._l_lock:
+                            if self.l is None:
+                                break
+                            self.l.handle_timeout(0)
+                except Exception as e:
+                    stack_trace = traceback.format_exc()
+                    print(f"Error in LCM handling: {e}\n{stack_trace}")
+                if not primed:
+                    # Signal start() only after one full poll cycle, so callers
+                    # don't race the first handle_timeout dispatch.
+                    primed = True
+                    self._startup_complete.set()
+        finally:
+            selector.close()
+            # A callback may request stop while handle_timeout holds _l_lock.
+            # Only release the native instance after dispatch has unwound.
+            self._release_lcm()
+            self._startup_complete.set()
+
+    def _release_lcm(self) -> None:
+        if not self.config.lcm:
+            with self._l_lock:
+                # Destroying the instance frees its subscriptions; drop
+                # pendings so a restart doesn't apply them to a new one.
+                self._pending_unsubs.clear()
+                self.l = None
 
     def stop(self) -> None:
-        with self._start_lock:
-            self._stop_event.set()
+        """Request shutdown, joining dispatch unless called from its callback.
 
-            if self._thread is not None:
-                # Only join if we're not the LCM thread (avoid "cannot join current thread")
-                if threading.current_thread() != self._thread:
-                    self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                    if self._thread.is_alive():
-                        logger.warning("LCM thread did not stop cleanly within timeout")
+        A join timeout leaves the native instance alive until dispatch exits.
+        Callbacks and pool workers request pool shutdown without waiting for it.
+        Every other caller waits for the handler pool to drain before stopping.
+        Restart is rejected while a stop call or stopping dispatch is still active.
+        """
+        with self._call_pool.stop_scope():
+            with self._call_pool.lock:
+                self._stop_event.set()
+                thread = self._thread
+                if thread is None:
+                    # Construction opens LCM even if start() was never called.
+                    self._release_lcm()
 
-                    self._thread = None
+            self._shutdown_thread_pool()
+            if thread is not None and threading.current_thread() is not thread:
+                # Callbacks can stop while another caller joins, without a lock cycle.
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                if thread.is_alive():
+                    logger.warning("LCM thread did not stop cleanly within timeout")
+                else:
+                    with self._call_pool.lock:
+                        if self._thread is thread:
+                            self._thread = None
 
-            # Clean up LCM instance if we created it
-            if not self.config.lcm:
-                with self._l_lock:
-                    # Destroying the instance frees its subscriptions; drop
-                    # pendings so a restart doesn't apply them to a new one.
-                    self._pending_unsubs.clear()
-                    if self.l is not None:
-                        del self.l
-                        self.l = None
-
-            with self._call_thread_pool_lock:
-                if self._call_thread_pool:
-                    # Check if we're being called from within the thread pool
-                    # If so, we can't wait for shutdown (would cause "cannot join current thread")
-                    current_thread = threading.current_thread()
-                    is_pool_thread = False
-
-                    # Check if current thread is one of the pool's threads
-                    # ThreadPoolExecutor threads have names like "ThreadPoolExecutor-N_M"
-                    if hasattr(self._call_thread_pool, "_threads"):
-                        is_pool_thread = current_thread in self._call_thread_pool._threads
-                    elif "ThreadPoolExecutor" in current_thread.name:
-                        # Fallback: check thread name pattern
-                        is_pool_thread = True
-
-                    # Don't wait if we're in a pool thread to avoid deadlock
-                    self._call_thread_pool.shutdown(wait=not is_pool_thread)
-                    self._call_thread_pool = None
+    def _shutdown_thread_pool(self) -> None:
+        # Dispatch cannot wait for handlers that may themselves stop dispatch.
+        with self._call_pool.lock:
+            is_dispatch_thread = threading.current_thread() is self._thread
+        self._call_pool.shutdown(wait=not is_dispatch_thread)
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
-        with self._call_thread_pool_lock:
-            if self._call_thread_pool is None:
-                self._call_thread_pool = ThreadPoolExecutor(max_workers=4)
-            return self._call_thread_pool
+        return self._call_pool.get()

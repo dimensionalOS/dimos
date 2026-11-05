@@ -1,0 +1,31 @@
+name: Check docs
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "misc/mkdocs/**"
+      - "README.md"
+      - "assets/readme/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/docs-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Install docs dependencies
+        run: uv sync --only-group docs --frozen
+      - name: Build docs
+        run: uv run --no-sync mkdocs build --strict

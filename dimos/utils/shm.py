@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Race-free creation and attachment of named POSIX shared-memory segments.
+"""Race-free attachment to named POSIX shared-memory segments.
 
 ``SharedMemory(create=True, size=N)`` runs ``shm_open`` and *then* ``ftruncate``.
 Between the two the segment exists at size 0, so a concurrent attacher mmaps an
@@ -67,20 +67,6 @@ def attach_shm(name: str, *, timeout: float | None = None) -> SharedMemory:
         if time.monotonic() >= deadline:
             raise ShmNotReadyError(f"SHM {name!r} not ready after {limit:g}s: {reason}")
         time.sleep(_POLL_S)
-
-
-def create_or_attach_shm(
-    name: str, size: int, *, timeout: float | None = None
-) -> tuple[SharedMemory, bool]:
-    """Create ``name`` at ``size`` (owner) or wait out its creator and attach.
-
-    Returns ``(segment, is_owner)``. Owners stay registered with the resource
-    tracker so a crash still cleans up; attachers do not, since they only close.
-    """
-    try:
-        return SharedMemory(create=True, size=size, name=name), True
-    except FileExistsError:
-        return attach_shm(name, timeout=timeout), False
 
 
 def _try_attach(name: str) -> tuple[SharedMemory | None, str]:

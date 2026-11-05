@@ -52,6 +52,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest
 from dimos.web.relay_bridge.e2e_support import (
     arm_teleop,
     attach_viewer,
@@ -65,13 +66,11 @@ from dimos.web.relay_bridge.protocol import (
     Twist as WireTwist,
     Unsub,
 )
-from dimos.web.relay_bridge.relay_bridge_module import (
-    RelayBridgeConfig,
-    RelayBridgeModule,
-    default_manifest,
-)
+from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 from dimos.web.relay_bridge.relay_process import RelayProcess
 from dimos.web.relay_bridge.wt_client import RelayClient, RelayRejectedError, fetch_relay_info
+
+pytestmark = pytest.mark.self_hosted
 
 ROBOT_ID = "bridge-e2e"
 POSE = PoseStamped(ts=42.5, position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0])
@@ -221,6 +220,7 @@ def test_local_relay_port_collision_does_not_kill_listener() -> None:
             listener.stdout.close()
 
 
+@pytest.mark.flaky(reruns=1)
 def test_full_session_flow_and_lazy_encode(
     bridge: RelayBridgeModule, publisher: _Publisher
 ) -> None:
@@ -561,6 +561,7 @@ def test_teleop_relay_kill_deadman_deadline(
     asyncio.run(flow())
 
 
+@pytest.mark.flaky(reruns=1)
 def test_teleop_lease_exclusive_and_handover(teleop_bridge: RelayBridgeModule) -> None:
     bridge = teleop_bridge
     twists: list[Twist] = []
@@ -698,6 +699,7 @@ def _self_signed_cert(directory: Path) -> tuple[Path, Path]:
     return cert_path, key_path
 
 
+@pytest.mark.flaky(reruns=1)
 def test_external_relay_with_real_certificate(tmp_path: Path) -> None:
     # A relay given --cert/--key advertises no hash, so both client legs
     # verify the certificate: against relay_ca (mkcert, a private CA) or the

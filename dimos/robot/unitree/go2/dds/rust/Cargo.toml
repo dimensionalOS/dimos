@@ -16,8 +16,8 @@ path = "src/bin/go2_dds.rs"
 [dependencies]
 # Our forks, vendored: the robot has no GitHub access. See vendor/*/Cargo.toml.
 cyclonedds-rs = { path = "vendor/cyclonedds-rs", default-features = false }
-dimos-module = { path = "../../../../../../native/rust/dimos-module" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", tag = "v0.1.6" }
 serde = { version = "1", features = ["derive"] }
 serde-big-array = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
@@ -45,6 +45,9 @@ image = "sensor_msgs.CompressedImage"
 lidar_raw = "sensor_msgs.PointCloud2"
 lidar_imu = "sensor_msgs.Imu"
 joint_state = "sensor_msgs.JointState"
+motor_state = "control_msgs.DynamicJointState"
+joint_command = "control_msgs.DynamicJointState"
+height_map = "sensor_msgs.PointCloud2"
 imu = "sensor_msgs.Imu"
 battery = "sensor_msgs.BatteryState"
 joy = "sensor_msgs.Joy"
@@ -56,6 +59,5 @@ codegen-units = 1
 # A panicked worker thread takes the process down, so the supervisor sees it.
 panic = "abort"
 
-# Own lockfile, like the other native crates: not in the repo's top-level workspace.
 [workspace]
 exclude = ["vendor/cyclonedds-sys", "vendor/cyclonedds-rs"]

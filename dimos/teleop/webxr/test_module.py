@@ -24,9 +24,10 @@ from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.std_msgs.String import String
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,
@@ -224,7 +225,7 @@ def test_episode_status_is_cached_and_broadcast(
     broadcast = mocker.patch.object(module, "_broadcast_text")
     mocker.patch("dimos.teleop.webxr.module.time.time", return_value=165.5)
 
-    module._on_episode_status(_episode_status())
+    module._on_episode_status(String(_episode_status().to_json()))
 
     assert module._latest_episode_status == _episode_status()
     payload = json.loads(broadcast.call_args.args[0])
@@ -469,6 +470,34 @@ def test_disconnect_releases_debounced_buttons_immediately(
     publish.assert_called_once()
     assert publish.call_args.args[0].right_primary
     assert module._debounced_buttons == 0
+
+
+def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture) -> None:
+    module = ArmTeleopModule(server_port=9443, zero_button="B")
+    manipulation = mocker.Mock()
+    manipulation.list_planning_groups.return_value = (
+        SimpleNamespace(id="manipulator", joint_names=("joint1", "joint2")),
+    )
+    module._manipulation = manipulation
+    thread = mocker.patch("dimos.teleop.webxr.extensions.threading.Thread")
+    mocker.patch("dimos.teleop.webxr.module.time.monotonic", side_effect=[0.0, 0.1])
+    buttons = Buttons()
+    buttons.right_secondary = True
+    try:
+        module._publish_buttons(buttons)
+        module._publish_buttons(buttons)
+        mocker.stopall()
+        thread.assert_called_once_with(target=module._move_to_zero, daemon=True)
+        module._move_to_zero()
+    finally:
+        module.stop()
+
+    target = manipulation.plan_to_joints.call_args.args[0]["manipulator"]
+    assert target.name == ["joint1", "joint2"]
+    assert list(target.position) == [0.0, 0.0]
+    manipulation.execute.assert_called_once_with(
+        blocking=False, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
+    )
 
 
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:
@@ -853,3 +882,21 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         assert not publish.call_args.args[0].right_grip
     finally:
         module.stop()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "not json",
+        '{"schema_version":2}',
+        '{"schema_version":true}',
+        '{"schema_version":1,"ts":null}',
+    ],
+)
+def test_invalid_episode_document_keeps_the_previous_hud_state(module, mocker, document):
+    broadcast = mocker.patch.object(module, "_broadcast_text")
+    module._on_episode_status(String(_episode_status().to_json()))
+    broadcast.reset_mock()
+    module._on_episode_status(String(document))
+    assert module._latest_episode_status == _episode_status()
+    broadcast.assert_not_called()

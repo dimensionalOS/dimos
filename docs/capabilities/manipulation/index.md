@@ -5,6 +5,10 @@ the default world and native path planner.
 
 For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
 
+For demonstration collection, dataset preparation, training, and compatible
+checkpoint rollout, see [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md).
+Start with the OpenYAM hand-teaching tutorial or choose a guide for your task.
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
@@ -20,6 +24,7 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
+dimos run seeed-b601-dm-planner-coordinator # Seeed reBot B601-DM 6-DOF + gripper
 dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
@@ -389,10 +394,16 @@ uv sync --extra manipulation --inexact
 
 The Viser panel talks to the concrete `ManipulationOperator` bound into its
 `VisualizationSession`. GUI callbacks enqueue operations through that operator
-for target evaluation, planning, preview, execution, cancellation, reset, and
+for target evaluation, planning, preview, execution, cancellation, and
 clear-plan actions. The panel owns only target drafts, selection state, and
 callback generations; it does not touch `WorldSpec`, IK, planner objects,
 `ManipulationModule`, `WorldMonitor`, or live Drake contexts directly.
+
+The **Zero** preset sets selected groups' joint targets to `0.0` without moving the
+robot. Use **Joint space → Plan → Execute**; the existing feasibility checks apply.
+If any selected joint's limits exclude zero, the preset is rejected and targets
+stay unchanged. Unselected joints stay unchanged. Zero is not Home or hardware
+calibration.
 
 The panel's **Planning mode** selector chooses how the current target is
 reached:
@@ -428,7 +439,7 @@ telemetry snapshots.
 
 ```bash
 # Arm + camera + manipulation + LLM agent (single command)
-dimos run xarm-grasp-agent --xarm7-ip <ip>
+dimos run xarm-grasp-agent --controlcoordinator.addresses '{"arm": "<ip>"}'
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -448,6 +459,12 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 - **KeyboardTeleopModule**: Pygame UI publishing routed spatial EEF twist intent
 - **ControlCoordinator**: 100Hz control loop with mock or real hardware adapters
 - **ManipulationModule**: world backend, optional visualization, RRT motion planning, obstacle management
+
+A manipulation stack that plans around a camera-built voxel map adds
+`manipulation_mapping()` from
+[`common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) (self
+filter, voxel mapper, `PointCloudBoxFilter`), which feeds `ManipulationModule`'s
+`voxel_map` input.
 
 ### Streaming pose-target control
 
@@ -497,6 +514,7 @@ planner is locked for its whole native call.
 | `keyboard-teleop-piper` | Piper 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm6` | XArm6 6-DOF keyboard teleop with Drake viz |
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
+| `seeed-b601-dm-planner-coordinator` | Seeed reBot B601-DM planning, gripper, and hardware control |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
 | `r1pro-planar-preview` | R1 Pro planar-base, torso, and bimanual planning preview with fake hardware |
@@ -512,6 +530,7 @@ planner is locked for its whole native call.
 | [A-750](/docs/capabilities/manipulation/a750.md) | 6 | Y | Y | N |
 | [Galaxea A1Z](/docs/capabilities/manipulation/a1z.md) | 6 | Y | Y | N |
 | Piper | 6 | Y | Y | N |
+| [Seeed reBot B601-DM](/docs/capabilities/manipulation/seeed_b601_dm_integration.md) | 6 | N | Y | N |
 | XArm6 | 6 | Y | Y | N |
 | XArm7 | 7 | Y | Y | Y |
 
@@ -524,7 +543,7 @@ planner is locked for its whole native call.
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, and task helpers |
+| [`robot/manipulators/common/blueprints.py`](/dimos/robot/manipulators/common/blueprints.py) | Shared coordinator, planner, mapping, and task helpers |
 | [`robot/manipulators/a750/config.py`](/dimos/robot/manipulators/a750/config.py) | A-750 model and hardware config |
 | [`robot/manipulators/a750/blueprints/teleop.py`](/dimos/robot/manipulators/a750/blueprints/teleop.py) | A-750 keyboard teleop blueprint |
 | [`robot/manipulators/piper/blueprints/basic.py`](/dimos/robot/manipulators/piper/blueprints/basic.py) | Piper coordinator blueprint |
@@ -536,3 +555,5 @@ planner is locked for its whole native call.
 | [`planning/world/roboplan_world.py`](/dimos/manipulation/planning/world/roboplan_world.py) | RoboPlan scene, state, and collision backend |
 | [`planning/planners/roboplan_planner.py`](/dimos/manipulation/planning/planners/roboplan_planner.py) | RoboPlan-native joint and Cartesian planner |
 | [`planning/planners/rrt_planner.py`](/dimos/manipulation/planning/planners/rrt_planner.py) | RRT-Connect motion planner |
+
+Device addresses are configured per hardware id in `controlcoordinator.addresses`; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).

@@ -16,7 +16,7 @@
 
 `audio_in` carries one utterance per button hold as ordered AudioChunk
 slices (dimos/web/relay_bridge/audio_codec.py pins the wire contract). The
-reassembled container bytes go through the owned local STT chain - ffmpeg
+reassembled container bytes go through the owned local STT chain - PyAV
 decode to PCM, AudioNormalizer, WhisperNode (the exact pipeline behind the
 legacy WebInput upload) - and the transcript is published on `human_input`,
 entering the agent conversation exactly like a typed chat message. A
@@ -38,9 +38,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.stream.audio.base import AudioEvent
-from dimos.stream.audio.decode import decode_audio_bytes, ffmpeg_requirement
+from dimos.stream.audio.decode import decode_audio_bytes
 from dimos.stream.audio.pipeline import whisper_pipeline
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.threadpool import run_in_thread
 from dimos.web.relay_bridge.audio_codec import AudioChunk
 
 logger = setup_logger()
@@ -74,7 +75,7 @@ class VoiceInput(Module):
     _queue: Queue[bytes]
     _thread: Thread
     _stop_event: Event
-    _audio_subject: rx.subject.Subject[AudioEvent] | None
+    _audio_subject: rx.subject.Subject[AudioEvent]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -87,18 +88,14 @@ class VoiceInput(Module):
             daemon=True,
         )
         self._stop_event = Event()
-        self._audio_subject = None
-
-    def __reduce__(self) -> Any:
-        return (self.__class__, (), {})
+        # Loading Whisper takes seconds; started here so it overlaps the deploy
+        # and start() waits only for whatever is left.
+        self._pipeline = run_in_thread(whisper_pipeline, "whisper-pipeline")
 
     @rpc
     def start(self) -> None:
-        requirement_error = ffmpeg_requirement()
-        if requirement_error is not None:
-            raise RuntimeError(requirement_error)
         super().start()
-        self._audio_subject, transcripts = whisper_pipeline()
+        self._audio_subject, transcripts = self._pipeline.result()
         self.register_disposable(
             transcripts.subscribe(
                 on_next=self._publish_text,
@@ -187,7 +184,7 @@ class VoiceInput(Module):
                 continue
             try:
                 event = decode_audio_bytes(raw)
-                if event is not None and self._audio_subject is not None:
+                if event is not None:
                     self._audio_subject.on_next(event)
             except Exception:
                 # One bad clip must not end voice input for the process.

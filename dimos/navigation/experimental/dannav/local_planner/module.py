@@ -71,7 +71,7 @@ class _ReplanGate:
     """Transport-free core deciding which planner paths reach the follower.
 
     Owns the gate state and the commit decision, so it is unit-testable directly
-    the way ``_HolonomicPathFollower`` is. It forwards a planner path only at
+    the way ``HolonomicPathController`` is. It forwards a planner path only at
     *commit* moments and suppresses replans in between, so ``DanHolonomicTC``
     follows the last committed path over a guaranteed-stable lookahead instead of
     being yanked onto a freshly re-rooted chord every lidar frame.

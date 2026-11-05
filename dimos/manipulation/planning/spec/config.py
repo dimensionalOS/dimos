@@ -17,13 +17,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasp_verification import GraspVerificationConfig
 from dimos.manipulation.planning.groups.identifiers import assert_valid_joint_names
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
 
@@ -43,6 +45,8 @@ class RobotModelConfig(ModuleConfig):
         collision_exclusion_pairs: List of (link1, link2) pairs to exclude from collision.
             Useful for parallel linkage mechanisms like grippers where non-adjacent
             links may legitimately overlap (e.g., mimic joints).
+        gripper: Where the gripper may touch a grasped object and how it closes,
+            for checking grasp candidates; None skips that check.
     """
 
     model: RobotModel
@@ -53,7 +57,6 @@ class RobotModelConfig(ModuleConfig):
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
     auto_convert_meshes: bool = False
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
-    gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
@@ -62,6 +65,13 @@ class RobotModelConfig(ModuleConfig):
     pre_grasp_offset: float = 0.10
     # Gripper feedback thresholds for pick/place.
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
+    gripper: GripperConfig | None = None
+
+    @field_validator("base_pose", mode="before")
+    @classmethod
+    def _parse_base_pose(cls, value: Any) -> Any:
+        """Accept a pose object or its JSON configuration across the launcher boundary."""
+        return PoseStamped(**value) if isinstance(value, dict) else value
 
     def model_post_init(self, __context: object) -> None:
         """Validate canonical joint-name constraints."""

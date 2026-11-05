@@ -25,19 +25,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 
 
 class V4L2CameraConfig(NativeModuleConfig):
-    # Absolute: a relative cwd resolves against the concrete subclass's file, wherever that lives.
-    cwd: str | None = str(Path(__file__).parent / "rust")
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "v4l2_camera")
-    build_command: str | None = "cargo build --release"
+    source_dir: str | None = "dimos/hardware/sensors/camera/v4l2/rust"
+    executable: str = "result/bin/v4l2_camera"
+    # A Jetson builds path:.#jetson, the hardware JPEG path (see below).
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
 
@@ -52,6 +51,12 @@ class V4L2CameraConfig(NativeModuleConfig):
     # Use the Jetson's hardware encoder when present; the CPU path covers everything else.
     hardware: bool = True
     retry_s: float = Field(default=3.0, ge=0.1, le=60.0)
+
+    @model_validator(mode="after")
+    def _jetson_build(self) -> V4L2CameraConfig:
+        if self.build_command == "nix build -L path:." and Path("/etc/nv_tegra_release").exists():
+            self.build_command = "nix build -L path:.#jetson"
+        return self
 
 
 class V4L2Camera(NativeModule):

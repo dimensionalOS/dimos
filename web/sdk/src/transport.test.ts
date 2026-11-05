@@ -302,6 +302,26 @@ describe("ReconnectingTransport", () => {
     transport.stop();
   });
 
+  it("an online event runs a pending retry at once", async () => {
+    let attempts = 0;
+    const transport = makeTransport({
+      fetchInfo: () => {
+        attempts += 1;
+        return Promise.reject(new Error("down"));
+      },
+    });
+    transport.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+    expect(transport.phase).toMatchObject({ phase: "reconnecting", attempt: 1 });
+    globalThis.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(2); // without waiting out the 500 ms
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(attempts).toBe(3); // and the backoff timer keeps working after it
+    transport.stop();
+  });
+
   it("stop() cancels a pending retry", async () => {
     const fetchInfo = vi.fn(() => Promise.reject(new Error("down")));
     const transport = makeTransport({ fetchInfo });
@@ -433,5 +453,21 @@ describe("ReconnectingTransport", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(signals).toHaveLength(1);
     expect(phases.filter((p) => p.phase === "reconnecting")).toEqual([]);
+  });
+});
+
+describe("fetchRelayInfo rtc flag", () => {
+  it("accepts an absent or boolean rtc and rejects other types", async () => {
+    const fetchJson = (body: unknown) => {
+      vi.stubGlobal("fetch", () => Promise.resolve(new Response(JSON.stringify(body))));
+      return fetchRelayInfo("http://relay/api/info", new AbortController().signal);
+    };
+    try {
+      expect(await fetchJson(INFO)).toEqual(INFO);
+      expect(await fetchJson({ ...INFO, rtc: true })).toEqual({ ...INFO, rtc: true });
+      await expect(fetchJson({ ...INFO, rtc: "yes" })).rejects.toThrow("unexpected shape");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

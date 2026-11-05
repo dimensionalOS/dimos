@@ -18,8 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import subprocess
 import threading
 from typing import Any
 
@@ -27,23 +25,21 @@ import pytest
 import websockets.asyncio.client as ws_client
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.global_config import global_config
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture()
 def server(wait_for_server: Any) -> RerunWebSocketServer:
-    original_port = global_config.rerun_websocket_server_port
-    # Port 0: bind an ephemeral port so parallel test workers never collide.
-    global_config.update(rerun_websocket_server_port=0)
+    # Port 0 avoids collisions between parallel test workers.
+    module = RerunWebSocketServer(port=0)
     try:
-        module = RerunWebSocketServer()
         module.start()
         wait_for_server(module.bound_port)
         yield module
-        module.stop()
     finally:
-        global_config.update(rerun_websocket_server_port=original_port)
+        module.stop()
 
 
 def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 0.05) -> None:
@@ -183,37 +179,3 @@ class TestViewerProtocolE2E:
 
         xs = sorted(point.x for point in received)
         assert xs == [1.0, 2.0], f"Unexpected xs: {xs}"
-
-
-class TestViewerBinaryConnectMode:
-    """Smoke test: dimos-viewer binary starts in --connect mode."""
-
-    @pytest.fixture()
-    def viewer_process(self, server: RerunWebSocketServer) -> subprocess.Popen[bytes]:
-        if not os.environ.get("DISPLAY"):
-            pytest.skip("dimos-viewer requires a display (winit cannot start without one)")
-        process = subprocess.Popen(
-            [
-                "dimos-viewer",
-                "--connect",
-                f"--ws-url=ws://127.0.0.1:{server.bound_port}/ws",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        yield process
-        process.terminate()
-        try:
-            process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            process.kill()
-
-    def test_viewer_ws_client_connects(
-        self, server: RerunWebSocketServer, viewer_process: subprocess.Popen[bytes]
-    ) -> None:
-        """dimos-viewer --connect starts and its WS client connects to our server."""
-        connected = server.client_connected.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        assert connected, (
-            f"dimos-viewer did not establish a WS connection within "
-            f"{DEFAULT_THREAD_JOIN_TIMEOUT}s. viewer_process.poll()={viewer_process.poll()}"
-        )

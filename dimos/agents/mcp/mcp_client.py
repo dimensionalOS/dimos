@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -28,7 +28,7 @@ from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
 # `allowed_objects` warning emitted when langchain.agents pulls in langgraph.checkpoint.
 warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
@@ -37,6 +37,8 @@ import requests
 
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
+from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -50,6 +52,14 @@ from dimos.utils.sequential_ids import SequentialIds
 logger = setup_logger()
 
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+# How much of a failed turn's error message goes into the agent's history.
+_FAILED_TURN_ERROR_CHARS = 300
+
+
+def _preload_agent_deps() -> None:
+    import langchain.agents
+    import langchain.chat_models  # noqa: F401
+    import langchain_openai  # noqa: F401
 
 
 def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
@@ -83,7 +93,8 @@ class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
-    mcp_server_url: str = "http://localhost:9990/mcp"
+    # None: the McpServer in this blueprint, or the default endpoint without one.
+    mcp_server_url: str | None = None
     trace_dir: Path | None = None
 
 
@@ -92,6 +103,9 @@ class McpClient(Module):
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]
+
+    # Injected when the blueprint has an McpServer.
+    _mcp_server: McpServerSpec | None = None
 
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
@@ -122,9 +136,19 @@ class McpClient(Module):
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._mcp_url: str | None = None
+        Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
 
-    def __reduce__(self) -> Any:
-        return (self.__class__, (), {})
+    def _server_url(self) -> str:
+        """The MCP endpoint: configured, else the blueprint's McpServer, else the default."""
+        if self._mcp_url is None:
+            if self.config.mcp_server_url is not None:
+                self._mcp_url = self.config.mcp_server_url
+            elif self._mcp_server is not None:
+                self._mcp_url = str(self._mcp_server.mcp_url())
+            else:
+                self._mcp_url = DEFAULT_MCP_URL
+        return self._mcp_url
 
     def _mcp_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -135,7 +159,7 @@ class McpClient(Module):
         if params is not None:
             body["params"] = params
 
-        resp = self._http_client.post(self.config.mcp_server_url, json=body, timeout=120.0)
+        resp = self._http_client.post(self._server_url(), json=body, timeout=120.0)
         resp.raise_for_status()
         data = resp.json()
 
@@ -174,9 +198,7 @@ class McpClient(Module):
     def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[StructuredTool]:
         result = self._try_fetch_tools(timeout=timeout, interval=interval)
         if result is None:
-            raise RuntimeError(
-                f"Failed to fetch tools from MCP server {self.config.mcp_server_url}"
-            )
+            raise RuntimeError(f"Failed to fetch tools from MCP server {self._server_url()}")
 
         raw_tools = result.get("tools", [])
         self._tool_registry = {t["name"]: t for t in raw_tools}
@@ -381,24 +403,64 @@ class McpClient(Module):
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
         self.agent_idle.publish(False)
+        turn_start = len(self._history)
+        self._record(message)
+
+        try:
+            for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
+                for node_output in update.values():
+                    for msg in node_output.get("messages", []):
+                        self._record(msg)
+        except Exception as e:
+            # Letting this escape would end the thread, and no later message, tool
+            # updates included, would be processed. Log it and return; the failed
+            # message is not retried.
+            logger.exception("Agent turn failed", error=f"{type(e).__name__}: {e}")
+            failure = f"{type(e).__name__}: {str(e)[:_FAILED_TURN_ERROR_CHARS]}"
+            # Model APIs reject a history with an unanswered tool call, so answer
+            # each one with an error.
+            for call_id in _unanswered_tool_calls(self._history[turn_start + 1 :]):
+                self._record(
+                    ToolMessage(
+                        content=(
+                            f"No result: the agent turn failed with {failure}. "
+                            "The call may or may not have run."
+                        ),
+                        tool_call_id=call_id,
+                        status="error",
+                    )
+                )
+            self._record(
+                AIMessage(
+                    content=f"This turn failed with {failure}",
+                    additional_kwargs={TURN_FAILED_KEY: True},
+                )
+            )
+
+        if self._message_queue.empty():
+            self.agent_idle.publish(True)
+
+    def _record(self, message: BaseMessage) -> None:
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
-        for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
-            for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
 
-        if self._message_queue.empty():
-            self.agent_idle.publish(True)
+def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
+    answered = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        for call in message.tool_calls:
+            call_id = call["id"]
+            if call_id is not None and call_id not in answered:
+                yield call_id
 
 
 def _append_image_to_history(
     mcp_client: McpClient, func_name: str, uuid_: str, result: Any
 ) -> None:
+    # Tagged with its tool, or chat UIs would show this user turn as typed input.
     mcp_client.add_message(
         HumanMessage(
             content=[
@@ -407,6 +469,7 @@ def _append_image_to_history(
                     "text": f"This is the artefact for the '{func_name}' tool with UUID:={uuid_}.",
                 },
                 result,
-            ]
+            ],
+            additional_kwargs={TOOL_ORIGIN_KEY: func_name},
         )
     )

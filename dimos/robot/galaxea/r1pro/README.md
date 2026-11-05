@@ -10,16 +10,11 @@ not on your workstation. The paths below are the robot's, and are the same on
 every R1 Pro.
 
 `galaxea-dimos` is Galaxea's own ROS 2 driver with local bug fixes applied; it
-is not part of dimos. `canfd.sh` ships with the robot and brings up the CAN FD
-interfaces the driver needs. Boot the driver with the standalone stack, which
-bypasses the stock `moca_adapter` and runs the chassis gatekeeper on-robot:
-
-```bash
-bash ~/canfd.sh
-cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
-./robot_startup.sh kill
-./robot_startup.sh boot ../sessions.d/ATCStandard/R1PROBody.d/
-```
+is not part of dimos. `R1ProConnection` boots it, when it is not running, with
+[`vendor_setup.sh`](/dimos/robot/galaxea/r1pro/vendor_setup.sh): the standalone stack
+(no `moca_adapter`, chassis gatekeeper on-robot) without the vendor head camera and
+Livox drivers. HDAS brings up CAN FD itself, so `~/canfd.sh` is not needed. Pick a
+vendor profile instead with `--r1proconnection.vendor-profile ATCStandard/R1PROVRTeleop`.
 
 ## Environment
 
@@ -44,9 +39,29 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
 ## Blueprints
 
 ```bash
-dimos run r1pro-coordinator     # connection + coordinator + viewer
+dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer
 dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 ```
+
+## Point-LIO
+
+Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
+the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
+`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
+The Mid-360 driver and Point-LIO are native binaries built on first run, so
+`cargo` must be on the path.
+
+**Transport.** Run with `--g.transport lcm`. The vendor's `realsense2_camera`
+holds LCM's default port, so set
+`LCM_DEFAULT_URL=udpm://239.255.76.67:7767?ttl=0`.
+
+**Other vendor profiles.** With a `--r1proconnection.vendor-profile` that starts
+the vendor head camera and Livox drivers, the head cameras retry until the device
+is free and our Mid-360 driver competes with the vendor's for the sensor.
+
+The lidar and host addresses are `R1PRO_CHASSIS_LIDAR_IP` /
+`R1PRO_CHASSIS_LIDAR_HOST_IP` in `config.py` (`--mid360.lidar_ip` /
+`--mid360.host_ip` override them).

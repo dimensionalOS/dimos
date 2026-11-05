@@ -1,0 +1,6 @@
+# Overlay: Habitat datasets from HABITAT_DATA_DIR replace the container's
+# target/habitat/data (docs/usage/evals-docker.md, EC2 runbook step 8).
+services:
+  worker:
+    volumes:
+      - ${HABITAT_DATA_DIR:-./habitat-data}:/app/target/habitat/data

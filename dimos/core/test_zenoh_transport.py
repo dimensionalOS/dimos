@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import pickle
 import threading
 from types import SimpleNamespace
 from typing import cast
@@ -40,6 +39,7 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -57,7 +57,7 @@ class TypedMsg:
 
 
 class UntypedMsg:
-    """A message without lcm_encode. Triggers pickle transport."""
+    """A message without lcm_encode. Triggers the untyped transport."""
 
     pass
 
@@ -151,7 +151,7 @@ def test_lcm_transport_returned_when_transport_is_lcm(use_lcm, blueprint) -> Non
     assert isinstance(transport, LCMTransport)
 
 
-def test_lcm_pickle_transport_returned_for_untyped_when_lcm(use_lcm, blueprint) -> None:
+def test_lcm_untyped_transport_returned_when_lcm(use_lcm, blueprint) -> None:
     transport = _get_transport_for(blueprint, "untyped_data", UntypedMsg)
     assert isinstance(transport, pLCMTransport)
 
@@ -161,7 +161,7 @@ def test_zenoh_transport_returned_when_transport_is_zenoh(use_zenoh, blueprint) 
     assert isinstance(transport, ZenohTransport)
 
 
-def test_zenoh_pickle_transport_returned_for_untyped_when_zenoh(use_zenoh, blueprint) -> None:
+def test_zenoh_untyped_transport_returned_when_zenoh(use_zenoh, blueprint) -> None:
     transport = _get_transport_for(blueprint, "untyped_data", UntypedMsg)
     assert isinstance(transport, pZenohTransport)
 
@@ -196,7 +196,7 @@ def test_zenoh_transport_broadcast_and_subscribe(retry_until, session_pool, coll
 
 
 def test_pzenoh_transport_broadcast_and_subscribe(retry_until, session_pool, collector) -> None:
-    t = pZenohTransport("dimos/test/pickle_transport", session_pool=session_pool)
+    t = pZenohTransport("dimos/test/untyped_transport", session_pool=session_pool)
     t.start()
     t.subscribe(collector.callback)
 
@@ -224,16 +224,16 @@ def test_stop_and_restart(session_pool) -> None:
     t.stop()
 
 
-def test_zenoh_transport_pickle_preserves_topic_qos() -> None:
+def test_zenoh_transport_roundtrip_preserves_topic_qos() -> None:
     t = ZenohTransport(ZenohTopic("dimos/camera/color", Image, qos=QOS_LATEST_WINS))
-    t2 = pickle.loads(pickle.dumps(t))
+    t2 = decode(encode(t))
     assert type(t2) is ZenohTransport
     assert t2.topic == t.topic  # topic, lcm_type and qos all round-trip
 
 
-def test_pzenoh_transport_pickle_preserves_topic_qos() -> None:
+def test_pzenoh_transport_roundtrip_preserves_topic_qos() -> None:
     t = pZenohTransport(ZenohTopic("dimos/human_input", qos=QOS_NEVER_DROP))
-    t2 = pickle.loads(pickle.dumps(t))
+    t2 = decode(encode(t))
     assert type(t2) is pZenohTransport
     assert t2.topic == "dimos/human_input"
     assert t2._zenoh_topic == t._zenoh_topic
@@ -245,7 +245,7 @@ def test_coerce_lcm_to_zenoh_typed(use_zenoh) -> None:
     assert t.topic.topic == "dimos/cmd_vel"
 
 
-def test_coerce_pickled_lcm_to_zenoh(use_zenoh) -> None:
+def test_coerce_untyped_lcm_to_zenoh(use_zenoh) -> None:
     t = _coerce_transport_to_backend(pLCMTransport("/human_input"))
     assert type(t) is pZenohTransport
     assert t.topic == "dimos/human_input"
@@ -255,6 +255,27 @@ def test_coerce_zenoh_to_lcm_typed(use_lcm) -> None:
     t = _coerce_transport_to_backend(ZenohTransport("dimos/cmd_vel", Image))
     assert type(t) is LCMTransport
     assert t.topic.topic == "/cmd_vel"
+
+
+def test_coerce_rescopes_a_plain_zenoh_transport_into_the_run(use_zenoh, mocker) -> None:
+    mocker.patch.object(global_config, "zenoh_domain", "r1")
+    t = _coerce_transport_to_backend(ZenohTransport("dimos/cmd_vel", Image))
+    assert type(t) is ZenohTransport
+    assert t.topic.topic == "dimos-domains/r1/cmd_vel"
+    assert _coerce_transport_to_backend(t) is t
+    jpeg = JpegLcmTransport("/color_image", Image)
+    assert _coerce_transport_to_backend(jpeg) is jpeg
+
+
+def test_without_a_domain_a_custom_zenoh_key_is_left_alone(use_zenoh) -> None:
+    t = ZenohTransport("rt/cmd_vel", Image)
+    assert _coerce_transport_to_backend(t) is t
+
+
+def test_a_zenoh_domain_is_one_key_segment() -> None:
+    assert GlobalConfig(zenoh_domain="office-2.a_b").zenoh_domain == "office-2.a_b"
+    with pytest.raises(ValidationError):
+        GlobalConfig(zenoh_domain="a/b")
 
 
 def test_coerce_identity_when_backend_matches(use_lcm) -> None:

@@ -1,13 +1,18 @@
 # The hosted relay (docs/web/relay_hosting.md). From a checkout:
 #   docker compose -f docker/relay/compose.yaml up -d --build
-# config/ (gitignored) holds fullchain.pem, privkey.pem, and auth.json, owned
-# by uid 1993 (the image's deno user). The relay reads them at startup only.
+# config/ (gitignored) holds fullchain.pem, privkey.pem, auth.json, and
+# optionally rtc.json, owned by uid 1993 (the image's deno user). The relay
+# reads them at startup only.
 services:
   relay:
     image: dimos-relay
     build:
       context: ../..
       dockerfile: docker/relay/Dockerfile
+    # Video through Cloudflare (the section of that name in relay_hosting.md):
+    # the image's file flags plus the Cloudflare configuration.
+    # command: ["--cert", "/etc/relay/fullchain.pem", "--key", "/etc/relay/privkey.pem",
+    #   "--auth-file", "/etc/relay/auth.json", "--rtc-file", "/etc/relay/rtc.json"]
     ports:
       - "443:443/tcp"
       - "443:443/udp"

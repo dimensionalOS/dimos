@@ -5,6 +5,8 @@ edition = "2021"
 description = "Proc-macros for dimos-module"
 license = "Apache-2.0"
 
+[workspace]
+
 [lib]
 proc-macro = true
 

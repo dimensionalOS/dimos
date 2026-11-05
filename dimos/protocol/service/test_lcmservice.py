@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pickle
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+import copy
+import errno
+import os
 import threading
 import time
 from unittest.mock import MagicMock, create_autospec, patch
 
 from lcm import LCM
+import pytest
 
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.service.lcmservice import (
     _DEFAULT_LCM_URL,
@@ -34,6 +40,223 @@ from dimos.protocol.service.system_configurator.lcm import (
     MulticastConfiguratorMacOS,
 )
 from dimos.protocol.service.system_configurator.libpython import LibPythonConfiguratorMacOS
+
+
+@contextmanager
+def _memory_lcm_service(borrowed):
+    external_lcm = LCM("memq://") if borrowed else None
+    service = LCMService(url="memq://", lcm=external_lcm)
+    try:
+        yield service, external_lcm
+    finally:
+        service.stop()
+
+
+@pytest.fixture(params=[False, True], ids=["owned", "borrowed"])
+def memory_lcm_service(request):
+    with _memory_lcm_service(request.param) as service:
+        yield service
+
+
+@pytest.mark.parametrize("borrowed", [False, True], ids=["owned", "borrowed"])
+@pytest.mark.parametrize("publish_before_start", [False, True])
+def test_stop_from_callback_releases_after_dispatch_and_allows_restart(
+    run_in_subprocess, borrowed, publish_before_start
+):
+    run_in_subprocess(_check_callback_restart, borrowed, publish_before_start)
+
+
+def _check_callback_restart(borrowed, publish_before_start):
+    with _memory_lcm_service(borrowed) as (service, external_lcm):
+        _stop_from_callback_and_restart(service, external_lcm, publish_before_start)
+
+
+def _stop_from_callback_and_restart(service, external_lcm, publish_before_start):
+    native_id = id(service.l)
+    received = []
+    preserved_during_callback = []
+    stopped = threading.Event()
+
+    def stop_from_callback(channel, message):
+        service.stop()
+        received.append(message)
+        preserved_during_callback.append(id(service.l) == native_id)
+        service._defer_unsubscribe(subscription)
+        stopped.set()
+
+    subscription = service.l.subscribe("shutdown", stop_from_callback)
+    if publish_before_start:
+        service.l.publish("shutdown", b"first")
+    service.start()
+    thread = service._thread
+    if not publish_before_start:
+        service.l.publish("shutdown", b"first")
+
+    assert stopped.wait(timeout=2.0)
+    thread.join(timeout=2.0)
+    assert not thread.is_alive()
+    assert received == [b"first"]
+    assert preserved_during_callback == [True]
+    assert service.l is external_lcm
+
+    service.start()
+    delivered = threading.Event()
+
+    def receive_after_restart(channel, message):
+        received.append(message)
+        delivered.set()
+
+    service.l.subscribe("shutdown", receive_after_restart)
+    service.l.publish("shutdown", b"second")
+    assert delivered.wait(timeout=2.0)
+    assert received == [b"first", b"second"]
+
+
+@pytest.mark.parametrize("borrowed", [False, True], ids=["owned", "borrowed"])
+@pytest.mark.parametrize("use_service_pool", [False, True])
+def test_callback_can_stop_while_another_thread_is_joining(
+    run_in_subprocess, borrowed, use_service_pool
+):
+    run_in_subprocess(_check_concurrent_stop, borrowed, use_service_pool)
+
+
+def _check_concurrent_stop(borrowed, use_service_pool):
+    with _memory_lcm_service(borrowed) as (service, external_lcm):
+        _stop_concurrently(service, external_lcm, use_service_pool)
+
+
+def _stop_concurrently(service, external_lcm, use_service_pool):
+    entered = threading.Event()
+    callback_stopped = threading.Event()
+
+    def stop_from_callback(channel, message):
+        entered.set()
+        assert service._stop_event.wait(timeout=2.0)
+        service.stop()
+        callback_stopped.set()
+
+    service.l.subscribe("shutdown", stop_from_callback)
+    service.start()
+    service.l.publish("shutdown", b"stop")
+    assert entered.wait(timeout=2.0)
+
+    with (
+        service._get_call_thread_pool() if use_service_pool else ThreadPoolExecutor(max_workers=1)
+    ) as executor:
+        stopped = executor.submit(service.stop)
+        assert callback_stopped.wait(timeout=2.0)
+        stopped.result(timeout=2.0)
+
+    assert service._thread is None
+    assert service.l is external_lcm
+
+
+def test_callback_stop_closes_owned_native_descriptor(run_in_subprocess):
+    run_in_subprocess(_check_native_destruction)
+
+
+def _check_native_destruction():
+    with _memory_lcm_service(False) as (service, _):
+        descriptor = service.l.fileno()
+        preserved = []
+
+        def stop_callback(channel, message):
+            service.stop()
+            preserved.append(os.fstat(descriptor))
+
+        service.l.subscribe("shutdown", stop_callback)
+        service.l.publish("shutdown", b"stop")
+        service.start()
+        service._thread.join(timeout=2.0)
+
+        assert len(preserved) == 1
+        with pytest.raises(OSError) as error:
+            os.fstat(descriptor)
+        assert error.value.errno == errno.EBADF
+
+
+def test_stop_timeout_keeps_native_instance_until_callback_returns(memory_lcm_service, monkeypatch):
+    service, external_lcm = memory_lcm_service
+    monkeypatch.setattr("dimos.protocol.service.lcmservice.DEFAULT_THREAD_JOIN_TIMEOUT", 0.0)
+    native_lcm = service.l
+    entered = threading.Event()
+    release_callback = threading.Event()
+
+    def block_callback(channel, message):
+        entered.set()
+        release_callback.wait(timeout=5.0)
+
+    native_lcm.subscribe("shutdown", block_callback)
+    service.start()
+    thread = service._thread
+    native_lcm.publish("shutdown", b"stop")
+    try:
+        assert entered.wait(timeout=2.0)
+        service.stop()
+        assert thread.is_alive()
+        assert service.l is native_lcm
+        with pytest.raises(RuntimeError, match="still stopping"):
+            service.start()
+        with pytest.raises(RuntimeError, match="cannot accept calls"):
+            service._get_call_thread_pool()
+    finally:
+        release_callback.set()
+        thread.join(timeout=2.0)
+
+    assert not thread.is_alive()
+    assert service.l is external_lcm
+
+
+def test_restart_is_rejected_until_stop_finishes(memory_lcm_service, mocker):
+    service, _ = memory_lcm_service
+    service.start()
+    old_thread = service._thread
+    joined = threading.Event()
+    finish_stop = threading.Event()
+    real_join = old_thread.join
+
+    def pause_after_join(timeout):
+        real_join(timeout)
+        joined.set()
+        assert finish_stop.wait(timeout=2.0)
+
+    mocker.patch.object(old_thread, "join", side_effect=pause_after_join)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        stopped = executor.submit(service.stop)
+        try:
+            assert joined.wait(timeout=2.0)
+            with pytest.raises(RuntimeError, match="still stopping"):
+                service.start()
+            with pytest.raises(RuntimeError, match="cannot accept calls"):
+                service._get_call_thread_pool()
+        finally:
+            finish_stop.set()
+            stopped.result(timeout=2.0)
+
+    service.start()
+    pool = service._get_call_thread_pool()
+    assert pool.submit(lambda: 42).result(timeout=2.0) == 42
+
+
+def test_restart_from_stopping_callback_is_rejected(run_in_subprocess):
+    run_in_subprocess(_check_callback_restart_rejected)
+
+
+def _check_callback_restart_rejected():
+    with _memory_lcm_service(False) as (service, _):
+        rejected = threading.Event()
+
+        def stop_and_restart(channel, message):
+            service.stop()
+            with pytest.raises(RuntimeError, match="still stopping"):
+                service.start()
+            rejected.set()
+
+        service.l.subscribe("shutdown", stop_and_restart)
+        service.l.publish("shutdown", b"stop")
+        service.start()
+        assert rejected.wait(timeout=2.0)
+
 
 # autoconf tests
 
@@ -126,6 +349,22 @@ class TestTopic:
 # LCMService tests
 
 
+@pytest.fixture
+def mock_lcm():
+    """An autospec LCM whose fileno() is a real, never-readable descriptor.
+
+    The dispatch loop waits on that descriptor between messages.
+    """
+    read_end, write_end = os.pipe()
+    instance = create_autospec(LCM, spec_set=True, instance=True)
+    instance.fileno.return_value = read_end
+    try:
+        yield instance
+    finally:
+        os.close(read_end)
+        os.close(write_end)
+
+
 class TestLCMService:
     def test_init_with_defaults(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
@@ -156,10 +395,9 @@ class TestLCMService:
             mock_lcm_class.assert_not_called()
             assert service.l == mock_lcm_instance
 
-    def test_start_and_stop(self) -> None:
+    def test_start_and_stop(self, mock_lcm) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+            mock_lcm_class.return_value = mock_lcm
 
             service = LCMService()
             service.start()
@@ -174,57 +412,26 @@ class TestLCMService:
             time.sleep(0.1)
             assert service._thread is None
 
-    def test_getstate_excludes_unpicklable_attrs(self) -> None:
+    def test_codec_round_trip_and_deepcopy_rebuild_an_unstarted_service(self, mock_lcm) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+            mock_lcm_class.return_value = mock_lcm
+            service = LCMService(url="udpm://239.255.76.68:7799?ttl=1", ttl=1)
+            service.start()
+            try:
+                assert "lcm" not in service.cbor_encode()
+                for clone in (decode(encode(service)), copy.deepcopy(service)):
+                    assert type(clone) is LCMService
+                    assert clone.config == service.config
+                    assert clone._thread is None
+                    clone.stop()
+                # The service plus one native instance per clone.
+                assert mock_lcm_class.call_count == 3
+            finally:
+                service.stop()
 
-            service = LCMService()
-            state = service.__getstate__()
-
-            assert "l" not in state
-            assert "_stop_event" not in state
-            assert "_thread" not in state
-            assert "_l_lock" not in state
-            assert "_call_thread_pool" not in state
-            assert "_call_thread_pool_lock" not in state
-
-    def test_unpickling_reinitializes_runtime_attrs(self) -> None:
+    def test_stop_cleans_up_lcm_instance(self, mock_lcm) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            new_service = pickle.loads(pickle.dumps(service))
-
-            assert new_service.l is None
-            assert isinstance(new_service._stop_event, threading.Event)
-            assert new_service._thread is None
-            # threading.Lock is a factory function, not a type
-            # Just check that the lock exists and has acquire/release methods
-            assert hasattr(new_service._l_lock, "acquire")
-            assert hasattr(new_service._l_lock, "release")
-
-    def test_start_reinitializes_lcm_after_unpickling(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            new_service = pickle.loads(pickle.dumps(service))
-
-            # Start should reinitialize LCM
-            new_service.start()
-
-            # LCM should be created again
-            assert mock_lcm_class.call_count == 2
-
-            new_service.stop()
-
-    def test_stop_cleans_up_lcm_instance(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+            mock_lcm_class.return_value = mock_lcm
 
             service = LCMService()
             service.start()
@@ -233,49 +440,29 @@ class TestLCMService:
             # LCM instance should be cleaned up when we created it
             assert service.l is None
 
-    def test_stop_preserves_external_lcm_instance(self) -> None:
-        mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-
+    def test_stop_preserves_external_lcm_instance(self, mock_lcm) -> None:
         # Pass lcm as kwarg
-        service = LCMService(lcm=mock_lcm_instance)
+        service = LCMService(lcm=mock_lcm)
         service.start()
         service.stop()
 
         # External LCM instance should not be cleaned up
-        assert service.l == mock_lcm_instance
+        assert service.l == mock_lcm
 
-    def test_get_call_thread_pool_creates_pool(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
+    def test_get_call_thread_pool_reuses_executor(self, memory_lcm_service):
+        service, _ = memory_lcm_service
+        pool = service._get_call_thread_pool()
+        assert pool.submit(lambda: 42).result(timeout=2.0) == 42
+        assert service._get_call_thread_pool() is pool
 
-            service = LCMService()
-            assert service._call_thread_pool is None
+    def test_stop_shuts_down_thread_pool(self, memory_lcm_service):
+        service, _ = memory_lcm_service
+        service.start()
+        pool = service._get_call_thread_pool()
 
-            pool = service._get_call_thread_pool()
-            assert pool is not None
-            assert service._call_thread_pool == pool
+        service.stop()
 
-            # Should return same pool on subsequent calls
-            pool2 = service._get_call_thread_pool()
-            assert pool2 is pool
-
-            # Clean up
-            pool.shutdown(wait=False)
-
-    def test_stop_shuts_down_thread_pool(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
-            mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            service = LCMService()
-            service.start()
-
-            # Create thread pool
-            pool = service._get_call_thread_pool()
-            assert pool is not None
-
-            service.stop()
-
-            # Pool should be cleaned up
-            assert service._call_thread_pool is None
+        with pytest.raises(RuntimeError, match="cannot schedule new futures"):
+            pool.submit(lambda: 42)
+        with pytest.raises(RuntimeError, match="cannot accept calls"):
+            service._get_call_thread_pool()

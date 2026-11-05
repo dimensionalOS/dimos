@@ -5,6 +5,7 @@ import {
   type Manifest,
   type PanelSpec,
   StatusStore,
+  TRACK_ENCODING,
 } from "@dimos/sdk";
 import {
   channelSubscribable,
@@ -37,6 +38,7 @@ function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
 const odom = spec();
 const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
 const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" });
+const track = spec({ ch: "color_image", encoding: TRACK_ENCODING, delivery: "latest" });
 const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
 const lcm = spec({
   ch: "lcm_pose",
@@ -106,6 +108,13 @@ describe("subscribableChannels", () => {
     expect(channelSubscribable(voxels, [{ ...map3dPanel, kind: "hologram" }])).toBe(false);
   });
 
+  it("gates track channels like jpeg (a pull nobody renders makes the robot encode)", () => {
+    expect(channelSubscribable(track, [])).toBe(false);
+    expect(channelSubscribable(track, [videoPanel])).toBe(true);
+    expect(channelSubscribable(track, [{ ...videoPanel, kind: "hologram" }])).toBe(false);
+    expect(subscribableChannels([odom, track], [videoPanel])).toEqual([odom, track]);
+  });
+
   it("consults the given registry, not a global one", () => {
     const registry = createDecoderRegistry();
     registry.register("voxels.bin.v9", () => ({ value: null }));
@@ -131,19 +140,42 @@ describe("installAutoSubscriptions", () => {
 
   it("acquires handles for subscribable channels on every adoption", () => {
     const { status, session, subscribed } = harness();
-    installAutoSubscriptions(session);
+    const subs = installAutoSubscriptions(session);
     expect(subscribed).toEqual([]); // nothing before a manifest
 
     status.update({ manifest: mf([odom, jpeg]) }); // no panel binds the jpeg
     expect(subscribed).toEqual(["odom"]);
 
     status.update({ manifest: mf([odom, jpeg], [videoPanel]) });
+    expect(subscribed).toEqual(["odom"]); // bound, but its panel is not on screen
+    subs.setShownPanels(["cam"]);
     expect(subscribed).toEqual(["odom", "color_image"]);
+  });
+
+  it("holds panel-only channels only while a panel binding them is on screen", () => {
+    const { status, session, subscribed, released } = harness();
+    const subs = installAutoSubscriptions(session);
+    status.update({ manifest: mf([odom, track], [videoPanel]) });
+    subs.setShownPanels(["cam"]);
+    expect(subscribed).toEqual(["odom", "color_image"]);
+
+    subs.setShownPanels([]); // the channels tab, or another page
+    expect(released).toEqual(["color_image"]);
+    expect(subscribed).toEqual(["odom", "color_image"]); // odom stays held
+
+    // A robot restart meanwhile: the shown set is remembered for the return.
+    status.update({ manifest: null });
+    subs.setShownPanels(["cam"]);
+    expect(subscribed).toEqual(["odom", "color_image"]);
+    status.update({ manifest: mf([odom, track], [videoPanel]) });
+    expect(subscribed).toEqual(["odom", "color_image", "color_image"]);
+    expect(released).toEqual(["color_image"]);
   });
 
   it("releases handles for channels the new manifest drops, keeping the rest", () => {
     const { status, session, subscribed, released } = harness();
-    installAutoSubscriptions(session);
+    const subs = installAutoSubscriptions(session);
+    subs.setShownPanels(["cam"]);
     status.update({ manifest: mf([odom, jpeg], [videoPanel]) });
     expect(subscribed).toEqual(["odom", "color_image"]);
 
@@ -166,9 +198,9 @@ describe("installAutoSubscriptions", () => {
 
   it("releases everything on dispose and stops reconciling", () => {
     const { status, session, subscribed, released } = harness();
-    const dispose = installAutoSubscriptions(session);
+    const subs = installAutoSubscriptions(session);
     status.update({ manifest: mf([odom]) });
-    dispose();
+    subs.dispose();
     expect(released).toEqual(["odom"]);
 
     status.update({ manifest: mf([odom, spec({ ch: "gps" })]) });

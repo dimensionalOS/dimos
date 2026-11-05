@@ -1,0 +1,290 @@
+# What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
+name: dimos
+version: "0.0.14"
+install: |
+  set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
+# What this gateway serves (Desktop prefixes /dimos-gateway/); an app's `uses: "@dimos-gateway"` is checked against it.
+# A test keeps it equal to the gateway's routes (experimental/gateway/tests/test_config.py).
+provides:
+  openapi: 3.1.0
+  info:
+    title: dimos gateway
+    # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
+    # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
+    version: 8.0.0
+    description: >-
+      The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
+      stop, its module instances, RPCs and streams); and past runs (logs, recordings). It saves no config: each launch
+      carries all of its own. Desktop serves it at /dimos-gateway/; GET openapi.json has every request and answer.
+  paths:
+    /info:
+      get:
+        description: >-
+          Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway
+          tag, its python, its checkout, runs, log and recordings directories, and this process
+    /server/stop:
+      post:
+        summary: Stop this gateway (a running blueprint keeps running)
+    /catalog:
+      get:
+        description: >-
+          Every blueprint, module, RPC and robot from the last scan (cached on disk), with how stale it is (scan: finished_at,
+          age_seconds, stale); ?module= (name or class) or ?blueprint= narrows it; ?fields= keeps only those (dot paths)
+    /catalog/blueprints:
+      get:
+        summary: Every blueprint, including external ones and ones that don't import, with what the last scan found.
+    /catalog/blueprints/{name}:
+      get:
+        description: >-
+          A blueprint, plus its file and line and its modules' streams and RPCs; while it runs from another checkout, read
+          from that one (`checkout`, `checkoutError`). (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/blueprints/{name}/config:
+      get:
+        description: >-
+          The blueprint's config schema: GlobalConfig's fields and each module's, with types, defaults and choices; read from
+          the checkout of its live run, like /catalog/blueprints/{name}. (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/modules:
+      get:
+        description: >-
+          Every module the last scan found, with its streams, robots, RPCs and the blueprints using it; ?fields= keeps only
+          those (dot paths)
+    /catalog/modules/{name}:
+      get:
+        description: >-
+          A module, the blueprints using it, and its RPCs (`name` is its registry name or class). (slow: imports
+          python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/modules/{name}/config:
+      get:
+        description: >-
+          The module's config fields with the code's defaults; a launch sets them in its config.modules.
+          (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/msgs/{name}:
+      get:
+        description: >-
+          A message type's definition, by the type name topics use (e.g. sensor_msgs.Image). Not filled in yet.
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/robots:
+      get:
+        summary: Every robot dimos supports, by type, with its blueprints by name.
+    /catalog/scan:
+      post:
+        description: >-
+          202 {job}: scan every blueprint and module again (or join the running scan); the catalog changes when it finishes;
+          follow it at jobs/{job}
+    /catalog/scan/blueprints/{name}:
+      post:
+        description: >-
+          Scan just this blueprint and its modules, and update their entries in the cache (or join the running full scan).
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/rpcs:
+      get:
+        description: >-
+          Every module's RPCs the last scan found (`skill` says which are also skills); ?namespace= names them as that
+          namespace would. The running ones are at /active/modules.
+    /catalog/rpcs/{module}/{name}:
+      get:
+        description: >-
+          One RPC from the last scan: its doc, params, skill flag and rpc name; ?namespace= names it as that namespace would
+        parameters:
+          - name: module
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/config:
+      get:
+        summary: "dimos's GlobalConfig: the keys a launch's config.global can set, their defaults, and which are secret"
+    /active:
+      get:
+        summary: The running blueprint, however it was started (running false when idle), and the gateway's last launch
+    /active/id:
+      get:
+        summary: The running run's id, for /history/{runId}
+    /active/log:
+      get:
+        summary: The running run's structured log records from ?after= on (?level=, ?q=, ?limit=)
+    /active/launch:
+      post:
+        description: >-
+          Launch {blueprint} or {module} with all of its config {global, modules, secrets?} (the gateway saves none); 409 if
+          something runs
+    /active/exec:
+      post:
+        summary: Run exactly `dimos run <args>` (args[0] is the blueprint or module)
+    /active/relaunch:
+      post:
+        summary: Stop the running blueprint and start the same launch again (one started elsewhere as a copy of its command)
+    /active/stop:
+      post:
+        summary: Exactly `dimos stop`
+    /active/blueprint:
+      get:
+        summary: What was launched, the config it got (secrets shown as •••) and its module instances
+    /active/modules:
+      get:
+        summary: The running module instances (id = namespace:module), their RPCs (doc, params, skill flag) and streams
+    /active/modules/{id}:
+      get:
+        summary: One running instance
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/modules/{id}/restart:
+      post:
+        summary: Restart that instance, reloading its source
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/modules/{id}/stop:
+      post:
+        summary: Unload that instance; the rest keep running
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/modules/{id}/rpcs:
+      get:
+        summary: That instance's RPCs
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/modules/{id}/rpcs/{name}:
+      post:
+        description: >-
+          Call the RPC with {args?, kwargs?}: {ok, result, error}. For buttons: called directly, not through MCP, so skills'
+          capability holds don't apply; agents use the python API.
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/modules/{id}/streams:
+      get:
+        summary: That instance's streams
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/skills:
+      get:
+        summary: Every skill (RPC with skill true) across the running instances
+    /active/streams:
+      get:
+        summary: Every stream across the running instances, with its module
+    /active/streams/{name}/peek:
+      get:
+        summary: One message from the stream (?timeout= s; 504 if none comes)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /active/stats:
+      get:
+        description: >-
+          dtop for the running blueprint: cpu, memory, threads, fds and io per process (coordinator, workers, their children),
+          with a minute of cpu history; up false until its /resource_stats is heard (launches from here run with dtop)
+    /history:
+      get:
+        summary: Every run with a log, newest first (runId, blueprint, startedAt, endedAt, running)
+    /history/recordings:
+      get:
+        summary: The standard directory dimos writes recordings (mcap and db files) to
+    /history/{runId}:
+      get:
+        summary: One run's entry and log directory; latest is the newest
+        parameters:
+          - name: runId
+            in: path
+            required: true
+            schema:
+              type: string
+    /history/{runId}/logs:
+      get:
+        summary: A run's structured log records from ?after= on (?level=, ?q=, ?limit=); latest is the newest
+        parameters:
+          - name: runId
+            in: path
+            required: true
+            schema:
+              type: string
+    /extras:
+      get:
+        summary: 'dimos''s optional extras: installed, applicable, missing, download size'
+    /extras/install:
+      post:
+        summary: '202 {job, command}: install extras with uv; follow it at jobs/{job}'
+    /jobs/{job}:
+      get:
+        description: >-
+          A job (an extras install, a blueprint scan): done, ok, progress, error, and its output lines after ?after=
+        parameters:
+          - name: job
+            in: path
+            required: true
+            schema:
+              type: string
+    /docs/search:
+      get:
+        summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
+start: |
+  .venv/bin/python -m experimental.gateway --detach

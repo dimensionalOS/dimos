@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -32,10 +31,9 @@ TF_MATCH_TOLERANCE_S = 0.1
 
 
 class RayTracingVoxelMapConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "voxel_ray_tracing")
-    build_command: str | None = "cargo build --release"
+    source_dir: str | None = "dimos/mapping/ray_tracing/rust"
+    executable: str = "result/bin/voxel_ray_tracing"
+    build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
     voxel_size: float = 0.08
@@ -59,6 +57,8 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     # Don't clear a miss when abs of ray dot normal is below this, clear it when above.
     # Higher clears only on direct hits, lower clears on slight grazes too.
     graze_cos: float = 0.7
+    # Spare a grazing miss only on a voxel hit within this many frames, so what nothing sees any more clears; 2**32 - 1 spares always.
+    graze_recent_frames: int = 2**32 - 1
     # Occupied neighbors a surface voxel needs to appear in the local map. Zero
     # emits all. Higher drops isolated returns. The global map is unfiltered.
     support_min: int = 4
@@ -76,14 +76,18 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     tf_match_tolerance_s: float = TF_MATCH_TOLERANCE_S
     # Skip clouds this much (s) older than the newest transform for their frame, so a map that fell behind catches up; 0 keeps all.
     max_cloud_age_s: float = 0.0
+    # How long to wait for a late transform before dropping a cloud (s).
+    tf_wait_timeout_s: float = 0.05
     # Worker threads for parallel map work.
     worker_threads: int = 4
-    # Edge of the square regions a seeded map is handed on in and the map viz publishes by.
+    # Edge of the square regions a seeded map is handed on in.
     region_m: float = 4.0
-    # Publish the regions whose chunks changed every Nth frame, zero for never.
+    # Edge of the square cells the map viz publishes by, at least a chunk edge.
+    viz_cell_m: float = 4.0
+    # Publish the cells whose chunks changed every Nth frame, zero for never.
     viz_emit_every: int = 0
-    # Unchanged regions published per viz tick, round robin.
-    viz_sweep_regions: int = 2
+    # Unchanged cells published per viz tick, round robin.
+    viz_sweep_cells: int = 32
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -92,10 +96,6 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     config: RayTracingVoxelMapConfig
 
     lidar: In[PointCloud2]
-    # World-frame points a sensor knows to be empty. Their voxels are deleted
-    # outright, reaching space ray tracing cannot clear: a wrist camera's own
-    # arm occludes the volume behind it, so no ray ever misses through it.
-    voxel_clear_mask: In[PointCloud2]
     # An externally loaded map cloud, placed by the latest tf world_frame ->
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]

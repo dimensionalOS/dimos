@@ -61,3 +61,31 @@ def test_connect_stops_transport_after_retry_budget_expires(mocker) -> None:
         CoordinatorRPC.connect(timeout=1.0)
 
     rpc.stop.assert_called_once_with()
+
+
+def test_serve_and_connect_use_selected_rpc_name(mocker) -> None:
+    server_rpc = mocker.Mock()
+    client_rpc = mocker.Mock()
+    client_rpc.call_sync.return_value = ("pong", mocker.Mock())
+    backend = mocker.Mock(side_effect=[server_rpc, client_rpc])
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.rpc_backend",
+        return_value=backend,
+    )
+    ensure = mocker.patch.object(CoordinatorRPC, "_ensure_no_existing_service")
+    coordinator = mocker.Mock()
+    name = "runs/run-1/hosts/host-a/coordinator"
+
+    server = CoordinatorRPC.serve(coordinator, name=name)
+    client = CoordinatorRPC.connect(timeout=1.0, name=name)
+    result = client.call("ping")
+
+    ensure.assert_called_once_with(name)
+    server_rpc.serve_module_rpc.assert_called_once_with(coordinator, name=name)
+    assert server.name == name
+    assert client.name == name
+    assert result == "pong"
+    assert client_rpc.call_sync.call_args_list == [
+        mocker.call(f"{name}/ping", ([], {}), rpc_timeout=0.25),
+        mocker.call(f"{name}/ping", ([], {}), rpc_timeout=None),
+    ]

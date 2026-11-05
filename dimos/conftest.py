@@ -19,7 +19,6 @@ import hashlib
 import os
 import pathlib
 import platform
-import shutil
 import tempfile
 import threading
 import time
@@ -45,10 +44,9 @@ if not _worker:
 # machine shares. ``ZENOH_SCOUT_ADDR`` moves each onto its own group.
 #
 # Buckets are seeded with the session run id so concurrent sessions on one
-# machine can't collide. xdist workers mix in the worker name, and also get
-# a per-worker MCP port (``GlobalConfig`` captures ``MCP_PORT``) and state
-# dir (``run_registry`` captures ``XDG_STATE_HOME``), which only collide
-# between parallel workers. Exporting ``LCM_DEFAULT_URL`` yourself opts a
+# machine can't collide. Each session gets its own MCP port (``MCPSERVER__PORT``).
+# xdist workers mix in the worker name and get a separate state directory
+# (``run_registry`` captures ``XDG_STATE_HOME``). Exporting ``LCM_DEFAULT_URL`` opts a
 # single-worker session out of the isolation, deliberately joining it to an
 # external bus; ``ZENOH_SCOUT_ADDR`` does the same for zenoh.
 
@@ -62,12 +60,13 @@ if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
     os.environ["ZENOH_SCOUT_ADDR"] = f"224.0.0.224:{17700 + _BUCKET}"
-    os.environ["MCP_PORT"] = str(20000 + _BUCKET)
+    os.environ["MCPSERVER__PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 else:
     _BUCKET = _lcm_bucket(_run_id)
     os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
     os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
+    os.environ.setdefault("MCPSERVER__PORT", str(20000 + _BUCKET))
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
@@ -98,7 +97,7 @@ from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until 
 tqdm.tqdm.monitor_interval = 0
 
 _dotenv = dotenv_values()
-for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ALIBABA_API_KEY"):
+for _key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "ALIBABA_API_KEY"):
     if _dotenv.get(_key):
         os.environ.setdefault(_key, _dotenv[_key])
 
@@ -183,14 +182,15 @@ def pytest_configure(config):
         "markers",
         "self_hosted: tests that need the self-hosted runner (LFS, ROS, CUDA, etc.)",
     )
-    config.addinivalue_line("markers", "mujoco: tests which open mujoco")
     config.addinivalue_line(
-        "markers", "self_hosted_large: tests that need a high-memory self-hosted runner"
+        "markers",
+        "self_hosted_large: end-to-end and high-memory tests for the large self-hosted "
+        "runner; runs in the daily e2e workflow, not per PR",
     )
     config.addinivalue_line(
         "markers",
         "web_browser: cockpit browser e2e (playwright chromium + firefox); "
-        "runs in the CI web job and the macOS self-hosted-tests job",
+        "runs in the daily e2e workflow (Linux + macOS), not per PR",
     )
     config.addinivalue_line(
         "markers",
@@ -198,25 +198,26 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "native_e2e: native module e2e (builds rust); runs in the CI rust job",
+        "native_e2e: native module e2e (builds rust); "
+        "runs in the CI rust job and the macOS self-hosted-tests job",
     )
-    config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
-    config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
-    config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
-    config.addinivalue_line("markers", "skipif_no_typesafe: skip when TYPESAFE_API_KEY is not set")
+    config.addinivalue_line(
+        "markers", "skipif_no_typesafe: skip when TYPESAFENAVIGATIONAGENT__API_KEY is not set"
+    )
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line(
         "markers",
         "skipif_no_turbojpeg: skip when native libturbojpeg is missing — "
         "except in CI, where it runs anyway so a missing dep fails loudly",
     )
-    config.addinivalue_line(
-        "markers", "skipif_no_ffmpeg: skip when the ffmpeg binary is missing, except in CI"
-    )
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
     config.addinivalue_line("markers", "skipif_macos: skip tests not intended to run on macOS")
     config.addinivalue_line(
         "markers", "skipif_aarch64: skip tests not intended to run on aarch64 (Linux ARM)"
+    )
+    config.addinivalue_line(
+        "markers",
+        "skipif_flaky_in_ci: skip in CI (CI env var set) until the flake is fixed; runs locally",
     )
 
     if config.pluginmanager.hasplugin("_cov"):
@@ -242,11 +243,6 @@ def _global_config_guard():
 # the class and module guards, a class-scoped fixture's
 # `global_config.update(viewer="none", n_workers=1)` stays in effect for
 # every later test in the session.
-#
-# A build from a parsed config resets the singleton to the parse's full
-# resolution. With a hermetic parse (environ={}) that reverts mcp_port to
-# its schema default, and every later test on the worker then binds the
-# port every other worker also defaults to.
 @pytest.fixture(autouse=True)
 def _restore_global_config():
     yield from _global_config_guard()
@@ -265,7 +261,7 @@ def _restore_global_config_module():
 @pytest.fixture(scope="session")
 def mcp_port() -> int:
     """The MCP server port pinned for this xdist worker (or the default)."""
-    return int(os.environ.get("MCP_PORT", "9990"))
+    return int(os.environ.get("MCPSERVER__PORT", "9990"))
 
 
 @pytest.fixture(scope="session")
@@ -295,18 +291,14 @@ def retry_until():
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     _skipif_markers = {
-        "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
-        "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
-        "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
-        "skipif_no_typesafe": (not os.getenv("TYPESAFE_API_KEY"), "TYPESAFE_API_KEY not set"),
+        "skipif_no_typesafe": (
+            not os.getenv("TYPESAFENAVIGATIONAGENT__API_KEY"),
+            "TYPESAFENAVIGATIONAGENT__API_KEY not set",
+        ),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
         "skipif_no_turbojpeg": (
             not _has_turbojpeg() and not os.getenv("CI"),
             "native libturbojpeg unavailable",
-        ),
-        "skipif_no_ffmpeg": (
-            shutil.which("ffmpeg") is None and not os.getenv("CI"),
-            "ffmpeg not installed",
         ),
         "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
         "skipif_macos": (_is_macos(), "Not intended to run on macOS"),
@@ -314,6 +306,7 @@ def pytest_collection_modifyitems(config, items):
             platform.machine() == "aarch64",
             "Not intended to run on aarch64 (Linux ARM)",
         ),
+        "skipif_flaky_in_ci": (bool(os.getenv("CI")), "flaky in CI, disabled until fixed"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:

@@ -100,9 +100,10 @@ def robot_clearance(height: float, wall_clearance_m: float) -> Archetype:
     )
 
 
-def _body_on_base_link(
+def body_on_base_link(
     rr: ModuleType, length: float, width: float, height: float
 ) -> list[Archetype]:
+    """The robot's body box riding on base_link, for a bridge's static entities."""
     return [robot_body_box(length, width, height), rr.Transform3D(parent_frame="tf#/base_link")]
 
 
@@ -115,10 +116,10 @@ def nav_static(
 ) -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     """Bridge static entities: the body box and clearance cylinder riding on base_link.
 
-    Module-level partials, since blueprint config is pickled out to the workers.
+    Module-level partials, since blueprint config is sent by reference to the workers.
     """
     return {
-        "world/robot_body": partial(_body_on_base_link, length=length, width=width, height=height),
+        "world/robot_body": partial(body_on_base_link, length=length, width=width, height=height),
         "world/robot_body/clearance": partial(
             _clearance_on_body, height=height, wall_clearance_m=wall_clearance_m
         ),
@@ -130,16 +131,21 @@ def nav_visual_override(
     voxel_size: float,
     wall_clearance_m: float,
     clearance_clamp_m: float = 1.0,
+    static_regions: bool = True,
 ) -> dict[str, VisualOverride]:
     """Bridge overrides for the maps, path, goal and the planner's debug entities.
 
     Pass the same values given to ``MLSPlannerNative.blueprint(...)``.
+    static_regions False logs the map cells on the timeline, so a replay can scrub them.
     """
     voxels = partial(render_voxel_map, voxel_size=voxel_size, height_range=HEIGHT_RANGE)
     return {
         "world/global_map": voxels,
         MAP_REGIONS_ENTITY: partial(
-            render_map_region, voxel_size=voxel_size, height_range=HEIGHT_RANGE
+            render_map_region,
+            voxel_size=voxel_size,
+            height_range=HEIGHT_RANGE,
+            static=static_regions,
         ),
         # the seeded regions feed the planner, the map viz already shows them
         "world/seed_map": None,
@@ -147,5 +153,7 @@ def nav_visual_override(
         "world/local_map": voxels,
         "world/path": render_path,
         "world/goal": render_goal,
-        **planner_visual_override(viz_publish_hz, voxel_size, wall_clearance_m, clearance_clamp_m),
+        **planner_visual_override(
+            viz_publish_hz, voxel_size, wall_clearance_m, clearance_clamp_m, static_regions
+        ),
     }

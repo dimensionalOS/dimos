@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`dimos map view`: open a `.pc2.lcm` cloud - `dimos map global --export` - in rerun."""
+"""`dimos map view`: open a `.pc2.lcm` cloud - `dimos map global --export-pc2` - in rerun."""
 
 from __future__ import annotations
 

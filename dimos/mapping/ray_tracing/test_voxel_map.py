@@ -134,14 +134,14 @@ def test_seed_regions_land_nearest_first_and_gate_support() -> None:
     assert mapper.start_seed(np.vstack([slab, lone]), (40.0, 40.0, 0.0)) == 2
     first = mapper.seed_next_region()
     assert first is not None
-    assert first.center == (40.0, 40.0), "the origin's region lands first"
+    assert first.center == (44.0, 44.0), "the origin's region lands first"
     assert first.z_min < 0.5 < first.z_max
     assert first.points.shape == (0, 3), "an isolated voxel has no support"
 
     second = mapper.seed_next_region()
     assert second is not None
-    assert second.center == (8.0, 8.0)
-    assert second.radius == pytest.approx(np.hypot(8.0, 8.0) + 1.0), (
+    assert second.center == (4.0, 4.0)
+    assert second.radius == pytest.approx(np.hypot(4.0, 4.0) + 1.0), (
         "one chunk box, reached corner to corner plus a voxel of margin"
     )
     assert second.points.dtype == np.float32

@@ -12,17 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A law's parameters, read off the body it drives. The body itself arrives
-//! as `embodiment/base.py`'s record (a module's config, or the JSON the
-//! python wrappers pass); there is no table here to drift from it.
+//! The law's parameters, read off the body it drives. The body arrives in the
+//! native module's config, so there is no table here to drift from it.
 
 use dimos_local_planner::planner::Emb;
 
-use crate::laws::hinted::HintedParams;
+use crate::hinted::HintedParams;
 
-// The base tuning and the governor are read off the body by the planner's crate,
-// which encodes the dialect these laws decode.
-pub use dimos_local_planner::emb::{base_params, governor};
+use dimos_local_planner::emb::base_params;
 
 pub fn hinted_params(emb: &Emb) -> HintedParams {
     HintedParams {

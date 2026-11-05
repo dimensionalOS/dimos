@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
 import os
 from pathlib import Path
 import subprocess
+from threading import Barrier
 from typing import Any
 from unittest.mock import call
 
+from filelock import FileLock, Timeout
 from pydantic import TypeAdapter
 import pytest
 from pytest_mock import MockerFixture
@@ -103,6 +106,24 @@ def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None
         resolve_named_path(tmp_path / "premap.pc2.lcm", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
     )
     assert resolve_named_path("/nowhere/premap", ".pc2.lcm") == Path("/nowhere/premap.pc2.lcm")
+
+
+def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    get_data = mocker.patch.object(data, "get_data")
+    (tmp_path / "house.map.db").touch()
+    # found where it is, and nothing is pulled for one that is missing
+    assert resolve_named_path(tmp_path / "house", ".map.db", must_exist=False) == (
+        tmp_path / "house.map.db"
+    )
+    assert resolve_named_path("no_such_house", ".map.db", must_exist=False) == (
+        data.DIMOS_PROJECT_ROOT / "no_such_house.map.db"
+    )
+    assert resolve_named_path("maps/no_such_house", ".map.db", must_exist=False) == Path(
+        "maps/no_such_house.map.db"
+    )
+    get_data.assert_not_called()
 
 
 def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
@@ -577,3 +598,25 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+def test_project_root_serializes_concurrent_clone(tmp_path, mocker):
+    data_dir = tmp_path / "data"
+    barrier = Barrier(4)
+    mocker.patch.object(data, "DIMOS_PROJECT_ROOT", tmp_path / "installed")
+
+    def user_data_dir():
+        barrier.wait(timeout=5)
+        return data_dir
+
+    def clone(*args, **kwargs):
+        with pytest.raises(Timeout), FileLock(data_dir / "repo.lock", timeout=0):
+            pass
+        (data_dir / "repo" / ".git").mkdir(parents=True)
+
+    mocker.patch.object(data, "_get_user_data_dir", side_effect=user_data_dir)
+    run = mocker.patch.object(data.subprocess, "run", side_effect=clone)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: data.get_project_root.__wrapped__(), range(4)))
+    assert results == [data_dir / "repo"] * 4
+    run.assert_called_once()

@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -33,7 +34,7 @@ import time
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
-from dimos.evals.agents.base import Agent
+from dimos.evals.agents.base import EvalSubject
 from dimos.evals.constants import DENIED
 from dimos.evals.types import (
     EvalCase,
@@ -86,7 +87,7 @@ class EvalRunner(Configurable):
     def run(
         self,
         cases: Suite,
-        agent: Agent,
+        agent: EvalSubject,
         *,
         tags: frozenset[str] = frozenset(),
         limit: int = 0,
@@ -139,7 +140,7 @@ class EvalRunner(Configurable):
         self._write_artifacts(ordered)
         return ordered
 
-    def _preflight(self, case: EvalCase, agent: Agent) -> str:
+    def _preflight(self, case: EvalCase, agent: EvalSubject) -> str:
         """Both sides checked before anything starts: the failure text, or ``""``."""
         try:
             case.environment.preflight(agent)
@@ -151,7 +152,7 @@ class EvalRunner(Configurable):
             return f"preflight: {e}"
         return ""
 
-    def run_case(self, case: EvalCase, agent: Agent) -> EvalResult:
+    def run_case(self, case: EvalCase, agent: EvalSubject) -> EvalResult:
         t0 = time.monotonic()
         case_dir = self.run_dir / case.id
         case_dir.mkdir(parents=True, exist_ok=True)
@@ -166,7 +167,16 @@ class EvalRunner(Configurable):
                 )
                 started = time.monotonic()
                 try:
-                    trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
+                    agent_artifacts = {
+                        name: env.artifacts[name]
+                        for name in case.environment.config.agent_artifacts
+                    }
+                    trajectory = agent.run(
+                        case.inputs,
+                        replace(env, artifacts=agent_artifacts),
+                        case_dir,
+                        timeout_s=case.timeout_s,
+                    )
                 finally:
                     agent_duration_s = time.monotonic() - started
                 _write_trajectory(case_dir, trajectory, tools)
@@ -250,7 +260,11 @@ class EvalRunner(Configurable):
     def _new_run_dir(self) -> Path:
         self.config.out_dir.mkdir(parents=True, exist_ok=True)
         prefix = time.strftime("run-%Y%m%d-%H%M%S-")
-        return Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
+        path = Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
+        # The eval container runs as root; open the run dir so the host user can read it.
+        if os.environ.get("DIMOS_EVALS_OPEN_OUTPUT") == "1":
+            path.chmod(0o777)
+        return path
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]

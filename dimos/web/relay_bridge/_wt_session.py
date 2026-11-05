@@ -93,6 +93,13 @@ _CONTROL_QUEUE_MAX = 64
 # when this side resets a stale latest-wins stream.
 STALE_STREAM_ERROR_CODE = 0x01
 
+# QUIC idle timeout offered by this side. Both peers take the minimum, so
+# this also bounds how long the relay keeps a dead robot's id registered
+# (aioquic's default of 60 s left a killed bridge locked out for the relay's
+# 30 s). The relay's keepalive (3 s) keeps an idle session alive, and the
+# application ping in wt_client notices a dead relay sooner than this.
+IDLE_TIMEOUT_S = 10.0
+
 
 class _FrameQueue:
     """Drop-oldest frame buffer bounded by frame count and total payload bytes.
@@ -136,6 +143,7 @@ def make_quic_configuration(insecure: bool, cafile: str | None = None) -> QuicCo
         # Required: without it the relay's H3_DATAGRAM setting kills the
         # session at SETTINGS time.
         max_datagram_frame_size=65536,
+        idle_timeout=IDLE_TIMEOUT_S,
     )
     if insecure:
         config.verify_mode = ssl.CERT_NONE
@@ -156,7 +164,7 @@ class SessionProtocol(QuicConnectionProtocol):
         self.welcomed = asyncio.Event()
         # Set when the QUIC connection terminates. Public mirror of the
         # base class's private _closed (see wait_closed()); producers and the
-        # delivery poll consult it so they stop the moment the relay dies.
+        # delivery waiters consult it so they stop the moment the relay dies.
         self.closed = asyncio.Event()
         self.relay_error: Error | None = None
         self.frames = _FrameQueue(_FRAME_QUEUE_MAX, _FRAME_QUEUE_MAX_BYTES)
@@ -179,6 +187,10 @@ class SessionProtocol(QuicConnectionProtocol):
         # ch -> encoding, learned from manifest messages; arms the
         # per-encoding payload caps in _MAX_PAYLOAD_BYTES.
         self._encodings: dict[str, str] = {}
+        # Woken on every received datagram (ACKs move stream delivery
+        # forward only then): the latest-wins pump waits here instead of
+        # polling. See wait_delivery_progress.
+        self._delivery_waiters: list[asyncio.Future[None]] = []
 
     def open_session(self, authority: str, path: str) -> None:
         self.session_id = self._quic.get_next_available_stream_id()
@@ -195,9 +207,29 @@ class SessionProtocol(QuicConnectionProtocol):
         )
         self.transmit()
 
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:  # type: ignore[override]
+        super().datagram_received(data, addr)
+        self._wake_delivery_waiters()
+
+    def error_received(self, exc: Exception) -> None:
+        """Fail immediately on connection refusal from the connected UDP socket.
+
+        Other socket errors can be transient; keepalive and the idle timeout
+        decide whether the relay is still reachable. Guard against re-entry
+        when transmitting the close reports another socket error.
+        """
+        if self.closed.is_set():
+            return
+        if not isinstance(exc, ConnectionRefusedError):
+            logger.warning("relay UDP socket error", error=str(exc))
+            return
+        self.fail_session(f"socket error: {exc}")
+        self.transmit()  # emits the close and arms the drain timer
+
     def quic_event_received(self, event: QuicEvent) -> None:
         if isinstance(event, ConnectionTerminated):
             self.closed.set()
+            self._wake_delivery_waiters()
         elif isinstance(event, StreamReset):
             # aioquic's H3 layer ignores resets, and the relay ends every
             # latest stream with one (reap, dispose, or teardown): without
@@ -205,7 +237,7 @@ class SessionProtocol(QuicConnectionProtocol):
             # A partial frame in that reader is stale by definition.
             self._frame_readers.pop(event.stream_id, None)
             if self._carrier_stream(event.stream_id):
-                self._fail_session(f"carrier stream {event.stream_id} reset")
+                self.fail_session(f"carrier stream {event.stream_id} reset")
         for h3_event in self.h3.handle_event(event):
             self._h3_event_received(h3_event)
 
@@ -345,7 +377,7 @@ class SessionProtocol(QuicConnectionProtocol):
                     # relay caps serialized publish data, so an over-cap
                     # payload means a broken control path.
                     if len(frame.payload) > MAX_PUB_DATA_BYTES:
-                        self._fail_session(
+                        self.fail_session(
                             f"carrier tx payload is {len(frame.payload)} B (over the publish cap)"
                         )
                         return
@@ -363,13 +395,13 @@ class SessionProtocol(QuicConnectionProtocol):
             if corrupt and self._carrier_stream(stream_id):
                 # The carrier is a control dependency: a poisoned carrier must
                 # not leave a half-alive session with frozen subscriptions.
-                self._fail_session(f"corrupt carrier framing on stream {stream_id}")
+                self.fail_session(f"corrupt carrier framing on stream {stream_id}")
         if ended:
             self._frame_readers.pop(stream_id, None)
             if self._carrier_stream(stream_id):
                 # Deno aborts, never FINs; an ended carrier is equally
                 # unreplaceable (complete frames above dispatched first).
-                self._fail_session(f"carrier stream {stream_id} ended")
+                self.fail_session(f"carrier stream {stream_id} ended")
 
     def _control_frame_received(self, frame: DataFrame) -> None:
         """One @control frame from the relay-opened control carrier: the
@@ -377,7 +409,7 @@ class SessionProtocol(QuicConnectionProtocol):
         dispatch."""
         if len(frame.payload) > MAX_CONTROL_PAYLOAD_BYTES:
             # A compliant relay never sends one; the control path is broken.
-            self._fail_session(f"@control payload is {len(frame.payload)} B (over the control cap)")
+            self.fail_session(f"@control payload is {len(frame.payload)} B (over the control cap)")
             return
         msg = decode_datagram(frame.payload)
         if msg is None:
@@ -388,13 +420,15 @@ class SessionProtocol(QuicConnectionProtocol):
             return
         self._control_msg_received(msg)
 
-    def _fail_session(self, reason: str) -> None:
-        """Terminate the session on a control-path protocol violation; the
-        module's supervisor sees the close and reconnects.
+    def fail_session(self, reason: str) -> None:
+        """Terminate the session (a control-path protocol violation, an
+        unanswered keepalive, a socket error); the module's supervisor sees
+        the close and reconnects.
 
         No transmit() here: the enclosing datagram_received transmits after
         event processing (the pattern aioquic's own H3 layer uses for
-        ProtocolError closes), and unit tests drive this without a transport.
+        ProtocolError closes). Callers outside that path must transmit the
+        close themselves to arm the drain timer.
         Consumers gated on wait_closed() exit when ConnectionTerminated lands
         (<= ~3x PTO after a local close); the public `closed` event stops
         producers immediately.
@@ -404,6 +438,7 @@ class SessionProtocol(QuicConnectionProtocol):
         logger.error(f"failing relay session: {reason}")
         self._quic.close(error_code=ErrorCode.H3_GENERAL_PROTOCOL_ERROR, reason_phrase=reason)
         self.closed.set()
+        self._wake_delivery_waiters()
 
     def send_msg(self, msg: Msg) -> None:
         assert self.session_id is not None
@@ -449,10 +484,33 @@ class SessionProtocol(QuicConnectionProtocol):
         self.transmit()
         return True
 
-    async def wait_delivered(self, stream_id: int, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
+    def _wake_delivery_waiters(self) -> None:
+        waiters, self._delivery_waiters = self._delivery_waiters, []
+        for waiter in waiters:
+            if not waiter.done():
+                waiter.set_result(None)
+
+    async def wait_delivery_progress(self, timeout: float | None) -> None:
+        """Return once another datagram has been processed (so stream
+        delivery may have advanced), the session closed, or `timeout` passed.
+        Event-driven replacement for polling stream_in_flight()."""
+        if self.closed.is_set():
+            return
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._delivery_waiters.append(waiter)
+        try:
+            await asyncio.wait_for(waiter, timeout)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            if waiter in self._delivery_waiters:
+                self._delivery_waiters.remove(waiter)
+
+    async def wait_delivered(self, stream_id: int, timeout: float | None) -> bool:
+        deadline = None if timeout is None else time.monotonic() + timeout
         while self.stream_in_flight(stream_id):
-            if self.closed.is_set() or time.monotonic() >= deadline:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if self.closed.is_set() or (remaining is not None and remaining <= 0):
                 return False
-            await asyncio.sleep(0.002)
+            await self.wait_delivery_progress(remaining)
         return True

@@ -43,6 +43,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
@@ -109,7 +110,7 @@ class UnitreeWebRTCConnection(Resource):
         self.ip = ip
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
-        self.cmd_vel_timeout = 0.2
+        self.cmd_vel_timeout = CMD_VEL_TIMEOUT
         self._velocity_api = velocity_api
         self._move_ids = SequentialIds()
         # Per-device AES-128 key for new Unitree firmware (data2=3 handshake); omitted when unset.

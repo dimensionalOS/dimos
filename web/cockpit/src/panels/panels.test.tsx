@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
 import type { CostmapValue, VoxelsValue } from "@dimos/sdk";
@@ -306,11 +306,64 @@ describe("VideoPanel", () => {
     await act(async () => {
       frame(store, 1, now / 1000);
       await flush();
+      // The first frame published its snapshot before the decode failed
+      // (the store's first-frame flush); the failure shows at the next
+      // snapshot, which the moving age bucket forces within 500 ms.
+      now += 500;
       store.publishUi();
     });
     expect(badge().textContent).toBe("decode failing");
     expect(badge().getAttribute("data-error")).toBe("true");
     expect(badge().getAttribute("data-state")).toBe("error");
+  });
+
+  it("plays a track value in a <video> and drives the badge from its frames", () => {
+    // happy-dom's MediaStreamTrack has an illegal constructor; a prototype
+    // instance still passes the panel's instanceof check, and its real
+    // MediaStream accepts it (the srcObject setter insists on the real class).
+    const track = Object.create(MediaStreamTrack.prototype, {
+      kind: { value: "video" },
+    }) as MediaStreamTrack;
+    const frameCallbacks: (() => void)[] = [];
+    const proto = HTMLVideoElement.prototype as unknown as Record<string, unknown>;
+    proto.requestVideoFrameCallback = (cb: () => void) => {
+      frameCallbacks.push(cb);
+      return frameCallbacks.length;
+    };
+    proto.cancelVideoFrameCallback = vi.fn();
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    act(() => root.render(<VideoPanel spec={SPEC} store={store} />));
+    expect(container.querySelector("canvas")).not.toBeNull();
+    act(() => {
+      store.ingest(CH, header(1, now / 1000), track, true);
+      store.publishUi();
+    });
+    const video = container.querySelector<HTMLVideoElement>(`[data-testid="video-${CH}-track"]`)!;
+    expect(container.querySelector("canvas")).toBeNull();
+    expect((video.srcObject as MediaStream).getVideoTracks()).toEqual([track]);
+    // Connecting: the store saw the track, but no frame was presented yet.
+    expect(badge().textContent).toBe("waiting");
+
+    // Three presented frames within a second (600 ms: the slot age crosses a
+    // 500 ms bucket, which is what republishes the badge).
+    act(() => {
+      for (let i = 0; i < 3; i++) {
+        now += 200;
+        frameCallbacks.shift()!();
+      }
+      store.publishUi();
+    });
+    expect(badge().textContent).toBe("3.0 fps");
+    expect(badge().getAttribute("data-state")).toBe("live");
+
+    // Silence past the threshold reads as stale, off the sink's clock.
+    act(() => {
+      now += 5000;
+      store.publishUi();
+    });
+    expect(badge().textContent).toMatch(/^stale/);
+    expect(badge().getAttribute("data-state")).toBe("stale");
   });
 
   it("renders a visible note instead of a canvas when no channel is bound", () => {
@@ -826,6 +879,7 @@ describe("MapPanel", () => {
       );
       await flush();
       await flush();
+      now += 500; // the failure shows at the next snapshot (see the video test)
       store.publishUi();
     });
     expect(badge().textContent).toBe("decode failing");
@@ -937,12 +991,31 @@ function fakeScene() {
   return {
     setVoxels: vi.fn(),
     setPose: vi.fn(),
+    setPath: vi.fn(),
     fit: vi.fn(),
     setFollow: vi.fn(),
     resize: vi.fn(),
+    pick: vi.fn<(x: number, y: number) => [number, number] | null>().mockReturnValue([1.25, -2.5]),
     render: vi.fn(),
     dispose: vi.fn(),
   };
+}
+
+function pointerEvent(
+  canvas: HTMLCanvasElement,
+  type: string,
+  options: PointerEventInit = {},
+): void {
+  canvas.dispatchEvent(
+    new PointerEvent(type, {
+      pointerId: 1,
+      isPrimary: true,
+      clientX: 50,
+      clientY: 40,
+      bubbles: true,
+      ...options,
+    }),
+  );
 }
 
 function voxelFrame(store: ChannelStore, seq: number, ts = seq, n = 2): VoxelsValue {
@@ -987,6 +1060,53 @@ describe("startVoxelSink", () => {
   afterEach(() => {
     sink?.stop();
     vi.restoreAllMocks();
+  });
+
+  it("picks in normalized canvas coordinates and removes click handling on stop", async () => {
+    const onClick = vi.fn();
+    defineRect(canvas, 10, 20, 200, 100);
+    sink = startVoxelSink(store, { ...CHS, onClick }, canvas, health, deps());
+    const tap = () => {
+      pointerEvent(canvas, "pointerdown", { clientX: 160, clientY: 45 });
+      pointerEvent(canvas, "pointerup", { clientX: 160, clientY: 45 });
+    };
+    tap(); // the lazy scene is not ready yet
+    expect(onClick).not.toHaveBeenCalled();
+    await flush();
+    tap();
+    expect(scene.pick).toHaveBeenCalledWith(0.5, 0.5);
+    expect(onClick).toHaveBeenCalledExactlyOnceWith(1.25, -2.5);
+    scene.pick.mockReturnValue(null); // ray misses both voxels and ground
+    tap();
+    expect(onClick).toHaveBeenCalledTimes(1);
+    sink.stop();
+    sink = null;
+    scene.pick.mockClear();
+    tap();
+    expect(scene.pick).not.toHaveBeenCalled();
+  });
+
+  it.each(
+    [
+      ["orbit", {}, "pointermove", { clientX: 80 }],
+      ["pan", { button: 2 }, "pointermove", {}],
+      ["modified pan", { ctrlKey: true }, "pointermove", {}],
+      ["modified release", {}, "pointerup", { shiftKey: true }],
+      ["cancel", {}, "pointercancel", {}],
+      ["lost capture", {}, "lostpointercapture", {}],
+      ["multi-touch", {}, "pointerdown", { pointerId: 2, isPrimary: false }],
+    ] as const,
+  )("does not send a goal for %s gestures", async (_name, start, event, end) => {
+    const onClick = vi.fn();
+    defineRect(canvas, 0, 0, 100, 80);
+    sink = startVoxelSink(store, { ...CHS, onClick }, canvas, health, deps());
+    await flush();
+    pointerEvent(canvas, "pointerdown", start);
+    pointerEvent(canvas, event, end);
+    // Returning to the starting point does not turn an orbit into a click.
+    pointerEvent(canvas, "pointerup");
+    expect(scene.pick).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
   });
 
   it("inflates one frame at a time once the scene is up and skips to the newest", async () => {
@@ -1078,6 +1198,52 @@ describe("startVoxelSink", () => {
     expect(scene.render.mock.calls.length).toBe(renders + 2);
     sink.follow(false);
     expect(scene.setFollow).toHaveBeenLastCalledWith(false);
+  });
+
+  it("draws and clears paths independently of voxel inflation, and unsubscribes on stop", async () => {
+    const { inflate, calls } = deferredInflateVoxels();
+    const initial = [[1, 2], [3, 4]] as [number, number][];
+    pathFrame(store, 1, initial); // the path can predate the lazy scene
+    sink = startVoxelSink(store, { ...CHS, path: PATH_CH }, canvas, health, deps({ inflate }));
+    await flush();
+    expect(scene.setPath).toHaveBeenLastCalledWith(initial);
+
+    voxelFrame(store, 1); // leave the voxel inflate pending
+    const updated = [[1, 2], [5, 6]] as [number, number][];
+    const renders = scene.render.mock.calls.length;
+    pathFrame(store, 2, updated);
+    expect(scene.setPath).toHaveBeenLastCalledWith(updated);
+    expect(scene.render.mock.calls.length).toBe(renders + 1);
+    expect(calls.length).toBe(1);
+
+    poseFrame(store, 1);
+    expect(scene.setPath).toHaveBeenCalledTimes(2); // no geometry rebuild on pose ticks
+    pathFrame(store, 3, []);
+    expect(scene.setPath).toHaveBeenLastCalledWith([]);
+
+    sink.stop();
+    sink = null;
+    scene.setPath.mockClear();
+    pathFrame(store, 4, initial);
+    expect(scene.setPath).not.toHaveBeenCalled();
+  });
+
+  it("catches up with path changes received while hidden", async () => {
+    let hidden = true;
+    sink = startVoxelSink(
+      store,
+      { ...CHS, path: PATH_CH },
+      canvas,
+      health,
+      deps({ hidden: () => hidden }),
+    );
+    await flush();
+    pathFrame(store, 1, [[1, 2], [3, 4]]);
+    pathFrame(store, 2, []);
+    expect(scene.setPath).not.toHaveBeenCalled();
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(scene.setPath).toHaveBeenCalledExactlyOnceWith([]);
   });
 
   it("carries a follow toggled before the scene is up into it and skips the first fit", async () => {
@@ -1227,6 +1393,76 @@ describe("Map3DPanel", () => {
     expect(getPanel("map3d")).toBe(Map3DPanel);
   });
 
+  it("draws the bound path without needing a command session", async () => {
+    const deps = sinkDeps();
+    const spec = { ...SPEC, params: { path: PATH_CH } };
+    act(() => root.render(<Map3DPanel spec={spec} store={store} sinkDeps={deps} />));
+    await act(flush);
+    act(() => pathFrame(store, 1, [[1, 2], [3, 4]]));
+    expect(scene.setPath).toHaveBeenLastCalledWith([[1, 2], [3, 4]]);
+    act(() => pathFrame(store, 2, []));
+    expect(scene.setPath).toHaveBeenLastCalledWith([]);
+  });
+
+  it("publishes picked x/y on the goal channel and surfaces send failures", async () => {
+    const session = new FakeSession();
+    const spec = { ...SPEC, params: { click: "clicked_point" } };
+    const deps = sinkDeps();
+    act(() =>
+      root.render(
+        <Map3DPanel spec={spec} store={store} session={session} sinkDeps={deps} />,
+      )
+    );
+    await act(flush);
+    const canvas = container.querySelector("canvas")!;
+    defineRect(canvas, 0, 0, 100, 80);
+    const tap = () => {
+      pointerEvent(canvas, "pointerdown");
+      pointerEvent(canvas, "pointerup");
+    };
+    expect(canvas.className).toContain("clickable");
+    act(tap);
+    await act(flush);
+    expect(session.published).toEqual([["clicked_point", { x: 1.25, y: -2.5 }]]);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+
+    session.reject = new PublishError("rejected", "not_connected", "no session");
+    act(tap);
+    await act(flush);
+    expect(container.querySelector('[role="alert"]')!.textContent).toBe(
+      "send failed: not_connected: no session",
+    );
+    session.reject = null;
+    act(tap);
+    await act(flush);
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it.each([true, false])(
+    "does not pick without a click channel or session (%s)",
+    async (hasSession) => {
+      const deps = sinkDeps();
+      const spec = { ...SPEC, params: hasSession ? {} : { click: "clicked_point" } };
+      act(() =>
+        root.render(
+          <Map3DPanel
+            spec={spec}
+            store={store}
+            session={hasSession ? new FakeSession() : undefined}
+            sinkDeps={deps}
+          />,
+        )
+      );
+      await act(flush);
+      const canvas = container.querySelector("canvas")!;
+      defineRect(canvas, 0, 0, 100, 80);
+      pointerEvent(canvas, "pointerdown");
+      pointerEvent(canvas, "pointerup");
+      expect(scene.pick).not.toHaveBeenCalled();
+      expect(canvas.className).not.toContain("clickable");
+    },
+  );
+
   it("shows waiting, then the Hz badge, then flags staleness", async () => {
     const deps = sinkDeps();
     act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
@@ -1274,6 +1510,77 @@ describe("Map3DPanel", () => {
     const noPose = { ...SPEC, channels: [VOX_CH] };
     act(() => root.render(<Map3DPanel spec={noPose} store={store} sinkDeps={deps} />));
     expect(follow()).toBeNull();
+  });
+
+  it("disposes the scene while its canvas is still in the document", async () => {
+    // OrbitControls.dispose() unregisters from the canvas's root node; a
+    // canvas already detached from the document leaks the listener and
+    // everything it reaches (the whole grid, per page switch).
+    let connectedAtDispose: boolean | null = null;
+    const deps = {
+      ...sinkDeps(),
+      createScene: (canvas: HTMLCanvasElement) => {
+        scene.dispose.mockImplementation(() => {
+          connectedAtDispose = canvas.isConnected;
+        });
+        return Promise.resolve(scene as unknown as VoxelScene);
+      },
+    };
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    act(() => root.render(<div />));
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+    expect(connectedAtDispose).toBe(true);
+  });
+
+  it("replaces the canvas whenever the scene is recreated", async () => {
+    const deps = sinkDeps();
+    act(() => root.render(<Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const first = container.querySelector("canvas")!;
+    const changed = { ...SPEC, channels: [VOX_CH, "other_pose"] };
+    act(() => root.render(<Map3DPanel spec={changed} store={store} sinkDeps={deps} />));
+    await act(flush);
+    const second = container.querySelector("canvas")!;
+    expect(first.isConnected).toBe(false);
+    expect(second).not.toBe(first);
+    expect(scene.dispose).toHaveBeenCalledTimes(1);
+
+    act(() =>
+      root.render(<Map3DPanel spec={changed} store={new ChannelStore()} sinkDeps={deps} />)
+    );
+    await act(flush);
+    expect(second.isConnected).toBe(false);
+    expect(container.querySelector("canvas")).not.toBe(second);
+    expect(scene.dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives replayed effects separate canvases while the scene is loading", async () => {
+    const canvases: HTMLCanvasElement[] = [];
+    const scenes: ReturnType<typeof fakeScene>[] = [];
+    const deps = {
+      ...sinkDeps(),
+      createScene: (canvas: HTMLCanvasElement) => {
+        canvases.push(canvas);
+        const created = fakeScene();
+        scenes.push(created);
+        return Promise.resolve(created);
+      },
+    };
+    act(() => {
+      root.render(
+        <StrictMode>
+          <Map3DPanel spec={SPEC} store={store} sinkDeps={deps} />
+        </StrictMode>,
+      );
+    });
+    await act(flush);
+    expect(canvases).toHaveLength(2);
+    expect(canvases[0]).not.toBe(canvases[1]);
+    expect(canvases[0].isConnected).toBe(false);
+    expect(container.querySelector("canvas")).toBe(canvases[1]);
+    expect(scenes[0].dispose).toHaveBeenCalledTimes(1);
+    expect(scenes[1].dispose).not.toHaveBeenCalled();
   });
 
   it("shows why the renderer could not start", async () => {

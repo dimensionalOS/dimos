@@ -22,7 +22,10 @@ from typing import Any, cast
 
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.values import read_only_view, snapshot_mapping
-from dimos.core.coordination.blueprints import Blueprint, config_key
+from dimos.core.coordination.blueprints import (
+    Blueprint,
+    config_key,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +37,8 @@ class ParsedBlueprintConfig:
     _global_explicit_values: Mapping[str, Any] = field(repr=False)
     _transport_config_values: Mapping[str, Any] = field(repr=False)
     _blueprint: Blueprint = field(repr=False, compare=False)
+    # What the config file and CLI set, by section: module names, ``g``, ``transports``.
+    _file_and_cli_values: Mapping[str, Any] = field(repr=False, default_factory=dict)
 
     @property
     def module_configs(self) -> Mapping[str, Any]:
@@ -49,6 +54,11 @@ class ParsedBlueprintConfig:
     def transport_configs(self) -> Mapping[str, Any]:
         """Return a read-only view detached from the stored snapshot."""
         return cast("Mapping[str, Any]", read_only_view(self._transport_config_values))
+
+    @property
+    def file_and_cli(self) -> Mapping[str, Any]:
+        """What the config file and CLI set, by section; a hosted run sends it to its Hosts."""
+        return snapshot_mapping(self._file_and_cli_values)
 
     def assert_matches(self, blueprint: Blueprint) -> None:
         """Reject use with a blueprint other than the one that was parsed."""

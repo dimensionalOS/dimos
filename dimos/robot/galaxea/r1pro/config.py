@@ -30,6 +30,11 @@ from dimos.robot.galaxea.r1pro.joints import (
     coordinator_name,
 )
 
+# Chassis Mid-360 and host NIC addresses from the vendor's livox_ros_driver2 config.
+R1PRO_CHASSIS_LIDAR_IP = "192.168.2.100"
+R1PRO_CHASSIS_LIDAR_HOST_IP = "192.168.2.150"
+
+
 R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(
     url="https://github.com/userguide-galaxea/URDF",
     ref="2e5d31e1784481a34d178006c0d0e18e0a84a82a",

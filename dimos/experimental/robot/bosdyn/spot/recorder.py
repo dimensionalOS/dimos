@@ -29,7 +29,8 @@ from pydantic import Field
 
 from dimos.core.stream import In
 from dimos.experimental.robot.bosdyn.spot.config import CAMERA_STREAM_SUFFIXES
-from dimos.memory.module import OnExisting, Recorder, RecorderConfig
+from dimos.memory.module import Recorder, RecorderConfig
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image

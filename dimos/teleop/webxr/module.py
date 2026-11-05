@@ -43,9 +43,10 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.std_msgs.String import String
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
@@ -87,6 +88,8 @@ class WebXRTeleopConfig(ModuleConfig):
     server_port: int = 8443
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
+    # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
+    zero_button: str | None = None
 
 
 _Config = TypeVar("_Config", bound=WebXRTeleopConfig)
@@ -114,7 +117,7 @@ class WebXRTeleopModule(Module):
     teleop_buttons: Out[Buttons]
     button_pressed: Out[Buttons]
     button_released: Out[Buttons]
-    status: In[EpisodeStatus]
+    status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -313,7 +316,12 @@ class WebXRTeleopModule(Module):
         for ws in clients:
             asyncio.run_coroutine_threadsafe(_ws_send_text(ws, data), loop)
 
-    def _on_episode_status(self, status: EpisodeStatus) -> None:
+    def _on_episode_status(self, message: String) -> None:
+        try:
+            status = EpisodeStatus.from_json(message.data)
+        except ValueError:
+            logger.warning("Ignoring invalid episode status JSON", exc_info=True)
+            return
         with self._lock:
             self._latest_episode_status = status
         self._broadcast_text(self._encode_episode_status(status))
@@ -656,8 +664,12 @@ class WebXRTeleopModule(Module):
                 released |= mask
         if pressed:
             self.button_pressed.publish(Buttons(pressed))
+            self._on_buttons_pressed(Buttons(pressed))
         if released:
             self.button_released.publish(Buttons(released))
+
+    def _on_buttons_pressed(self, pressed: Buttons) -> None:
+        """Override to react to debounced button presses."""
 
     def _release_all_buttons(self) -> None:
         """Emit release edges without debounce when input ownership disappears."""

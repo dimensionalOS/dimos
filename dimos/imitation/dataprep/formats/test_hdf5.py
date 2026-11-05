@@ -28,9 +28,12 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from dimos.imitation.dataprep.core import OutputConfig, Sample
 from dimos.imitation.dataprep.formats.hdf5.reader import inspect
 from dimos.imitation.dataprep.formats.hdf5.writer import write
+from dimos.imitation.dataprep.schema import (
+    OutputConfig,
+    Sample,
+)
 
 
 def _samples(n_episodes: int = 2, n_frames: int = 3) -> Iterator[Sample]:
@@ -42,6 +45,8 @@ def _samples(n_episodes: int = 2, n_frames: int = 3) -> Iterator[Sample]:
                 episode_id=f"ep_{ep:06d}",
                 observation={"state": (np.arange(4, dtype=np.float32) + i)},
                 action={"action": np.full(2, float(i), dtype=np.float32)},
+                task_label=f"task {ep}",
+                complementary_info={"is_filled": np.asarray([i == 1], dtype=np.bool_)},
             )
 
 
@@ -66,6 +71,11 @@ def test_hdf5_roundtrip_counts_and_shapes(tmp_path: Path) -> None:
     assert info["shapes_uniform"] is True
     assert info["has_stats"] is True
     assert info["episode_lengths"] == {"min": 3, "max": 3, "mean": 3.0, "uniform": True}
+    with h5py.File(path, "r") as dataset:
+        np.testing.assert_array_equal(
+            dataset["episodes/episode_000000/complementary_info/is_filled"][:],
+            [[False], [True], [False]],
+        )
 
 
 def test_hdf5_extension_appended_when_missing(tmp_path: Path) -> None:
@@ -83,3 +93,18 @@ def test_hdf5_stats_values_match(tmp_path: Path) -> None:
         # state = [0..3]+i for i in 0,1,2 → per-dim mean = base + mean(0,1,2)=base+1
         mean = f["stats"]["observation.state"]["mean"][:]
         np.testing.assert_allclose(mean, np.arange(4) + 1.0)
+
+
+def test_unlabeled_range_samples_use_configured_default_task(tmp_path: Path) -> None:
+    config = OutputConfig(
+        format="hdf5",
+        path=tmp_path / "ranges.hdf5",
+        metadata={"default_task_label": "manual range"},
+    )
+    samples = (sample.model_copy(update={"task_label": None}) for sample in _samples())
+
+    root = write(samples, config)
+
+    with h5py.File(root) as dataset:
+        assert dataset["tasks"].attrs["task_0"] == "manual range"
+        assert dataset.attrs["num_frames"] == 6

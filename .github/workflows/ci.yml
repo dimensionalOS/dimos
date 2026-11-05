@@ -45,9 +45,9 @@ jobs:
           : "${PRE_COMMIT_TO_REF:?Missing head SHA}"
           policy_ref="$PRE_COMMIT_FROM_REF"
           policy_path="dimos/utils/commit_message.py"
-          if ! git cat-file -e "${policy_ref}:${policy_path}"; then
-            # This PR introduces the policy; pin its validated bootstrap snapshot.
-            policy_ref="976384c372728b8d70908492c5810f8168c5e1d3"
+          if ! git cat-file -e "${policy_ref}:${policy_path}" 2>/dev/null; then
+            echo "::error::Base commit $policy_ref has no $policy_path. Update this branch from main and retry." >&2
+            exit 1
           fi
           git show "${policy_ref}:${policy_path}" > "$RUNNER_TEMP/commit-message-policy.py"
           python3 "$RUNNER_TEMP/commit-message-policy.py" --check
@@ -94,7 +94,7 @@ jobs:
         uses: actions/checkout@v7
       - name: Compute native-module inputs hash
         id: hash
-        run: python3 bin/build-native-modules --inputs-hash
+        run: python3 bin/native-modules --inputs-hash
       - name: Probe Linux publish marker
         id: marker-linux
         uses: actions/cache/restore@v6
@@ -159,6 +159,7 @@ jobs:
       - name: Install Nix (with Cachix substituter)
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
@@ -175,7 +176,7 @@ jobs:
           path: |
             ~/.cache/nix
             ~/.local/state/nix
-          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-native-modules', '**/flake.lock', '**/flake.nix') }}
+          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/native-modules', '**/flake.lock', '**/flake.nix') }}
           restore-keys: nix-fetcher-build-${{ runner.os }}-
       - name: Authenticate Cachix
         uses: cachix/cachix-action@v17
@@ -183,13 +184,15 @@ jobs:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
-        env:
-          BUILD_WORKERS: "1"
-        run: python3 bin/build-native-modules
+        run: python3 bin/native-modules --build
+      - name: Lint native modules
+        run: python3 bin/native-modules --lint
+      - name: Test native modules
+        run: python3 bin/native-modules --test
       - name: Verify Cachix holds the built paths
         env:
           CACHIX_CACHE_NAME: dimensionalos
-        run: python3 bin/build-native-modules --verify-published
+        run: python3 bin/native-modules --verify-published
       - name: Record the published inputs manifest
         # The manifest is forensics for the marker saved below; links.txt maps
         # each result symlink to its store path so consumers can materialise
@@ -198,9 +201,9 @@ jobs:
           CACHIX_CACHE_NAME: dimensionalos
         run: |
           mkdir -p .cachix-marker
-          python3 bin/build-native-modules --inputs-hash \
+          python3 bin/native-modules --inputs-hash \
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
-          python3 bin/build-native-modules --record-links > .cachix-marker/links.txt
+          python3 bin/native-modules --record-links > .cachix-marker/links.txt
       - name: Save publish marker
         uses: actions/cache/save@v6
         with:
@@ -231,6 +234,7 @@ jobs:
       - name: Install Nix (with Cachix substituter)
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
@@ -243,7 +247,7 @@ jobs:
           path: |
             ~/.cache/nix
             ~/.local/state/nix
-          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-native-modules', '**/flake.lock', '**/flake.nix') }}
+          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/native-modules', '**/flake.lock', '**/flake.nix') }}
           restore-keys: nix-fetcher-build-${{ runner.os }}-
       - name: Authenticate Cachix
         uses: cachix/cachix-action@v17
@@ -251,21 +255,19 @@ jobs:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
-        env:
-          BUILD_WORKERS: "1"
-        run: python3 bin/build-native-modules
+        run: python3 bin/native-modules --build
       - name: Verify Cachix holds the built paths
         env:
           CACHIX_CACHE_NAME: dimensionalos
-        run: python3 bin/build-native-modules --verify-published
+        run: python3 bin/native-modules --verify-published
       - name: Record the published inputs manifest
         env:
           CACHIX_CACHE_NAME: dimensionalos
         run: |
           mkdir -p .cachix-marker
-          python3 bin/build-native-modules --inputs-hash \
+          python3 bin/native-modules --inputs-hash \
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
-          python3 bin/build-native-modules --record-links > .cachix-marker/links.txt
+          python3 bin/native-modules --record-links > .cachix-marker/links.txt
       - name: Save publish marker
         uses: actions/cache/save@v6
         with:
@@ -308,6 +310,8 @@ jobs:
           prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
+      - name: Check declared dependencies
+        run: uv run --no-sync deptry dimos --config pyproject.toml --github-output
       - name: Mypy
         run: uv run mypy
 
@@ -320,17 +324,24 @@ jobs:
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
 
       - name: Run pre-commit
-        uses: pre-commit/action@v3.0.1
         env:
-          # clippy and fmt are checked in the rust job, so we can skip them here
-          SKIP: cargo-fmt,cargo-clippy
+          # fmt is checked in the rust job, lint in cachix-build
+          # Fork PRs are exempt from the branch naming convention.
+          SKIP: >-
+            cargo-fmt,native-module-lint${{ github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name != github.repository && ',branch-name' || '' }}
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files --verbose
+
 
   rust:
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: "0"
     permissions:
       contents: read  # For checkout
 
@@ -341,18 +352,25 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-        with:
-          # Only main writes the cache, so a PR run cannot evict main's entry
-          # from the repo's 10GB budget. PR runs still restore from it.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fmt
-        run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: cargo test
-        run: cargo test --workspace --all-features --locked
+        run: |
+          git ls-files "*Cargo.toml" | while read -r m; do
+            cargo locate-project --manifest-path "$m" --workspace --message-format plain
+          done | sort -u | while read -r root; do
+            cargo fmt --manifest-path "$root" --all -- --check
+          done
+      - name: Restore cargo build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            !target/debug/incremental
+          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
         with:
@@ -362,130 +380,111 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
-      - name: Build and test PyO3 bindings
-        # PyO3 extension modules (cdylib + `extension-module`) are the one case
-        # that still needs a plain build: pytest imports the compiled .so.
-        run: |
-          uv sync --group tests --frozen
-          source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
-          maturin develop -m dimos/navigation/global_planner/mls_planner/rust/py/Cargo.toml
-          python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
-          python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
-            dimos/mapping/ray_tracing/test_voxel_map.py \
-            dimos/mapping/ray_tracing/test_transformer.py \
-            dimos/navigation/global_planner/mls_planner/test_mls_planner.py \
-            dimos/navigation/global_planner/mls_planner/test_transformer.py
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+      # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
-      - name: Native module e2e tests
-        run: |
-          cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
-          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
-  native:
-    name: Native builds (C++ and Rust)
+      - name: Save cargo build cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            !target/debug/incremental
+          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+  isolated-python-tests:
+    # Keep each published check name stable as more isolated projects are added.
+    name: ${{ matrix.check_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check_name: isolated-lerobot-tests
+            project: native/python/lerobot
+            tests: [dimos_lerobot]
+            system_packages: [portaudio19-dev, libturbojpeg, ffmpeg]
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
-      contents: read  # For checkout
-
+      contents: read
+    env:
+      # Unlike root jobs, uv run must provision the locked isolated project.
+      UV_NO_SYNC: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      # The SDK headers include both transports, so liblcm and zenoh are both
-      # needed to build at all. Zenoh has no apt package, so it comes from its
-      # release
-      - name: Install system dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Install project system dependencies
         env:
-          ZENOH_VERSION: 1.10.0
+          SYSTEM_PACKAGES: ${{ toJSON(matrix.system_packages) }}
+        run: |
+          mapfile -t packages < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["SYSTEM_PACKAGES"])))')
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
+      - name: Test isolated Python project
+        working-directory: ${{ matrix.project }}
+        env:
+          TEST_PATHS: ${{ toJSON(matrix.tests) }}
+        run: |
+          mapfile -t tests < <(python3 -c 'import json, os; print("\n".join(json.loads(os.environ["TEST_PATHS"])))')
+          env -u VIRTUAL_ENV -u UV_PYTHON -u UV_PROJECT_ENVIRONMENT \
+            uv run --frozen --group tests --with-editable "$GITHUB_WORKSPACE" pytest "${tests[@]}"
+
+
+  # The PyO3 extensions, the one rust artefact nix does not build: pytest imports them, so they must
+  # match uv's interpreter. They are abi3, so one Python per OS covers every version.
+  pyo3:
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_INCREMENTAL: "0"
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Restore cargo build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/pyo3
+          key: pyo3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+      - name: Install dependency for pyaudio (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # lcm.pc carries `Requires: glib-2.0`, so pkg-config cannot resolve
-          # lcm at all without glib's own .pc file
-          sudo apt-get install -y liblcm-dev libglib2.0-dev nlohmann-json3-dev
-          base=https://github.com/eclipse-zenoh
-          curl -fsSL -o /tmp/zenoh-c.zip \
-            "$base/zenoh-c/releases/download/$ZENOH_VERSION/zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip"
-          curl -fsSL -o /tmp/zenoh-cpp.zip \
-            "$base/zenoh-cpp/releases/download/$ZENOH_VERSION/zenohcpp-$ZENOH_VERSION-standalone.zip"
-          # A release asset can be replaced in place, so the bytes are pinned too
-          printf '%s  /tmp/zenoh-c.zip\n%s  /tmp/zenoh-cpp.zip\n' \
-            1168b3dffa7f4f48ffabfd640a3878ec0527c0a612ce825aa6f93e2cd05762d1 \
-            7a50a74e98fd1e1e7ed8461b8490b30d67f878649f0727dea2cf0936501780af \
-            | sha256sum -c -
-          # The zips are laid out for /usr/local, where cmake and the loader
-          # already look
-          sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
-          sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
-          sudo ldconfig
-      - name: Configure
-        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
-      - name: Build
-        run: cmake --build build/native-cpp -j
-      - name: Test
-        run: ctest --test-dir build/native-cpp --output-on-failure
-
-      - name: Find C++ native modules
-        id: find-modules
-        run: |
-          modules=$(find . -name flake.nix \
-            -not -path './.git/*' \
-            -not -path '*/build/*' \
-            -not -path '*/result/*' \
-            -printf '%h\n' \
-            | while read -r dir; do
-                [ -f "$dir/CMakeLists.txt" ] && echo "${dir#./}"
-              done \
-            | sort)
-          if [ -z "$modules" ]; then
-            echo "::error::No C++ native modules found - the discovery glob is wrong"
-            exit 1
-          fi
-          echo "Found C++ native modules:"
-          echo "$modules"
-          {
-            echo "modules<<EOF"
-            echo "$modules"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-      - name: Free runner disk space
-        uses: BRAINSia/free-disk-space@v2.1.3
-      - name: Install Nix
-        # Substituting needs only the public key, so no auth token is used here
-        # and this stays safe on fork PRs.
-        env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: bash docker/ros/install-nix.sh
-      - name: Build Rust memory recorder Nix package
-        run: |
-          cd dimos/experimental/memory/rust
-          nix build .#dimos-memory-recorder --no-write-lock-file --print-build-logs
-          test -x result/bin/dimos-memory-recorder
-      # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
-      - name: Build C++ native modules
-        env:
-          MODULES: ${{ steps.find-modules.outputs.modules }}
-        run: |
-          for module in $MODULES; do
-            echo "::group::$module"
-            (cd "$module" && nix build --no-write-lock-file --print-build-logs)
-            echo "::endgroup::"
-          done
-      - name: Test C++ native modules
-        env:
-          MODULES: ${{ steps.find-modules.outputs.modules }}
-        run: |
-          for module in $MODULES; do
-            if grep -qE 'enable_testing|add_test' "$module/CMakeLists.txt"; then
-              echo "::group::ctest $module"
-              (cd "$module" && ctest --test-dir build --output-on-failure)
-              echo "::endgroup::"
-            fi
-          done
+          sudo apt-get install -y portaudio19-dev
+      - name: Install dependency for pyaudio (macOS)
+        if: runner.os == 'macOS'
+        run: brew install portaudio
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+      - name: Build the extensions
+        run: uv run python bin/pyo3-extensions --build
+      # Tested here, not in the tests jobs, so those start without waiting for this build.
+      - name: Test the extensions
+        run: uv run python bin/pyo3-extensions --test
 
   md-babel:
     timeout-minutes: 15
@@ -618,41 +617,43 @@ jobs:
         working-directory: web/cockpit
         run: deno task build
 
-      # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-          prune-cache: true
-      - name: Setup Python
-        uses: actions/setup-python@v7.0.0
-        with:
-          python-version: '3.12'
-      - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
-      - name: Fetch the go2_short replay dataset
-        run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
-      - name: Install dependencies
-        run: uv sync --group tests --group browser-tests --frozen
-      - name: Install Playwright browsers  # the e2e runs in both engines
-        run: uv run playwright install --with-deps chromium firefox
-      - name: Cockpit + SDK browser e2e
-        run: >-
-          uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
-          dimos/e2e_tests/test_sdk_browser.py
-          dimos/e2e_tests/test_custom_channel_browser.py
-          dimos/e2e_tests/test_lcm_channel_browser.py
-          dimos/e2e_tests/test_publish_browser.py
-          dimos/e2e_tests/test_voice_browser.py
-          dimos/e2e_tests/test_stats_browser.py
-          dimos/e2e_tests/test_map3d_browser.py
-          dimos/e2e_tests/test_robot_picker_browser.py
-          dimos/e2e_tests/test_relay_auth_browser.py --no-cov
-
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently
         run: docker build -f docker/relay/Dockerfile .
+
+  agent:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    defaults:
+      run:
+        working-directory: dimos/agents
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: dimos/agents/package-lock.json
+
+      - name: Check dependency release ages
+        run: node check-dependency-age.mjs
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
 
   tests:
     if: |
@@ -699,20 +700,21 @@ jobs:
       - name: Extract Deno version
         id: deno-version
         run: echo "version=$(grep -oP 'DENO_VERSION = "\K[^"]+' dimos/utils/deno.py)" >> "$GITHUB_OUTPUT"
+      # No setup-deno cache here: its post step fails when DENO_DIR does not exist,
+      # and nothing creates it until the relay tests first run deno.
       - name: Install Deno
         uses: denoland/setup-deno@v2
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
-          cache: true
-      # pyaudio needs portaudio; relay/audio tests need TurboJPEG and ffmpeg.
+      # pyaudio needs portaudio; relay tests need TurboJPEG.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
-        run: brew install portaudio ffmpeg
+        run: brew install portaudio
       - name: Configure LCM networking (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
@@ -743,23 +745,28 @@ jobs:
         if: steps.native-marker.outputs.cache-hit == 'true'
         env:
           INPUT_EXTRA_NIX_CONFIG: |
+            http-connections = 50
             extra-substituters = https://dimensionalos.cachix.org
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
       - name: Provision native modules from Cachix
         if: steps.native-marker.outputs.cache-hit == 'true'
-        run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
+        run: python3 bin/native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+      # Serial and after the parallel run: it binds the livox SDK's fixed ports.
+      - name: Native module e2e tests
+        if: steps.native-marker.outputs.cache-hit == 'true'
+        run: uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -811,7 +818,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+      TYPESAFENAVIGATIONAGENT__API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
       # See the `tests` job for why this is set.
       PYTHONFAULTHANDLER: "1"
     timeout-minutes: 45
@@ -837,8 +844,8 @@ jobs:
             experimental: false
           - os: macOS
             container: null  # run on host — `container:` is Linux-only
-            # web_browser: the cockpit browser e2e that Linux runs in the `web` job.
-            markers: "self_hosted or web_browser"
+            # native_e2e: livox live loopback; hosted macOS has no nix-built binaries, Linux runs it in tests.
+            markers: "self_hosted or native_e2e"
             experimental: false
     runs-on:
       - self-hosted
@@ -886,12 +893,17 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
-      - name: Install web_browser e2e dependencies (macOS)
-        if: matrix.os == 'macOS'
+      - name: Install Node 24 for the Pi and dimcode CLIs
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Install the Pi and dimcode CLIs
+        # The agent eval tests (dimos/evals/agents) drive both. Installed outside
+        # the workspace: the no_dimos evals drop PATH entries with a "dimos" path
+        # component, and the CLIs must survive that.
         run: |
-          brew install ffmpeg
-          uv sync --group tests-self-hosted --group browser-tests --frozen
-          uv run playwright install chromium firefox
+          bin/install-test-clis "$RUNNER_TEMP/test-clis"
+          echo "$RUNNER_TEMP/test-clis/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment
@@ -949,6 +961,18 @@ jobs:
           fi
           echo "$bin" >> "$GITHUB_PATH"
           echo "NIX_CONFIG=experimental-features = nix-command flakes" >> "$GITHUB_ENV"
+      - name: Configure LCM networking (macOS)
+        # LCM sends datagrams up to 64 KB; macOS caps UDP at 9216 bytes by default, so point clouds never leave the sender.
+        if: matrix.os == 'macOS'
+        run: |
+          raise() {
+            if [ "$(sysctl -n "$1")" -lt "$2" ]; then
+              sudo -n sysctl -w "$1=$2" || { echo "::error::$1 is below $2 on $RUNNER_NAME and sudo needs a password; set it in /etc/sysctl.conf on the host"; exit 1; }
+            fi
+          }
+          raise kern.ipc.maxsockbuf 6291456
+          raise net.inet.udp.recvspace 2097152
+          raise net.inet.udp.maxdgram 65535
       - name: Restore publish marker
         id: native-marker
         uses: actions/cache/restore@v6
@@ -962,9 +986,9 @@ jobs:
         # A missed marker (evicted) falls back to the full nix build.
         run: |
           if [ "${{ steps.native-marker.outputs.cache-hit }}" = "true" ]; then
-            python3 bin/build-native-modules --link-results .cachix-marker/links.txt
+            python3 bin/native-modules --link-results .cachix-marker/links.txt
           else
-            python3 bin/build-native-modules
+            python3 bin/native-modules --build
           fi
           # Linux only: root the out paths so this job's end-of-GC keeps the
           # closure warm in the CI-managed bind-mounted store (the workspace
@@ -973,30 +997,27 @@ jobs:
           if [ "${{ matrix.os }}" = "Linux" ]; then
             sudo mkdir -p /nix/var/nix/gcroots/dimos-native
             sudo find /nix/var/nix/gcroots/dimos-native -maxdepth 1 -type l -delete
-            python3 bin/build-native-modules --record-links | cut -d' ' -f2 | sort -u |
+            python3 bin/native-modules --record-links | cut -d' ' -f2 | sort -u |
               while read -r p; do
                 sudo ln -sfn "$p" "/nix/var/nix/gcroots/dimos-native/$(basename "$p")"
               done
           fi
-      - name: Point cargo at a persistent cache on the workspace mount
-        if: contains(matrix.markers, 'self_hosted')
+      - name: Kill processes left over from earlier jobs (macOS)
+        # Not needed on Linux, as it uses a fresh container on every run.
+        if: matrix.os == 'macOS'
         run: |
-          echo "RUSTUP_HOME=$(dirname "$RUNNER_WORKSPACE")/rustup" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=$(dirname "$RUNNER_WORKSPACE")/cargo" >> "$GITHUB_ENV"
-      - name: Install Rust toolchain
-        if: contains(matrix.markers, 'self_hosted')
-        uses: dtolnay/rust-toolchain@stable
-      - name: Build rust native modules
-        if: contains(matrix.markers, 'self_hosted')
-        run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
+          pgrep -fl "$GITHUB_WORKSPACE/" || exit 0
+          pkill -f "$GITHUB_WORKSPACE/" || true
+          for _ in $(seq 30); do pgrep -qf "$GITHUB_WORKSPACE/" || exit 0; sleep 0.1; done
+          pkill -KILL -f "$GITHUB_WORKSPACE/" || true
       - name: Run tests
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
+        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '${{ matrix.markers }}'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m '(${{ matrix.markers }}) and not mujoco' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m '${{ matrix.markers }}' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -1056,146 +1077,6 @@ jobs:
         # always(): a cancelled run can leave nix processes holding locks.
         if: ${{ !cancelled() && matrix.os == 'Linux' }}
         run: nix-collect-garbage --delete-older-than 3d
-
-  self-hosted-large-tests:
-    # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
-    if: |
-      !cancelled() &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
-      needs.cachix-build-check.result == 'success' &&
-      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
-    needs: [cachix-build-check, cachix-build]
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
-      DIMSIM_RENDER: gpu
-      # See the `tests` job for why this is set.
-      PYTHONFAULTHANDLER: "1"
-    timeout-minutes: 30
-    runs-on: [self-hosted, Linux, large]
-    permissions:
-      contents: read  # For checkout
-      id-token: write  # For codecov-action's OIDC upload
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          clean: false
-          # If we ever allow external PRs on custom runner, persisting credentials
-          # could be abused by attackers.
-          persist-credentials: false
-      - name: Fix permissions
-        run: |
-          sudo git config --global --add safe.directory '*'
-          sudo git clean -ffdx
-      - name: Fetch DimSim LFS assets only
-        # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
-        # glbs are pointer stubs and the browser sim fails to load them. Pull
-        # ONLY misc/DimSim assets — a full `lfs: true` would also drag in main's
-        # multi-GB data/.lfs/* objects (some missing on the server → 404).
-        # persist-credentials is false above, so supply the token for this pull.
-        run: |
-          git config --local http.https://github.com/.extraheader \
-            "AUTHORIZATION: basic $(printf 'x-access-token:%s' '${{ github.token }}' | base64 -w0)"
-          git lfs pull --include="misc/DimSim/**"
-          git config --local --unset-all http.https://github.com/.extraheader
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          # We persist on disk, cache would clean some of this up.
-          enable-cache: false
-      - name: Install codecov CLI
-        # Self-hosted runners have no `pip` on PATH, so codecov-action's
-        # use_pypi can't work here; pre-install the pinned CLI with uv and
-        # point the action at it via `binary`. See codecov/codecov-action#1955
-        # and #2398.
-        run: |
-          uv venv .codecov-venv
-          uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
-      - name: Install apt dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            `# Compiler toolchain for the in-tree pybind11 C++ extension.` \
-            build-essential \
-            `# Runtime lib for opencv-python (cv2 loads libGL.so.1 on import).` \
-            libgl1 \
-            `# Runtime lib for PyTurboJPEG (fast JPEG encode/decode).` \
-            libturbojpeg \
-            `# Dev package for PyAudio (built from source against PortAudio).` \
-            portaudio19-dev \
-            `# Chromium runtime libs required by Playwright (used by dimsim browser tests).` \
-            libatk1.0-0 libatk-bridge2.0-0 libcairo2 libcups2 libgbm1 \
-            libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
-            `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
-            libxkbcommon-x11-0
-      - name: Install dependencies
-        run: uv sync --group tests-self-hosted --frozen
-      - name: Build C++ extensions in-place
-        run: uv run python setup.py build_ext --inplace
-      - name: Run tests
-        # The runner must have an Xorg server with NVIDIA GPU access running
-        # on DISPLAY=:0 — dimsim's headless Chromium needs real WebGL for the
-        # heavier scenes (`apt`). Software X via xvfb is not enough.
-        env:
-          DISPLAY: ":0"
-        run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m self_hosted_large
-      - name: Re-run the failing tests with maximum verbosity
-        if: failure()
-        env:
-          COLOR: yes
-          DISPLAY: ":0"
-        run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf -m self_hosted_large && exit 1
-        shell: bash
-      - name: Print crash diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          shopt -s nullglob
-          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
-            echo "::group::$(basename "$f")"
-            cat "$f"
-            echo "::endgroup::"
-          done
-      - name: Turn coverage into xml
-        run: uv run python -m coverage xml
-      - name: Upload coverage
-        uses: codecov/codecov-action@v7
-        with:
-          disable_search: true
-          fail_ci_if_error: true
-          files: ./coverage.xml
-          flags: SelfHosted-Large
-          use_oidc: true
-          # Use the pinned CLI from the "Install codecov CLI" step (no pip
-          # on self-hosted runners, and the default cli.codecov.io download
-          # has a broken GPG key fetch). See codecov/codecov-action#1955.
-          binary: .codecov-venv/bin/codecovcli
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
-        with:
-          report_type: test_results
-          use_oidc: true
-          # See the "Upload coverage" step above.
-          binary: .codecov-venv/bin/codecovcli
-      - name: Check disk space
-        if: failure()
-        run: |
-          df -h
-      - name: Prune the persistent uv cache
-        # See self-hosted-tests; UV_CACHE_DIR isn't set here, so resolve the
-        # default with `uv cache dir`.
-        if: ${{ !cancelled() }}
-        run: |
-          uv cache prune
-          size_mb=$(du -sm "$(uv cache dir)" | cut -f1)
-          echo "uv cache size: ${size_mb} MB"
-          if [ "$size_mb" -gt 25600 ]; then uv cache prune --ci; fi
 
   benchmark:
     timeout-minutes: 30
@@ -1386,13 +1267,14 @@ jobs:
     - commit-messages
     - lint
     - rust
-    - native
+    - pyo3
+    - isolated-python-tests
     - md-babel
     - web
+    - agent
     - tests
     - self-hosted-tests
     - benchmark-track
-    #- self-hosted-large-tests
 
     runs-on: ubuntu-latest
     permissions:
@@ -1402,7 +1284,7 @@ jobs:
     - name: Decide whether the needed jobs succeeded or failed
       uses: re-actors/alls-green@release/v1
       with:
-        allowed-skips: self-hosted-tests, self-hosted-large-tests
+        allowed-skips: self-hosted-tests
         jobs: ${{ toJSON(needs) }}
     - name: Trigger Codecov notifications
       uses: codecov/codecov-action@v7

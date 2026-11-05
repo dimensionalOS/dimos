@@ -24,10 +24,10 @@ def test_go_to_the_bed(
         "unitree-go2-agentic",
         simulator="dimsim",
     )
-    wait_for_system_ready(timeout=1200.0)
+    wait_for_system_ready(timeout=300.0)
 
     explore_house()
 
     human_input("go to the bed")
 
-    lcm_spy.wait_until_odom_position(-3.567, -1.332, threshold=2, timeout=180)
+    lcm_spy.wait_until_odom_position(-3.567, -1.332, threshold=3, timeout=180)

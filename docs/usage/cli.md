@@ -14,55 +14,50 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 |------|------|---------|-------------|
 | `--robot-ip` | TEXT | `None` | Robot IP address |
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
-| `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
+| `--simulation` | TEXT | empty | Select simulation (`mujoco` or `dimsim`); a bare flag selects MuJoCo |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_short` | Replay memory SQLite database name |
-| `--replay-exit` / `--no-replay-exit` | bool | `False` | Exit once every replay stream finishes |
 | `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
 | `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
 | `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
 | `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
-| `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
-| `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
-| `--rerun-web` / `--no-rerun-web` | bool | `False` | Serve the Rerun web viewer |
 | `--n-workers` | INT | `2` | Number of forkserver workers |
-| `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
-| `--mcp-port` | INT | `9990` | MCP server port |
-| `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
 | `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
-| `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
-| `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
 | `--robot-model` | TEXT | `None` | Robot model identifier |
-| `--robot-width` | FLOAT | `0.3` | Robot width in meters |
+| `--robot-width` | FLOAT | `0.3` | Robot width in meters, shared by the navigation and patrol modules |
 | `--robot-rotation-diameter` | FLOAT | `0.6` | Robot rotation diameter in meters |
-| `--planner-strategy` | `simple\|mixed` | `simple` | Navigation planner strategy |
-| `--planner-robot-speed` | FLOAT | `None` | Planner robot speed override |
-| `--mujoco-camera-position` | TEXT | `None` | MuJoCo camera position |
-| `--mujoco-room` | TEXT | `None` | MuJoCo room model |
-| `--mujoco-room-from-occupancy` | TEXT | `None` | Generate room from occupancy map |
-| `--mujoco-global-costmap-from-occupancy` | TEXT | `None` | Generate costmap from occupancy |
-| `--mujoco-global-map-from-pointcloud` | TEXT | `None` | Generate map from point cloud |
-| `--mujoco-start-pos` | TEXT | `-1.0, 1.0` | MuJoCo robot start position |
-| `--mujoco-steps-per-frame` | INT | `7` | MuJoCo simulation steps per frame |
-| `--mujoco-shadows` | `auto\|on\|off` | `auto` | MuJoCo shadow mapping. `auto` benchmarks one shadowed render at startup and disables shadows when it exceeds 30% of the video frame budget; `on` and `off` skip the benchmark |
 
 ### Configuration Precedence
 
-Values cascade (later overrides earlier):
+Values resolve in this order: schema defaults → blueprint values → JSON config → `.env` → environment → CLI flags. Global environment variables use uppercase field names, such as `ROBOT_IPS` (transport also accepts `DIMOS_TRANSPORT`).
 
-1. `GlobalConfig` default → `simulation = ""`
-2. `.env` file → `SIMULATION=mujoco`
-3. Environment variable → `export SIMULATION=mujoco`
-4. Blueprint definition → `.global_config(simulation="mujoco")`
-5. CLI flag → `dimos --simulation run ...`
+Module settings go after the blueprint names, for example `dimos run unitree-go2 --go2connection.replay-exit true`. Use `dimos run <blueprint> --help` for that stack's options. See [Configuration](/docs/usage/configuration.md#migrating-former-global-settings) for the migration from global flags.
 
-Environment variables and `.env` values use the field name in uppercase, for example `ROBOT_IPS`.
+Module booleans require an explicit value (`--go2connection.replay-exit true` or `--go2connection.replay-exit=true`); they have no bare-flag or `--no-` form. Global booleans still accept paired flags such as `--replay` / `--no-replay`.
 
 ---
 
 ## Commands
+
+### `dimos imitation`
+
+| Command | Purpose |
+| --- | --- |
+| `dimos imitation control` | Attach one panel for available episode and policy controls |
+| `dimos imitation prepare RECORDING_DIR --output DATASET_DIR` | Convert saved episodes to a new LeRobot dataset directory |
+| `dimos imitation inspect ARTIFACT [--verbose] [--json]` | Inspect a recording or prepared dataset |
+| `dimos imitation visualize DATASET_DIR --episode 0` | View a local LeRobot episode in Rerun |
+| `dimos imitation train [LEROBOT_ARGS...]` | Forward arguments to isolated `lerobot-train`, including `--help` |
+
+The panel discovers episode and rollout controls in a stack launched with
+`dimos run`. Q detaches. **Stop stack…** requests shutdown after confirmation;
+an active episode must first be saved or discarded. `dimos stop` also shuts down
+the runtime.
+
+See [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md)
+for tutorials, task guides, and compatibility limits.
 
 ### `dimos run`
 
@@ -81,7 +76,7 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<
 | `--disable` | Module class names to exclude from the blueprint |
 | `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
 | `--local-relay` | Start a relay on this machine and open the cockpit in the browser (see [Web](/docs/web/index.md)) |
-| `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL; `--relay-ca` adds a private CA and `RELAY_KEY` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
+| `--relay-url` | Connect the robot to a relay started elsewhere, by its HTTP URL. `--relay-ca` adds a private CA and `--relay-key` the robot's key (see [Bridge](/docs/web/bridge.md#robot-side-options)) |
 | `--help` | Display the run options and available blueprint configuration flags |
 
 Dynamic values accept both `--field=value` and `--field value`. A shorthand is
@@ -111,7 +106,7 @@ dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
 
 # Blueprint configuration (both value forms are accepted)
-dimos run unitree-go2-relocalization --map-file recording_go2
+dimos run unitree-go2 --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop
@@ -290,7 +285,7 @@ dimos log                    # last 50 lines, human-readable
 dimos log -f                 # follow in real time
 dimos log -n 100             # last 100 lines
 dimos log --json | jq .event # raw JSONL, extract events
-dimos log -r 20260306-143022-unitree-go2  # specific run
+dimos log -r 20260306-143022-a3f1-unitree-go2  # specific run
 ```
 
 All processes (main + workers) write to the same `main.jsonl`. Filter by module:
@@ -371,6 +366,10 @@ Upload recordings (or any file) to hosted storage and pull them back. See [Cloud
 | `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
 | `status ID` / `quota` | Upload state and parts on server / storage quota |
 
+### `dimos host`
+
+Run this machine as a Host for [distributed runs](/docs/usage/distributed/index.md). See [`dimos host`](/docs/usage/distributed/cli.md).
+
 ## Agent & MCP Commands
 
 ### `dimos agent-send`
@@ -385,7 +384,7 @@ Works with any agentic blueprint. Does not require MCP. Publishes directly to th
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `McpClient` in the blueprint find the endpoint themselves).
 
 To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
@@ -425,7 +424,7 @@ dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout S
 |--------|-------------|
 | `--arg`, `-a` | Arguments as `key=value` pairs (repeatable) |
 | `--json-args`, `-j` | Arguments as a JSON string |
-| `--timeout`, `-t` | Seconds to wait for the tool. Default is `mcp_timeout` (30). The client cuts off a skill that runs longer. |
+| `--timeout`, `-t` | Seconds to wait for the tool. Default is 30 seconds. The client cuts off a skill that runs longer. |
 
 ```bash
 dimos mcp call move_to --arg x=3.2 --arg y=-0.5
@@ -492,15 +491,16 @@ Or run standalone:
 dtop
 ```
 
-### `rerun-bridge`
+### `dimos rerun-bridge`
 
-Launch the Rerun visualization bridge as a standalone process (outside of a blueprint).
+Launch the Rerun visualization bridge as a standalone process (outside of a blueprint). It takes the bridge module's settings as flags or as `RERUNBRIDGEMODULE__*` environment variables, and serves the web viewer by default. Global options such as `--transport` are accepted after the command as well.
 
 ```bash
-rerun-bridge
+dimos rerun-bridge --rerun-open web --memory-limit 4GB
+dimos rerun-bridge --transport lcm
+RERUNBRIDGEMODULE__HOST=0.0.0.0 dimos rerun-bridge
+dimos rerun-bridge --help
 ```
-
-Also available as `dimos rerun-bridge`.
 
 ## File Locations
 

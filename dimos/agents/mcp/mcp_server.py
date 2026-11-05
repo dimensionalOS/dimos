@@ -25,6 +25,7 @@ import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 import uvicorn
@@ -32,11 +33,14 @@ import uvicorn
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp import tool_stream
+from dimos.agents.mcp.constants import DEFAULT_MCP_PORT, mcp_url
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.module import SkillInfo
@@ -74,6 +78,11 @@ def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
 
 def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
     return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}]})
+
+
+def _jsonrpc_tool_error(req_id: Any, text: str) -> dict[str, Any]:
+    """Tool-call result flagged as failed (MCP ``isError``), with ``text`` as its content."""
+    return _jsonrpc_result(req_id, {"content": [{"type": "text", "text": text}], "isError": True})
 
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
@@ -122,7 +131,7 @@ async def _handle_tools_call(
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
         logger.warning("MCP tool not found", tool=name)
-        return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
+        return _jsonrpc_tool_error(req_id, f"Tool not found: {name}")
 
     skill_info = app.state.skills_by_name.get(name)
     uses: list[str] = list(skill_info.uses) if skill_info is not None else []
@@ -179,16 +188,16 @@ async def _handle_tools_call(
     t0 = time.monotonic()
 
     # _mcp_context is a reserved kwarg consumed by the `@skill` wrapper; it never
-    # reaches the user-visible skill signature. The acquire token rides along so
-    # a background skill's ToolStream can stamp it on its stop frame for release.
+    # reaches the user-visible skill signature. The caller's whole _meta rides
+    # along as `meta`, so a skill can read who called it. The acquire token rides
+    # along so a background skill's ToolStream can stamp it on its stop frame.
     call_kwargs = dict(args)
-    mcp_context: dict[str, Any] = {}
+    mcp_context: dict[str, Any] = {"meta": meta}
     if progress_token is not None:
         mcp_context["progress_token"] = progress_token
     if uses:
         mcp_context["acquire_token"] = acquire_token
-    if mcp_context:
-        call_kwargs["_mcp_context"] = mcp_context
+    call_kwargs["_mcp_context"] = mcp_context
 
     # Track whether we still hold the caps so we can release on failure even
     # for background skills. On success the background skill keeps them until
@@ -201,7 +210,9 @@ async def _handle_tools_call(
             )
         except Exception as e:
             logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
-            return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
+            return _jsonrpc_tool_error(
+                req_id, f"Error running tool '{name}': {type(e).__name__}: {e}"
+            )
 
         if lifecycle == "background":
             # Hand ownership of the caps off to the tool-stream lifecycle.
@@ -212,6 +223,19 @@ async def _handle_tools_call(
 
     duration = f"{time.monotonic() - t0:.3f}s"
     response = str(result)[:200]
+
+    if isinstance(result, SkillResult):
+        content = result.agent_encode()
+        structured = result.to_json()
+        logger.info("MCP tool done", tool=name, duration=duration, response=response)
+        try:
+            # The response is rendered as strict JSON, which has no NaN or Infinity; the
+            # text content tolerates them, so the call still answers with it alone.
+            json.dumps(structured, allow_nan=False)
+        except ValueError as e:
+            logger.warning("MCP tool result has no strict JSON form", tool=name, error=str(e))
+            return _jsonrpc_result(req_id, {"content": content})
+        return _jsonrpc_result(req_id, {"content": content, "structuredContent": structured})
 
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)
@@ -344,7 +368,13 @@ async def mcp_sse_endpoint() -> StreamingResponse:
     )
 
 
+class McpServerConfig(ModuleConfig):
+    host: str = Field(default_factory=lambda m: m["g"].listen_host)
+    port: int = Field(default=DEFAULT_MCP_PORT, ge=1, le=65535)
+
+
 class McpServer(Module):
+    config: McpServerConfig
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
     _tool_stream_cleanup: Callable[[], None] | None = None
@@ -381,9 +411,10 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
-        ]
+        # One RPC per module, in parallel: a worker still warming up blocks
+        # its call on the langchain import.
+        per_module = safe_thread_map(modules, lambda module: module.get_skills() or [])
+        app.state.skills = [skill_info for skills in per_module for skill_info in skills]
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
             skill_info.func_name: RpcCall(
@@ -432,12 +463,15 @@ class McpServer(Module):
         finally:
             transport.stop()
 
-    def _start_server(self, port: int | None = None) -> None:
-        from dimos.core.global_config import global_config
+    @rpc
+    def mcp_url(self) -> str:
+        """The HTTP endpoint for clients on this host."""
+        return mcp_url(self.config.host, self.config.port)
 
-        _port = port if port is not None else global_config.mcp_port
-        _host = global_config.listen_host
-        config = uvicorn.Config(app, host=_host, port=_port, log_level="warning", access_log=False)
+    def _start_server(self) -> None:
+        config = uvicorn.Config(
+            app, host=self.config.host, port=self.config.port, log_level="warning", access_log=False
+        )
         server = uvicorn.Server(config)
         self._uvicorn_server = server
         loop = self._loop

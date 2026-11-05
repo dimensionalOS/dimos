@@ -62,7 +62,6 @@ def _sighting(ts: float, confidence: float, name: str, points: int) -> Detection
     )
 
 
-@pytest.mark.skipif_macos_bug
 def test_detection3dpc(detection3dpc) -> None:
     # def test_oriented_bounding_box(detection3dpc):
     """Test oriented bounding box calculation and values."""
