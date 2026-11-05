@@ -135,7 +135,7 @@ class UrdfManagerPointClearing(UrdfManager):
     def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
         with self._lock:
             # Sensors sharing this input interleave, so an older capture is filtered at its own time rather than dropped.
-            if not np.isfinite(cloud.ts):
+            if cloud.ts is None or not np.isfinite(cloud.ts):
                 logger.warning("Dropping cloud: invalid capture timestamp")
                 return None
             points = cloud.points_f32()
@@ -147,8 +147,6 @@ class UrdfManagerPointClearing(UrdfManager):
             filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
             for name, values in cloud.pointcloud_tensor.point.items():
                 filtered.pointcloud_tensor.point[name] = values[keep]
-            if cloud.sample_header is not None:
-                filtered.with_sample_header(cloud.sample_header)
             return filtered
 
     def _on_pointcloud(self, cloud: PointCloud2) -> None:
@@ -180,7 +178,7 @@ class UrdfManagerPointClearing(UrdfManager):
     def _observed_keep_mask(
         self, cloud: PointCloud2, points: NDArray[np.float32]
     ) -> NDArray[np.bool_] | None:
-        """Use the same physical samples as rolling lidar, without mixing reset epochs in TF.
+        """Use the same acquisition timestamps and physical samples as rolling lidar.
 
         Raw sensor-axis clouds and truth-registered world clouds are supported.
         Estimated/deskewed clouds must be filtered before the estimator instead.
@@ -189,10 +187,9 @@ class UrdfManagerPointClearing(UrdfManager):
             history = tuple(self._observations)
         if not history:
             return None
-        header = cloud.sample_header
-        latest = history[-1].header
-        if header is None or (header.clock_id, header.epoch) != (latest.clock_id, latest.epoch):
+        if cloud.ts is None:
             return None
+        acquisition_ns = round(cloud.ts * 1e9)
         offsets = cloud.offset_times_u32()
         if offsets is None:
             offsets = np.zeros(len(points), dtype=np.uint32)
@@ -205,7 +202,7 @@ class UrdfManagerPointClearing(UrdfManager):
             needed.update((joint.parent_link, joint.child_link))
         for bucket in np.unique(buckets):
             indices = np.flatnonzero(buckets == bucket)
-            stamp = header.time_ns + int(offsets[indices].min())
+            stamp = acquisition_ns + int(offsets[indices].min())
             state = next((s for s in reversed(history) if s.header.time_ns <= stamp), None)
             if state is None or stamp - state.header.time_ns > self.config.state_tolerance_s * 1e9:
                 return None

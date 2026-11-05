@@ -18,6 +18,7 @@ Uses the existing GR00T task unchanged. This is a simulation demonstration,
 not a replacement connection, coordinator, or hardware firmware emulator.
 """
 
+import math
 import threading
 import time
 from typing import Any
@@ -62,8 +63,6 @@ CONTROL = ControllerConfig("g1/groot", 20_000_000, JOINTS)
 
 class G1PolicyConfig(ModuleConfig):
     control: ControllerConfig = CONTROL
-    imu_source: str = "g1/imu"
-    joint_source: str = "g1/encoders"
 
 
 class G1PolicyModule(SharedConfigModule):
@@ -79,15 +78,19 @@ class G1PolicyModule(SharedConfigModule):
         self._lock = threading.RLock()
         self._velocity = np.zeros(3)
         self._until = 0.0
-        self._identity = (-1, -1)
+        self._identity = -1
         self._last_action: ActionCommand | None = None
-        self._joints: dict[tuple[int, int], JointState] = {}
-        self._imus: dict[tuple[int, int], Imu] = {}
+        self._joints: dict[int, JointState] = {}
+        self._imus: dict[int, Imu] = {}
         self._clock_id: str | None = None
         self._arm_targets = np.array(POLICY.default_positions_29[15:])
         self.inferences = 0
 
     def config_receive(self, config_senders: ConfigSenders) -> None:
+        clocks = [c["sim_clock_id"] for _, c in config_senders if "sim_clock_id" in c]
+        if len(clocks) != 1:
+            raise ValueError("policy requires exactly one simulation clock")
+        self._clock_id = clocks[0]
         joints = {
             joint.name: joint
             for _, config in config_senders
@@ -100,6 +103,7 @@ class G1PolicyModule(SharedConfigModule):
     @rpc
     def start(self) -> None:
         self._task.start()
+        self._task.reset_runtime_state(reactivate=True)
         super().start()
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
@@ -123,20 +127,25 @@ class G1PolicyModule(SharedConfigModule):
             self._arm_targets[index - 15] = position
 
     async def handle_joint_state(self, sample: JointState) -> None:
-        self._receive(sample, self.config.joint_source)
+        self._receive(sample)
 
     async def handle_imu(self, sample: Imu) -> None:
-        self._receive(sample, self.config.imu_source)
+        self._receive(sample)
 
-    def _receive(self, sample: JointState | Imu, source: str) -> None:
-        h = sample.sample_header
-        if h is None or h.source_id != source or h.time_ns % self.config.control.period_ns:
+    def _control_time(self, stamp: float) -> int | None:
+        if not math.isfinite(stamp) or stamp < 0:
+            return None
+        period = self.config.control.period_ns
+        boundary = round(stamp * 1e9 / period) * period
+        # Standard DimOS messages use float seconds; codecs may truncate one ns.
+        tolerance_ns = 2 + math.ulp(stamp) * 1e9
+        return boundary if abs(stamp * 1e9 - boundary) <= tolerance_ns else None
+
+    def _receive(self, sample: JointState | Imu) -> None:
+        identity = self._control_time(sample.ts)
+        if identity is None:
             return
         with self._lock:
-            if self._clock_id is not None and h.clock_id != self._clock_id:
-                raise ValueError("controller clock changed; rebind")
-            self._clock_id = h.clock_id
-            identity = (h.epoch, h.time_ns)
             if identity < self._identity:
                 return
             if identity == self._identity:
@@ -157,28 +166,18 @@ class G1PolicyModule(SharedConfigModule):
 
     def compute(self, joints: JointState, imu: Imu) -> ActionCommand | None:
         with self._lock:
-            h, ih = joints.sample_header, imu.sample_header
-            if (
-                h is None
-                or ih is None
-                or (h.clock_id, h.epoch, h.time_ns) != (ih.clock_id, ih.epoch, ih.time_ns)
-            ):
+            identity = self._control_time(joints.ts)
+            if identity is None or identity != self._control_time(imu.ts):
                 raise ValueError(
                     "policy requires joint and IMU measurements at the same acquisition"
                 )
-            if h.source_id != self.config.joint_source or ih.source_id != self.config.imu_source:
-                raise ValueError("wrong configured measurement source")
-            identity = (h.epoch, h.time_ns)
-            if h.time_ns % self.config.control.period_ns or identity < self._identity:
+            if self._clock_id is None:
+                raise ValueError("policy requires shared simulation configuration before control")
+            if identity < self._identity:
                 return None
             if identity == self._identity:
                 return self._last_action
-            if h.epoch != self._identity[0]:
-                self._task.reset_runtime_state(reactivate=True)
-                self._velocity[:] = 0
-                self._until = 0
-                self._arm_targets[:] = POLICY.default_positions_29[15:]
-            now = h.time_ns / 1e9
+            now = identity / 1e9
             velocity = self._velocity if time.monotonic() < self._until else np.zeros(3)
             self._task.set_velocity_command(
                 float(velocity[0]), float(velocity[1]), float(velocity[2]), t_now=now
@@ -212,15 +211,15 @@ class G1PolicyModule(SharedConfigModule):
             )
             self._last_action = ActionCommand(
                 header=SampleHeader(
-                    clock_id=h.clock_id,
-                    epoch=h.epoch,
-                    time_ns=h.time_ns,
+                    clock_id=self._clock_id,
+                    epoch=0,
+                    time_ns=identity,
                     source_id=self.config.control.controller_id,
-                    sequence=h.sequence,
+                    sequence=identity // self.config.control.period_ns,
                 ),
-                based_on_time_ns=h.time_ns,
-                apply_at_ns=h.time_ns,
-                valid_until_ns=h.time_ns + self.config.control.period_ns,
+                based_on_time_ns=identity,
+                apply_at_ns=identity,
+                valid_until_ns=identity + self.config.control.period_ns,
                 joint_commands_length=len(JOINTS),
                 joint_commands=[
                     JointCommand(

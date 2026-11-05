@@ -92,7 +92,7 @@ def g1_measurements(deployed_g1):
         yield samples
 
 
-def test_g1_walks_moves_an_arm_and_resets_with_independent_sensors(
+def test_g1_walks_and_moves_an_arm_with_standard_sensor_messages(
     deployed_g1, g1_measurements, g1_configuration
 ):
     sim = deployed_g1.get_instance(SimModule)
@@ -113,7 +113,8 @@ def test_g1_walks_moves_an_arm_and_resets_with_independent_sensors(
     assert len(cloud) > 300
     assert cloud.frame_id == g1_configuration[1]
     assert g1_measurements["filtered_pointcloud"]
-    assert cloud.sample_header.clock_id == sim.inspect().header.clock_id
+    assert cloud.ts is not None
+    assert 0 <= cloud.ts <= sim.inspect().header.time_ns / 1e9
     raw = g1_measurements["lidar_raw"][-1]
     assert raw.frame_id == "g1/mid360_link"
     assert set(np.unique(raw.lines_u8())) == {0, 1, 2, 3}
@@ -126,6 +127,7 @@ def test_g1_walks_moves_an_arm_and_resets_with_independent_sensors(
     expected_parent = "odom" if g1_configuration[1] == "odom" else "g1/torso_link"
     assert parents["g1/mid360_link"] == {expected_parent}
     before = sim.inspect()
+    before_inferences = policy.status()["inferences"]
     assert poses_by_id(before)["g1/pelvis"].position.z > 0.68
     policy.arm_joint("g1/left_elbow_joint", 1.4)
     policy.move(Twist(linear=Vector3(0.2, 0, 0)), duration=20)
@@ -139,21 +141,11 @@ def test_g1_walks_moves_an_arm_and_resets_with_independent_sensors(
         > 0.2
     )
     assert joints.position[joints.name.index("g1/left_elbow_joint")] == pytest.approx(1.4, abs=0.12)
-    reset = sim.reset()
-    wait_until(
-        lambda: sim.status()["epoch"] == reset.header.epoch
-        and sim.status()["time_ns"] > 1_000_000_000,
-        timeout=30,
-    )
-    wait_until(
-        lambda: g1_measurements["global_map"][-1].sample_header.epoch == reset.header.epoch,
-        timeout=40,
-    )
     assert poses_by_id(sim.inspect())["g1/pelvis"].position.z > 0.68
     assert (
         sim.status()["error"] == camera.statistics()["error"] == lidar.statistics()["error"] == ""
     )
-    assert policy.status()["inferences"] > 250
+    assert policy.status()["inferences"] >= before_inferences + 150
 
 
 def test_g1_mid360_mount_observes_the_floor_instead_of_its_head():
@@ -213,7 +205,7 @@ def test_g1_truth_map_has_no_body_trail_after_walking(deployed_g1, g1_measuremen
     policy.move(Twist(), duration=1)
     wait_until(
         lambda: bool(g1_measurements["global_map"])
-        and g1_measurements["global_map"][-1].sample_header.time_ns > start + 3_000_000_000,
+        and g1_measurements["global_map"][-1].ts > start / 1e9 + 3,
         timeout=20,
     )
     p = g1_measurements["global_map"][-1].points_f32()

@@ -12,41 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.common_msgs import SampleHeader
 import numpy as np
 
-from dimos.mapping.voxels.module import VoxelMapTransformer
-from dimos.memory.type.observation import Observation
+from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
-def test_map_preserves_acquisition_and_clears_on_reset():
-    def observation(x, epoch, time_ns):
-        cloud = PointCloud2.from_numpy(
-            np.array([[x, 0.0, 0.0]], dtype=np.float32), frame_id="world"
-        )
-        cloud.with_sample_header(
-            SampleHeader(
-                clock_id="sim", epoch=epoch, time_ns=time_ns, source_id="lidar", frame_id="world"
-            )
-        )
-        return Observation(_data=cloud, data_type=PointCloud2)
-
-    mapper = VoxelMapTransformer(device="CPU:0", carve_columns=False, voxel_size=0.1)
-    result = list(
-        mapper(
-            iter(
-                [
-                    observation(1.0, 0, 100_000_000),
-                    observation(2.0, 0, 200_000_000),
-                    observation(5.0, 1, 0),
-                    observation(9.0, 0, 300_000_000),
-                ]
-            )
-        )
+def test_mapper_keeps_configured_frame_and_last_acquisition_timestamp():
+    cloud = PointCloud2.from_numpy(
+        np.array([[1.0, 0.0, 0.0]], dtype=np.float32), frame_id="map", timestamp=12.25
     )
-    assert [len(o.data) for o in result] == [1, 2, 1]
-    assert result[-1].data.sample_header.epoch == 1
-    assert result[-1].data.sample_header.time_ns == 0
-    assert result[-1].data.sample_header.source_id == "global_map"
-    assert result[-1].data.points_f32()[0, 0] > 4.9
+    module = VoxelGridMapper(frame_id="map", device="CPU:0", carve_columns=False)
+    try:
+        with MemoryStore() as store:
+            stream = store.stream("lidar", PointCloud2)
+            stream.append(cloud)
+            result = list(module.pipeline(stream))
+            assert result[-1].data.frame_id == "map"
+            assert result[-1].data.ts == 12.25
+            assert len(result[-1].data) == 1
+    finally:
+        module.dispose()

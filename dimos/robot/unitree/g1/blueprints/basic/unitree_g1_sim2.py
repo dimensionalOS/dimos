@@ -83,13 +83,12 @@ SCENE = SceneConfig(
     ),
 )
 
-IMU = ImuConfig("g1/imu_in_pelvis", source_id="g1/imu", orientation="ideal")
-MID360_IMU = ImuConfig("g1/mid360_link", source_id="g1/mid360/imu")
-ENCODERS = EncoderConfig(JOINTS, source_id="g1/encoders", hz=50)
-CAMERA = CameraConfig("g1/camera", source_id="g1/camera")
+IMU = ImuConfig("g1/imu_in_pelvis", orientation="ideal")
+MID360_IMU = ImuConfig("g1/mid360_link")
+ENCODERS = EncoderConfig(JOINTS, hz=50)
+CAMERA = CameraConfig("g1/camera")
 LIDAR = LidarConfig(
     "g1/mid360_link",
-    source_id="g1/mid360",
     pattern=partial(Mid360Scan, LfsPath("mid360_pattern/fourier.npz"), downsample=10),
     min_range=0.16,
     response=Mid360Returns,
