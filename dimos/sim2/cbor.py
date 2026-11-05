@@ -19,18 +19,18 @@ from io import BytesIO
 
 import cbor2
 from dimos_lcm.control_msgs import CborCommand
-from dimos_lcm.sim_msgs import CborExtension
+from dimos_lcm.sim_msgs import CborObservation
 
 
 def validate_cbor_entries(
-    entries: Sequence[CborExtension | CborCommand], entity_ids: set[str]
+    entries: Sequence[CborObservation | CborCommand], entity_ids: set[str]
 ) -> None:
-    """Reject ambiguous addressing or malformed CBOR; payload semantics belong to its schema."""
+    """Reject ambiguous addressing or malformed CBOR; payload semantics belong to the addressed key."""
     seen: set[tuple[str, str]] = set()
     for prop in entries:
         identity = (prop.entity_id, prop.key)
-        if prop.entity_id not in entity_ids or not prop.key or not prop.schema:
-            raise ValueError("CBOR entry requires a known entity, property key and schema")
+        if prop.entity_id not in entity_ids or not prop.key:
+            raise ValueError("CBOR entry requires a known entity, property key")
         if identity in seen:
             raise ValueError("duplicate entity/key in CBOR entries")
         seen.add(identity)

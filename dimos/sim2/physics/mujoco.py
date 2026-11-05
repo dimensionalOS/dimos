@@ -19,9 +19,10 @@ indices are bound once. Fixed links are retained so logical frame IDs agree
 with UrdfManager even when the model includes massless sensor frames.
 """
 
-from dimos_lcm.control_msgs import CborCommand, JointTarget
-from dimos_lcm.geometry_msgs import Point, Pose, Quaternion
-from dimos_lcm.sim_msgs import BodyMotion, BodyPose, CborExtension, JointTruth
+from dimos_lcm.control_msgs import CborCommand, JointCommand
+from dimos_lcm.geometry_msgs import Accel, Point, Pose, Quaternion, Twist, Vector3
+from dimos_lcm.sensor_msgs import JointState
+from dimos_lcm.sim_msgs import BodyState, CborObservation
 import mujoco
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -49,15 +50,15 @@ class MujocoBackend:
         self.reset()
 
     def apply_action(
-        self, joint_targets: list[JointTarget], cbor_commands: list[CborCommand]
+        self, joint_commands: list[JointCommand], cbor_commands: list[CborCommand]
     ) -> None:
         """Validate before mutation. This backend implements joint targets only."""
         if cbor_commands:
             command = cbor_commands[0]
-            raise ValueError(f"unsupported CBOR command: {command.key} ({command.schema})")
-        if not joint_targets:
+            raise ValueError(f"unsupported CBOR command: {command.key}")
+        if not joint_commands:
             return
-        targets = joint_targets
+        targets = joint_commands
         names = [t.joint_id for t in targets]
         if not names or len(set(names)) != len(names):
             raise ValueError("targets require unique, nonempty joint IDs")
@@ -113,19 +114,39 @@ class MujocoBackend:
             orientation=Quaternion(*self.data.xquat[body, [1, 2, 3, 0]]),
         )
 
-    def read_body_poses(self) -> list[BodyPose]:
-        return [
-            BodyPose(body_id=name, pose_world=self._pose(self.model.body(name).id))
-            for name in self.body_ids
-        ]
+    def read_bodies(self) -> list[BodyState]:
+        # Populate all constraint-aware accelerations once for this acquisition.
+        # MuJoCo cacc is gravity-subtracted; export physical acceleration instead.
+        mujoco.mj_rnePostConstraint(self.model, self.data)
+        velocity, acceleration = np.empty(6), np.empty(6)
+        bodies = []
+        for body, name in enumerate(self.body_ids, start=1):
+            mujoco.mj_objectVelocity(
+                self.model, self.data, mujoco.mjtObj.mjOBJ_XBODY, body, velocity, 0
+            )
+            mujoco.mj_objectAcceleration(
+                self.model, self.data, mujoco.mjtObj.mjOBJ_XBODY, body, acceleration, 0
+            )
+            bodies.append(
+                BodyState(
+                    body_id=name,
+                    pose=self._pose(body),
+                    twist=Twist(linear=Vector3(*velocity[3:]), angular=Vector3(*velocity[:3])),
+                    acceleration=Accel(
+                        linear=Vector3(*(acceleration[3:] + self.model.opt.gravity)),
+                        angular=Vector3(*acceleration[:3]),
+                    ),
+                )
+            )
+        return bodies
 
-    def read_joints(self, joint_ids: tuple[str, ...]) -> JointTruth:
+    def read_joints(self, joint_ids: tuple[str, ...]) -> JointState:
         ids = np.asarray([self.model.joint(n).id for n in joint_ids], dtype=int)
         if any(n not in self.joint_ids for n in joint_ids):
             raise ValueError("only scalar joint coordinates are supported")
         q, v = self.model.jnt_qposadr[ids], self.model.jnt_dofadr[ids]
         count = len(joint_ids)
-        return JointTruth(
+        return JointState(
             name_length=count,
             position_length=count,
             velocity_length=count,
@@ -136,30 +157,8 @@ class MujocoBackend:
             effort=self.data.qfrc_actuator[v].tolist(),
         )
 
-    def read_extensions(self) -> list[CborExtension]:
+    def read_cbor_observations(self) -> list[CborObservation]:
         return []
-
-    def read_motion(self, frame_id: str) -> BodyMotion:
-        body = self.model.body(frame_id).id
-        velocity, acceleration = np.empty(6), np.empty(6)
-        mujoco.mj_objectVelocity(
-            self.model, self.data, mujoco.mjtObj.mjOBJ_XBODY, body, velocity, 0
-        )
-        # Native cacc uses gravity-subtracted spatial acceleration; populate it
-        # explicitly even when the model contains no MuJoCo sensors.
-        mujoco.mj_rnePostConstraint(self.model, self.data)
-        mujoco.mj_objectAcceleration(
-            self.model, self.data, mujoco.mjtObj.mjOBJ_XBODY, body, acceleration, 0
-        )
-        result = BodyMotion(
-            pose_world=self._pose(body),
-            linear_velocity_world=velocity[3:].tolist(),
-            angular_velocity_world=velocity[:3].tolist(),
-            linear_acceleration_world=(acceleration[3:] + self.model.opt.gravity).tolist(),
-            gravity_world=self.model.opt.gravity.tolist(),
-        )
-        result.frame_id = frame_id
-        return result
 
     def close(self) -> None:
         pass

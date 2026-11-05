@@ -27,7 +27,7 @@ import uuid
 import xml.etree.ElementTree as ET
 
 from dimos_lcm.common_msgs import SampleHeader
-from dimos_lcm.control_msgs import ActionCommand, JointTarget
+from dimos_lcm.control_msgs import ActionCommand, JointCommand
 from dimos_lcm.sim_msgs import WorldState
 import pytest
 
@@ -163,15 +163,22 @@ def backend(world):
 @pytest.fixture
 def poses(backend, world):
     def capture(time_ns=0, epoch=0):
-        bodies = backend.read_body_poses()
+        bodies = backend.read_bodies()
+        header = SampleHeader(
+            clock_id="test",
+            epoch=epoch,
+            time_ns=time_ns,
+            source_id="sim/observations",
+            frame_id="world",
+        )
+        joints = backend.read_joints(backend.joint_ids)
+        joints.header = header
         return WorldState(
-            header=SampleHeader(clock_id="test", epoch=epoch, time_ns=time_ns, frame_id="world"),
+            header=header,
             model_revision=world.revision,
-            body_poses_length=len(bodies),
-            body_poses=bodies,
-            body_motion_length=1,
-            body_motion=[backend.read_motion("left/imu")],
-            joint_truth=backend.read_joints(backend.joint_ids),
+            bodies_length=len(bodies),
+            bodies=bodies,
+            joint_truth=joints,
         )
 
     return capture
@@ -226,9 +233,9 @@ def command():
             based_on_time_ns=header.time_ns,
             apply_at_ns=header.time_ns,
             valid_until_ns=header.time_ns + round(ttl * 1e9),
-            joint_targets_length=len(names),
-            joint_targets=[
-                JointTarget(joint_id=n, position=q, velocity=0, kp=kp, kd=kd, feedforward=effort)
+            joint_commands_length=len(names),
+            joint_commands=[
+                JointCommand(joint_id=n, position=q, velocity=0, kp=kp, kd=kd, feedforward=effort)
                 for n, q in zip(names, positions, strict=True)
             ],
         )
