@@ -74,8 +74,8 @@ def sim(scene: Scene, policy: OnnxGo2Policy) -> Sim:
 def waiting_world() -> Iterator[SimGo2World]:
     world = SimGo2World(wait_for_scene=True)
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world_wait/cmd_vel", Twist)
-    world.scene_data_request.transport = LCMTransport(
-        "/test_go2_sim_world_wait/scene_data_request", String
+    world.render_file_request.transport = LCMTransport(
+        "/test_go2_sim_world_wait/render_file_request", String
     )
     yield world
     world.stop()
@@ -201,8 +201,8 @@ def test_a_rig_with_two_lidars_reports_both_at_its_base(
 def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene: Scene) -> None:
     world = SimGo2World()
     world.cmd_vel.transport = LCMTransport("/test_go2_sim_world/cmd_vel", Twist)
-    world.scene_data_request.transport = LCMTransport(
-        "/test_go2_sim_world/scene_data_request", String
+    world.render_file_request.transport = LCMTransport(
+        "/test_go2_sim_world/render_file_request", String
     )
     poses: list[PoseStamped] = []
     heard: list[Contacts] = []

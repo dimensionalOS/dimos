@@ -42,6 +42,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -66,7 +67,7 @@ from dimos.simulation.sim_world.body import (
     Sensor,
 )
 from dimos.simulation.sim_world.premap import premap_cloud, without_objects
-from dimos.simulation.sim_world.scene_data import scene_data
+from dimos.simulation.sim_world.scene_data import scene_files
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.logging_config import setup_logger
 
@@ -393,8 +394,8 @@ class SimWorld(Module, ABC):
     rig: ClassVar[Rig]
 
     cmd_vel: In[Twist]
-    # a viewer asks for the world as dimos.scene_data.v1 here, answered on scene_data
-    scene_data_request: In[String]
+    # a request for SCENE_FILE or a file it names is answered on file_info; other names are another module's
+    render_file_request: In[String]
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
@@ -406,7 +407,7 @@ class SimWorld(Module, ABC):
     loaded_map: Out[PointCloud2]
     # the scene's id, so a viewer knows a world is there to ask for
     scene_info: Out[String]
-    scene_data: Out[String]
+    file_info: Out[File]
 
     _thread: Thread | None = None
     _reset: tuple[float, float, float, float] | None = None
@@ -423,7 +424,7 @@ class SimWorld(Module, ABC):
         self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
         self.register_disposable(
-            Disposable(self.scene_data_request.subscribe(self._on_scene_data_request))
+            Disposable(self.render_file_request.subscribe(self._on_render_file_request))
         )
         if not self.config.wait_for_scene:
             self._begin(self._load(self.config.family, self.config.seed, self.config.scene_params))
@@ -476,14 +477,22 @@ class SimWorld(Module, ABC):
         if not self._hold.update(command, time.monotonic()):
             logger.warning("Ignored non-finite cmd_vel", command=command.tolist())
 
-    def _on_scene_data_request(self, _msg: String) -> None:
+    def _on_render_file_request(self, msg: String) -> None:
         sim = getattr(self, "_sim", None)
-        if sim is not None:
-            self.scene_data.publish(String(self._scene_json(sim)))
+        if sim is None:
+            return
+        data = self._scene_files(sim).get(msg.data)
+        if data is not None:
+            self.file_info.publish(File(msg.data, data))
 
-    def _scene_json(self, sim: Sim) -> str:
-        robot = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_BODY, sim.rig.base_body)
-        return scene_data(sim.model, sim.data, _scene_id(sim), sim.rig.world_frame, robot)
+    def _scene_files(self, sim: Sim) -> dict[str, bytes]:
+        # built once per scene: the world's geometry and textures never change while it runs
+        scene_id = _scene_id(sim)
+        if getattr(self, "_files_for", None) != scene_id:
+            robot = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_BODY, sim.rig.base_body)
+            self._files = scene_files(sim.model, sim.data, scene_id, sim.rig.world_frame, robot)
+            self._files_for = scene_id
+        return self._files
 
     @abstractmethod
     def _build(self, scene: Scene, seed: int) -> Sim:

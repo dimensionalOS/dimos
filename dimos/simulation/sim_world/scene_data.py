@@ -13,19 +13,23 @@
 # limitations under the License.
 
 
-"""The sim's world outside the robot as dimos.scene_data.v1 JSON, the format the Controller's simulated-world layer draws."""
+"""The sim's world outside the robot as dimos.scene_data.v2 files: a JSON index that names its meshes (STL) and textures (PNG)."""
 
 from __future__ import annotations
 
-import base64
+import io
 import json
+import re
+import struct
 from typing import Any
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
+from PIL import Image
 
-SCENE_DATA_FORMAT = "dimos.scene_data.v1"
+SCENE_DATA_FORMAT = "dimos.scene_data.v2"
+SCENE_FILE = "sim_scene.json"
 _GEOM_TYPES = {
     int(mujoco.mjtGeom.mjGEOM_PLANE): "plane",
     int(mujoco.mjtGeom.mjGEOM_SPHERE): "sphere",
@@ -37,47 +41,61 @@ _GEOM_TYPES = {
 }
 
 
-def _b64(array: NDArray[Any]) -> str:
-    return base64.b64encode(array.tobytes()).decode()
-
-
 def _xyzw(wxyz: NDArray[np.float64]) -> list[float]:
     w, x, y, z = (float(value) for value in wxyz)
     return [x, y, z, w]
 
 
-def _mesh(model: mujoco.MjModel, mesh: int) -> dict[str, str]:
+def _file_name(kind: str, name: str, suffix: str) -> str:
+    return f"sim_scene/{kind}/{re.sub(r'[^A-Za-z0-9_.-]', '_', name)}{suffix}"
+
+
+def _stl(model: mujoco.MjModel, mesh: int) -> bytes:
+    """The mesh as binary STL, in its own frame."""
     vertices = model.mesh_vert[
         model.mesh_vertadr[mesh] : model.mesh_vertadr[mesh] + model.mesh_vertnum[mesh]
-    ]
+    ].astype(np.float32)
     faces = model.mesh_face[
         model.mesh_faceadr[mesh] : model.mesh_faceadr[mesh] + model.mesh_facenum[mesh]
     ]
-    return {"vertices": _b64(vertices.astype("<f4")), "faces": _b64(faces.astype("<u4"))}
+    triangles = vertices[faces]
+    normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = (normals / np.where(lengths > 0, lengths, 1)).astype(np.float32)
+    record = np.dtype([("normal", "<f4", 3), ("vertices", "<f4", (3, 3)), ("attribute", "<u2")])
+    records = np.zeros(len(faces), dtype=record)
+    records["normal"], records["vertices"] = normals, triangles
+    return b"\0" * 80 + struct.pack("<I", len(faces)) + records.tobytes()
 
 
-def _texture(model: mujoco.MjModel, texture: int) -> dict[str, Any]:
+def _png(model: mujoco.MjModel, texture: int) -> bytes:
+    """The texture as PNG, its rows in MuJoCo's order."""
     width, height, channels = (
         int(model.tex_width[texture]),
         int(model.tex_height[texture]),
         int(model.tex_nchannel[texture]),
     )
     start = int(model.tex_adr[texture])
-    pixels = model.tex_data[start : start + width * height * channels]
-    return {"width": width, "height": height, "channels": channels, "pixels": _b64(pixels)}
+    pixels = np.asarray(model.tex_data[start : start + width * height * channels], dtype=np.uint8)
+    mode = {1: "L", 3: "RGB", 4: "RGBA"}[channels]
+    shape = (height, width) if channels == 1 else (height, width, channels)
+    out = io.BytesIO()
+    Image.fromarray(pixels.reshape(shape), mode).save(out, format="PNG")
+    return out.getvalue()
 
 
-def scene_data(
+def scene_files(
     model: mujoco.MjModel,
     data: mujoco.MjData,
     scene_id: str,
     frame: str,
     robot_root_body: int,
-) -> str:
-    """Every body but the robot's (it is drawn from its URDF) with its geoms, meshes and textures."""
+) -> dict[str, bytes]:
+    """Every body but the robot's (it is drawn from its URDF): SCENE_FILE and each mesh and texture file it names."""
     bodies: list[dict[str, Any]] = []
     meshes: dict[str, dict[str, str]] = {}
     textures: dict[str, dict[str, Any]] = {}
+    files: dict[str, bytes] = {}
     for body in range(model.nbody):
         if body and model.body_rootid[body] == robot_root_body:
             continue
@@ -100,13 +118,23 @@ def scene_data(
             if kind == "mesh":
                 mesh = int(model.geom_dataid[geom])
                 entry["mesh"] = name = model.mesh(mesh).name or f"mesh{mesh}"
-                meshes.setdefault(name, _mesh(model, mesh))
+                if name not in meshes:
+                    meshes[name] = {"file": _file_name("meshes", name, ".stl")}
+                    files[meshes[name]["file"]] = _stl(model, mesh)
             if material >= 0:
                 entry["material"] = model.material(material).name
                 texture = int(model.mat_texid[material, mujoco.mjtTextureRole.mjTEXROLE_RGB])
                 if texture >= 0:
                     entry["texture"] = name = model.texture(texture).name or f"texture{texture}"
-                    textures.setdefault(name, _texture(model, texture))
+                    if name not in textures:
+                        file = _file_name("textures", name, ".png")
+                        textures[name] = {
+                            "file": file,
+                            "width": int(model.tex_width[texture]),
+                            "height": int(model.tex_height[texture]),
+                            "channels": int(model.tex_nchannel[texture]),
+                        }
+                        files[file] = _png(model, texture)
                     # how many times the texture repeats: per meter when uniform, else per face
                     entry["texrepeat"] = model.mat_texrepeat[material].tolist()
                     entry["texuniform"] = bool(model.mat_texuniform[material])
@@ -124,7 +152,7 @@ def scene_data(
                     "lights": [],
                 }
             )
-    return json.dumps(
+    files[SCENE_FILE] = json.dumps(
         {
             "format": SCENE_DATA_FORMAT,
             "id": scene_id,
@@ -134,4 +162,5 @@ def scene_data(
             "hfields": {},
             "textures": textures,
         }
-    )
+    ).encode()
+    return files
