@@ -45,7 +45,7 @@ def _gripper_task() -> TaskConfig:
 _openyam_planner_hw = openyam_hardware()
 
 openyam_planner_coordinator = autoconnect(
-    planner(model=make_openyam_model_config()),
+    planner(model=make_openyam_model_config(), gripper_tasks={"manipulator": "openyam_gripper"}),
     coordinator(
         hardware=[_openyam_planner_hw],
         tasks=[_trajectory_task(), _gripper_task()],
