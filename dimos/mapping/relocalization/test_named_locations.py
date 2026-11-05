@@ -194,7 +194,7 @@ def test_a_request_resends_every_location(make):
 
 
 def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
-    module, _ = make(locations_from="none_yet.db")
+    module, _ = make()
     module.submit(FIX)
 
     # 1 m in front of the old map's origin: map x points along world y
@@ -203,7 +203,7 @@ def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
 
 
 def test_a_list_without_a_map_transform_is_ignored(make):
-    module, _ = make(locations_from="none_yet.db")
+    module, _ = make()
     publish(module, {"door": at(10, 1, "world")})
     assert names(module.locations_snapshot()) == []
 
@@ -216,7 +216,7 @@ def test_a_new_map_is_the_world_frame(make):
     assert positions(module.locations_snapshot()) == {"door": (4, 5)}
 
 
-def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
+def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
     run1 = str(tmp_path / "run1.db")
     first, _ = make(save_locations_to=run1)
     begin(first)
@@ -226,7 +226,7 @@ def test_locations_are_loaded_from_the_saved_file_at_startup(make, tmp_path):
 
     assert list(load_locations(run1, "named_locations")) == ["dock"]
 
-    second, published = make(locations_from=run1, save_locations_to=str(tmp_path / "run2.db"))
+    second, published = make(map_file=run1, save_locations_to=str(tmp_path / "run2.db"))
     begin(second)
     assert published == []
     asyncio.run(second.handle_named_locations_request(String("")))
@@ -245,7 +245,7 @@ def test_a_missing_file_loads_nothing(tmp_path):
 
 def test_a_list_in_another_frame_goes_through_tf(make):
     """Only world/map come from the module's own fix; any other frame is looked up in tf."""
-    module, _ = make(locations_from="none_yet.db")
+    module, _ = make()
     module.tfbuffer.receive_transform(
         Transform(translation=Vector3(0.0, 2.0, 0.0), frame_id="map", child_frame_id="desk_frame")
     )
@@ -255,7 +255,7 @@ def test_a_list_in_another_frame_goes_through_tf(make):
 
 def test_locations_hang_off_the_map_frame_and_follow_every_fix(make):
     """Each location is a tf frame under map, so a new world -> map moves it with the old map."""
-    module, _ = make(locations_from="none_yet.db", relocalize_once=False)
+    module, _ = make(relocalize_once=False)
     module.submit(FIX)
     publish(module, {"door": at(1, 0, "map")})
     sent: list[TFMessage] = module.__dict__["sent_tf"]

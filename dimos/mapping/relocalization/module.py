@@ -14,8 +14,8 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-The base loads ``map_file`` into ``self.premap`` (a ``.pc2.lcm``, or the last
-``map_stream`` cloud of a ``.db``/``.mcap`` recording), publishes accepted
+The base loads ``map_file`` into ``self.premap`` (the last ``map_stream`` cloud of a
+``.db``/``.mcap`` recording), publishes accepted
 ``world -> map`` fixes on ``tf`` and the premap on ``loaded_map`` once a fix lands.
 An implementation reads ``self.premap`` after ``super().start()`` (``None`` when
 no map is configured), picks its inputs, decides when a fix is good enough, and
@@ -37,8 +37,8 @@ with the old map. Each is also a tf frame under ``map``. Wire contract:
   ``goal`` as a ``PointStamped`` in ``map_frame``, which the planner re-expresses through tf on
   every replan, so the goal follows a later fix.
 
-The locations are seeded from the last ``locations_stream`` snapshot of ``locations_from``
-(by default the ``map_file`` recording itself), and every list adopted is appended to
+The locations are seeded from the last ``locations_stream`` snapshot of the ``map_file``
+recording, and every list adopted is appended to
 ``save_locations_to``. With no map and ``new_map`` set, this run's world frame is the map:
 the module submits an identity ``world -> map`` fix itself.
 """
@@ -79,12 +79,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-MAP_SUFFIX = ".pc2.lcm"
 RECORDING_SUFFIXES = (".db", ".mcap")
-
-
-def is_recording(path: str) -> bool:
-    return Path(path).suffix in RECORDING_SUFFIXES
 
 
 def find_stream(streams: list[str], wanted: str) -> str | None:
@@ -93,9 +88,11 @@ def find_stream(streams: list[str], wanted: str) -> str | None:
 
 
 def load_premap(map_file: str, stream: str) -> PointCloud2:
-    """A ``.pc2.lcm`` premap, or the last *stream* cloud of a ``.db``/``.mcap`` recording."""
-    if not is_recording(map_file):
-        return PointCloud2.lcm_decode(resolve_named_path(map_file, MAP_SUFFIX).read_bytes())
+    """The last *stream* cloud of a ``.db``/``.mcap`` recording."""
+    if Path(map_file).suffix not in RECORDING_SUFFIXES:
+        raise ValueError(
+            f"map_file {map_file!r} must be a {' or '.join(RECORDING_SUFFIXES)} recording"
+        )
     from dimos.memory.cli.dataset import open_store
 
     path = resolve_named_path(map_file, Path(map_file).suffix)
@@ -128,8 +125,8 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 
 
 class Config(ModuleConfig):
-    # Premap: a `.pc2.lcm` stem or path (suffix appended if absent), or a `.db`/`.mcap`
-    # recording whose last `map_stream` cloud is the map; None never attempts a fix
+    # Premap: a `.db`/`.mcap` recording whose last `map_stream` cloud is the map; None never
+    # attempts a fix
     map_file: str | None = None
     # Recording stream holding the map cloud
     map_stream: str = "map_cloud"
@@ -145,9 +142,6 @@ class Config(ModuleConfig):
     relocalize_once: bool = True
     # No map_file: this run's world frame is the map (submit an identity fix)
     new_map: bool = False
-    # A .db/.mcap whose last `locations_stream` snapshot seeds the named locations;
-    # None takes them from map_file when it is a recording
-    locations_from: str | None = None
     # A .db every adopted list is appended to; None keeps them in memory only
     save_locations_to: str | None = None
     # Stream (recorded topic) the named-location snapshots live on
@@ -254,12 +248,10 @@ class RelocalizationModule(Module):
 
     def open_locations(self) -> None:
         """Load the saved locations and open the save file."""
-        source = self.config.locations_from
-        if source is None and self.config.map_file and is_recording(self.config.map_file):
+        if self.config.map_file:
             source = str(
                 resolve_named_path(self.config.map_file, Path(self.config.map_file).suffix)
             )
-        if source:
             self._locations = load_locations(source, self.config.locations_stream)
             logger.info(
                 f"Loaded {len(self._locations)} named locations from {source}: {list(self._locations)}"

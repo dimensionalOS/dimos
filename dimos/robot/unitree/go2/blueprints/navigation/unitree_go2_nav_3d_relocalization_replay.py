@@ -14,7 +14,7 @@
 
 """The relocalized nav_3d stack driven by a recording instead of a robot.
 
-dimos run unitree-go2-nav-3d-relocalization-replay --map-file=<premap stem>
+dimos run unitree-go2-nav-3d-relocalization-replay --map-file=<premap .db or .mcap with a map_cloud stream>
 """
 
 from dimos.core.coordination.blueprints import autoconnect

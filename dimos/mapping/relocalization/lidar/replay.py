@@ -200,7 +200,7 @@ def main(
     premap: str = typer.Option(
         ...,
         "--premap",
-        help="Premap: a .pc2.lcm bare name or path, or a .db/.mcap whose last map_cloud is the map",
+        help="Premap: a .db/.mcap whose last map_cloud is the map",
     ),
     lidar: str = typer.Option("lidar", "--lidar", help="Lidar stream in the recording"),
     world_frame: str = typer.Option("odom", "--world-frame", help="Frame the live map is built in"),

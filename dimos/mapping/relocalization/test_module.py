@@ -94,10 +94,13 @@ def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     """The base loads the premap and publishes it once placed."""
-    path = tmp_path / "somewhere.pc2.lcm"
-    path.write_bytes(
-        PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
-    )
+    from dimos.memory.store.sqlite import SqliteStore
+
+    path = tmp_path / "somewhere.db"
+    with SqliteStore(path=str(path)) as store:
+        store.stream("map_cloud", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0), ts=0.0
+        )
     m = module()
     published, disposables = [], []
     # Capture publishes without a bus.
@@ -195,3 +198,10 @@ def test_dual_strategy_merges_ports():
     hints = get_type_hints(Dual)
     assert {"tf", "lidar", "loaded_map", "detections"} <= hints.keys()
     assert Dual.blueprint() is not None
+
+
+def test_a_map_file_that_is_not_a_recording_is_refused():
+    from dimos.mapping.relocalization.module import load_premap
+
+    with pytest.raises(ValueError, match="recording"):
+        load_premap("office.pc2.lcm", "map_cloud")
