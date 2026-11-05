@@ -51,15 +51,18 @@ def serve(dimos_dir: Path) -> None:
 def recordings_dir(dimos_dir: Path | None = None) -> Path:
     """The configured one (a relative one is under the checkout, where launches run), else the checkout's default."""
     dimos_dir = dimos_dir or _served
-    configured = shared_config.setting("recordings", "dir")
+    configured = shared_config.shared_config().recordings_dir
     if configured:
         return dimos_dir / Path(str(configured)).expanduser()
     return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
 
 
 def shared_settings() -> dict[str, Any]:
-    """`GET /config` and the `config` event: the settings read fresh on each use (socket and namespace are fixed at start: `GET /info`)."""
-    return {"path": str(shared_config.config_file()), "recordingsDir": str(recordings_dir())}
+    """`GET /config` and the `config` event: the settings, read again when config.yaml changes (socket and namespace are fixed at start: `GET /info`)."""
+    return {
+        "path": str(shared_config.shared_config().home / "config.yaml"),
+        "recordingsDir": str(recordings_dir()),
+    }
 
 
 def write_atomic(path: Path, text: str) -> None:

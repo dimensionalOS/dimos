@@ -27,7 +27,7 @@ import psutil
 import pytest
 
 from dimos.core.run_registry import RunEntry
-from experimental.gateway import launches
+from experimental.gateway import launches, shared_config
 
 
 def until(check: Callable[[], bool], seconds: float = 10.0) -> None:
@@ -329,6 +329,7 @@ def test_recordings_is_the_standard_directory(
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         f"recordings:\n  dir: {tmp_path / 'recs'}\n"
     )
+    shared_config.shared_config.cache_clear()
     assert client.get("/history/recordings").json() == {"path": str(tmp_path / "recs")}
 
 
@@ -340,27 +341,28 @@ def test_a_reused_pid_is_not_the_launch(client: TestClient) -> None:
 def test_shared_config_yaml_sets_the_namespace_connect_and_socket_but_not_a_runs_gossip(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from experimental.gateway import events, shared_config
+    from experimental.gateway import events
 
-    assert (events.resolve_namespace(), shared_config.setting("dimos-gateway", "socket")) == (
-        None,
-        None,
-    )
+    assert (events.resolve_namespace(), shared_config.shared_config().socket) == (None, None)
     (tmp_path / "dimos_home").mkdir(exist_ok=True)
     (tmp_path / "dimos_home" / "config.yaml").write_text(
         "zenoh: {namespace: desk1, connect: 'tcp/10.0.0.2:7447', gossip: false}\n"
         "dimos-gateway: {socket: /tmp/gw.sock}\ndesktop: {port: 5555}\n"
     )
+    # read once: a config.yaml written after the first read changes nothing until a reload
+    assert events.resolve_namespace() is None
+    shared_config.shared_config.cache_clear()
     assert events.resolve_namespace() == "desk1"
     assert events.resolve_connect() == ["tcp/10.0.0.2:7447"]
-    assert shared_config.setting("dimos-gateway", "socket") == "/tmp/gw.sock"
+    assert shared_config.shared_config().socket == "/tmp/gw.sock"
     app = {
         "home": str(tmp_path / "dimos_home"),
         "socket": "/tmp/app.sock",
         "zenohNamespace": "app1",
     }
     monkeypatch.setenv("DIMOS_APP", json.dumps(app))
-    assert (events.resolve_namespace(), shared_config.setting("dimos-gateway", "socket")) == (
+    shared_config.shared_config.cache_clear()
+    assert (events.resolve_namespace(), shared_config.shared_config().socket) == (
         "app1",
         "/tmp/app.sock",
     )

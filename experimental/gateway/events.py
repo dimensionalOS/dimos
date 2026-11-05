@@ -35,7 +35,7 @@ logger = setup_logger()
 
 
 def resolve_namespace() -> str | None:
-    namespace: str | None = shared_config.setting("zenoh", "namespace")
+    namespace = shared_config.shared_config().zenoh_namespace
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -46,7 +46,7 @@ def resolve_namespace() -> str | None:
 def resolve_connect() -> list[str]:
     from dimos.core.global_config import global_config
 
-    value = shared_config.setting("zenoh", "connect") or global_config.zenoh_connect
+    value = shared_config.shared_config().zenoh_connect or global_config.zenoh_connect
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
@@ -249,12 +249,11 @@ async def watch_config(
     Only the settings that actually moved are reported: a save that rewrites the file without
     changing an answer, or that changes a key the gateway does not read, is not news.
     """
-    home = shared_config.dimos_home()
+    home = shared_config.shared_config().home
     home.mkdir(parents=True, exist_ok=True)
-    config_name = shared_config.config_file().name
 
     def is_shared_config(_change: watchfiles.Change, path: str) -> bool:
-        return Path(path).name == config_name
+        return Path(path).name == "config.yaml"
 
     wake = asyncio.Event()
     watcher = asyncio.create_task(
@@ -266,6 +265,8 @@ async def watch_config(
         while True:
             await wake.wait()
             wake.clear()
+            # the change is news before Desktop restarts the gateway, so it is read again here
+            shared_config.shared_config.cache_clear()
             current = store.shared_settings()
             moved = sorted(
                 key for key in {*settings, *current} if settings.get(key) != current.get(key)

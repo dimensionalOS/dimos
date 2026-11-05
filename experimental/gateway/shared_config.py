@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The gateway's settings: `DIMOS_APP` (what Desktop starts it with), else `<home>/config.yaml`."""
+"""The gateway's settings, read once: `DIMOS_APP` (what Desktop starts it with), else `<home>/config.yaml`."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import functools
 import json
 import os
 from pathlib import Path
@@ -27,16 +29,17 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# config.yaml (section, key) -> the DIMOS_APP field that wins over it (Desktop's app contract names)
-APP_FIELDS = {
-    ("dimos-gateway", "socket"): "socket",
-    ("recordings", "dir"): "recordingsDir",
-    ("zenoh", "namespace"): "zenohNamespace",
-    ("zenoh", "connect"): "zenohConnect",
-}
+
+@dataclass(frozen=True)
+class SharedConfig:
+    home: Path
+    socket: str | None
+    recordings_dir: str | None
+    zenoh_namespace: str | None
+    zenoh_connect: str | None
 
 
-def app_env() -> dict[str, Any]:
+def _app_env() -> dict[str, Any]:
     """`DIMOS_APP` as JSON; an unusable one is warned about and ignored, since every field has a fallback."""
     text = os.environ.get("DIMOS_APP")
     if not text:
@@ -49,40 +52,32 @@ def app_env() -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def dimos_home() -> Path:
-    """`DIMOS_APP`'s `home`, else `~/.dimos`."""
-    home = app_env().get("home")
-    return Path(home) if home else Path.home() / ".dimos"
-
-
-def config_file() -> Path:
-    return dimos_home() / "config.yaml"
-
-
-# config.yaml parsed once per change (a parse is ~50 ms on the M20, and GET /info reads it each call)
-_parsed: tuple[tuple[int, int], Any] | None = None
-
-
-def _loaded(path: Path) -> Any:
-    global _parsed
+def _config_yaml(home: Path) -> dict[str, Any]:
     try:
-        stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size)
-        if _parsed is None or _parsed[0] != key:
-            _parsed = (key, yaml.safe_load(path.read_text()) or {})
+        loaded = yaml.safe_load((home / "config.yaml").read_text()) or {}
     except (OSError, yaml.YAMLError):
-        return None
-    return _parsed[1]
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
-def setting(section: str, key: str) -> Any:
-    """`DIMOS_APP`'s field for it, else config.yaml's; None when neither has it (empty counts as unset)."""
-    field = APP_FIELDS.get((section, key))
-    value = app_env().get(field) if field else None
-    if value not in (None, ""):
-        return value
-    loaded = _loaded(config_file())
-    if loaded is None:
-        return None
-    value = (loaded.get(section) or {}).get(key) if isinstance(loaded, dict) else None
-    return None if value == "" else value
+@functools.cache
+def shared_config() -> SharedConfig:
+    """Read on first use and kept: Desktop restarts the gateway when any of these change."""
+    app = _app_env()
+    home = Path(app["home"]) if app.get("home") else Path.home() / ".dimos"
+    on_disk = _config_yaml(home)
+
+    def pick(field: str | None, section: str, key: str) -> Any:
+        """`DIMOS_APP`'s field, else config.yaml's; None when neither has it (empty counts as unset)."""
+        if field and app.get(field) not in (None, ""):
+            return app[field]
+        value = (on_disk.get(section) or {}).get(key)
+        return None if value == "" else value
+
+    return SharedConfig(
+        home=home,
+        socket=pick("socket", "dimos-gateway", "socket"),
+        recordings_dir=pick("recordingsDir", "recordings", "dir"),
+        zenoh_namespace=pick("zenohNamespace", "zenoh", "namespace"),
+        zenoh_connect=pick("zenohConnect", "zenoh", "connect"),
+    )

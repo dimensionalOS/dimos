@@ -134,7 +134,7 @@ def gateway(
     zenoh: bool = typer.Option(True),
     ready_fd: int = typer.Option(None, hidden=True),
 ) -> None:
-    configured = shared_config.setting("dimos-gateway", "socket")
+    configured = shared_config.shared_config().socket
     socket_path = Path(configured) if configured else store.gateway_dir() / "dimos-gateway.sock"
     if detach_:
         detach([arg for arg in sys.argv[1:] if arg != "--detach"], socket_path)
