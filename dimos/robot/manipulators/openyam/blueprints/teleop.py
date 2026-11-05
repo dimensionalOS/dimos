@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -39,6 +38,7 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.coordinator import OpenYamTeleopCoordinator
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
@@ -89,7 +89,7 @@ keyboard_teleop_openyam = autoconnect(
 
 OPENYAM_WEBXR_TASK_NAME = "teleop_openyam"
 
-_openyam_webxr_pink = PinkKinematicsConfig(
+OPENYAM_QUEST_KINEMATICS = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
@@ -98,11 +98,11 @@ _openyam_webxr_pink = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-_openyam_webxr_hw = openyam_hardware()
-_openyam_webxr_model = make_openyam_model_config()
-_openyam_webxr_task = teleop_ik_task(
-    _openyam_webxr_hw,
-    robot_model=_openyam_webxr_model,
+OPENYAM_QUEST_HARDWARE = openyam_hardware()
+OPENYAM_QUEST_MODEL = make_openyam_model_config()
+_openyam_quest_task = teleop_ik_task(
+    OPENYAM_QUEST_HARDWARE,
+    robot_model=OPENYAM_QUEST_MODEL,
     name=OPENYAM_WEBXR_TASK_NAME,
     joint_names=OPENYAM_ARM_JOINTS,
     priority=20,
@@ -114,7 +114,7 @@ _openyam_webxr_task = teleop_ik_task(
         }
     ],
     params={
-        "pink": _openyam_webxr_pink,
+        "pink": OPENYAM_QUEST_KINEMATICS,
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
@@ -122,28 +122,35 @@ _openyam_webxr_task = teleop_ik_task(
     },
 )
 
-# Single-arm WebXR teleop: right controller -> OpenYAM arm
+
+def openyam_quest_tasks() -> list[TaskConfig]:
+    """Build the canonical Quest control tasks."""
+    return [
+        _openyam_quest_task,
+        TaskConfig(
+            name="arm_gripper",
+            type="gripper",
+            joint_names=[OPENYAM_GRIPPER_JOINT],
+            priority=20,
+            params={"hold_duration": 0.1},
+            stream_bind={"gripper_command": "right_gripper_command"},
+        ),
+        _trajectory_task(priority=10),
+    ]
+
+
+# Single-arm Quest teleop: right controller -> OpenYAM arm
 teleop_webxr_openyam = autoconnect(
     ArmTeleopModule.blueprint(zero_button="B"),
-    TeleopControlCoordinator.blueprint(
+    OpenYamTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        hardware=[_openyam_webxr_hw],
-        tasks=[
-            _openyam_webxr_task,
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=[OPENYAM_GRIPPER_JOINT],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            _trajectory_task(priority=10),
-        ],
+        hardware=[OPENYAM_QUEST_HARDWARE],
+        tasks=openyam_quest_tasks(),
     ),
     ManipulationModule.blueprint(
         gripper_tasks={"manipulator": "arm_gripper"},
-        model=_openyam_webxr_model,
-        kinematics=_openyam_webxr_pink,
+        model=OPENYAM_QUEST_MODEL,
+        kinematics=OPENYAM_QUEST_KINEMATICS,
         visualization={"backend": "viser"},
     ),
 ).remappings(

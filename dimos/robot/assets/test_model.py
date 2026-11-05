@@ -14,12 +14,12 @@
 
 from collections.abc import Callable
 from pathlib import Path
-import pickle
 import xml.etree.ElementTree as ET
 
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
 from dimos.utils.data import LfsPath
 
@@ -703,7 +703,7 @@ def test_with_fixed_frame_rejects_invalid_model(
         model.load()
 
 
-def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
+def test_roundtrip_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
         "<robot name='before'><link name='base'/><link name='slider'/><link name='camera'/>"
@@ -721,7 +721,7 @@ def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> No
     )
     assert ET.fromstring(model.load().xml).get("name") == "before"
 
-    restored = pickle.loads(pickle.dumps(model))
+    restored = decode(encode(model))
     urdf.write_text(urdf.read_text().replace("name='before'", "name='after'"))
     root = ET.fromstring(restored.load().xml)
 
@@ -737,3 +737,33 @@ def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="must reference a .urdf or .xacro"):
         model.load()
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, float("nan"), float("inf")])
+def test_joint_velocity_limits_reject_invalid_values(tmp_path: Path, value: float) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        robot_model.RobotModel.from_file(tmp_path / "robot.urdf").with_joint_velocity_limits(
+            {"slide": value}
+        )
+
+
+def test_joint_velocity_limits_replace_only_requested_limits(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='tip'/>"
+        "<joint name='slide' type='prismatic'><parent link='base'/><child link='tip'/>"
+        "<limit lower='0' upper='1' effort='10' velocity='50'/></joint></robot>"
+    )
+    loaded = (
+        robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits({"slide": 0.2}).load()
+    )
+    limit = ET.fromstring(loaded.xml).find("joint/limit")
+    assert limit is not None
+    assert limit.attrib == {"lower": "0", "upper": "1", "effort": "10", "velocity": "0.2"}
+    assert "velocity='50'" in urdf.read_text()
+    with pytest.raises(ValueError, match="Joint not found"):
+        robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits({"missing": 0.2}).load()
+    with pytest.raises(ValueError, match="already replaced"):
+        robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits(
+            {"slide": 0.2}
+        ).with_joint_velocity_limits({"slide": 0.3}).load()

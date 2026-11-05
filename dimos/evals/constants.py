@@ -18,6 +18,7 @@
 PROVIDERS: dict[str, tuple[str, str]] = {
     "openai": ("OPENAI_API_KEY", "https://api.openai.com/v1"),
     "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com"),
+    "google": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta"),
 }
 
 # Host variables a Pi process may inherit; the provider key is added by name.
