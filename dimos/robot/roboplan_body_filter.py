@@ -17,7 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 import importlib
+from typing import Literal
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -28,13 +30,31 @@ from dimos.utils.transform_utils import matrix_to_pose
 
 
 class RoboPlanBodyFilter:
-    """Which points (in the URDF root frame) lie on the robot's collision geometry, padded by padding_m."""
+    """Which points (in the URDF root frame) lie on the robot's selected geometry, padded by padding_m."""
 
-    def __init__(self, description: LoadedRobotModel, padding_m: float) -> None:
+    def __init__(
+        self,
+        description: LoadedRobotModel,
+        padding_m: float,
+        geometry: Literal["collision", "visual"] = "collision",
+    ) -> None:
         # RoboPlan is optional for stacks that never self-filter.
         native = importlib.import_module("roboplan.core")
         root = ET.fromstring(description.xml)
         root.set("version", "1.0")
+        if geometry == "visual":
+            # The filter has its own model: optical masking must also cover
+            # visual-only parts, without adding physical collisions to a robot.
+            for link in root.findall("link"):
+                visuals = link.findall("visual")
+                if visuals:
+                    for collision in link.findall("collision"):
+                        link.remove(collision)
+                    for visual in visuals:
+                        collision = ET.SubElement(link, "collision")
+                        for child in visual:
+                            if child.tag in {"origin", "geometry"}:
+                                collision.append(deepcopy(child))
         self._scene = native.Scene(
             "dimos_self_filter",
             native.loadUrdfSceneDescriptionFromXml(

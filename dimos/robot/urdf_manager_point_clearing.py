@@ -17,13 +17,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Mapping
 import time
-from typing import Protocol
+from typing import Literal, Protocol
 
+from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import Field
+from scipy.spatial.transform import Rotation
 
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -39,6 +42,7 @@ logger = setup_logger()
 
 class UrdfManagerPointClearingConfig(UrdfManagerConfig):
     padding_m: float = Field(default=0.01, ge=0.0)
+    filter_geometry: Literal["collision", "visual"] = "collision"
     # How far a cloud's capture time may be from the tf and joint state it is matched with.
     tf_tolerance_s: float = Field(default=0.02, ge=0.0)
     tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
@@ -59,12 +63,32 @@ class UrdfManagerPointClearing(UrdfManager):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
-            self._description, self.config.padding_m
+            self._description, self.config.padding_m, self.config.filter_geometry
         )
         self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
+        self._observations: deque[WorldState] = deque(maxlen=4096)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+
+    async def handle_observations(self, sample: WorldState) -> None:
+        """Keep capture-time simulation poses for self-filtering, then publish TF as usual."""
+        with self._lock:
+            if self._observations:
+                last = self._observations[-1].header
+                if sample.header.clock_id != last.clock_id:
+                    raise ValueError("self-filter clock changed; restart its binding")
+                if sample.header.epoch < last.epoch:
+                    return
+                if sample.header.epoch > last.epoch:
+                    self._observations.clear()
+                elif sample.header.time_ns <= last.time_ns:
+                    return
+            self._observations.append(sample)
+            cutoff = sample.header.time_ns - round(self.config.state_history_s * 1e9)
+            while len(self._observations) > 1 and self._observations[0].header.time_ns < cutoff:
+                self._observations.popleft()
+        await super().handle_observations(sample)
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
@@ -114,6 +138,8 @@ class UrdfManagerPointClearing(UrdfManager):
             filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
             for name, values in cloud.pointcloud_tensor.point.items():
                 filtered.pointcloud_tensor.point[name] = values[keep]
+            if cloud.sample_header is not None:
+                filtered.with_sample_header(cloud.sample_header)
             return filtered
 
     def _on_pointcloud(self, cloud: PointCloud2) -> None:
@@ -126,6 +152,8 @@ class UrdfManagerPointClearing(UrdfManager):
         self, cloud: PointCloud2, points: NDArray[np.float32]
     ) -> NDArray[np.bool_] | None:
         """One keep flag per point (input order), or None when the capture-time state or tf is missing."""
+        if self._observations:
+            return self._observed_keep_mask(cloud, points)
         base_from_sensor = self._tf_at(self._base_link, cloud.frame_id, cloud.ts)
         state = self._capture_state(cloud.ts)
         motions = self._multi_dof_motions(cloud.ts)
@@ -138,6 +166,63 @@ class UrdfManagerPointClearing(UrdfManager):
             keep = self._body_filter.keep_mask(base_points, state, motions)
         if keep is None:
             logger.warning("Dropping cloud: capture-time robot state or TF unavailable")
+        return keep
+
+    def _observed_keep_mask(
+        self, cloud: PointCloud2, points: NDArray[np.float32]
+    ) -> NDArray[np.bool_] | None:
+        """Use the same physical samples as rolling lidar, without mixing reset epochs in TF.
+
+        Raw sensor-axis clouds and truth-registered world clouds are supported.
+        Estimated/deskewed clouds must be filtered before the estimator instead.
+        """
+        header = cloud.sample_header
+        latest = self._observations[-1].header
+        if header is None or (header.clock_id, header.epoch) != (latest.clock_id, latest.epoch):
+            return None
+        offsets = cloud.offset_times_u32()
+        if offsets is None:
+            offsets = np.zeros(len(points), dtype=np.uint32)
+        # Bound articulated collision queries to 5 ms batches, like sim lidar.
+        buckets = offsets // 5_000_000
+        keep = np.zeros(len(points), dtype=bool)
+        for bucket in np.unique(buckets):
+            indices = np.flatnonzero(buckets == bucket)
+            stamp = header.time_ns + int(offsets[indices].min())
+            state = next(
+                (s for s in reversed(self._observations) if s.header.time_ns <= stamp), None
+            )
+            if state is None or stamp - state.header.time_ns > self.config.state_tolerance_s * 1e9:
+                return None
+            poses = {"world": np.eye(4)}
+            for body in state.bodies:
+                p, q = body.pose.position, body.pose.orientation
+                transform = np.eye(4)
+                transform[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+                transform[:3, 3] = [p.x, p.y, p.z]
+                poses[body.body_id] = transform
+            if self._base_link not in poses or cloud.frame_id not in poses:
+                return None
+            root_from_cloud = np.linalg.inv(poses[self._base_link]) @ poses[cloud.frame_id]
+            root_points = points[indices] @ root_from_cloud[:3, :3].T + root_from_cloud[:3, 3]
+            joints = state.joint_truth
+            if len(joints.name) != len(joints.position):
+                return None
+            positions = dict(zip(joints.name, joints.position, strict=True))
+            motions = {}
+            for joint in self._description.joints:
+                if joint.type in MULTI_DOF_JOINT_TYPES:
+                    if joint.parent_link not in poses or joint.child_link not in poses:
+                        return None
+                    motions[joint.name] = (
+                        np.linalg.inv(joint.origin())
+                        @ np.linalg.inv(poses[joint.parent_link])
+                        @ poses[joint.child_link]
+                    )
+            mask = self._body_filter.keep_mask(root_points, positions, motions)
+            if mask is None:
+                return None
+            keep[indices] = mask
         return keep
 
     def _capture_state(self, stamp: float) -> dict[str, float] | None:

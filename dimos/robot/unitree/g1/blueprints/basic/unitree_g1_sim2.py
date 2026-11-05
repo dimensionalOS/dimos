@@ -32,7 +32,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.sim2_policy import CONTROL, JOINTS, POLICY, G1PolicyModule
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
@@ -107,15 +107,19 @@ def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
                 sensor_frame_id="g1/mid360_link",
                 # The simulated device IMU is colocated with the laser.
                 extrinsic_t=[0.0, 0.0, 0.0],
-            ),
+            ).remappings([(PointLio, "lidar_raw", "filtered_pointcloud")]),
         )
         if pointlio
         else ()
     )
     return autoconnect(
-        UrdfManager.blueprint(
+        UrdfManagerPointClearing.blueprint(
             models=MODELS,
+            padding_m=0.03,
+            filter_geometry="visual",
             external_pose_frames={"g1": "g1/mid360_link"} if pointlio else {},
+        ).remappings(
+            [(UrdfManagerPointClearing, "pointcloud", "lidar_raw" if pointlio else "pointcloud")]
         ),
         SimModule.blueprint(
             scene=SCENE,
@@ -144,7 +148,9 @@ def _g1_sim2(*, pointlio: bool = False) -> Blueprint:
             carve_columns=False,
             block_count=100_000,
             frame_id="odom" if pointlio else "world",
-        ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
+        ).remappings(
+            [(VoxelGridMapper, "lidar", "pointcloud" if pointlio else "filtered_pointcloud")]
+        ),
         G1PolicyModule.blueprint(),
         *localization,
     )

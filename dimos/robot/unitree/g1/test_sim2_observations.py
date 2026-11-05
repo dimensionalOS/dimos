@@ -14,6 +14,7 @@
 
 """Real G1 geometry and GR00T weights through ordinary worker/transport lifecycle."""
 
+import asyncio
 from collections import defaultdict, deque
 from contextlib import ExitStack
 from dataclasses import replace
@@ -32,6 +33,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import (
+    JOINTS,
     LIDAR,
     MODELS,
     SCENE,
@@ -39,6 +41,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import (
     unitree_g1_sim2_pointlio,
 )
 from dimos.robot.unitree.g1.sim2_policy import G1PolicyModule
+from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
@@ -79,6 +82,7 @@ def g1_measurements(deployed_g1):
         for topic, message in (
             ("global_map", PointCloud2),
             ("lidar_raw", PointCloud2),
+            ("filtered_pointcloud", PointCloud2),
             ("imu_raw", Imu),
             ("tf", TFMessage),
         ):
@@ -109,6 +113,7 @@ def test_g1_walks_moves_an_arm_and_resets_with_independent_sensors(
     cloud = g1_measurements["global_map"][-1]
     assert len(cloud) > 300
     assert cloud.frame_id == g1_configuration[1]
+    assert g1_measurements["filtered_pointcloud"]
     assert cloud.sample_header.clock_id == sim.inspect().header.clock_id
     raw = g1_measurements["lidar_raw"][-1]
     assert raw.frame_id == "g1/mid360_link"
@@ -162,16 +167,21 @@ def test_g1_mid360_mount_observes_the_floor_instead_of_its_head():
         cleanup.callback(lidar.dispose)
         lidar.open_sensor(scene)
         cleanup.callback(lidar.close_sensor)
+        self_filter = UrdfManagerPointClearing(
+            models=MODELS, padding_m=0.03, filter_geometry="visual", publish_joint_tf=False
+        )
+        cleanup.callback(self_filter.dispose)
         for tick in range(51):
             bodies = backend.read_bodies()
-            scan = lidar.measure(
-                WorldState(
-                    header=SampleHeader(clock_id="g1-mount-test", time_ns=tick * 2_000_000),
-                    model_revision=scene.revision,
-                    bodies_length=len(bodies),
-                    bodies=bodies,
-                )
+            state = WorldState(
+                header=SampleHeader(clock_id="g1-mount-test", time_ns=tick * 2_000_000),
+                model_revision=scene.revision,
+                bodies_length=len(bodies),
+                bodies=bodies,
+                joint_truth=backend.read_joints(JOINTS),
             )
+            asyncio.run(self_filter.handle_observations(state))
+            scan = lidar.measure(state)
         assert scan is not None
         raw, world = scan
         floor = world.points_f32()[np.abs(world.points_f32()[:, 2]) < 0.05]
@@ -179,3 +189,36 @@ def test_g1_mid360_mount_observes_the_floor_instead_of_its_head():
         assert np.ptp(floor[:, 0]) > 4
         assert np.ptp(floor[:, 1]) > 4
         assert np.median(raw.points_f32()[:, 2]) > 0
+
+        filtered_raw = self_filter.filter_cloud(raw)
+        filtered_world = self_filter.filter_cloud(world)
+        assert filtered_raw is not None and filtered_world is not None
+        assert len(filtered_raw) == len(filtered_world) < len(raw)
+        points = filtered_world.points_f32()
+        assert not np.any((np.linalg.norm(points[:, :2], axis=1) < 0.8) & (points[:, 2] > 0.08))
+        # Preserve distant environment returns, rather than hiding the robot from rays.
+        outside = np.linalg.norm(world.points_f32()[:, :2], axis=1) > 0.8
+        kept_outside = np.linalg.norm(points[:, :2], axis=1) > 0.8
+        np.testing.assert_allclose(points[kept_outside], world.points_f32()[outside])
+
+
+@pytest.mark.parametrize("g1_configuration", [(unitree_g1_sim2, "world")], indirect=True)
+def test_g1_truth_map_has_no_body_trail_after_walking(deployed_g1, g1_measurements):
+    sim = deployed_g1.get_instance(SimModule)
+    policy = deployed_g1.get_instance(G1PolicyModule)
+    wait_until(lambda: sim.status()["time_ns"] > 2_000_000_000, timeout=40)
+    start = sim.inspect().header.time_ns
+    policy.arm_joint("g1/left_elbow_joint", 1.4)
+    policy.move(Twist(linear=Vector3(0.2, 0, 0)), duration=20)
+    wait_until(lambda: sim.status()["time_ns"] > start + 3_000_000_000, timeout=40)
+    policy.move(Twist(), duration=1)
+    wait_until(
+        lambda: bool(g1_measurements["global_map"])
+        and g1_measurements["global_map"][-1].sample_header.time_ns > start + 3_000_000_000,
+        timeout=20,
+    )
+    p = g1_measurements["global_map"][-1].points_f32()
+    # Only floor lies along this route; the desk and box are outside the corridor.
+    corridor = (p[:, 0] > -0.5) & (p[:, 0] < 0.9) & (np.abs(p[:, 1]) < 0.5)
+    assert np.count_nonzero(corridor) > 20
+    assert not np.any(corridor & (p[:, 2] > 0.15))
