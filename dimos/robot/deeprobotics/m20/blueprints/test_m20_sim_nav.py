@@ -23,16 +23,13 @@ from dimos.core.module import ModuleBase
 from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    m20_nav_overrides,
-    m20_nav_stack,
-    m20_nav_static,
-)
+from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
 from dimos.robot.deeprobotics.m20.blueprints.m20_nav import (
     deeprobotics_m20_kronknav_control as m20_nav,
 )
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode import m20_sim_nav_episode
+from dimos.robot.deeprobotics.m20.rerun import m20_nav_overrides, m20_nav_static
 from dimos.simulation.m20_sim.world import SIM_M20, STEP_LIMIT
 from dimos.spec.utils import Spec
 from dimos.visualization.rerun.bridge import RerunBridgeModule

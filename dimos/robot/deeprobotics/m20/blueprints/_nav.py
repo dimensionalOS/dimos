@@ -12,37 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's navigation fragment: voxel map, planners and follower over the vendor LIO."""
+"""The M20's navigation stack: voxel map, planners and follower over the vendor LIO."""
 
 from __future__ import annotations
-
-from collections.abc import Callable
-from types import ModuleType
-from typing import TYPE_CHECKING
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
-from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
-from dimos.navigation.global_planner.viz import render_path
 from dimos.navigation.local_planner.native import LocalPlannerNative
-from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
-from dimos.robot.deeprobotics.m20.constants import (
-    BASE_LINK_HEIGHT_M,
-    BODY_LENGTH_M,
-    BODY_WIDTH_M,
-    PLANNING_HEIGHT_M,
-    WORLD_FRAME,
-)
-
-if TYPE_CHECKING:
-    from rerun._baseclasses import Archetype
-
-    from dimos.visualization.rerun.bridge import VisualOverride
+from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 
 VOXEL_SIZE_M = 0.08
 WALL_CLEARANCE_M = 0.3
@@ -84,36 +66,3 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> Blueprint:
         TrajectoryFollowerNative.blueprint(embodiment=embodiment),
         MovementManager.blueprint(),
     )
-
-
-def _robot_body(rr: ModuleType) -> list[Archetype]:
-    return [
-        rr.Boxes3D(
-            half_sizes=[
-                BODY_LENGTH_M * 0.5,
-                BODY_WIDTH_M * 0.5,
-                PLANNING_HEIGHT_M * 0.5,
-            ],
-            centers=[0.0, 0.0, PLANNING_HEIGHT_M * 0.5 - BASE_LINK_HEIGHT_M],
-            colors=[(0, 255, 127)],
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
-
-
-def m20_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
-    """Bridge static entities for navigation: the body box on base_link."""
-    return {"world/robot_body": _robot_body}
-
-
-def m20_nav_overrides() -> dict[str, VisualOverride]:
-    """Bridge overrides for the navigation maps, paths and planner debug, with the raw clouds hidden."""
-    return {
-        "world/lidar": None,
-        "world/slam_body_points": None,
-        "world/planner_path": render_path,
-        **motion_visual_override(embodiment=M20),
-        **planner_visual_override(
-            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
-        ),
-    }

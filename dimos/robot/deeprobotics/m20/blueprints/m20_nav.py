@@ -14,94 +14,22 @@
 
 """Robot-local M20 integration for the current DimOS 3D navigation stack."""
 
-from typing import Any
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
-from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    m20_nav_overrides,
-    m20_nav_stack,
-    m20_nav_static,
-)
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
+from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
+from dimos.robot.deeprobotics.m20.rerun import m20_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
-
-def _render_h265(msg: CompressedVideo) -> Any:
-    import rerun as rr
-
-    return rr.VideoStream(codec=rr.VideoCodec.H265, sample=msg.data.tobytes())
-
-
-def _render_front_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/front_camera",
-        optical_frame="front_camera_optical",
-    )
-
-
-def _render_rear_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/rear_camera",
-        optical_frame="rear_camera_optical",
-    )
-
-
-def _m20_rerun_blueprint() -> Any:
-    """Go2-style navigation layout with both M20 camera streams."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Vertical(
-                rrb.Spatial2DView(origin="world/front_camera", name="Front Camera"),
-                rrb.Spatial2DView(origin="world/rear_camera", name="Rear Camera"),
-                row_shares=[1, 1],
-            ),
-            rrb.Spatial3DView(
-                origin="world",
-                name="M20 nav",
-                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-                line_grid=rrb.LineGrid3D(
-                    plane=rr.components.Plane3D.XY.with_distance(0.5),
-                ),
-            ),
-            column_shares=[1, 2],
-        ),
-        rrb.TimePanel(state="hidden"),
-        rrb.SelectionPanel(state="hidden"),
-    )
-
-
-_rerun_config = {
-    "pubsubs": [Zenoh()],
-    "blueprint": _m20_rerun_blueprint,
-    "tf_axes": 0.35,
-    "max_hz": {
-        "world/local_map": 0.5,
-    },
-    "visual_override": {
-        **m20_nav_overrides(),
-        "world/front_camera": _render_h265,
-        "world/rear_camera": _render_h265,
-        "world/front_camera_info": _render_front_camera_info,
-        "world/rear_camera_info": _render_rear_camera_info,
-    },
-    "static": m20_nav_static(),
-}
-
-
 deeprobotics_m20_kronknav_control = (
     autoconnect(
-        vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+        vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
         M20Connection.blueprint(auto_stand=True).remappings(
             [(M20Connection, "odometry", "slam_odom")]

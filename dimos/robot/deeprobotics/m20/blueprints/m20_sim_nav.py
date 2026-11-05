@@ -16,57 +16,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.robot.deeprobotics.m20.blueprints._nav import (
-    m20_nav_overrides,
-    m20_nav_stack,
-    m20_nav_static,
-)
+from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
 from dimos.robot.deeprobotics.m20.model import M20_MODEL
+from dimos.robot.deeprobotics.m20.rerun import m20_sim_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.m20_sim.world import SIM_M20, SimM20World
 from dimos.visualization.vis_module import vis_module
 
-if TYPE_CHECKING:
-    from rerun._baseclasses import Archetype
-    from rerun.blueprint import Blueprint
-
-    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-
-
-def _scene_lines(scene: LineSegments3D) -> Archetype:
-    return scene.to_rerun(radii=0.01)
-
-
-def _rerun_blueprint() -> Blueprint:
-    # rerun is heavy, loaded only in the viewer's worker
-    import rerun as rr
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Spatial3DView(
-            origin="world",
-            name="M20 sim",
-            background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-            line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
-        ),
-        rrb.TimePanel(state="hidden"),
-        rrb.SelectionPanel(state="hidden"),
-    )
-
-
-_rerun_config: dict[str, Any] = {
-    "blueprint": _rerun_blueprint,
-    "tf_axes": 0.35,
-    "static": m20_nav_static(),
-    "visual_override": {**m20_nav_overrides(), "world/scene": _scene_lines},
-}
-
 m20_sim_nav = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
+    vis_module(viewer_backend=global_config.viewer, rerun_config=m20_sim_rerun_config()),
     SimM20World.blueprint().remappings(
         [
             (SimM20World, "lidar", "slam_body_points"),
