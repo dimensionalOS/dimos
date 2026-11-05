@@ -56,7 +56,7 @@ def _mjcf_gripper_boxes(scene_xml: str) -> list[tuple[np.ndarray, np.ndarray]]:
 def test_the_gripper_boxes_match_the_sim_model() -> None:
     from dimos.utils.data import get_data
 
-    model = _mjcf_gripper_boxes(str(get_data("robosuite_2") / "bin" / "scene.xml"))
+    model = _mjcf_gripper_boxes(str(get_data("robosuite") / "lift" / "scene.xml"))
     ours = [
         (np.subtract(c, np.divide(s, 2)), np.add(c, np.divide(s, 2)))
         for c, s in gf.XARM_GRIPPER_BOXES

@@ -601,8 +601,8 @@ def word_partial(outcome: Outcome) -> float:
     return float(max(read(u) for u in (*ups[~free], *(-ups[flips]))))
 
 
-# Pour (data/robosuite_2/pour): a cup of balls that stand in for water, poured into a bowl with
-# slanted walls. Inside sizes, in each body's frame (origin at the centre of its base).
+# Pour (the evals repo's datasets/scenes/custom/pour): a cup of balls that stand in for water,
+# poured into a bowl with slanted walls. Inside sizes, in each body's frame (origin at the centre of its base).
 BALLS = tuple(f"ball{i}" for i in range(100))
 _CUP_R, _CUP_H = 0.033, 0.10
 _BOWL_R_BOTTOM, _BOWL_R_TOP, _BOWL_H = 0.05, 0.078, 0.055
