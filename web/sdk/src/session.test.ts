@@ -234,6 +234,37 @@ describe("Session over a fake WebTransport", () => {
     expect(relays.length).toBe(1);
   });
 
+  it("reports the lowest RTT among the last four matched pongs", async () => {
+    vi.useFakeTimers();
+    const relay = new FakeRelayEnd();
+    relay.answerPings = false;
+    const handle = connect({ pingIntervalMs: 1000 }, {
+      fetchInfo: async () => INFO,
+      createWebTransport: () => relay.wt,
+    });
+    handles.push(handle);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.rttMs()).toBeNull();
+    for (const [i, latency] of [50, 40, 30, 60, 80].entries()) {
+      await vi.advanceTimersByTimeAsync(i === 0 ? 1000 : 1000 - [50, 40, 30, 60][i - 1]);
+      await vi.advanceTimersByTimeAsync(latency);
+      relay.push({ t: "pong", n: i + 1, ts: 0, aborted: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(handle.rttMs()).toBe(30);
+    await vi.advanceTimersByTimeAsync(920);
+    await vi.advanceTimersByTimeAsync(90);
+    relay.push({ t: "pong", n: 6, ts: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.rttMs()).toBe(30);
+    await vi.advanceTimersByTimeAsync(910);
+    await vi.advanceTimersByTimeAsync(100);
+    relay.push({ t: "pong", n: 7, ts: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.rttMs()).toBe(60);
+    vi.useRealTimers();
+  });
+
   it("pings on the control stream and reconnects after two unanswered pings", async () => {
     const relays: FakeRelayEnd[] = [];
     const handle = connect({ pingIntervalMs: 20 }, {
