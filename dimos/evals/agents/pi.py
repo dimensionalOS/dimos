@@ -131,12 +131,6 @@ class PiAdapterConfig(ModelAgentConfig):
         "Answer the question from the files and tools listed below and nothing else."
     )
 
-    # Replaces system_prompt when the case drives a live robot.
-    robot_prompt: str = (
-        "Carry out the task on the live robot, using the files and tools listed below and "
-        "nothing else."
-    )
-
     # Extra guidance appended after system_prompt.
     instructions: str = ""
 
@@ -262,9 +256,7 @@ class PiAdapter(EvalSubject):
                 guide = run_dir / "DIMOS.md"
                 shutil.copyfile(env.python_guide, guide)
                 files["robot"] = guide
-        live = bool(env.mcp_url or env.python_guide or env.raw_endpoint)
-        parts = [self.config.robot_prompt if live else self.config.system_prompt]
-        parts.append(self.config.instructions)
+        parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.no_dimos:
             parts.append(NO_DIMOS_GUIDANCE)
