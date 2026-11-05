@@ -181,7 +181,6 @@ class MujocoBackend:
         q, v = self.model.jnt_qposadr[jid], self.model.jnt_dofadr[jid]
         self.data.qpos[q : q + 7] = (*pose[:3], *quat)
         self.data.qvel[v : v + 6] = 0
-        self.data.time = 0.0
         self.data.qfrc_applied[:] = 0
         self.data.qacc_warmstart[:] = 0
         mujoco.mj_forward(self.model, self.data)

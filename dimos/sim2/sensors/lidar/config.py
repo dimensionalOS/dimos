@@ -68,7 +68,6 @@ class UniformScan:
 class LidarConfig:
     frame_id: str
     pattern: Callable[[], ScanPattern] = UniformScan
-    source_id: str = "lidar"
     scan_hz: float = 10
     motion_hz: float = 200
     min_range: float = 0.05

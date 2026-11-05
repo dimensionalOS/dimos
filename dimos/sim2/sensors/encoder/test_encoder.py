@@ -33,7 +33,6 @@ def test_encoder_calibration_is_used_and_effort_is_not_fabricated(poses, encoder
     assert measured.position == pytest.approx([0.01])
     assert measured.effort == []
     restored = JointState.lcm_decode(measured.lcm_encode())
-    assert restored.sample_header.time_ns == 0
-    assert restored.sample_header.source_id == "encoders"
+    assert restored.ts == 0
     assert restored.position == measured.position
     assert encoder.measure(truth) is measured

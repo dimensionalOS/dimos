@@ -48,16 +48,5 @@ class Acquisition:
         return True
 
 
-def measurement_header(truth: SampleHeader, source: str, frame: str) -> SampleHeader:
-    return SampleHeader(
-        clock_id=truth.clock_id,
-        epoch=truth.epoch,
-        time_ns=truth.time_ns,
-        source_id=source,
-        sequence=truth.sequence,
-        frame_id=frame,
-    )
-
-
 def same_acquisition(a: SampleHeader, b: SampleHeader | None) -> bool:
     return b is not None and (a.clock_id, a.epoch, a.time_ns) == (b.clock_id, b.epoch, b.time_ns)
