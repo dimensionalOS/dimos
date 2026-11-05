@@ -180,10 +180,6 @@ def _with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
     return spec
 
 
-def _scene_id(sim: Sim) -> str:
-    return f"{sim.scene.name}-{id(sim)}"
-
-
 def scene_model(scene: Scene, robot: mujoco.MjSpec) -> mujoco.MjModel:
     """The scene's boxes and a robot spec, in one model for drawing."""
     model: mujoco.MjModel = _with_scene(robot, scene).compile()
@@ -484,7 +480,7 @@ class SimWorld(Module, ABC):
 
     def _scene_files(self, sim: Sim) -> dict[str, bytes]:
         # built once per scene: the world's geometry and textures never change while it runs
-        scene_id = _scene_id(sim)
+        scene_id = f"{sim.scene.name}-{id(sim)}"
         if getattr(self, "_files_for", None) != scene_id:
             robot = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_BODY, sim.rig.base_body)
             self._files = scene_files(sim.model, sim.data, scene_id, sim.rig.world_frame, robot)
