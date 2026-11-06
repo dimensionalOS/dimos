@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import sys
 from threading import Event
+from types import ModuleType
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
 import numpy as np
@@ -32,6 +34,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.manipulation.manipulation_module import (
     VOXEL_MAP_OBSTACLE_ID,
     ManipulationModule,
@@ -79,6 +82,30 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+
+
+def test_missing_roboplan_has_install_hint_before_construction(
+    monkeypatch, mocker, robot_config
+) -> None:
+    monkeypatch.setitem(sys.modules, "roboplan.core", None)
+    start = mocker.patch.object(ModuleCoordinator, "start")
+
+    with pytest.raises(ImportError, match="Install the manipulation extra"):
+        ModuleCoordinator.build(ManipulationModule.blueprint(model=robot_config))
+
+    start.assert_not_called()
+
+
+def test_available_roboplan_passes_dependency_check(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "roboplan.core", ModuleType("roboplan.core"))
+
+    assert ManipulationModule.check_dependencies(world_backend="roboplan") is None
+
+
+def test_drake_backend_does_not_require_roboplan(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "roboplan.core", None)
+
+    assert ManipulationModule.check_dependencies(world_backend="drake") is None
 
 
 def _control_coordinator(
