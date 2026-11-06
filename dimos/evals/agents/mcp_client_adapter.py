@@ -25,7 +25,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from dimos.agents.llm_trace import list_llm_trace_pairs
 from dimos.agents.mcp.constants import TURN_FAILED_KEY
-from dimos.evals.agents.base import EvalSubject, with_mcp_server
+from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
@@ -86,6 +86,8 @@ class McpClientAdapter(EvalSubject):
     uses the agent already supplied by the environment.
     """
 
+    requires_mcp = True
+
     def validate_tools(self) -> None:
         if self.config.no_dimos:
             raise ValueError("McpClientAdapter is dimOS's own agent")
@@ -94,9 +96,6 @@ class McpClientAdapter(EvalSubject):
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """The shipped agent can call every tool its MCP server exposes."""
         return environment_tools
-
-    def launch_modules(self, environment: Environment) -> tuple[str, ...]:
-        return with_mcp_server(environment, super().launch_modules(environment))
 
     def preflight(self, environment: Environment) -> None:
         if not environment.has_robot and not self.config.modules:

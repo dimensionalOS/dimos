@@ -30,7 +30,6 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from pydantic.alias_generators import to_camel
 
-from dimos.evals.agents.base import with_mcp_server
 from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig, read_pi_events
 from dimos.evals.environments.base import Environment
@@ -95,12 +94,13 @@ class DimosAgentAdapter(PiAdapter):
 
     The gateway keeps its config, state, cache and socket in per-case directories, sends
     model requests to the trace proxy through models.json, and links only to the case's
-    McpServer, which it adds itself to a suite that leaves it out for Pi. The agent keeps
-    its own system prompt, tools and skills; the shared case guidance accompanies the user
-    instruction.
+    McpServer, which the environment adds to a suite that leaves it out for Pi. The agent
+    keeps its own system prompt, tools and skills; the shared case guidance accompanies the
+    user instruction.
     """
 
     config: DimosAgentAdapterConfig
+    requires_mcp = True
 
     # The harness's tools without DimOS; inventory and agent_module join once the gateway links.
     default_tools: ClassVar[tuple[str, ...]] = (
@@ -130,9 +130,6 @@ class DimosAgentAdapter(PiAdapter):
             raise ValueError(
                 f"{name} does not support max_tool_seconds: its bash has no per-call time limit"
             )
-
-    def launch_modules(self, environment: Environment) -> tuple[str, ...]:
-        return with_mcp_server(environment, super().launch_modules(environment))
 
     def preflight(self, environment: Environment) -> None:
         super().preflight(environment)

@@ -135,7 +135,7 @@ class FakeEnvironment(Environment):
     def preflight(self, agent: Any) -> None:
         self.calls.append("preflight")
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         self.calls.append("start")
         return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": self.path})
 
@@ -425,15 +425,23 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
         (PiAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ()),
         (DimosAgentAdapter(), _sim(), ()),
         (McpClientAdapter(modules=("mcp-client",)), _sim(), ("mcp-client",)),
-        (McpClientAdapter(), DimSimEnvironment(blueprint=["unitree-go2"], attach=True), ()),
     ],
-    ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client", "attached"],
+    ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client"],
 )
-def test_agents_that_need_mcp_bring_it_to_a_python_api_suite(
+def test_the_environment_adds_mcp_server_for_agents_that_need_it(
     agent: EvalSubject, environment: LiveEnvironment, added: tuple[str, ...]
 ) -> None:
-    assert agent.launch_modules(environment) == added
+    assert environment._launch_modules(agent.config.modules, agent.requires_mcp) == added
     assert environment.python_guide == (None if environment.serves_mcp else PYTHON_API_GUIDE)
+
+
+def test_attaching_an_agent_that_needs_mcp_requires_a_running_mcp_server(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch("dimos.evals.environments.live.attached_mcp_url", return_value="")
+    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True)
+    with pytest.raises(RuntimeError, match="serving MCP"):
+        env.preflight(DimosAgentAdapter())
 
 
 def test_a_blueprint_with_mcp_server_fails_without_its_mcp_url(
@@ -767,7 +775,9 @@ def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
     seen: dict[str, set[str]] = {}
 
     class WithAnswers(FakeEnvironment):
-        def start(self, modules: Sequence[str]) -> RunningEnvironment:
+        def start(
+            self, modules: Sequence[str], *, requires_mcp: bool = False
+        ) -> RunningEnvironment:
             return RunningEnvironment(
                 mcp_url="", streams=(), artifacts={"recording": self.path, "answers": self.path}
             )
