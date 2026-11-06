@@ -439,7 +439,7 @@ class RobotModel:
         return self._materialize(xml, source_path, package_paths)
 
     def _materialize(
-        self, xml: str, source_path: Path | None, package_paths: dict[str, Path]
+        self, xml: str, source_path: Path | None, package_paths: Mapping[str, Path]
     ) -> LoadedRobotModel:
         """Apply this view's structural filters and edits to an already loaded XML."""
         if self._subtree_root_link is not None or self._removed_joint_subtrees:

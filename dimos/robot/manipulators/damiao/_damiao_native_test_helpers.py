@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -33,7 +32,7 @@ from dimos.robot.manipulators.damiao.robot import (
 )
 
 
-def make_test_robot(**overrides: object) -> DamiaoRobot:
+def make_test_robot() -> DamiaoRobot:
     """Three arm joints on two buses, plus one gripper on each bus."""
     model = fake_arm_model(("joint1", "joint2", "joint3"))
     robot = DamiaoRobot(
@@ -72,7 +71,7 @@ def make_test_robot(**overrides: object) -> DamiaoRobot:
         joint_names=["joint1", "joint2", "joint3", "left_gripper", "right_gripper"],
         gravity=False,
     )
-    return replace(robot, **overrides)
+    return robot
 
 
 #: The shared robot the Damiao fixtures deploy; tests clone it with overrides.

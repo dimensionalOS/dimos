@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
@@ -51,7 +51,7 @@ OPENYAM_ROLLOUT_JOINTS = [
 
 def _rollout_control(
     tasks: list[TaskConfig],
-    coordinator: type[DamiaoCoordinator] = DamiaoCoordinator,
+    coordinator: type[ControlCoordinator] = DamiaoCoordinator,
 ) -> Blueprint:
     """A trajectory coordinator named ControlCoordinator over the connection."""
     return autoconnect(
