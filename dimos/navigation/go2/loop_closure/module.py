@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import queue
-import sys
 import threading
 import time
 
@@ -69,19 +68,16 @@ class PGOVoxelMapperConfig(ModuleConfig):
     reloc_fitness_threshold: float = 0.45
     # Relocalize back to back until settled, then this often
     reloc_recheck_s: float = 30.0
-    # Loop closure corrects odometry drift. Simulators publish ground-truth odometry,
-    # so None means on, except in simulation (--simulation), where it is off.
-    loop_closure: bool | None = None
 
 
 def _pgo_config(cfg: PGOVoxelMapperConfig) -> PGOConfig:
-    """The PGO settings, with the loop search never starting when loop closure is off."""
-    loop_closure = cfg.loop_closure
-    if loop_closure is None:
-        loop_closure = not cfg.g.simulation
-    if loop_closure:
+    """The PGO settings, loop closure left on unless switched off or in simulation.
+
+    Simulators publish ground-truth odometry, so there is no drift for a loop to correct.
+    """
+    if cfg.pgo.loop_closure is not None:
         return cfg.pgo
-    return cfg.pgo.model_copy(update={"min_keyframes_for_loop_search": sys.maxsize})
+    return cfg.pgo.model_copy(update={"loop_closure": not cfg.g.simulation})
 
 
 class PGOVoxelMapper(Module):
