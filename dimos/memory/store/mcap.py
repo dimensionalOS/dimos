@@ -15,8 +15,7 @@
 """Read-only memory store backed by an mcap file.
 
 Generic and robot-independent. With ``decode_metadata=True``, trusted native
-DimOS metadata selects the codec and imports its payload type (``dimos.payload_type``,
-or an lcm channel's short ``lcm_type`` msg name). JPEG channels
+DimOS metadata selects the codec and imports its payload type. JPEG channels
 decode automatically because their payload type is fixed. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
@@ -271,16 +270,6 @@ class McapStore(Store):
                             f"Cannot decode MCAP stream {ch.topic!r}: install the package "
                             f"providing {payload_type!r} in the dataset reader environment"
                         ) from exc
-                lcm_type = ch.metadata.get("lcm_type")
-                if (
-                    decode_metadata
-                    and ch.topic not in self._codecs
-                    and ch.message_encoding == "lcm"
-                    and lcm_type
-                    and (msg_type := get_dimos_type(lcm_type)) is not None
-                ):
-                    # The dim-controller recorder names an lcm channel's type by its short dimos msg name.
-                    self._codecs[ch.topic] = _DimosCodec(msg_type)
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding == "json":

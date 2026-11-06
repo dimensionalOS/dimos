@@ -232,21 +232,7 @@ def test_a_missing_file_loads_nothing(tmp_path):
     assert load_locations(str(tmp_path / "absent.db"), "named_locations") == {}
 
 
-@pytest.mark.parametrize(
-    "topic, metadata",
-    [
-        # dimos's own tools and the Map Editor
-        (
-            "named_locations",
-            {
-                "dimos.payload_type": "dimos.msgs.visualization_msgs.InteractiveMarkerUpdate.InteractiveMarkerUpdate"
-            },
-        ),
-        # the dim-controller recorder, for a type it can't transcode to CDR
-        ("/named_locations", {"lcm_type": "visualization_msgs.InteractiveMarkerUpdate"}),
-    ],
-)
-def test_locations_are_loaded_from_an_mcap(tmp_path, topic, metadata):
+def test_locations_are_loaded_from_an_mcap(tmp_path):
     mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
     path = tmp_path / "walk.mcap"
     snapshot = InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map"))])
@@ -254,7 +240,12 @@ def test_locations_are_loaded_from_an_mcap(tmp_path, topic, metadata):
         writer = mcap_writer.Writer(output)
         writer.start()
         channel = writer.register_channel(
-            topic=topic, message_encoding="lcm", schema_id=0, metadata=metadata
+            topic="named_locations",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={
+                "dimos.payload_type": "dimos.msgs.visualization_msgs.InteractiveMarkerUpdate.InteractiveMarkerUpdate"
+            },
         )
         writer.add_message(
             channel_id=channel, log_time=1, publish_time=1, data=snapshot.lcm_encode()

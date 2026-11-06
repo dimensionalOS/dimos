@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
     """Open an already-resolved dataset *path*, dispatching on its extension.
 
-    ``decode_metadata`` trusts an .mcap channel's ``dimos.payload_type`` or ``lcm_type`` (see ``McapStore``).
+    ``decode_metadata`` trusts an .mcap channel's ``dimos.payload_type`` (see ``McapStore``).
     """
     s = str(path)
     if s.endswith(".mcap"):
