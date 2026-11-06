@@ -16,7 +16,6 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
-import time
 from typing import Any
 import uuid
 import warnings
@@ -33,27 +32,28 @@ from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
-import requests
 
+from dimos.agents.base_agent import BaseAgent
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
+from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.stream import In, Out
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 # How much of a failed turn's error message goes into the agent's history.
 _FAILED_TURN_ERROR_CHARS = 300
+_MCP_TIMEOUT_S = 120
+_MCP_READY_TIMEOUT_S = 60.0
 
 
 def _preload_agent_deps() -> None:
@@ -89,20 +89,17 @@ def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     )
 
 
-class McpClientConfig(ModuleConfig):
+class AgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
-    # None: the McpServer in this blueprint, or the default endpoint without one.
+    # None: the McpServer in this blueprint; without one the agent has no tools.
     mcp_server_url: str | None = None
     trace_dir: Path | None = None
 
 
-class McpClient(Module):
-    config: McpClientConfig
-    agent: Out[BaseMessage]
-    human_input: In[str]
-    agent_idle: Out[bool]
+class Agent(BaseAgent):
+    config: AgentConfig
 
     # Injected when the blueprint has an McpServer.
     _mcp_server: McpServerSpec | None = None
@@ -115,8 +112,7 @@ class McpClient(Module):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
-    _http_client: requests.Session
-    _seq_ids: SequentialIds
+    _mcp: McpAdapter | None
     _tool_stream_cleanup: Callable[[], None] | None
 
     def __init__(self, **kwargs: Any) -> None:
@@ -133,52 +129,24 @@ class McpClient(Module):
             daemon=True,
         )
         self._stop_event = Event()
-        self._http_client = requests.Session()
-        self._seq_ids = SequentialIds()
+        self._mcp = None
         self._tool_stream_cleanup = None
-        self._mcp_url: str | None = None
-        Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
+        Thread(target=_preload_agent_deps, name="Agent-preload", daemon=True).start()
 
-    def _server_url(self) -> str:
-        """The MCP endpoint: configured, else the blueprint's McpServer, else the default."""
-        if self._mcp_url is None:
-            if self.config.mcp_server_url is not None:
-                self._mcp_url = self.config.mcp_server_url
-            elif self._mcp_server is not None:
-                self._mcp_url = str(self._mcp_server.mcp_url())
-            else:
-                self._mcp_url = DEFAULT_MCP_URL
-        return self._mcp_url
+    def _resolve_mcp(self) -> McpAdapter | None:
+        """The MCP endpoint: configured, else the blueprint's McpServer, else none."""
+        if self.config.mcp_server_url is not None:
+            url = self.config.mcp_server_url
+        elif self._mcp_server is not None:
+            url = str(self._mcp_server.mcp_url())
+        else:
+            return None
+        return McpAdapter(url, timeout=_MCP_TIMEOUT_S)
 
-    def _mcp_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "jsonrpc": "2.0",
-            "id": self._seq_ids.next(),
-            "method": method,
-        }
-        if params is not None:
-            body["params"] = params
-
-        resp = self._http_client.post(self._server_url(), json=body, timeout=120.0)
-        resp.raise_for_status()
-        data = resp.json()
-
-        if "error" in data:
-            raise RuntimeError(f"MCP error {data['error']['code']}: {data['error']['message']}")
-
-        result: dict[str, Any] = data.get("result")
-        return result
-
-    def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        progress_token = str(uuid.uuid4())
-        return self._mcp_request(
-            "tools/call",
-            {
-                "name": name,
-                "arguments": arguments,
-                "_meta": {"progressToken": progress_token},
-            },
-        )
+    def _mcp_tool_call(
+        self, mcp: McpAdapter, name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        return mcp.call_tool(name, arguments, meta={"progressToken": str(uuid.uuid4())})
 
     def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
         method = msg.get("method")
@@ -195,14 +163,13 @@ class McpClient(Module):
             return
         self._message_queue.put(HumanMessage(content=f"[tool:{tool_name}] {text}"))
 
-    def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[StructuredTool]:
-        result = self._try_fetch_tools(timeout=timeout, interval=interval)
-        if result is None:
-            raise RuntimeError(f"Failed to fetch tools from MCP server {self._server_url()}")
+    def _fetch_tools(self, mcp: McpAdapter) -> list[StructuredTool]:
+        if not mcp.wait_for_ready(timeout=_MCP_READY_TIMEOUT_S):
+            raise RuntimeError(f"Failed to fetch tools from MCP server {mcp.url}")
 
-        raw_tools = result.get("tools", [])
+        raw_tools = mcp.list_tools()
         self._tool_registry = {t["name"]: t for t in raw_tools}
-        tools = [self._mcp_tool_to_langchain(t) for t in raw_tools]
+        tools = [self._mcp_tool_to_langchain(mcp, t) for t in raw_tools]
 
         if not tools:
             logger.warning("No tools found from MCP server.")
@@ -212,27 +179,13 @@ class McpClient(Module):
 
         return tools
 
-    def _try_fetch_tools(self, timeout: float, interval: float) -> dict[str, Any] | None:
-        deadline = time.monotonic() + timeout
-
-        while True:
-            try:
-                self._mcp_request("initialize")
-                break
-            except requests.ConnectionError:
-                if time.monotonic() >= deadline:
-                    return None
-                time.sleep(interval)
-
-        return self._mcp_request("tools/list")
-
-    def _mcp_tool_to_langchain(self, mcp_tool: dict[str, Any]) -> StructuredTool:
+    def _mcp_tool_to_langchain(self, mcp: McpAdapter, mcp_tool: dict[str, Any]) -> StructuredTool:
         name = mcp_tool["name"]
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
         def call_tool(**kwargs: Any) -> str:
-            result = self._mcp_tool_call(name, kwargs)
+            result = self._mcp_tool_call(mcp, name, kwargs)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -273,7 +226,12 @@ class McpClient(Module):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
-        self._agent_tools = self._fetch_tools()
+        self._mcp = self._resolve_mcp()
+        if self._mcp is None:
+            logger.info("No MCP server configured; the agent runs without tools.")
+            self._agent_tools = []
+        else:
+            self._agent_tools = self._fetch_tools(self._mcp)
         self._rebuild_agent()
         with self._lock:
             if not self._thread.is_alive():
@@ -307,7 +265,6 @@ class McpClient(Module):
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        self._http_client.close()
         super().stop()
 
     @rpc
@@ -353,7 +310,8 @@ class McpClient(Module):
             )
             return
 
-        if tool_name not in self._tool_registry:
+        mcp = self._mcp
+        if mcp is None or tool_name not in self._tool_registry:
             self._message_queue.put(
                 HumanMessage(f"Continuation failed: tool '{tool_name}' not found")
             )
@@ -369,7 +327,7 @@ class McpClient(Module):
                     tool_args[key] = continuation_context[context_key]
 
         try:
-            result = self._mcp_tool_call(tool_name, tool_args)
+            result = self._mcp_tool_call(mcp, tool_name, tool_args)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -457,11 +415,9 @@ def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
                 yield call_id
 
 
-def _append_image_to_history(
-    mcp_client: McpClient, func_name: str, uuid_: str, result: Any
-) -> None:
+def _append_image_to_history(agent: Agent, func_name: str, uuid_: str, result: Any) -> None:
     # Tagged with its tool, or chat UIs would show this user turn as typed input.
-    mcp_client.add_message(
+    agent.add_message(
         HumanMessage(
             content=[
                 {

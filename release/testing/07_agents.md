@@ -22,7 +22,7 @@ Wait for the spoken greeting to finish and the final assistant reply to appear i
 ```bash
 uv run dimos stop
 RELEASE_TRACE_DIR="$(mktemp -d)"
-uv run dimos --replay run unitree-go2-agentic --daemon --mcpclient.trace-dir "$RELEASE_TRACE_DIR"
+uv run dimos --replay run unitree-go2-agentic --daemon --agent.trace-dir "$RELEASE_TRACE_DIR"
 uv run dimos agent-send "say hello"
 ```
 
