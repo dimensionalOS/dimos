@@ -33,12 +33,9 @@ from dimos.robot.manipulators.openarm.config import (
 from dimos.teleop.openarm_mini.calibration import OpenArmMiniSide
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 
-# Per-joint follower speed cap. Leader-follower needs human arm speeds, well
-# above the WebXR IK profile; a rejected leader jump (0.75 rad) still plays
-# out over a quarter second instead of stepping the PD loop.
+# Leader-follower needs human arm speeds, well above the WebXR IK profile.
 _OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (3.0, 3.0, 3.0, 3.0, 6.0, 6.0, 6.0)
 
-# The robot's zenoh router. Named, not scouted: the operator machine dials it.
 OPENARM_ROUTER = os.environ.get("DIMOS_OPENARM_ROUTER", "tcp/127.0.0.1:7447")
 
 
@@ -64,9 +61,6 @@ def _trajectory_task(sides: tuple[OpenArmMiniSide, ...]) -> TaskConfig:
     )
 
 
-# Leader joint N drives follower joint N through the coordinator's streamed
-# joint_command path. The leader ports given on the command line select the
-# sides; the follower is in-memory unless both CAN ports are set.
 teleop_openarm_mini = autoconnect(
     OpenArmMiniTeleopModule.blueprint(),
     OpenArmTeleopCoordinator.blueprint(
@@ -80,10 +74,7 @@ teleop_openarm_mini = autoconnect(
 )
 
 # Split deployment: leaders on an operator machine, follower on the robot.
-# Both sides name the stream joint_command, so it rides one zenoh topic once
-# the operator machine joins the robot's router (--robot-ip <robot>). The
-# robot stack owns the bus-wide Coordinator name, so the leader half is a
-# client that does not claim it.
+# The robot stack owns the Coordinator name, so the leader half does not claim it.
 teleop_openarm_mini_leader = OpenArmMiniTeleopModule.blueprint().global_config(
     zenoh_mode="client", serve_coordinator_rpc=False
 )
