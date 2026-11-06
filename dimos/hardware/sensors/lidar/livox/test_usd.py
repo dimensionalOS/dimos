@@ -21,7 +21,7 @@ placeholders, so a test over them would only restate the constant.
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -168,3 +168,20 @@ def test_the_baked_layer_authors_no_custom_attributes() -> None:
 
     assert "custom " not in usd
     assert "dimos:" not in usd
+
+
+def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
+    """The rpc itself, not just the function under it.
+
+    A sync @rpc is tagged in place rather than wrapped, so it can be called with anything
+    carrying a config, which keeps this off the NativeModule's rust build. Worth covering
+    because swapping the two frames would be silent: both are strings.
+    """
+    from types import SimpleNamespace
+
+    pytest.importorskip("pxr")
+    config = Mid360Config(frame_id="chassis/lidar", imu_frame_id="chassis/imu")
+
+    usd = Mid360.get_usd(cast("Any", SimpleNamespace(config=config)))
+
+    assert _links(_stage(usd)) == {"chassis/lidar", "chassis/lidar_body", "chassis/imu"}
