@@ -23,7 +23,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from dimos.agents.llm_trace import list_llm_trace_pairs
+from dimos.agents.llm_trace import last_request_unanswered, list_llm_trace_pairs
 from dimos.agents.mcp.constants import TURN_FAILED_KEY
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
@@ -47,6 +47,7 @@ class _Turn:
         self._lock = threading.Lock()
         self._raw_dir = raw_dir
         self._expected: int | None = None
+        self._last_call_unanswered = False
 
     def on_agent(self, msg: Any) -> None:
         if isinstance(msg, BaseMessage):
@@ -60,15 +61,20 @@ class _Turn:
         elif flag is True and self._started.is_set():
             with self._lock:
                 self._expected = len(list_llm_trace_pairs(self._raw_dir))
+                self._last_call_unanswered = last_request_unanswered(self._raw_dir)
                 self._maybe_done()
 
     def _maybe_done(self) -> None:
         if self._expected is None:
             return
-        # An HTTP error response leaves a trace pair with no AIMessage, so a failed
-        # turn may never reach the expected count.
+        # A failed call leaves no AIMessage, so the failure note must end the turn.
+        # An HTTP error still leaves a trace pair, keeping the count short; a call
+        # with no response leaves none, so the count alone would end the turn early.
         failed = any(_is_failure_note(m) for m in self.received)
-        if failed or sum(isinstance(m, AIMessage) for m in self.received) >= self._expected:
+        if failed or (
+            not self._last_call_unanswered
+            and sum(isinstance(m, AIMessage) for m in self.received) >= self._expected
+        ):
             self.done.set()
 
 
