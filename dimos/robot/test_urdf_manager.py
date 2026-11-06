@@ -625,9 +625,6 @@ def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
         make_manager(mounts={"arm": _NoUsd})
 
 
-# --- namespacing: two of the same arm, and prefixed frames -------------------------------------
-
-
 def test_a_module_class_names_the_only_instance_of_itself() -> None:
     mount = Mount.of(_FakeArm)
 
