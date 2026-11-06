@@ -13,13 +13,10 @@ case "$(node --version 2>/dev/null || true)" in
 esac
 npm install --prefix "$prefix" --no-fund --no-audit "${packages[@]}"
 
-# Pi's grep otherwise downloads rg into each test's isolated HOME. This package
-# ships platform binaries in npm; expose rg beside pi on the tests' PATH.
-rg_path=$(node - "$prefix" <<'NODE'
-const path = require('node:path');
-const { rgPath } = require(path.resolve(process.argv[2], 'node_modules/@vscode/ripgrep'));
-process.stdout.write(rgPath);
-NODE
-)
+# Pi's grep tool (dimcode bundles Pi) otherwise downloads rg into each test's
+# isolated HOME. This package ships platform binaries in npm; expose rg beside
+# the CLIs on the tests' PATH. Resolved by platform package rather than through
+# the ESM entry point, which the host node may be too old to require().
+rg_path=$(node -p "require.resolve('@vscode/ripgrep-' + process.platform + '-' + process.arch + '/bin/rg', {paths: [process.argv[1]]})" "$prefix")
 ln -sf "$rg_path" "$prefix/node_modules/.bin/rg"
 "$prefix/node_modules/.bin/rg" --version

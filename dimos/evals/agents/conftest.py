@@ -247,7 +247,7 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NativeHa
     executable = shutil.which(os.environ.get(f"EVAL_{name.upper()}_CLI", name))
     if executable is None:
         pytest.skip(f"requires installed {name}")
-    if name == "pi" and shutil.which("rg") is None:
+    if shutil.which("rg") is None:
         pytest.skip(
             "requires ripgrep (rg) on PATH; run bin/install-test-clis and add "
             "<prefix>/node_modules/.bin to PATH"
