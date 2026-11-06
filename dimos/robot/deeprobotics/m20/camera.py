@@ -162,6 +162,14 @@ class M20CameraRelay(Module):
                     if video.codec_context.name != "hevc":
                         raise ValueError(f"expected H.265, got {video.codec_context.name}")
                     logger.info("M20 camera stream connected", camera=camera_name)
+                    # RTSP carries the VPS/SPS/PPS out of band (ffmpeg's extradata, Annex-B from the SDP):
+                    # each published keyframe carries them so it decodes on its own
+                    extradata = bytes(video.codec_context.extradata or b"")
+                    parameter_sets = (
+                        extradata
+                        if extradata.startswith((b"\x00\x00\x01", b"\x00\x00\x00\x01"))
+                        else b""
+                    )
                     for packet in container.demux(video):
                         if self._stop_event.is_set():
                             return
@@ -172,7 +180,7 @@ class M20CameraRelay(Module):
                             continue
                         output.publish(
                             CompressedVideo(
-                                bytes(packet),
+                                parameter_sets + bytes(packet),
                                 format="h265",
                                 frame_id="",
                                 ts=time.time(),
