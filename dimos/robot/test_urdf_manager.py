@@ -534,6 +534,13 @@ def _usd_stage(usd: str) -> Any:
     return Usd.Stage.Open(layer)
 
 
+def _link_of(stage: Any, path: str) -> str:
+    """The dimos:link a prim carries: its frame_id, under whatever name it ended up with."""
+    prim = stage.GetPrimAtPath(path)
+    assert prim, f"no prim at {path}"
+    return str(prim.GetAttribute("dimos:link").Get())
+
+
 def _scene(module: UrdfManager) -> str:
     """get_scene on a loop of this test's own, so its to_thread executor is torn down with it."""
     coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
@@ -702,42 +709,75 @@ def test_each_namespaced_arm_is_asked_under_its_own_name(
     assert stage.GetPrimAtPath("/box_robot/base/right_mount/other_arm")
 
 
-def test_joint_tf_is_published_under_an_unprefixed_frame_by_default(
+def test_a_bare_class_has_no_namespace_to_prefix_with() -> None:
+    assert PhysicalConnection.of(_FakeArm).namespace == ""
+
+
+@pytest.mark.parametrize(
+    ("remote_name", "namespace"),
+    [
+        ("left/xarm", "left"),
+        # namespace() nests by composition, so everything before the last "/" is the prefix.
+        ("fleet/robot0/xarm", "fleet/robot0"),
+    ],
+)
+def test_the_namespace_is_everything_before_the_instance_name(
+    remote_name: str, namespace: str
+) -> None:
+    assert PhysicalConnection.of(remote_name).namespace == namespace
+
+
+def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
-    module = make_manager()
-
-    (transform,) = module.joint_transforms(JointState())
-
-    assert (transform.frame_id, transform.child_frame_id) == ("base", "arm")
-
-
-def test_a_namespaced_manager_publishes_its_joint_tf_behind_its_prefix(
-    make_manager: Callable[..., UrdfManager],
-) -> None:
-    # Two of the same robot share a URDF and so share link names; unprefixed they collide on tf.
-    module = make_manager(frame_id_prefix="left")
-
-    (transform,) = module.joint_transforms(JointState())
-
-    assert (transform.frame_id, transform.child_frame_id) == ("left/base", "left/arm")
-
-
-def test_a_namespaced_point_clearing_filter_looks_up_its_prefixed_base(
-    make_filter: Callable[..., UrdfManagerPointClearing],
-) -> None:
-    module = make_filter(frame_id_prefix="left")
-    module.tfbuffer.receive_transform(
-        Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            frame_id="camera",
-            child_frame_id="left/base",
-            ts=1.0,
-        )
+    pytest.importorskip("pxr")
+    module = make_manager(
+        urdf_xml=_TWO_ARM_URDF,
+        physical_connections={
+            "left_mount": _FakeArm.blueprint().namespace("left"),
+            "right_mount": _FakeArm.blueprint().namespace("right"),
+        },
     )
+    clients = {
+        "left/_fakearm": _FakeClient(_SUBTREE_USD),
+        "right/_fakearm": _FakeClient(_SUBTREE_USD),
+    }
+    module._subtree_clients.update(cast("dict[str, Any]", clients))
 
-    filtered = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], ts=1.0))
+    stage = _usd_stage(_scene(module))
 
-    # The point at the origin is inside the cube on `left/arm`; the far one is not.
-    assert filtered is not None
-    assert filtered.points_f32().tolist() == [[5.0, 0.0, 0.0]]
+    assert clients["left/_fakearm"].asked == 1
+    assert clients["right/_fakearm"].asked == 1
+    # Same class, same description, same link names -- so the two copies would have collided
+    # on fake_arm_base. The namespace they were deployed under is what tells them apart.
+    assert _link_of(stage, "/box_robot/base/left_mount/fake_arm") == "left/fake_arm_base"
+    assert _link_of(stage, "/box_robot/base/right_mount/fake_arm") == "right/fake_arm_base"
+
+
+def test_an_un_namespaced_subtree_keeps_the_link_names_its_description_gave_it(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager(physical_connections={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert _link_of(stage, "/box_robot/base/arm/fake_arm") == "fake_arm_base"
+
+
+def test_the_roots_own_links_are_never_renamed(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # One URDF, so its link names are already unique; only what is grafted on needs moving.
+    pytest.importorskip("pxr")
+    module = make_manager(
+        urdf_xml=_TWO_ARM_URDF,
+        physical_connections={"left_mount": _FakeArm.blueprint().namespace("left")},
+    )
+    module._subtree_clients["left/_fakearm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert _link_of(stage, "/box_robot/base") == "base"
+    assert _link_of(stage, "/box_robot/base/left_mount") == "left_mount"

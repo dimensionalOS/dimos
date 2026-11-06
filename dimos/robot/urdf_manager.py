@@ -37,7 +37,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import MeshMode, graft_usd, urdf_to_usd
+from dimos.robot.assets.usd import MeshMode, graft_usd, prefix_usd_frames, urdf_to_usd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -63,6 +63,16 @@ class PhysicalConnection:
     # fail-fast get_usd check has to be skipped for it.
     module: type[Module] | None
     remote_name: str
+
+    @property
+    def namespace(self) -> str:
+        """The namespace this module is deployed under: "left" out of "left/xarm", "" without one.
+
+        Blueprint.namespace() builds the instance name as ``{prefix}/{name}`` and nests by
+        composition, so everything before the last "/" is the prefix ("fleet/robot0/xarm" ->
+        "fleet/robot0"). Same rule as the coordinator's own _atom_namespace.
+        """
+        return self.remote_name.rsplit("/", 1)[0] if "/" in self.remote_name else ""
 
     @classmethod
     def of(cls, value: object) -> PhysicalConnection:
@@ -269,7 +279,10 @@ class UrdfManager(Module):
             usd = await asyncio.to_thread(self._ask_for_usd, client, frame_id)
             if usd:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
-                return usd
+                # A namespaced module's frames are renamed here rather than at its end: it holds
+                # one description and does not know which copy of itself it is, while the name it
+                # was deployed under says exactly that.
+                return await asyncio.to_thread(prefix_usd_frames, usd, connection.namespace)
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"{name} did not answer {SUBTREE_RPC}() for frame {frame_id!r} "
@@ -343,10 +356,8 @@ class UrdfManager(Module):
         return [
             Transform.from_matrix(
                 joint.parent_from_child(positions.get(joint.name, 0.0)),
-                # Behind frame_id_prefix: two of the same robot, or two of the same arm, share a
-                # URDF and so share link names, and unprefixed they would collide on tf.
-                frame_id=self.frame(joint.parent_link),
-                child_frame_id=self.frame(joint.child_link),
+                frame_id=joint.parent_link,
+                child_frame_id=joint.child_link,
                 ts=state.ts,
             )
             for joint in self._joints.values()

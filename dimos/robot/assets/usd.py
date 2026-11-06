@@ -174,6 +174,31 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
     return str(root_layer.ExportToString())
 
 
+def prefix_usd_frames(usd: str, prefix: str) -> str:
+    """``usd`` with every link and joint name it carries moved under ``prefix``.
+
+    A description's link names are its tf frame_ids, and they come from the URDF, so every copy
+    of one arm names the same frames. Two of that arm on one robot therefore need one of them
+    renamed, and the namespace it is deployed under ("left" out of "left/xarm") is the name that
+    is already unique. Joint names move with the links: they are what a JointState keys on, and
+    two arms answering to one joint name is the same collision one layer down.
+
+    Only the ``dimos:link`` / ``dimos:joint`` attributes change. Prim names cannot hold a "/" and
+    prim paths are already unique by nesting, so neither needs to move.
+    """
+    if not prefix:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    stage = pxr.Usd.Stage.Open(layer)
+    for prim in stage.Traverse():
+        for name in (LINK_ATTR, JOINT_ATTR):
+            attr = prim.GetAttribute(name)
+            if attr and attr.HasAuthoredValue():
+                attr.Set(f"{prefix}/{attr.Get()}")
+    return str(layer.ExportToString())
+
+
 def _layer_from(pxr: Any, usd: str, what: str) -> Any:
     layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
     if not layer.ImportFromString(usd):

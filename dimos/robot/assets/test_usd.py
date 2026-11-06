@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import LINK_ATTR, graft_usd, urdf_to_usd
+from dimos.robot.assets.usd import JOINT_ATTR, LINK_ATTR, graft_usd, prefix_usd_frames, urdf_to_usd
 
 # usd-core is an optional extra with no linux-aarch64 wheel (see dimos.robot.assets.usd).
 pytest.importorskip("pxr")
@@ -63,6 +63,12 @@ def toy(tmp_path: Path) -> Any:
     urdf = tmp_path / "toy.urdf"
     urdf.write_text(_URDF)
     return RobotModel.from_file(urdf).load()
+
+
+def _link_of(stage: Any, path: str) -> str:
+    prim = stage.GetPrimAtPath(path)
+    assert prim, f"no prim at {path}"
+    return str(prim.GetAttribute(LINK_ATTR).Get())
 
 
 def _stage(usd: str) -> Any:
@@ -246,3 +252,81 @@ def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
     root = urdf_to_usd(toy)
 
     assert graft_usd(root, {}) == root
+
+
+# --- prefix_usd_frames ------------------------------------------------------------------------
+
+
+def _attrs(stage: Any, name: str) -> set[str]:
+    return {
+        str(prim.GetAttribute(name).Get())
+        for prim in stage.Traverse()
+        if prim.GetAttribute(name) and prim.GetAttribute(name).HasAuthoredValue()
+    }
+
+
+def test_every_link_name_moves_under_the_prefix(toy: Any) -> None:
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
+
+    assert _attrs(stage, LINK_ATTR) == {
+        "left/base_link",
+        "left/mount",
+        "left/arm-1",
+        "left/spin",
+    }
+
+
+def test_joint_names_move_with_the_links(toy: Any) -> None:
+    # A joint name is what a JointState keys on: two arms answering to one name is the same
+    # collision the link names have, one layer down.
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
+
+    assert _attrs(stage, JOINT_ATTR) == {
+        "left/base_to_mount",
+        "left/mount_to_arm",
+        "left/arm_to_spin",
+    }
+
+
+def test_the_original_urdf_spelling_survives_the_move(toy: Any) -> None:
+    # "arm-1" is not a USD identifier, so the prim is "arm_1"; the attribute keeps the real name.
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
+
+    assert stage.GetPrimAtPath("/toy/base_link/mount/arm_1")
+    assert _link_of(stage, "/toy/base_link/mount/arm_1") == "left/arm-1"
+
+
+def test_a_nested_namespace_prefixes_whole(toy: Any) -> None:
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "fleet/robot0"))
+
+    assert "fleet/robot0/base_link" in _attrs(stage, LINK_ATTR)
+
+
+def test_prim_paths_and_joint_bodies_are_untouched_by_the_move(toy: Any) -> None:
+    # Prim names cannot hold a "/", and prim paths are already unique by nesting.
+    prefixed = prefix_usd_frames(urdf_to_usd(toy), "left")
+
+    stage = _stage(prefixed)
+    joint = stage.GetPrimAtPath("/toy/joints/base_to_mount")
+
+    assert joint
+    targets = joint.GetRelationship("physics:body0").GetTargets()
+    assert str(targets[0]) == "/toy/base_link"
+
+
+def test_an_empty_prefix_leaves_the_layer_byte_identical(toy: Any) -> None:
+    # An un-namespaced module must not even be re-exported: nothing about it is ambiguous.
+    usd = urdf_to_usd(toy)
+
+    assert prefix_usd_frames(usd, "") is usd
+
+
+def test_a_prefixed_subtree_grafts_at_the_roots_own_unprefixed_frame(toy: Any) -> None:
+    # The key is a link of the root, which is never renamed; only the subtree moves.
+    root = urdf_to_usd(toy)
+    subtree = prefix_usd_frames(urdf_to_usd(toy, name="arm_sub"), "left")
+
+    stage = _stage(graft_usd(root, {"mount": subtree}))
+
+    assert _link_of(stage, "/toy/base_link/mount") == "mount"
+    assert _link_of(stage, "/toy/base_link/mount/arm_sub/base_link") == "left/base_link"
