@@ -251,7 +251,7 @@ dimos --viewer rerun run drone-basic
 Split layout with camera feed + 3D world view. Includes static drone body visualization and LCM transport integration.
 
 ### Web Visualization
-Always available at `http://localhost:7779` via `WebsocketVisModule`.
+Available at `http://localhost:7779` via `WebsocketVisModule` when Rerun opens in web mode.
 
 ## Testing
 

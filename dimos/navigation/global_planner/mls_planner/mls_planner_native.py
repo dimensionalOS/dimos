@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import threading
+from typing import Any
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
@@ -37,9 +38,6 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.spec import cancel_goal, position_goal
 from dimos.utils.trigonometry import angle_diff
-
-# Seconds a go_to waits for the robot pose to show up on tf.
-POSE_WAIT_S = 0.5
 
 
 def reports_goal(msg: GoalStatus, goal: PoseStamped) -> bool:
@@ -83,7 +81,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     blocked_timeout_s: float = 2.0
     # Seconds a followed goal may go without the robot moving before it is aborted.
     progress_timeout_s: float = 10.0
-    # Ground-plane distance the robot must cover to count as moving.
+    # Ground-plane meters the robot must move within the progress timeout window.
     progress_min_m: float = 0.2
     viz_publish_hz: float = 2.0
     # The surface and edge viz publish by square cells of this edge, only the
@@ -92,6 +90,11 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     viz_sweep_cells: int = 32
     # Worker threads for parallel planner work.
     worker_threads: int = 4
+    # Seconds a go_to waits for the robot pose to show up on tf.
+    pose_wait_s: float = 0.5
+
+    def to_config_dict(self) -> dict[str, Any]:
+        return {k: v for k, v in super().to_config_dict().items() if k != "pose_wait_s"}
 
 
 class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
@@ -170,7 +173,7 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             y: target y in meters, world frame.
             degrees: heading to face there, world frame, 0 = +x and 90 = +y. Omit for any.
         """
-        pose = self._pose(wait_s=POSE_WAIT_S)
+        pose = self._pose(wait_s=self.config.pose_wait_s)
         # Close the old go_to's stream first so start_tool opens a new one for this call.
         self._finish("Replaced by another goal", cancel=pose is None)
         # Opened before any return so the movement claim always has a stream to release it.

@@ -95,7 +95,7 @@ pub struct Config {
     /// Seconds a followed goal may go without the robot moving before it is aborted.
     #[validate(range(min = 0.0))]
     pub progress_timeout_s: f32,
-    /// Ground-plane distance the robot must cover to count as moving.
+    /// Ground-plane meters the robot must move within the progress timeout window.
     #[validate(range(exclusive_min = 0.0))]
     pub progress_min_m: f32,
     /// Rate cap for the surface_map / nodes / node_edges viz artifacts. 0

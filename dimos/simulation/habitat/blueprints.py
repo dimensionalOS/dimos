@@ -16,7 +16,8 @@
 
 - ``habitat-teleop``: sim, streams, teleop.
 - ``habitat-raycaster``: + :class:`RayTracingVoxelMap` on a sensor-frame scan.
-- ``habitat-nav``: + MLS planner and follower; click the surface to set a goal.
+- ``habitat-nav``: + MLS planner, local planner, trajectory follower and
+  :class:`MovementManager`; click the surface to set a goal.
 - ``habitat-voxel``: :class:`VoxelGridMapper` on a world-frame scan. An alternative,
   not a layer: the two mappers want the scan in different frames.
 - ``habitat-typesafe``: teleop + :class:`TypeSafeNavigationAgent` steering to a named visible object.
@@ -29,14 +30,16 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.navigation.embodiment.habitat import HABITAT
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,
     MLSPlannerNativeConfig,
 )
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.global_planner.viz import render_path
+from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.trajectory_follower.basic.module import BasicPathFollower
+from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
 from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
@@ -44,8 +47,7 @@ from dimos.visualization.vis_module import vis_module
 # One stream, two port names: remap rather than rename.
 SCAN_TOPIC = "habitat_scan"
 
-# Teleop and the follower publish straight onto cmd_vel, not through MovementManager's
-# mux: it cancels the goal on the zero twist the viewer sends on every key release.
+# Teleop publishes straight onto cmd_vel until habitat-nav routes it through MovementManager.
 CMD_VEL_TOPIC = "cmd_vel"
 
 # VoxelGridMapper wants world-frame clouds; RayTracingVoxelMap registers via tf
@@ -151,7 +153,12 @@ _mls_planner = MLSPlannerNative.blueprint(
         step_penalty_weight=4.0,
         viz_publish_hz=planner_viz_hz,
     ).model_dump(exclude_unset=True)
-).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
+).remappings(
+    [
+        (MLSPlannerNative, "global_map", "global_map_unused"),
+        (MLSPlannerNative, "path", "planner_path"),
+    ]
+)
 
 
 # Newest duplicate wins: re-declared with the sensor-frame scan.
@@ -166,24 +173,15 @@ habitat_raycaster = autoconnect(
 ).global_config(transport="zenoh")
 
 
-# Click the surface to set a goal; a held key overrides the follower.
+# Click the surface to set a goal. A key press cancels it.
 habitat_nav = autoconnect(
     habitat_raycaster,
     _mls_planner,
-    # Turns the viewer's click into a goal. Everything else on it is parked.
-    MovementManager.blueprint().remappings(
-        [
-            (MovementManager, "nav_cmd_vel", "_habitat_nav_cmd_vel_unused"),
-            (MovementManager, "tele_cmd_vel", "_habitat_tele_cmd_vel_unused"),
-            (MovementManager, "cmd_vel", "_habitat_mux_cmd_vel_unused"),
-            (MovementManager, "way_point", "_habitat_way_point_unused"),
-            (MovementManager, "stop_movement", "_habitat_stop_movement_unused"),
-        ]
-    ),
     # Defaults to odom; the sim's tf root is world.
-    BasicPathFollower.blueprint(
-        world_frame=WORLD_FRAME, speed=0.5, heading_gain=1.5, max_angular=1.5
-    ).remappings([(BasicPathFollower, "nav_cmd_vel", CMD_VEL_TOPIC)]),
+    LocalPlannerNative.blueprint(embodiment=HABITAT, world_frame=WORLD_FRAME),
+    TrajectoryFollowerNative.blueprint(embodiment=HABITAT),
+    MovementManager.blueprint(),
+    # The tele_cmd_vel remap undoes the teleop layer's, so keys reach MovementManager.
     vis_module(
         global_config.viewer,
         rerun_config=_rerun_config(
@@ -194,7 +192,7 @@ habitat_nav = autoconnect(
                 ),
             }
         ),
-    ).remappings([(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]),
+    ).remappings([(RerunWebSocketServer, "tele_cmd_vel", "tele_cmd_vel")]),
 ).global_config(transport="zenoh")
 
 

@@ -69,7 +69,8 @@ class EEFTwistTask(PoseTargetIKTask):
     """Integrate twists into a Cartesian target solved by the shared IK core.
 
     Each tick the target pose moves by twist x tick time and the IK solver
-    drives the joints after it. A zero twist stops the target where it is.
+    drives the joints after it. A zero twist after motion stops the target where
+    the arm is, so a target pushed out of reach does not freeze later twists.
 
     With ``command_timeout`` > 0 the task is idle until the first non-zero
     twist and goes idle again once ``command_timeout`` seconds pass with no
@@ -131,7 +132,11 @@ class EEFTwistTask(PoseTargetIKTask):
             if self._estopped:
                 return False
             if np.allclose(values, 0.0):
-                self._latest_twist = None
+                if self._latest_twist is not None:
+                    # Re-anchor at the measured pose; the target may have run past reach.
+                    self._latest_twist = None
+                    self._target_pose = None
+                    self._reset_command_state()
                 return True
             if self._idle:
                 # Start from where the arm is now; another task may have moved it.
