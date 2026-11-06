@@ -20,6 +20,7 @@ import pytest
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Instance, SceneConfig
+from dimos.sim2.geometry.mujoco import compile_scene
 
 
 def test_cli_configuration_roundtrip_keeps_physical_model_variants(world):
@@ -73,3 +74,18 @@ def test_shared_models_combine_multiple_providers_and_reject_duplicate_ids(world
 def test_missing_shared_model_fails_during_configuration():
     with pytest.raises(ValueError, match="model missing has not been resolved"):
         SceneConfig((Instance("missing"),)).resolve(())
+
+
+def test_collision_exclusions_change_scene_identity_and_bind_bodies(world):
+    first = replace(world.instances[0], collision_exclusions=(("left/base_link", "left/tool"),))
+    configured = replace(world, instances=(first, *world.instances[1:]))
+    assert configured.revision != world.revision
+    model = compile_scene(configured)
+    expected = (model.body("left/base_link").id << 16) + model.body("left/tool").id
+    assert expected in model.exclude_signature
+
+
+def test_collision_exclusion_rejects_unknown_body(world):
+    first = replace(world.instances[0], collision_exclusions=(("left/base_link", "missing"),))
+    with pytest.raises(ValueError, match="invalid collision exclusion"):
+        compile_scene(replace(world, instances=(first,)))

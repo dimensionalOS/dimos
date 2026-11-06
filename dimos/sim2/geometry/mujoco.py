@@ -84,6 +84,10 @@ def build_scene(
                 for index, shape in enumerate(link.findall(shape_kind)):
                     shape.set("name", f"{instance.id}/{link.attrib['name']}/{shape_kind}/{index}")
         child = mujoco.MjSpec.from_string(ET.tostring(xml, encoding="unicode"))
+        for first, second in instance.collision_exclusions:
+            if first == second or child.body(first) is None or child.body(second) is None:
+                raise ValueError(f"invalid collision exclusion: {first}, {second}")
+            child.add_exclude(bodyname1=first, bodyname2=second)
         if instance.floating:
             child.body(model.root_link).add_freejoint(name=model.root_link + "/free")
         for drive in instance.drives:
