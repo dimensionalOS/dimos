@@ -30,7 +30,7 @@ from dimos.hardware.sensors.camera.realsense.camera import (
     RealSenseCameraConfig,
 )
 from dimos.hardware.sensors.camera.spec import CameraConfig
-from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
@@ -40,6 +40,8 @@ from dimos.teleop.webxr.blueprints import (
     teleop_webxr_piper,
     teleop_webxr_xarm7,
 )
+from dimos.teleop.webxr.headset_feed import HeadsetFeedModule
+from dimos.teleop.webxr.preset_buttons import PresetButtonsModule
 
 
 class _CollectionRealSenseConfig(RealSenseCameraConfig):
@@ -53,21 +55,50 @@ class _CollectionRealSenseCamera(RealSenseCamera):
     config: _CollectionRealSenseConfig
 
 
-def _camera_if_real() -> tuple[Blueprint, ...]:
+def _camera_if_real(*, pointcloud: bool) -> tuple[Blueprint, ...]:
     """Real RealSense only off-sim. In `--simulation` the teleop coordinator's
     MujocoSimModule already publishes color_image on /camera/color_image, so a
-    real camera would be redundant (and fail with no device connected)."""
+    real camera would be redundant (and fail with no device connected).
+
+    Args:
+        pointcloud: Also publish the depth point cloud (for the 3D view; not recorded).
+    """
     if global_config.simulation:
         return ()
     return (
         _CollectionRealSenseCamera.blueprint(
-            instance_name="RealSenseCamera", enable_pointcloud=False
+            instance_name="RealSenseCamera", enable_pointcloud=pointcloud
         ),
     )
 
 
-def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple[Blueprint, ...]:
-    producers = autoconnect(teleop, *_camera_if_real())
+def _collection_components(
+    robot: str, teleop: Blueprint, *, task: str, headset_view: bool = False
+) -> tuple[Blueprint, ...]:
+    """The recorder, the episode monitor and the teleop stack with its camera.
+
+    Args:
+        headset_view: Also send the camera's picture and point cloud to the Quest
+            (the Manipulation app's VR view) and the point cloud to Desktop's 3D view,
+            and let the left controller's X and Y send the arm to its start pose and
+            home. Y then no longer discards an episode: A does. Only for an arm whose
+            teleop stack places the camera on the arm and has a safe home pose.
+    """
+    real_camera = _camera_if_real(pointcloud=headset_view)
+    # Half the feed's default grids: a tabletop at 1 cm still fits its 150,000-point
+    # map, and the map's message size, so the Quest's Wi-Fi load, stays the same.
+    bench = (
+        (
+            HeadsetFeedModule.blueprint(cloud_voxel_m=0.0075, map_voxel_m=0.01),
+            PresetButtonsModule.blueprint(),
+        )
+        if headset_view
+        else ()
+    )
+    button_map: dict[EpisodeCommand, str] = (
+        {"toggle": "B", "discard": "A"} if headset_view else {"toggle": "B", "discard": "Y"}
+    )
+    producers = autoconnect(teleop, *real_camera, *bench)
     coordinator = next(
         atom for atom in producers.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )
@@ -106,13 +137,18 @@ def _collection_components(robot: str, teleop: Blueprint, *, task: str) -> tuple
     directory: Path = RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S_%f}"
     return (
         collect(profile=profile, recording=directory, format="sqlite"),
-        EpisodeMonitorModule.blueprint(task=task),
+        EpisodeMonitorModule.blueprint(task=task, button_map=button_map),
         producers,
     )
 
 
 learning_collect_webxr_xarm7 = autoconnect(
-    *_collection_components("xarm7", teleop_webxr_xarm7, task="Teleoperate the xArm")
+    *_collection_components(
+        "xarm7",
+        teleop_webxr_xarm7,
+        task="Teleoperate the xArm",
+        headset_view=True,
+    )
 )
 learning_collect_webxr_piper = autoconnect(
     *_collection_components("piper", teleop_webxr_piper, task="Teleoperate the Piper")

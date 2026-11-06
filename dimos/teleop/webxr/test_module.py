@@ -763,6 +763,80 @@ def test_unknown_binary_message_is_dropped(
     )
 
 
+def _right_controller_bytes() -> tuple[bytes, bytes]:
+    """What the browser sends for a right controller with the grip held and the trigger at 0.25."""
+    pose = PoseStamped(
+        ts=1.0, frame_id="right", position=[0.1, 1.2, -0.3], orientation=[0.0, 0.0, 0.0, 1.0]
+    )
+    joy = Joy(ts=1.0, frame_id="right", axes=[0.0, 0.0, 0.25, 1.0], buttons=[0, 1, 0, 0, 0, 0, 0])
+    return pose.lcm_encode(), joy.lcm_encode()
+
+
+def test_stream_input_drives_the_arm_like_the_websocket(mocker: pytest_mock.MockerFixture) -> None:
+    by_websocket = ArmTeleopModule()
+    by_stream = ArmTeleopModule()
+    pose_bytes, joy_bytes = _right_controller_bytes()
+    try:
+        assert by_websocket._dispatch_binary_message(pose_bytes)
+        assert by_websocket._dispatch_binary_message(joy_bytes)
+        # The stream's transport hands over the same bytes, already decoded.
+        by_stream._on_stream_message(PoseStamped.lcm_decode(pose_bytes))
+        by_stream._on_stream_message(Joy.lcm_decode(joy_bytes))
+
+        assert by_stream._current_poses[Hand.RIGHT] == by_websocket._current_poses[Hand.RIGHT]
+        assert by_stream._controllers[Hand.RIGHT] == by_websocket._controllers[Hand.RIGHT]
+        assert by_stream._should_publish(Hand.RIGHT)
+        assert by_stream._get_output_pose(Hand.RIGHT) == by_websocket._get_output_pose(Hand.RIGHT)
+
+        gripper = mocker.patch.object(by_stream.right_gripper_command, "publish")
+        buttons = mocker.patch.object(by_stream.teleop_buttons, "publish")
+        by_stream._publish_button_state(None, by_stream._controllers[Hand.RIGHT])
+        assert gripper.call_args.args[0].data == pytest.approx(0.75)
+        assert buttons.call_args.args[0].right_grip
+    finally:
+        by_websocket.stop()
+        by_stream.stop()
+
+
+def test_build_subscribes_to_webxr_input_streams(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    subscribes = []
+    for stream in (module.webxr_pose, module.webxr_joy):
+        stream._transport = mocker.MagicMock()
+        subscribes.append(mocker.patch.object(stream, "subscribe", return_value=mocker.MagicMock()))
+
+    module.build()
+
+    for subscribe in subscribes:
+        subscribe.assert_called_once_with(module._on_stream_message)
+
+
+def test_input_from_websocket_and_stream_warns_once(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    warning = mocker.patch("dimos.teleop.webxr.module.logger.warning")
+    pose = PoseStamped(ts=1.0, frame_id="left", position=[1.0, 2.0, 3.0])
+
+    for _ in range(2):
+        module._note_input_source("websocket")
+        module._on_stream_message(pose)
+
+    warning.assert_called_once()
+    assert module._current_poses[Hand.LEFT] is not None
+
+
+def test_stream_message_for_an_unknown_hand_is_dropped(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    warning = mocker.patch("dimos.teleop.webxr.module.logger.warning")
+
+    module._on_stream_message(PoseStamped(ts=1.0, frame_id="head"))
+
+    warning.assert_called_once()
+    assert module._current_poses == {Hand.LEFT: None, Hand.RIGHT: None}
+
+
 def test_translation_scale_changes_pose_delta(module: WebXRTeleopModule) -> None:
     module._initial_poses[Hand.RIGHT] = PoseStamped(position=[1.0, 2.0, 3.0])
     module._current_poses[Hand.RIGHT] = PoseStamped(position=[1.2, 1.5, 4.0])
