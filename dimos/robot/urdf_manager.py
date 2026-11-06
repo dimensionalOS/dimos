@@ -45,7 +45,7 @@ logger = setup_logger()
 # Their pose comes from tf (odometry, a planar base), so they are read from tf, never published to it.
 MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
-# The RPC every module in physical_connections answers with its own subtree as a USD string.
+# The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
 
 
@@ -62,7 +62,7 @@ class UrdfManagerConfig(ModuleConfig):
     # that frame. get_scene asks each of them for its own USD and grafts the result onto the root URDF, so every
     # module named here must answer the get_usd RPC. Nothing else reads this yet; the manager's tf and file serving
     # are unchanged by it, which is what keeps the empty default backwards compatible.
-    physical_connections: dict[str, type[Module]] = Field(default_factory=dict)
+    mounts: dict[str, type[Module]] = Field(default_factory=dict)
     # get_scene has every subtree or it has nothing, so it waits this long for the slowest one.
     scene_timeout_s: float = Field(default=60.0, gt=0.0)
     # A module that is not up yet answers nothing, so retry it this often inside that budget.
@@ -99,25 +99,25 @@ class UrdfManager(Module):
         self._usd_lock = RLock()
         self._subtree_clients: dict[type[Module], RPCClient] = {}
         try:
-            self._check_physical_connections()
+            self._check_mounts()
         except Exception:
             # super().__init__ already took a loop thread and an RPC session; hand them back
             # rather than leave a half-built module behind for the caller to notice.
             self.dispose()
             raise
 
-    def _check_physical_connections(self) -> None:
+    def _check_mounts(self) -> None:
         """Fail here rather than at get_scene time, which is a blueprint's last step before start."""
         links = {self._description.root_link, *(j.child_link for j in self._description.joints)}
-        for frame_id, module in self.config.physical_connections.items():
+        for frame_id, module in self.config.mounts.items():
             if frame_id not in links:
                 raise ValueError(
-                    f"physical_connections names frame {frame_id!r}, which is not a link of this "
+                    f"mounts names frame {frame_id!r}, which is not a link of this "
                     f"URDF (it has {sorted(links)})"
                 )
             if SUBTREE_RPC not in module.rpcs:
                 raise ValueError(
-                    f"physical_connections attaches {module.__name__} at {frame_id!r}, but it has "
+                    f"mounts attaches {module.__name__} at {frame_id!r}, but it has "
                     f"no @rpc {SUBTREE_RPC}() to ask for its subtree"
                 )
 
@@ -137,7 +137,7 @@ class UrdfManager(Module):
     def get_usd(self) -> str:
         """This robot's own URDF as a USD layer, with nothing attached to it.
 
-        Every module that can be a physical_connections value answers this, UrdfManager included,
+        Every module that can be mounted on another answers this, UrdfManager included,
         so one bolted to another robot's frame needs no special case.
         """
         with self._usd_lock:
@@ -147,7 +147,7 @@ class UrdfManager(Module):
 
     @rpc
     async def get_scene(self) -> str:
-        """The whole tree as one USD layer: this URDF with every physical_connections subtree on it.
+        """The whole tree as one USD layer: this URDF with every mounted subtree on it.
 
         Async and meant to be called before start(): it waits for every module in the map, because a
         scene missing an arm is worse than a scene that arrives late. Raises TimeoutError when one of
@@ -158,14 +158,14 @@ class UrdfManager(Module):
         return graft_usd(root, subtrees) if subtrees else root
 
     async def _subtrees(self) -> dict[str, str]:
-        connections = self.config.physical_connections
-        if not connections:
+        mounts = self.config.mounts
+        if not mounts:
             return {}
         deadline = time.monotonic() + self.config.scene_timeout_s
         results = await asyncio.gather(
-            *(self._subtree(frame_id, module, deadline) for frame_id, module in connections.items())
+            *(self._subtree(frame_id, module, deadline) for frame_id, module in mounts.items())
         )
-        return dict(zip(connections, results, strict=True))
+        return dict(zip(mounts, results, strict=True))
 
     async def _subtree(self, frame_id: str, module: type[Module], deadline: float) -> str:
         """``module``'s USD, retried until it answers or the deadline passes."""

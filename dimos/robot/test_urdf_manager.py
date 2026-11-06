@@ -439,11 +439,11 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
         )
 
 
-# --- physical_connections and the USD scene ---------------------------------------------------
+# --- mounts and the USD scene ---------------------------------------------------
 
 
 class _FakeArm(Module):
-    """Stands in for a module bolted to the robot: all a physical_connections value owes is get_usd."""
+    """Stands in for a module bolted to the robot: all a mounted module owes is get_usd."""
 
     config: ModuleConfig
 
@@ -536,7 +536,7 @@ def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManage
     assert module.get_usd() is module.get_usd()
 
 
-def test_get_scene_without_physical_connections_is_just_the_robot(
+def test_get_scene_without_mounts_is_just_the_robot(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     # The empty default is what keeps every existing blueprint working untouched.
@@ -550,7 +550,7 @@ def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(physical_connections={"arm": _FakeArm})
+    module = make_manager(mounts={"arm": _FakeArm})
     module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(_SUBTREE_USD))
 
     stage = _usd_stage(_scene(module))
@@ -562,9 +562,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(
-        physical_connections={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01
-    )
+    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01)
     client = _FakeClient(RuntimeError("no reply"), None, _SUBTREE_USD)
     module._subtree_clients[_FakeArm] = cast("Any", client)
 
@@ -579,24 +577,22 @@ def test_get_scene_times_out_naming_the_module_that_never_answered(
 ) -> None:
     # Half a scene would hand a renderer a robot with no arm, so it is all or an error.
     pytest.importorskip("pxr")
-    module = make_manager(
-        physical_connections={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01
-    )
+    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01)
     module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(RuntimeError("never")))
 
     with pytest.raises(TimeoutError, match="_FakeArm did not answer get_usd"):
         _scene(module)
 
 
-def test_physical_connections_at_a_frame_the_urdf_does_not_have_is_rejected(
+def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     with pytest.raises(ValueError, match="not a link of this URDF"):
-        make_manager(physical_connections={"elbow": _FakeArm})
+        make_manager(mounts={"elbow": _FakeArm})
 
 
-def test_physical_connections_to_a_module_that_cannot_be_asked_is_rejected(
+def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     with pytest.raises(ValueError, match="no @rpc get_usd"):
-        make_manager(physical_connections={"arm": _NoUsd})
+        make_manager(mounts={"arm": _NoUsd})
