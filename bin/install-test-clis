@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
-# Install the Pi and dimcode CLIs that the agent eval tests (dimos/evals/agents) drive,
+# Install the Pi and dimcode CLIs and ripgrep for the agent eval tests (dimos/evals/agents),
 # into the npm prefix given as $1, by default the dimos-test-clis cache directory.
 # dimcode needs Node 24: hosts running another version get a private Node 24 next to
 # the CLIs. The prefix must not have a "dimos" path component, because the no_dimos
 # evals drop such PATH entries.
 set -euo pipefail
 prefix=${1:-"${XDG_CACHE_HOME:-$HOME/.cache}/dimos-test-clis"}
-packages=(@earendil-works/pi-coding-agent@0.85.1 @dimensionalos/dimcode@0.1.0-next.7)
+packages=(@earendil-works/pi-coding-agent@0.85.1 @dimensionalos/dimcode@0.1.0-next.7 @vscode/ripgrep@1.18.0)
 case "$(node --version 2>/dev/null || true)" in
   v24.*) ;;
   *) packages+=(node@24) ;;
 esac
 npm install --prefix "$prefix" --no-fund --no-audit "${packages[@]}"
+
+# Pi's grep otherwise downloads rg into each test's isolated HOME. This package
+# ships platform binaries in npm; expose rg beside pi on the tests' PATH.
+rg_path=$(node - "$prefix" <<'NODE'
+const path = require('node:path');
+const { rgPath } = require(path.resolve(process.argv[2], 'node_modules/@vscode/ripgrep'));
+process.stdout.write(rgPath);
+NODE
+)
+ln -sf "$rg_path" "$prefix/node_modules/.bin/rg"
+"$prefix/node_modules/.bin/rg" --version
