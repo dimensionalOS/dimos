@@ -44,7 +44,56 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-vr-teleop        # Quest VR: both arms + torso, safe fake backend
 ```
+
+## Quest VR teleop
+
+`r1pro-vr-teleop` is the operator stack for a Meta Quest browser: both
+controllers drive the whole 18-DOF upper body (torso 4 + arm 7 + arm 7)
+through one `teleop_ik` task, so the torso participates in the same IK solve
+as the arms rather than being pinned. Each trigger drives its own jaw through
+a separate feedback-gated gripper task; the jaws never enter the IK model or a
+trajectory. The coordinator declares no `r1pro_cmd_vel` output and nothing in
+the stack publishes either base command stream (`cmd_vel`, `twist_command`),
+so the chassis has no source of motion targets here.
+
+It starts on the **fake backend by default** — `FakeR1ProConnection`, an
+in-memory closed loop on the same contract (`position_command`, `cmd_vel`,
+`joint_state`, the same 18-joint order, limits and metres for jaw openings).
+It pulls in no ROS 2, vendor stack, camera, lidar, CAN or robot; the Quest
+input visibly moves the simulated joints and jaws through the coordinator's
+`joint_state` feedback and the viewer. Selecting the real robot is explicit
+and only assembles the stack; starting it against hardware is a separate,
+deliberate operation:
+
+```bash
+dimos run r1pro-vr-teleop                       # fake, safe anywhere
+# real (assembly only; bringing it up on hardware is a separate step):
+#   python -c "from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop \
+#       import make_r1pro_vr_teleop; make_r1pro_vr_teleop(backend='real').build().loop()"
+```
+
+Both backends share the Quest input module, the task set, the IK model and
+the coordinator; only the connection module differs. Opening
+`https://<host>:8443/teleop` in the headset connects the browser; the actual
+headset session is verified by a human, not by CI.
+
+**Deadman and session teardown.** Middle-finger grips engage both hands and
+capture the controller references. Releasing either grip, controller input
+going stale, or a coordinator E-STOP ends the session and clears the
+references, so the next engagement starts from a fresh capture and no old
+intent replays. A jaw whose feedback drops out loses its emitted target; a
+target latched *during* the outage has never been sent and goes out on the
+first tick whose feedback covers the jaw again. That replay-on-recovery is
+the framework's current gripper semantic, exercised by the tests and still
+unreviewed as queueing behaviour.
+
+**Stop is not a cancel.** As with the rest of the R1 Pro stack, stopping the
+coordinator, the deadman, or an E-STOP only stops *us* from sending new
+targets. None of it is a vendor cancel or a physical E-stop; a command the
+vendor controller already accepted can keep executing. Use the robot's own
+E-stop hardware for a real emergency stop.
 
 ## Control path
 
