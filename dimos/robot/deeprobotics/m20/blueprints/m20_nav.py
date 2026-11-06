@@ -198,7 +198,6 @@ deeprobotics_m20_kronknav_control = (
             relocalize=MID360_NAV,
             republish_loaded_map=0.0,
             new_map=True,
-            save_locations_to="named_locations.db",
             tf_interval=1.0,
         ),
     )

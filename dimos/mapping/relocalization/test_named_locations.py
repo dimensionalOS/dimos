@@ -50,7 +50,6 @@ def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     def build(
         **config: Any,
     ) -> tuple[PremapModule, list[InteractiveMarkerUpdate]]:
-        config.setdefault("save_locations_to", str(tmp_path / "named_locations.db"))
         module = PremapModule(**config)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         snapshots: list[InteractiveMarkerUpdate] = []
@@ -107,14 +106,6 @@ def positions(snapshot: InteractiveMarkerUpdate) -> dict[str, tuple[float, float
     }
 
 
-def saved(path: str) -> list[list[str]]:
-    """Every list appended to a save file, oldest first."""
-    from dimos.memory.store.sqlite import SqliteStore
-
-    with SqliteStore(path=path, must_exist=True) as store:
-        return [names(obs.data) for obs in store.stream("named_locations").order_by("ts")]
-
-
 def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revision(make, tmp_path):
     module, published = make()
     begin(module)
@@ -129,11 +120,6 @@ def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revisi
     # every adopted list goes out, one revision on, so every viewer's cache follows
     assert [names(p) for p in published] == [["dock", "desk"], ["charger", "desk"], ["charger"]]
     assert [p.seq_num for p in published] == [1, 2, 3]
-    assert saved(str(tmp_path / "named_locations.db")) == [
-        ["dock", "desk"],
-        ["charger", "desk"],
-        ["charger"],
-    ]
 
 
 def test_its_own_list_coming_back_changes_nothing(make, tmp_path):
@@ -142,7 +128,6 @@ def test_its_own_list_coming_back_changes_nothing(make, tmp_path):
     publish(module, {"dock": at(1, 2, "map", yaw=0.3)})
 
     asyncio.run(module.handle_named_locations(published[-1]))
-    assert saved(str(tmp_path / "named_locations.db")) == [["dock"]]
     assert len(published) == 1
 
 
@@ -161,7 +146,6 @@ def test_a_stale_cache_cannot_bring_back_a_renamed_location(make, tmp_path):
     # the stale viewer gets the current list back to replace its cache with
     assert names(published[-1]) == ["charger"]
     assert published[-1].seq_num == 2
-    assert saved(str(tmp_path / "named_locations.db")) == [["dock"], ["charger"]]
 
 
 def test_a_list_from_another_run_is_dropped(make):
@@ -217,16 +201,22 @@ def test_a_new_map_is_the_world_frame(make):
 
 
 def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
+    from dimos.memory.store.sqlite import SqliteStore
+
     run1 = str(tmp_path / "run1.db")
-    first, _ = make(save_locations_to=run1)
+    first, published_by_first = make()
     begin(first)
     publish(first, {"dock": at(1, 2, "map", yaw=0.5), "desk": at(3, 4, "map")})
     publish(first, {"dock": at(1, 2, "map", yaw=0.5)})
-    first.dispose()
+    # what a recording of named_locations holds
+    with SqliteStore(path=run1) as store:
+        lists = store.stream("named_locations", InteractiveMarkerUpdate)
+        for ts, snapshot in enumerate(published_by_first):
+            lists.append(snapshot, ts=float(ts))
 
     assert list(load_locations(run1, "named_locations")) == ["dock"]
 
-    second, published = make(map_file=run1, save_locations_to=str(tmp_path / "run2.db"))
+    second, published = make(map_file=run1)
     begin(second)
     assert published == []
     asyncio.run(second.handle_named_locations_request(String("")))

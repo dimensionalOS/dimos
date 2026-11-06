@@ -34,7 +34,6 @@ go2_sim_nav_named_locations = autoconnect(
     relocalization(
         republish_loaded_map=0.0,
         new_map=True,
-        save_locations_to="named_locations.db",
         tf_interval=1.0,
     ),
 ).global_config(n_workers=11)

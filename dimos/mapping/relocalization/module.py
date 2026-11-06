@@ -38,8 +38,7 @@ with the old map. Each is also a tf frame under ``map``. Wire contract:
   every replan, so the goal follows a later fix.
 
 The locations are seeded from the last ``locations_stream`` snapshot of the ``map_file``
-recording, and every list adopted is appended to
-``save_locations_to``. With no map and ``new_map`` set, this run's world frame is the map:
+recording; a recording of ``named_locations`` keeps them for the next run. With no map and ``new_map`` set, this run's world frame is the map:
 the module submits an identity ``world -> map`` fix itself.
 """
 
@@ -48,7 +47,6 @@ from __future__ import annotations
 import math
 from pathlib import Path
 import threading
-import time
 from typing import Any
 import uuid
 
@@ -63,7 +61,6 @@ from dimos.mapping.relocalization.named_locations import (
     location_frame,
     same_locations,
 )
-from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -142,8 +139,6 @@ class Config(ModuleConfig):
     relocalize_once: bool = True
     # No map_file: this run's world frame is the map (submit an identity fix)
     new_map: bool = False
-    # A .db every adopted list is appended to; None keeps them in memory only
-    save_locations_to: str | None = None
     # Stream (recorded topic) the named-location snapshots live on
     locations_stream: str = "named_locations"
 
@@ -168,7 +163,6 @@ class PremapModule(Module):
         # The list's revision, under an id of its own per run so another run's revisions never match
         self._server_id = uuid.uuid4().hex
         self._revision = 0
-        self._locations_store: SqliteStore | None = None
 
     @rpc
     def start(self) -> None:
@@ -247,7 +241,7 @@ class PremapModule(Module):
     # Named locations
 
     def open_locations(self) -> None:
-        """Load the saved locations and open the save file."""
+        """Load the locations recorded in the map file."""
         if self.config.map_file:
             source = str(
                 resolve_named_path(self.config.map_file, Path(self.config.map_file).suffix)
@@ -256,11 +250,6 @@ class PremapModule(Module):
             logger.info(
                 f"Loaded {len(self._locations)} named locations from {source}: {list(self._locations)}"
             )
-        if self.config.save_locations_to:
-            self._locations_store = self.register_disposable(
-                SqliteStore(path=self.config.save_locations_to)
-            )
-            self._locations_store.start()
 
     async def handle_named_locations(self, published: InteractiveMarkerUpdate) -> None:
         locations: dict[str, PoseStamped] = {}
@@ -288,7 +277,6 @@ class PremapModule(Module):
             return
         logger.info(f"named locations: {list(locations)}")
         snapshot = self.locations_snapshot()
-        self._save_locations(snapshot)
         self.named_locations.publish(snapshot)
         self.publish_tf()
 
@@ -321,9 +309,3 @@ class PremapModule(Module):
                 server_id=self._server_id,
                 seq_num=self._revision,
             )
-
-    def _save_locations(self, snapshot: InteractiveMarkerUpdate) -> None:
-        if self._locations_store is not None:
-            self._locations_store.stream(
-                self.config.locations_stream, InteractiveMarkerUpdate
-            ).append(snapshot, ts=time.time())
