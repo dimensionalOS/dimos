@@ -34,6 +34,7 @@ pub(crate) const PREEMPT_CANCELED: &str = "canceled";
 pub(crate) const NO_SAFE_PATH: &str = "no safe path";
 pub(crate) const NO_POSE: &str = "no robot pose";
 pub(crate) const NO_PROGRESS: &str = "no progress";
+pub(crate) const HEADING_NOT_REACHED: &str = "heading not reached";
 
 /// How often the latest goal status repeats between transitions.
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
@@ -128,6 +129,8 @@ impl GoalId {
 pub(crate) struct Goal {
     pub(crate) id: GoalId,
     pub(crate) position: Xyz,
+    /// The heading to face at the goal, when it carries one.
+    pub(crate) yaw: Option<f32>,
 }
 
 /// One goal's state as nav_status carries it.

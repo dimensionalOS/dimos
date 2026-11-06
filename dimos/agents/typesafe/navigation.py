@@ -53,13 +53,13 @@ from dimos.agents.typesafe.world_state import WorldState, build_world_state
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.navigation.spec import position_goal
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import LatestReader, getter_streaming
@@ -97,7 +97,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
     human_input: In[str]
 
     cmd_vel: Out[Twist]
-    goal: Out[PointStamped]  # world-frame XY the goal text resolved to
+    goal: Out[PoseStamped]  # world-frame XY the goal text resolved to, no heading
     agent: Out[BaseMessage]
     agent_idle: Out[bool]
 
@@ -299,7 +299,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
             prev = self._goal_xy
             self._goal_xy = (x, y)
         if prev is None or abs(prev[0] - x) > 0.1 or abs(prev[1] - y) > 0.1:
-            self.goal.publish(PointStamped(x, y, 0.0, frame_id="world"))
+            self.goal.publish(position_goal(x, y, 0.0, "world"))
 
     def _set_target(self, target: Vec3, *, immediate: bool = False, gen: int | None = None) -> None:
         now = time.monotonic()

@@ -19,6 +19,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::geom::angle_diff;
 use crate::hinted::update as hinted_update;
 use dimos_local_planner::planner::Emb;
 use dimos_module::{native_config, Input, Module, Output, Tf};
@@ -41,6 +42,9 @@ pub struct Config {
     /// Planar distance that counts as arrival (m).
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f64,
+    /// Arrival heading error on a goal with a heading (rad).
+    #[validate(range(exclusive_min = 0.0))]
+    pub goal_yaw_tolerance: f64,
     /// The planner's own body (`embodiment/base.py`).
     pub embodiment: Emb,
     /// The pose is the `path.frame_id -> base_frame` edge on tf, read each tick.
@@ -51,18 +55,27 @@ pub struct Config {
     pub max_path_age_s: f64,
 }
 
+/// A path's end: where to stop, and the heading to stop at when the path carries one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Goal {
+    pub xy: (f64, f64),
+    pub yaw: Option<f64>,
+}
+
 /// Arrival edge detector: fires once per goal, then holds until it moves (`follower.GoalLatch`).
 #[derive(Debug, Clone)]
 pub struct GoalLatch {
     tolerance: f64,
-    goal: Option<(f64, f64)>,
+    yaw_tolerance: f64,
+    goal: Option<Goal>,
     reached: bool,
 }
 
 impl GoalLatch {
-    pub fn new(tolerance: f64) -> Self {
+    pub fn new(tolerance: f64, yaw_tolerance: f64) -> Self {
         Self {
             tolerance,
+            yaw_tolerance,
             goal: None,
             reached: false,
         }
@@ -73,23 +86,41 @@ impl GoalLatch {
     }
 
     /// Moves under the tolerance are the same goal: replans snap the path end to the grid.
-    pub fn set_goal(&mut self, xy: (f64, f64)) {
-        if self.goal.is_none_or(|g| dist(xy, g) > self.tolerance) {
-            self.goal = Some(xy);
-            self.reached = false;
+    /// A heading goal stays the same goal only while its heading holds too.
+    pub fn set_goal(&mut self, goal: Goal) {
+        if self.goal.is_some_and(|g| self.same(g, goal)) {
+            return;
         }
+        self.goal = Some(goal);
+        self.reached = false;
     }
 
-    /// True exactly once: the tick this position first reaches the goal.
-    pub fn arrive(&mut self, xy: (f64, f64)) -> bool {
+    fn same(&self, a: Goal, b: Goal) -> bool {
+        let heading_holds = match (a.yaw, b.yaw) {
+            (None, None) => true,
+            (Some(ya), Some(yb)) => angle_diff(ya, yb).abs() <= self.yaw_tolerance,
+            _ => false,
+        };
+        heading_holds && dist(a.xy, b.xy) <= self.tolerance
+    }
+
+    /// True exactly once: the tick this pose first reaches the goal.
+    pub fn arrive(&mut self, pose: (f64, f64, f64)) -> bool {
         let Some(goal) = self.goal else {
             return false;
         };
-        if self.reached || dist(xy, goal) >= self.tolerance {
+        if self.reached || !self.at(goal, pose) {
             return false;
         }
         self.reached = true;
         true
+    }
+
+    fn at(&self, goal: Goal, (x, y, yaw): (f64, f64, f64)) -> bool {
+        dist((x, y), goal.xy) < self.tolerance
+            && goal
+                .yaw
+                .is_none_or(|g| angle_diff(g, yaw).abs() < self.yaw_tolerance)
     }
 }
 
@@ -98,12 +129,15 @@ fn dist(a: (f64, f64), b: (f64, f64)) -> f64 {
 }
 
 /// The goal a path carries: its last pose, or `None` for a single-pose refusal stub.
-pub fn goal_of(path: &Path) -> Option<(f64, f64)> {
+pub fn goal_of(path: &Path) -> Option<Goal> {
     if path.poses.len() < 2 {
         return None;
     }
     let last = path.poses.last()?;
-    Some((last.pose.position.x, last.pose.position.y))
+    Some(Goal {
+        xy: (last.pose.position.x, last.pose.position.y),
+        yaw: msg::heading_of(path),
+    })
 }
 
 #[derive(Default)]
@@ -112,7 +146,7 @@ struct Shared {
     /// Arrival, not `msg.ts`: this measures how long since the planner was last heard.
     path_at: Option<Instant>,
     /// Drained per tick in arrival order, so the latch sees every set_goal in sequence.
-    goals: Vec<(f64, f64)>,
+    goals: Vec<Goal>,
 }
 
 #[derive(Module)]
@@ -207,7 +241,7 @@ pub fn decide(
     if age > max_path_age_s {
         return Tick::Stale { age_s: age };
     }
-    if latch.arrive((pose.0, pose.1)) {
+    if latch.arrive(pose) {
         return Tick::Arrived;
     }
     if latch.reached() {
@@ -243,7 +277,7 @@ struct Worker {
 struct Snapshot {
     path: Option<Arc<Path>>,
     age_s: Option<f64>,
-    goals: Vec<(f64, f64)>,
+    goals: Vec<Goal>,
 }
 
 impl Worker {
@@ -253,7 +287,7 @@ impl Worker {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         let hinted = emb::hinted_params(&self.config.embodiment);
-        let mut latch = GoalLatch::new(self.config.goal_tolerance);
+        let mut latch = GoalLatch::new(self.config.goal_tolerance, self.config.goal_yaw_tolerance);
         let mut stale = Gate::default();
         let mut watch = PoseWatch::new(self.config.max_path_age_s);
 
@@ -349,7 +383,21 @@ mod tests {
     use dimos_local_planner::module::planner;
 
     fn latch() -> GoalLatch {
-        GoalLatch::new(0.2)
+        GoalLatch::new(0.2, 0.15)
+    }
+
+    fn point(x: f64, y: f64) -> Goal {
+        Goal {
+            xy: (x, y),
+            yaw: None,
+        }
+    }
+
+    fn pose(x: f64, y: f64, yaw: f64) -> Goal {
+        Goal {
+            xy: (x, y),
+            yaw: Some(yaw),
+        }
     }
 
     // GoalLatch: the cases in adapter/test_follower.py
@@ -357,27 +405,55 @@ mod tests {
     #[test]
     fn goal_latch_fires_once_then_holds() {
         let mut l = latch();
-        l.set_goal((1.0, 0.0));
-        assert!(!l.arrive((0.0, 0.0)));
-        assert!(l.arrive((0.95, 0.0)));
+        l.set_goal(point(1.0, 0.0));
+        assert!(!l.arrive((0.0, 0.0, 0.0)));
+        assert!(l.arrive((0.95, 0.0, 0.0)));
         assert!(l.reached());
-        assert!(!l.arrive((0.95, 0.0)));
+        assert!(!l.arrive((0.95, 0.0, 0.0)));
     }
 
     #[test]
     fn goal_latch_ignores_sub_tolerance_goal_moves() {
         let mut l = latch();
-        l.set_goal((1.0, 0.0));
-        assert!(l.arrive((1.0, 0.0)));
-        l.set_goal((1.05, 0.0)); // a replan's grid snap: the same goal
+        l.set_goal(point(1.0, 0.0));
+        assert!(l.arrive((1.0, 0.0, 0.0)));
+        l.set_goal(point(1.05, 0.0)); // a replan's grid snap: the same goal
         assert!(l.reached());
-        l.set_goal((3.0, 0.0)); // a new task
+        l.set_goal(point(3.0, 0.0)); // a new task
         assert!(!l.reached());
     }
 
     #[test]
     fn goal_latch_without_a_goal_never_arrives() {
-        assert!(!latch().arrive((0.0, 0.0)));
+        assert!(!latch().arrive((0.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_heading_change_is_a_new_goal() {
+        let mut l = latch();
+        l.set_goal(pose(1.0, 0.0, 0.0));
+        assert!(l.arrive((1.0, 0.0, 0.0)));
+        l.set_goal(pose(1.0, 0.0, 0.1)); // within the yaw tolerance: the same goal
+        assert!(l.reached());
+        l.set_goal(pose(1.0, 0.0, 1.0));
+        assert!(!l.reached());
+        assert!(l.arrive((1.0, 0.0, 1.0)));
+        l.set_goal(point(1.0, 0.0)); // dropping the heading is a new goal too
+        assert!(!l.reached());
+    }
+
+    #[test]
+    fn a_heading_goal_drives_until_aligned_then_arrives() {
+        let mut l = latch();
+        l.set_goal(pose(1.0, 0.0, 1.0));
+        assert_eq!(
+            decide(Some((1.0, 0.0, 0.0)), Some(0.0), 1.0, &mut l),
+            Tick::Drive
+        );
+        assert_eq!(
+            decide(Some((1.0, 0.0, 0.9)), Some(0.0), 1.0, &mut l),
+            Tick::Arrived
+        );
     }
 
     fn path_of(states: &[msg::State]) -> Path {
@@ -390,8 +466,16 @@ mod tests {
         assert_eq!(goal_of(&path_of(&[])), None);
         assert_eq!(
             goal_of(&path_of(&[[0.0, 0.0, 0.0], [1.0, 2.0, 0.0]])),
-            Some((1.0, 2.0))
+            Some(point(1.0, 2.0))
         );
+    }
+
+    #[test]
+    fn a_flagged_path_carries_its_last_yaw_as_the_goal_heading() {
+        let mut p = path_of(&[[0.0, 0.0, 0.0], [1.0, 2.0, 0.5]]);
+        assert_eq!(goal_of(&p), Some(point(1.0, 2.0)));
+        p.header.seq = msg::HEADING_GOAL_SEQ;
+        assert_eq!(goal_of(&p), Some(pose(1.0, 2.0, 0.5)));
     }
 
     #[test]
@@ -402,7 +486,7 @@ mod tests {
         if let Some(goal) = goal_of(&stub) {
             l.set_goal(goal);
         }
-        assert!(!l.arrive((5.0, 5.0)));
+        assert!(!l.arrive((5.0, 5.0, 0.0)));
     }
 
     #[test]
@@ -417,7 +501,7 @@ mod tests {
     #[test]
     fn a_stale_path_zeroes_the_twist() {
         let mut l = latch();
-        l.set_goal((10.0, 0.0));
+        l.set_goal(point(10.0, 0.0));
         assert_eq!(
             decide(Some((0.0, 0.0, 0.0)), Some(1.5), 1.0, &mut l),
             Tick::Stale { age_s: 1.5 }
@@ -433,7 +517,7 @@ mod tests {
     fn a_stale_path_outranks_an_arrival() {
         // the latch stays unarmed under the deadman, so a live plan later still gets its edge
         let mut l = latch();
-        l.set_goal((0.0, 0.0));
+        l.set_goal(point(0.0, 0.0));
         assert_eq!(
             decide(Some((0.0, 0.0, 0.0)), Some(9.0), 1.0, &mut l),
             Tick::Stale { age_s: 9.0 }
@@ -448,7 +532,7 @@ mod tests {
     #[test]
     fn arrival_fires_once_and_then_holds() {
         let mut l = latch();
-        l.set_goal((1.0, 0.0));
+        l.set_goal(point(1.0, 0.0));
         let at_goal = Some((1.0, 0.0, 0.0));
         assert_eq!(decide(at_goal, Some(0.0), 1.0, &mut l), Tick::Arrived);
         assert_eq!(decide(at_goal, Some(0.0), 1.0, &mut l), Tick::Holding);
