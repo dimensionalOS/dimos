@@ -86,7 +86,7 @@ changes only what it is handed. For a `Dataset` case the baseline receives selec
 coordinates and colors as CSV, camera frames as lossless PNG and primitive observations as
 JSON, with timestamps and hashes; no `agent_encode` summaries, labels, semantic tags or the
 original database. For a robot case it receives the raw topics and `ROBOT.md`. Dimcode
-receives the same selected observations through the dimOS store, the robot through MCP, and
+receives the same selected observations through the dimOS store, the robot through `DIMOS.md`, and
 keeps its production tools and skills. Representation and delivery differences between the
 arms are part of the comparison and belong in the report.
 
@@ -401,8 +401,14 @@ robot. `Sim` is its simulator branch: use `DimSimEnvironment` for DimSim,
 `HabitatEnvironment` for Habitat or `MujocoEnvironment` for MuJoCo.
 `HardwareEnvironment` runs a real robot (see Hardware below).
 
+Agents with dimOS drive a live robot through the Python API. A blueprint without
+`mcp-server` gives them [the Python API guide](/docs/usage/python-api.md) as `DIMOS.md`,
+which links to the manipulation and navigation guides, and no MCP tool list. Agents that
+need an McpServer (the dimOS agent, the MCP client) add `mcp-server` themselves.
+
 `DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
-<blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
+<blueprint> <modules>`, waits for the coordinator (and MCP when the blueprint has
+`mcp-server`), runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
 `grade` reads the recording once. `recording(o)` opens it:
@@ -429,7 +435,7 @@ go_to_bed = EvalCase(
     id="go_to_bed",
     inputs="go to the bed",
     environment=DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        blueprint=["unitree-go2", "unitree-skill-container"],
         scene="apartment",
     ),
     grade=ended_near_bed,
@@ -454,7 +460,7 @@ from dimos.evals.environments.habitat import HabitatEnvironment
 from dimos.simulation.habitat.constants import HM3D_EXAMPLE_DATASET_CONFIG
 
 habitat_environment = HabitatEnvironment(
-    blueprint=["habitat-nav", "mcp-server", "observe-skill"],
+    blueprint=["habitat-nav", "observe-skill"],
     scene_dataset_config=str(HM3D_EXAMPLE_DATASET_CONFIG),
     scene_id="00861-GLAQ4DNUx5U",
     seed=0,
@@ -492,7 +498,7 @@ lift_apple = EvalCase(
     id="lift_apple",
     inputs="Pick up the apple and hold it in the air above the table.",
     environment=MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server"],
+        blueprint=["xarm-perception-sim"],
         disable=("rerun-bridge-module",),
         tracked_bodies=("apple", "orange", "cup"),
     ),

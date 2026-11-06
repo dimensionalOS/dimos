@@ -155,7 +155,7 @@ class HabitatEnvironment(Sim):
         return {"episode": metadata}
 
     def wait_ready(self, recording: Store, *, deadline: float) -> None:
-        """Wait for fresh observations; Sim separately checks the MCP endpoint."""
+        """Wait for fresh observations; LiveEnvironment separately waits for the coordinator."""
         # Message timestamps are Unix wall-clock seconds. Use wall time for
         # freshness and monotonic time only for the elapsed launch deadline.
         while time.monotonic() < deadline:
