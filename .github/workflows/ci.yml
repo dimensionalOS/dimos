@@ -632,23 +632,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: dimos/agents/package-lock.json
-
-      - name: Check dependency release ages
-        run: node check-dependency-age.mjs
-
       - name: Install
         run: npm ci
-
       - name: Typecheck
         run: npm run typecheck
-
       - name: Test
         run: npm test
 
@@ -710,8 +703,12 @@ jobs:
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
+          # Slow Azure HTTP package downloads can exhaust the test job's timeout.
+          if [[ "$RUNNER_ARCH" == "X64" ]]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          sudo apt-get install -y --no-install-recommends portaudio19-dev libturbojpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio

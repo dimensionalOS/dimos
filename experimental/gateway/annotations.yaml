@@ -291,6 +291,12 @@ robots:
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
+        unitree-g1-replay-mesh:
+          title: G1 RGB-D mesh replay
+          description: 'Replays a G1 recording and reconstructs a colored 3D triangle mesh from its RealSense RGB-D stream: no robot needed.'
+          recommended_config:
+          - <<: *recording
+            streams: [[color_image], [realsense_depth_image], [realsense_camera_info], [tf]]
         unitree-g1-teleop:
           title: G1 VR teleop + recording
           description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
@@ -381,8 +387,8 @@ robots:
       manufacturer: DeepRobotics
       dirs: [dimos/robot/deeprobotics/m20]
       blueprints:
-        deeprobotics-m20-kronknav-control:
-          title: M20 3D navigation
+        m20:
+          title: 'M20: navigation'
           description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower, plus named map locations kept under the premap frame by the relocalizer.'
           recommended_config:
           - module: m20connection
@@ -392,6 +398,13 @@ robots:
           - module: localmaprelocalization
             field: map_file
             label: Premap (.db/.mcap)
+        m20-sim-nav:
+          title: 'M20 in simulation (navigation)'
+          description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        m20-sim-nav-episode:
+          title: 'M20 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated M20 navigation stack. Run by dimos nav-bench.'
+          hidden: true
     alfred:
       name: Alfred
       description: A DIY mobile base with a Mid-360 and a RealSense mast.

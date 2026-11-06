@@ -12,11 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FlowBase platform constants."""
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+"""A MuJoCo MJCF robot as a URDF, so one MJCF is the source for both the simulator and RobotModel users."""
 
-# Mid-360 mount pose on the FlowBase (position + orientation) in the base frame.
-FLOWBASE_MID360_MOUNT = Pose(0.20, -0.20, 0.10, *Quaternion.from_euler(Vector3(0, 0, 0)))
+from __future__ import annotations
+
+from mjcf_to_urdf import mjcf_spec_to_urdf
+import mujoco
+
+from dimos.robot.assets.model import RobotModel
+
+
+def mjcf_to_urdf(spec: mujoco.MjSpec) -> RobotModel:
+    """The robot in an MJCF as a RobotModel; mesh paths stay relative to the MJCF's folder, as MuJoCo resolves them."""
+    return RobotModel.from_urdf_string(mjcf_spec_to_urdf(spec), asset_dir=spec.modelfiledir)

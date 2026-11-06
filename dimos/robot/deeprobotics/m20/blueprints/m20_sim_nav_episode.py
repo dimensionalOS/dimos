@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulation engine registry."""
+"""One benchmark case driven against the M20 navigation stack in the simulated world."""
 
 from __future__ import annotations
 
-from typing import Literal
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.navigation.bench.driver import EpisodeDriver
+from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
+from dimos.simulation.m20_sim.world import SimM20World
 
-from dimos.simulation.engines.base import SimulationEngine
-from dimos.simulation.engines.mujoco_engine import MujocoEngine
-
-EngineType = Literal["mujoco"]
-
-_ENGINES: dict[EngineType, type[SimulationEngine]] = {
-    "mujoco": MujocoEngine,
-}
-
-
-def get_engine(engine_name: EngineType) -> type[SimulationEngine]:
-    return _ENGINES[engine_name]
+m20_sim_nav_episode = autoconnect(
+    m20_sim_nav, SimM20World.blueprint(wait_for_scene=True), EpisodeDriver.blueprint()
+).global_config(n_workers=10)

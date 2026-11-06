@@ -35,6 +35,7 @@ surface_map = "sensor_msgs.PointCloud2"
 nodes = "sensor_msgs.PointCloud2"
 node_edges = "nav_msgs.LineSegments3D"
 path = "nav_msgs.Path"
+nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
