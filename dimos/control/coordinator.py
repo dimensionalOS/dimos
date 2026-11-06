@@ -512,6 +512,7 @@ class ControlCoordinator(Module):
             for task in self._tasks.values():
                 if isinstance(task, OperatorHoldTask):
                     task.set_base_axes(axes)
+                    task.exclude_joints(self.config.command_only_joints)
 
     def _publish_command(self, robot: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
@@ -691,6 +692,7 @@ class ControlCoordinator(Module):
 
         if isinstance(task, OperatorHoldTask):
             task.set_base_axes(self._connection_base_axes())
+            task.exclude_joints(self.config.command_only_joints)
 
         with self._task_lock:
             if task.name in self._tasks:

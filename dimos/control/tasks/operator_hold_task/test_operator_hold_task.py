@@ -33,6 +33,37 @@ def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
     return CoordinatorState(joints=JointStateSnapshot(joint_positions=positions), t_now=t_now)
 
 
+def test_command_only_feedback_is_preserved_but_not_held():
+    task = create_task(
+        TaskConfig(
+            name="operator_hold",
+            type="operator_hold",
+            priority=100,
+            params={"excluded_joints": ["r1pro/left_gripper"]},
+        ),
+        None,
+    )
+    task.exclude_joints(["r1pro/right_gripper"])
+    task.set_base_axes(["r1pro/base/vx"])
+    state = _state({"r1pro/arm": 0.5, "r1pro/left_gripper": 0.03, "r1pro/right_gripper": 0.04})
+    task.request("manual")
+    for estopped in (False, True, False):
+        task.set_estop(estopped)
+        output = task.compute(state)
+        assert state.joints.joint_positions["r1pro/left_gripper"] == 0.03
+        assert state.joints.joint_positions["r1pro/right_gripper"] == 0.04
+        assert task.get_status().on
+        if estopped:
+            assert output is None
+        else:
+            assert output is not None
+            assert dict(zip(output.joint_names, output.positions, strict=True)) == {
+                "r1pro/arm": 0.5,
+                "r1pro/base/vx": 0.0,
+            }
+            assert task.claim().joints == {"r1pro/arm", "r1pro/base/vx"}
+
+
 def test_idle_until_requested():
     task = OperatorHoldTask()
 
