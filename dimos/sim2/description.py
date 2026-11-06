@@ -55,6 +55,7 @@ class Instance:
 class SceneConfig:
     instances: tuple[Instance, ...]
     gravity_world: tuple[float, float, float] = (0.0, 0.0, -9.81)
+    ground_plane: bool = True
 
     def resolve(self, config_senders: ConfigSenders) -> SceneConfig:
         """Bind instance IDs to shared models before any consumer builds or starts."""
@@ -84,6 +85,7 @@ class SceneConfig:
         """Identity of the materialized description; not a native solver checkpoint."""
         payload = {
             "gravity_world": self.gravity_world,
+            "ground_plane": self.ground_plane,
             "instances": [
                 {
                     "id": i.id,

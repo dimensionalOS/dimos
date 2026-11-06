@@ -71,3 +71,7 @@ class MujocoRenderer:
 
     def close(self) -> None:
         self.renderer.close()
+
+    def cancel(self) -> None:
+        # No external I/O to interrupt. OpenGL cleanup must stay on its owner thread.
+        pass

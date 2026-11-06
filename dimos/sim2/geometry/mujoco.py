@@ -33,9 +33,13 @@ def build_scene(
     spec.option.gravity = world.gravity_world
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     spec.compiler.fusestatic = False
-    spec.worldbody.add_geom(
-        name="floor", type=mujoco.mjtGeom.mjGEOM_PLANE, size=[4, 4, 0.05], rgba=[0.25, 0.3, 0.35, 1]
-    )
+    if world.ground_plane:
+        spec.worldbody.add_geom(
+            name="floor",
+            type=mujoco.mjtGeom.mjGEOM_PLANE,
+            size=[4, 4, 0.05],
+            rgba=[0.25, 0.3, 0.35, 1],
+        )
     spec.worldbody.add_light(
         pos=[0, -3, 5],
         dir=[0, 0, -1],
@@ -71,6 +75,11 @@ def build_scene(
         extension = ET.SubElement(xml, "mujoco")
         ET.SubElement(extension, "compiler", fusestatic="false", discardvisual="false")
         for link in xml.findall("link"):
+            # Optical queries use visuals where available. Avoid compiling a
+            # second, unused copy of a large environment's collision geometry.
+            if kinematic and link.findall("visual"):
+                for collision in link.findall("collision"):
+                    link.remove(collision)
             for shape_kind in ("visual", "collision"):
                 for index, shape in enumerate(link.findall(shape_kind)):
                     shape.set("name", f"{instance.id}/{link.attrib['name']}/{shape_kind}/{index}")

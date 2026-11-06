@@ -2201,6 +2201,13 @@ sim = [
     { name = "playground" },
     { name = "pygame" },
 ]
+sim-unreal = [
+    { name = "mujoco" },
+    { name = "playground" },
+    { name = "pygame" },
+    { name = "trimesh" },
+    { name = "vhacdx" },
+]
 spot = [
     { name = "bosdyn-api" },
     { name = "bosdyn-client" },
@@ -2550,6 +2557,7 @@ requires-dist = [
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
     { name = "dimos", extras = ["planning", "base", "sim", "cpu"], marker = "extra == 'manipulation'" },
+    { name = "dimos", extras = ["sim"], marker = "extra == 'sim-unreal'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=e63ced404498e82e77963ab81649204054e80473" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
@@ -2658,6 +2666,7 @@ requires-dist = [
     { name = "trimesh", marker = "extra == 'apriltag'", specifier = ">=4.0.0" },
     { name = "trimesh", marker = "extra == 'planning'" },
     { name = "trimesh", marker = "extra == 'scene'", specifier = ">=4.0.0" },
+    { name = "trimesh", marker = "extra == 'sim-unreal'", specifier = ">=4.12" },
     { name = "typer", specifier = ">=0.19.2,<1" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.7" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
@@ -2665,6 +2674,7 @@ requires-dist = [
     { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", specifier = ">=2.1.2" },
     { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
+    { name = "vhacdx", marker = "extra == 'sim-unreal'", specifier = ">=0.0.10" },
     { name = "viser", extras = ["urdf"], marker = "extra == 'planning'", specifier = ">=1.0.29" },
     { name = "warp-lang", marker = "extra == 'cuda'", specifier = ">=1.13" },
     { name = "watchfiles", marker = "extra == 'web'", specifier = ">=1.0" },
@@ -2675,7 +2685,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "cpu", "cuda", "sim", "sim-unreal", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]

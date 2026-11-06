@@ -15,6 +15,7 @@
 """Camera acquisition, independent of physics and selectable renderer."""
 
 from collections.abc import Callable
+from typing import Any
 
 from dimos_lcm.sim_msgs import WorldState
 
@@ -39,8 +40,11 @@ class SimCameraModule(_PoseSensorModule):
     depth_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    def open_sensor(self, scene: SceneConfig) -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.renderer = self.config.renderer()
+
+    def open_sensor(self, scene: SceneConfig) -> None:
         self.renderer.load(scene, self.config.sensor)
         self._sampling = Acquisition(self.config.sensor.hz)
 
@@ -66,3 +70,6 @@ class SimCameraModule(_PoseSensorModule):
 
     def close_sensor(self) -> None:
         self.renderer.close()
+
+    def interrupt_sensor(self) -> None:
+        self.renderer.cancel()

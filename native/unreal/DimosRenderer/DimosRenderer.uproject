@@ -1,0 +1,13 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.7",
+  "Category": "Robotics",
+  "Description": "DimOS camera renderer driven by authoritative physics snapshots.",
+  "Modules": [{"Name": "DimosRenderer", "Type": "Runtime", "LoadingPhase": "Default"}],
+  "Plugins": [
+    {"Name": "ProceduralMeshComponent", "Enabled": true},
+    {"Name": "PythonScriptPlugin", "Enabled": true},
+    {"Name": "EditorScriptingUtilities", "Enabled": true},
+    {"Name": "AndroidFileServer", "Enabled": false}
+  ]
+}

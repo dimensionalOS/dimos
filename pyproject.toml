@@ -330,6 +330,12 @@ sim = [
     "pygame>=2.6.1",
 ]
 
+sim-unreal = [
+    "dimos[sim]",
+    "trimesh>=4.12",
+    "vhacdx>=0.0.10",
+]
+
 mapping = [
     # PGO for reloc premap
     # Jeff's https://github.com/jeff-hykin/gtsam-extended

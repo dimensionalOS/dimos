@@ -106,6 +106,9 @@ class _PoseSensorModule(SharedConfigModule, ABC):
         with self._stats_lock:
             self._stats[key] += 1
 
+    def interrupt_sensor(self) -> None:
+        """Wake external I/O when stopping; native cleanup stays on the worker."""
+
     @rpc
     def statistics(self) -> dict[str, Any]:
         with self._stats_lock:
@@ -114,6 +117,7 @@ class _PoseSensorModule(SharedConfigModule, ABC):
     @rpc
     def stop(self) -> None:
         self._done.set()
+        self.interrupt_sensor()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():
