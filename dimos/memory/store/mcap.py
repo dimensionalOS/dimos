@@ -49,6 +49,7 @@ from dimos.memory.observationstore.base import ObservationStore, ObservationStor
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.msgs.helpers import lcm_msg_type
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
 
@@ -288,10 +289,19 @@ class McapStore(Store):
                     # Artifact metadata may select only a built-in message class,
                     # never an arbitrary Python module or pickle decoder.
                     match = re.fullmatch(
-                        r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2",
+                        r"(dimos\.msgs|dimos_lcm)\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\3",
                         ch.metadata.get("dimos.payload_type", ""),
                     )
-                    kind = get_dimos_type(f"{match[1]}.{match[2]}") if match else None
+                    kind = None
+                    if match:
+                        msg_name = f"{match[2]}.{match[3]}"
+                        if match[1] == "dimos.msgs":
+                            kind = get_dimos_type(msg_name)
+                        else:
+                            try:
+                                kind = lcm_msg_type(msg_name)
+                            except (ImportError, AttributeError):
+                                pass
                     if kind is not None and hasattr(kind, "lcm_decode"):
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (
