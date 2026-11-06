@@ -124,6 +124,16 @@ def test_server_url_is_configured_else_the_blueprints_server_else_the_default() 
         client.stop()
 
 
+def test_mcp_requests_do_not_keep_the_connection_alive() -> None:
+    """A pooled connection the server closes as idle at the moment a tool call is
+    sent on it fails the call with "Connection aborted", so none is pooled."""
+    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
+    try:
+        assert client._http_client.headers["Connection"] == "close"
+    finally:
+        client.stop()
+
+
 @pytest.fixture
 def mcp_client() -> McpClient:
     """Build an McpClient wired to a mock requests session."""
