@@ -191,11 +191,11 @@ class PickAndPlaceModule(Module):
         here only if the planner finds no path to it. Without ``grasp``, ranked
         grasps are generated and tried in order.
 
-        ``source`` in the result says which grasp was used: the given grasp's
-        ``generator`` ("operator" when it has none), or "provider" for one
-        generated here. ``contact_rejected`` counts the generated grasps dropped
-        because the arm cannot reach them, or the robot would touch the object
-        off its finger pads or hit the scene.
+        ``source`` in the result says where the grasp the gripper closed on came
+        from: the given grasp's ``generator`` ("operator" when it has none), or
+        "provider" for one generated here. ``contact_rejected`` counts the
+        generated grasps dropped because the arm cannot reach them, or the robot
+        would touch the object off its finger pads or hit the scene.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -402,6 +402,7 @@ class PickAndPlaceModule(Module):
                     f"Move to grasp candidate {rank} for object {object_id}", blocked
                 )
             if not_held := self._close_and_verify(group, object_id):
+                not_held.metadata = {**not_held.metadata, "source": source}
                 # Back out while the target's cells are still ignored: left at
                 # the grasp pose, the arm would start the next plan inside them.
                 # Only with the jaws open again, so nothing half-gripped is dragged.

@@ -667,3 +667,18 @@ def test_no_path_to_the_given_grasp_or_the_generated_ones_is_reported(
 
     assert result.message.startswith("The planner found no path to any of the 2 grasp")
     assert not module._holding_object
+
+
+def test_a_given_grasp_that_does_not_hold_says_where_it_came_from(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
+        position = 0.0 if target == config.closed_position else target
+        return GripperSettle(True, position, True, 0.1)
+
+    monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
+
+    result = module.pick_object("cup-1", grasp=_given(0.12, generator="GraspGenXModule", rank=1))
+
+    assert result.message.startswith("Closed the gripper on object cup-1.")
+    assert (result.metadata["source"], result.metadata["rank"]) == ("GraspGenXModule", 1)
