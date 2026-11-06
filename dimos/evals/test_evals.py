@@ -50,6 +50,7 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.environments.live import PYTHON_API_GUIDE
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -285,9 +286,16 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
     proc.stop.assert_called_once_with()
 
 
-def test_attach_checks_the_python_guide_exists(tmp_path: Path) -> None:
-    with pytest.raises(RuntimeError, match="python_guide .* does not exist"):
-        _sim(attach=True, python_guide=tmp_path / "missing.md").preflight(McpClientAdapter())
+def test_attach_checks_the_python_guide_exists(tmp_path: Path, mocker: MockerFixture) -> None:
+    mocker.patch("dimos.evals.environments.live.PYTHON_API_GUIDE", tmp_path / "missing.md")
+    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True)
+    with pytest.raises(RuntimeError, match="Python API guide .* does not exist"):
+        env.preflight(McpClientAdapter())
+
+
+def test_a_blueprint_without_mcp_server_gets_the_python_api_guide() -> None:
+    assert DimSimEnvironment(blueprint=["unitree-go2"]).python_guide == PYTHON_API_GUIDE
+    assert _sim().python_guide is None
 
 
 def test_sim_attach_rejects_added_modules() -> None:
@@ -407,10 +415,8 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
 
 
-def test_mcp_client_adapter_needs_an_mcp_server_beside_a_python_guide(tmp_path: Path) -> None:
-    guide = tmp_path / "python_api.md"
-    guide.touch()
-    env = _sim(python_guide=guide)
+def test_mcp_client_adapter_needs_an_mcp_server_beside_a_python_guide() -> None:
+    env = DimSimEnvironment(blueprint=["unitree-go2"])
     with pytest.raises(RuntimeError, match="add mcp-server"):
         McpClientAdapter(modules=("mcp-client",)).preflight(env)
     McpClientAdapter(modules=("mcp-server", "mcp-client")).preflight(env)

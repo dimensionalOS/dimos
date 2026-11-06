@@ -21,7 +21,6 @@ bodies' recorded poses.
 
 from __future__ import annotations
 
-from dimos.evals.environments.live import MANIPULATION_PYTHON_GUIDE
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.scorers import lifted, stacked_on
 from dimos.evals.types import EvalCase, Suite
@@ -48,7 +47,6 @@ def environment() -> MujocoEnvironment:
     return MujocoEnvironment(
         blueprint=["xarm-perception-sim", "observe-skill"],
         disable=PERCEPTION_MODULES,
-        python_guide=MANIPULATION_PYTHON_GUIDE,
         scene=LfsPath("xarm7/scene.xml"),
         tracked_bodies=TRACKED,
     )

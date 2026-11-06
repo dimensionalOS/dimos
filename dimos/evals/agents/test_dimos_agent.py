@@ -185,10 +185,8 @@ def test_the_python_guide_reaches_the_agent_as_dimos_md(tmp_path):
     assert (run_dir / "DIMOS.md").is_file() and "DIMOS.md" in prompt
 
 
-def test_the_agent_brings_its_own_mcp_server_to_a_python_api_suite(tmp_path):
-    guide = tmp_path / "python_api.md"
-    guide.touch()
-    python_api = MujocoEnvironment(blueprint=["xarm-sim"], python_guide=guide)
+def test_the_agent_brings_its_own_mcp_server_to_a_python_api_suite():
+    python_api = MujocoEnvironment(blueprint=["xarm-sim"])
     assert DimosAgentAdapter().launch_modules(python_api) == ("mcp-server",)
     assert PiAdapter().launch_modules(python_api) == ()
     with_mcp = MujocoEnvironment(blueprint=["xarm-sim", "mcp-server"])

@@ -23,6 +23,7 @@ import pytest
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
+from dimos.evals.environments.live import PYTHON_API_GUIDE
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
@@ -269,9 +270,7 @@ def test_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
     connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
     mcp = mocker.patch("dimos.evals.environments.live.McpAdapter")
     mocker.patch("dimos.memory.store.sqlite.SqliteStore")
-    guide = tmp_path / "python_api.md"
-    guide.write_text("# guide")
-    env = MujocoEnvironment(blueprint=["xarm-perception-sim"], python_guide=guide)
+    env = MujocoEnvironment(blueprint=["xarm-perception-sim"])
     mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
     mocker.patch.object(env, "wait_ready")
     try:
@@ -279,6 +278,6 @@ def test_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
         connectable.assert_called_once()
         mcp.assert_not_called()
         assert result.mcp_url == ""
-        assert result.python_guide == guide
+        assert result.python_guide == PYTHON_API_GUIDE
     finally:
         env.stop()
