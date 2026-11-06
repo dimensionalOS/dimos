@@ -1,62 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793953845824,
+  "lastUpdate": 1793963484571,
   "repoUrl": "https://github.com/dimensionalOS/dimos",
   "entries": {
     "go2 replay realtime (arm64)": [
-      {
-        "commit": {
-          "author": {
-            "email": "69774903+aclauer@users.noreply.github.com",
-            "name": "Andrew Lauer",
-            "username": "aclauer"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d0e2332679bbc9376304d091863c40c696556933",
-          "message": "fix: lazy voxel normal calculations and voxel chunking (#4324)\n\nCo-authored-by: Jeff Hykin <jeff.hykin@gmail.com>",
-          "timestamp": "2026-10-07T23:55:20+03:00",
-          "tree_id": "ce2d9ee14026daf916e3b314c48b1dae4501b2c0",
-          "url": "https://github.com/dimensionalOS/dimos/commit/d0e2332679bbc9376304d091863c40c696556933"
-        },
-        "date": 1791406706277,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "peak memory",
-            "value": 1515.949,
-            "unit": "MB",
-            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
-          },
-          {
-            "name": "peak threads",
-            "value": 352,
-            "unit": "threads",
-            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
-          },
-          {
-            "name": "network (transport)",
-            "value": 2723.985,
-            "unit": "MB",
-            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
-          },
-          {
-            "name": "disk write",
-            "value": 1.457,
-            "unit": "MB",
-            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
-          },
-          {
-            "name": "instructions",
-            "value": 112.187,
-            "unit": "G",
-            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -10796,6 +10742,60 @@ window.BENCHMARK_DATA = {
           {
             "name": "instructions",
             "value": 136.987,
+            "unit": "G",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "bogwi@tutamail.com",
+            "name": "Dan Vi",
+            "username": "bogwi"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "abf36ce7c3aeb9c41032db94efdf958b9bbc0c08",
+          "message": "feat(g1): RGB-D TSDF mesh replay (#4855)\n\nCo-authored-by: bogwi <bogdan@dimensional.org>",
+          "timestamp": "2026-11-06T19:08:22+08:00",
+          "tree_id": "c8ff64eac66f28c3e69e3b04035dc432425e7b9a",
+          "url": "https://github.com/dimensionalOS/dimos/commit/abf36ce7c3aeb9c41032db94efdf958b9bbc0c08"
+        },
+        "date": 1793963483699,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "peak memory",
+            "value": 1748.508,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "peak threads",
+            "value": 369,
+            "unit": "threads",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "network (transport)",
+            "value": 2730.588,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "disk write",
+            "value": 1.367,
+            "unit": "MB",
+            "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
+          },
+          {
+            "name": "instructions",
+            "value": 138.583,
             "unit": "G",
             "extra": "cpu: Neoverse-N2; delivered: odom 1122/1122, lidar 461/461, color_image 853/855; perf counted 100.0%"
           }
