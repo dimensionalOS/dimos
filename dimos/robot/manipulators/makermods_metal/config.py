@@ -35,19 +35,16 @@ METAL_SOURCE = RobotDescriptionSource(
 # reports -0.05050 rad when the arm rests on that stop. Widen the stop so the
 # measured pose is inside the model, and a hold there does not push to 0 rad.
 METAL_JOINT3_LIMITS = (-0.06, 3.14)
-METAL_MODEL = (
-    RobotModel.from_file(
-        METAL_SOURCE / "metal_ros2/src/metal_description/urdf/metal_with_gripper.urdf",
-        package_paths={"metal_description": METAL_SOURCE / "metal_ros2/src/metal_description"},
-    )
-    .with_fixed_joints("joint7", "joint8")
-    .with_joint_position_limits(
-        "joint3", lower=METAL_JOINT3_LIMITS[0], upper=METAL_JOINT3_LIMITS[1]
-    )
-)
+METAL_MODEL = RobotModel.from_file(
+    METAL_SOURCE / "metal_ros2/src/metal_description/urdf/metal_with_gripper.urdf",
+    package_paths={"metal_description": METAL_SOURCE / "metal_ros2/src/metal_description"},
+).with_joint_position_limits("joint3", lower=METAL_JOINT3_LIMITS[0], upper=METAL_JOINT3_LIMITS[1])
 METAL_ARM_JOINTS = tuple(f"joint{index}" for index in range(1, 7))
 METAL_HARDWARE_ID = "metal"
-METAL_GRIPPER_JOINT = "gripper"
+METAL_GRIPPER_NAME = "gripper"
+#: The jaw's finger joints, in m: joint7 is driven and the URDF has joint8 copy
+#: it. joint7 is fully open at its lower end and closed at 0.
+METAL_FINGER_JOINTS = ("joint7", "joint8")
 # Custom firmware profiles: the stock DM scaling does not match these motors.
 METAL_PROFILE_LOW = DamiaoProfile(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
 METAL_PROFILE_SHOULDER = DamiaoProfile(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)
@@ -63,10 +60,11 @@ METAL_PROFILES = (
 
 
 def make_metal_model_config(*, robot: str | None = None) -> RobotModelConfig:
-    """Plan to the gripper mount; normalized jaw motion is controlled separately.
+    """Plan the arm to the gripper mount; the jaw moves on its own finger joint.
 
     Args:
-        robot: Name the moving joints under this robot, e.g. "arm".
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/joint1" and "arm/joint7".
     """
     return named_for_robot(
         RobotModelConfig(
@@ -86,6 +84,7 @@ def make_metal_model_config(*, robot: str | None = None) -> RobotModelConfig:
             auto_convert_meshes=True,
         ),
         robot,
+        fingers=METAL_FINGER_JOINTS,
     )
 
 
@@ -99,10 +98,17 @@ def metal_motors(prefix: str = "") -> list[DamiaoMotor]:
     ]
 
 
-def metal_gripper(name: str) -> DamiaoGripper:
-    """A Metal jaw on the high-torque profile, opening toward more position."""
+def metal_gripper(name: str, joint: str) -> DamiaoGripper:
+    """A Metal jaw on the high-torque profile, opening toward more motor position.
+
+    Args:
+        name: The native gripper and motor name, e.g. "gripper".
+        joint: Its URDF finger joint, e.g. "joint7"; open at its lower end.
+    """
     return DamiaoGripper(
         name=name,
+        joint=joint,
+        open_at="lower",
         motor=DamiaoMotor(name, "profile", 0x07, 0x17, METAL_PROFILE_HIGH),
         opening="increasing_position",
         current=0.1,
@@ -116,13 +122,13 @@ METAL = DamiaoRobot(
             arm=metal_motors(),
             kp=[100.0, 100.0, 100.0, 50.0, 20.0, 20.0],
             kd=[5.0, 5.0, 5.0, 5.0, 0.6, 0.6],
-            gripper=metal_gripper(METAL_GRIPPER_JOINT),
+            gripper=metal_gripper(METAL_GRIPPER_NAME, METAL_FINGER_JOINTS[0]),
             name="arm",
         )
     ],
     model=make_metal_model_config().model,
     gravity_model=METAL_MODEL,
     base_link="base_link",
-    joint_names=[*METAL_ARM_JOINTS, METAL_GRIPPER_JOINT],
+    joint_names=[*METAL_ARM_JOINTS, METAL_FINGER_JOINTS[0]],
     gravity=False,
 )

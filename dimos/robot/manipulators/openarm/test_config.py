@@ -74,22 +74,22 @@ def test_openarm_config_exposes_one_bimanual_model() -> None:
 
 
 @pytest.mark.self_hosted
-def test_openarm_model_fixes_fingers_without_removing_grasp_frames() -> None:
+def test_openarm_model_moves_fingers_without_removing_grasp_frames() -> None:
     loaded = OPENARM_BIMANUAL_MODEL.load()
-    finger_joint_names = {
-        f"openarm_{side}_finger_joint{index}" for side in OPENARM_SIDES for index in (1, 2)
-    }
 
-    assert {joint.name for joint in loaded.joints if joint.type == "fixed"}.issuperset(
-        finger_joint_names
-    )
+    for side in OPENARM_SIDES:
+        assert loaded.get_joint(f"openarm_{side}_finger_joint1").type == "revolute"
+        assert loaded.get_joint(f"openarm_{side}_finger_joint2").mimic == (
+            f"openarm_{side}_finger_joint1",
+            1.0,
+            0.0,
+        )
 
     model = pinocchio.buildModelFromXML(loaded.xml)
 
-    assert model.nq == model.nv == len(OPENARM_ARM_JOINTS)
-    assert tuple(str(name) for name in model.names[1:]) == tuple(
+    assert [str(name) for name in model.names[1:] if "finger" not in str(name)] == [
         name for side in OPENARM_SIDES for name in openarm_urdf_joints(side)
-    )
+    ]
     frame_names = {str(frame.name) for frame in model.frames}
     assert {f"openarm_{side}_grasp_frame" for side in OPENARM_SIDES} <= frame_names
 

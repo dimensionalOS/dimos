@@ -38,15 +38,14 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 _WRIST_WIDTH = 640
 _WRIST_HEIGHT = 480
 _WRIST_FPS = 30.0
-OPENYAM_ROLLOUT_JOINTS = [
-    *make_openyam_model_config(robot="arm").joint_names,
-    "arm/gripper",
-]
+_MODEL = make_openyam_model_config(robot="arm")
+OPENYAM_ROLLOUT_JOINTS = [*_MODEL.joint_names, OPENYAM_GRIPPER_JOINT]
 
 
 def _rollout_control(
@@ -57,7 +56,7 @@ def _rollout_control(
     return autoconnect(
         coordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenYamConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),

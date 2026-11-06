@@ -33,14 +33,16 @@ def metal_control() -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=MetalConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=[
                 joint_trajectory_task(list(_MODEL.joint_names)),
+                # joint7 is open at its lower end.
                 TaskConfig(
                     name="metal_gripper",
                     type="gripper",
-                    joint_names=["arm/gripper"],
+                    joint_names=["arm/joint7"],
                     priority=20,
+                    params={"open_at": "lower"},
                 ),
             ],
             zero_stiffness_joints=[],

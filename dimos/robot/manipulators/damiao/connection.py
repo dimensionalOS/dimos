@@ -41,7 +41,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.logging_config import setup_logger
@@ -60,7 +59,7 @@ def zero_stiffness_joints(robot: DamiaoRobot, *, teach: bool, source: str = "arm
         return []
     names = [
         *robot.arm_joint_names,
-        *(name for name in robot.gripper_joint_names if name in robot.passive_grippers),
+        *(gripper.joint for gripper in robot.grippers if gripper.name in robot.passive_grippers),
     ]
     return [f"{source}/{name}" for name in names]
 
@@ -110,31 +109,6 @@ class DamiaoConnection(ConnectionModule):
     @abstractmethod
     def can_ports(self) -> list[str]:
         """Return one explicitly configured CAN selector per robot bus, in order."""
-
-    @classmethod
-    def control_model(cls, source: str | None = None) -> RobotModel:
-        """The model clients control: the arm joints plus normalized gripper joints."""
-        model = cls.robot.model
-        grippers = [
-            JointDescription(
-                name=name,
-                type="revolute",
-                parent_link=cls.robot.base_link,
-                child_link=f"{name}_control_link",
-                lower=0.0,
-                upper=1.0,
-                velocity=0.0,
-                effort=0.0,
-            )
-            for name in cls.robot.gripper_joint_names
-        ]
-        if grippers:
-            model = model.with_added_joints(*grippers)
-        if source is not None:
-            model = model.with_renamed_joints(
-                {name: f"{source}/{name}" for name in cls.robot.joint_names}
-            )
-        return model
 
     def connect(self) -> None:
         """Validate the deployed model and topology, then open the buses."""

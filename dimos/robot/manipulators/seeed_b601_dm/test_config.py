@@ -74,7 +74,7 @@ def test_connection_uses_its_explicit_selector(can_port: str) -> None:
 
 def test_connection_declares_seeed_gains_and_topology() -> None:
     assert B601_DM.arm_joints == {"arm": list(B601_DM_ARM_JOINTS)}
-    assert B601_DM.gripper_joints == {"gripper": "gripper"}
+    assert B601_DM.gripper_joints == {"gripper": "finger_left"}
     assert B601_DM.buses[0].kp == [120.0, 120.0, 120.0, 18.0, 18.0, 18.0]
     assert B601_DM.buses[0].kd == [5.0, 5.0, 5.0, 2.0, 2.0, 2.0]
     assert B601_DM.gravity is True
@@ -139,7 +139,7 @@ def test_simulation_composes_a_mock_connection(monkeypatch: pytest.MonkeyPatch) 
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
     assert mock.kwargs["source"] == "arm"
-    assert list(mock.kwargs["initial_positions"]) == [*B601_DM_ARM_JOINTS, "gripper"]
+    assert list(mock.kwargs["initial_positions"]) == [*B601_DM_ARM_JOINTS, "finger_left"]
     assert set(mock.kwargs["initial_positions"].values()) == {0.0}
     assert blueprint.remapping_map[(mock.name, "position_command")] == "arm_position_command"
 
@@ -171,7 +171,7 @@ def test_planner_coordinator_drives_arm_and_gripper() -> None:
     assert parsed.module_kwargs("b601dmconnection")["can_port"] == "/dev/ttyACM0"
     assert tasks["trajectory"].joint_names == [f"arm/{name}" for name in B601_DM_ARM_JOINTS]
     assert tasks["gripper"].name == "b601_dm_gripper"
-    assert tasks["gripper"].joint_names == ["arm/gripper"]
+    assert tasks["gripper"].joint_names == ["arm/finger_left"]
 
     planner_config = ManipulationModuleConfig.model_validate(
         parsed.module_kwargs(planner_atom.name)
@@ -184,11 +184,12 @@ def test_planner_coordinator_drives_arm_and_gripper() -> None:
 def test_gripper_task_uses_the_deployed_joint_name() -> None:
     task = b601_dm_gripper_task()
 
-    assert (task.name, task.type, task.joint_names, task.priority) == (
+    assert (task.name, task.type, task.joint_names, task.priority, task.params) == (
         "b601_dm_gripper",
         "gripper",
-        ["arm/gripper"],
+        ["arm/finger_left"],
         20,
+        {"open_at": "upper"},
     )
 
 
@@ -201,14 +202,13 @@ def test_model_plans_arm_joints_to_the_tool_link() -> None:
 
 
 @pytest.mark.self_hosted
-def test_model_fixes_fingers_and_widens_joint2_for_the_folded_rest() -> None:
+def test_model_moves_fingers_and_widens_joint2_for_the_folded_rest() -> None:
     loaded = B601_DM_MODEL.load()
 
-    assert {joint.name for joint in loaded.joints if joint.type == "fixed"}.issuperset(
-        {"finger_left", "finger_right"}
-    )
+    assert loaded.get_joint("finger_left").type == "prismatic"
+    assert loaded.get_joint("finger_right").mimic == ("finger_left", -1.0, 0.0)
     model = pinocchio.buildModelFromXML(loaded.xml)
-    assert tuple(str(name) for name in model.names[1:]) == B601_DM_ARM_JOINTS
+    assert tuple(str(name) for name in model.names[1:7]) == B601_DM_ARM_JOINTS
     joint2 = model.getJointId("joint2") - 1
     assert (model.lowerPositionLimit[joint2], model.upperPositionLimit[joint2]) == pytest.approx(
         B601_DM_JOINT2_LIMITS
@@ -245,4 +245,5 @@ def test_mock_coordinator_executes_trajectory_and_gripper_command(tmp_path, mock
 
         assert coordinator.task_invoke("b601_dm_gripper", "set_normalized", {"values": [1.0]})
         rig.tick()
-        assert rig.positions["arm/gripper"] == pytest.approx(1.0)
+        # finger_left is fully open at 0.05 m.
+        assert rig.positions["arm/finger_left"] == pytest.approx(0.05)

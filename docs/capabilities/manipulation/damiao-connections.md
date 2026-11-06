@@ -79,8 +79,9 @@ app.ControlCoordinator.task_invoke("arm_gripper", "set_normalized", {"values": [
 app.ControlCoordinator.get_joint_positions()
 ```
 
-The call returns `True`. On a subsequent state read, `arm/gripper` is near 0.6,
-while the six arm positions are unchanged. In the simple OpenArm control
+The call returns `True`. On a subsequent state read, `arm/joint7` is near
+-0.03 m (Metal's finger is closed at 0 and fully open at -0.05), while the six
+arm positions are unchanged. In the simple OpenArm control
 blueprint, use `arm_left_gripper` or `arm_right_gripper` for the selected jaw.
 
 For a small arm trajectory in the mock Metal, use:
@@ -170,13 +171,17 @@ Existing entry names now compose the direct connection too:
 Deployed joint names use source `arm`. Metal has `arm/joint1..6`, YAM has
 `arm/yam_joint1..6`, dual YAM has `arm/left_joint1..6` and `arm/right_joint1..6`,
 and OpenArm has `arm/openarm_left_joint1..7` and the corresponding right names.
-Single grippers are `arm/gripper`; bimanual grippers are `arm/left_gripper` and
-`arm/right_gripper`. Openings are calibrated 0 closed to 1 open, not distances.
-Logical gripper links do not animate the physical finger meshes.
+Each gripper is its URDF finger joint, in the URDF's unit: YAM `arm/joint7`,
+Metal `arm/joint7` (dual Metal `arm/left_joint7` and `arm/right_joint7`), B601-DM
+`arm/finger_left`, and OpenArm `arm/openarm_left_finger_joint1` and
+`arm/openarm_right_finger_joint1`. The other finger copies it. Each gripper
+task's `open_at` says which end of the joint's range is open. Dual YAM's URDF
+has its finger joints fixed, so it keeps `arm/left_gripper` and
+`arm/right_gripper`, from 0 closed to 1 open.
 
-Planner groups and task joints derive from the same
-connection's `planning_model()` and `control_model()` views. Existing recordings using the old bare names retain
-their original schema; newly collected Quest recordings use the deployed names.
+Planner groups, task joints and the coordinator's model come from each robot's
+`config.py`. Existing recordings using the old names retain their original
+schema; newly collected recordings use the deployed names.
 
 `ManipulationModuleConfig.gripper_tasks` maps planning-group IDs to complete
 coordinator task names; grippers are not configured on `RobotModelConfig`.

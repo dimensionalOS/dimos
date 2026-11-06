@@ -81,8 +81,8 @@ def test_first_state_follows_stream_setup_and_ready_log(connection_class, bounda
             "arm/joint1",
             "arm/joint2",
             "arm/joint3",
-            "arm/left_gripper",
-            "arm/right_gripper",
+            "arm/left_finger",
+            "arm/right_finger",
         ]
         info.assert_any_call("Robot connection ready", connection="Connection", source="arm")
     finally:

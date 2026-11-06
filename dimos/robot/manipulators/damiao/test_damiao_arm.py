@@ -40,16 +40,32 @@ def test_command_composes_one_tick_with_declared_gains_and_held_targets(boundary
     rows = native.groups["left_arm"].commands[-1]
     np.testing.assert_equal(rows, [[80, 5, 0.2, 0, 0], [10, 1.5, -0.5, 0, 0]])
     assert native.groups["right_arm"].commands[-1][0, 2] == 0.2
-    arm.command({"left_gripper": 0.75})
-    assert native.groups["left_gripper"].commands[-1] == 0.75
 
 
-def test_command_rejects_unknown_joints_and_gripper_openings(boundary):
+def test_jaws_are_their_finger_joints_with_the_open_end_from_the_robot(boundary):
+    # left_finger opens toward its upper end (0.04 m), right_finger toward its
+    # lower end (-0.02 m); the SDK counts 0 closed to 1 open.
+    arm = _arm(boundary)
+    native = boundary[0]
+    arm.command({"left_finger": 0.03, "right_finger": -0.005})
+    assert native.groups["left_gripper"].commands[-1] == pytest.approx(0.75)
+    assert native.groups["right_gripper"].commands[-1] == pytest.approx(0.25)
+    native.groups["left_gripper"].opening = 1.0
+    native.groups["right_gripper"].opening = 1.0
+    assert arm.read().position[-2:] == [0.04, -0.02]
+    native.groups["left_gripper"].opening = 0.0
+    native.groups["right_gripper"].opening = 0.0
+    assert arm.read().position[-2:] == [0.0, 0.0]
+
+
+def test_command_rejects_unknown_joints_and_jaw_targets_outside_the_urdf_range(boundary):
     arm = _arm(boundary)
     with pytest.raises(ValueError, match="unknown Damiao joints"):
         arm.command({"missing": 0.1})
-    with pytest.raises(ValueError, match="gripper opening"):
-        arm.command({"left_gripper": 1.5})
+    with pytest.raises(ValueError, match="outside its URDF range"):
+        arm.command({"left_finger": 0.05})
+    with pytest.raises(ValueError, match="outside its URDF range"):
+        arm.command({"right_finger": 0.01})
 
 
 def test_command_and_hold_are_inert_on_an_unenabled_arm(boundary):
@@ -107,7 +123,7 @@ def test_teach_makes_the_jaw_passive_and_ignores_openings(boundary):
     gripper = boundary[0].groups["left_gripper"]
     assert gripper.modes == ["mit"]
     assert set(gripper.mit_commands) == {(0.0, 0.0, 0.4, 0.0, 0.0)}
-    arm.command({"left_gripper": 2.0})
+    arm.command({"left_finger": 2.0})
     assert gripper.commands == []
 
 
@@ -116,8 +132,8 @@ def test_passive_jaw_stays_positioned_without_teaching(boundary):
     arm = _arm(boundary, robot=robot)
     gripper = boundary[0].groups["left_gripper"]
     assert gripper.modes == []
-    arm.command({"left_gripper": 0.25})
-    assert gripper.commands[-1] == 0.25
+    arm.command({"left_finger": 0.01})
+    assert gripper.commands[-1] == pytest.approx(0.25)
     assert gripper.mit_commands == []
 
 
@@ -157,8 +173,8 @@ def test_missing_targets_and_nonfinite_commands_are_rejected(boundary):
         "joint1": 0.1,
         "joint2": 0.1,
         "joint3": 0.1,
-        "left_gripper": float("nan"),
-        "right_gripper": 0.0,
+        "left_finger": float("nan"),
+        "right_finger": 0.0,
     }
     with pytest.raises(ValueError, match="non-finite"):
         arm.command({"joint1": 0.2})

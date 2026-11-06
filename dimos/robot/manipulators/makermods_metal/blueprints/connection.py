@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Metal trajectory and normalized gripper control over connection streams."""
+"""Metal trajectory and gripper control over connection streams."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -30,24 +30,26 @@ _MODEL = make_metal_model_config(robot="arm")
 
 
 def makermods_metal_connection_control_blueprint() -> Blueprint:
-    """Trajectories and normalized grippers with the robot model served to clients."""
+    """Trajectories and the gripper, with the robot model served to clients."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=MetalConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=[
-                joint_trajectory_task([*_MODEL.joint_names, "arm/gripper"]),
+                joint_trajectory_task([*_MODEL.joint_names, "arm/joint7"]),
+                # joint7 is open at its lower end.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
-                    joint_names=["arm/gripper"],
+                    joint_names=["arm/joint7"],
                     priority=20,
+                    params={"open_at": "lower"},
                 ),
             ],
             zero_stiffness_joints=[],
         ),
         arm_connection(MetalConnection),
-        UrdfManager.blueprint(model=MetalConnection.control_model("arm")),
+        UrdfManager.blueprint(model=_MODEL.model),
     ).remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
 
 

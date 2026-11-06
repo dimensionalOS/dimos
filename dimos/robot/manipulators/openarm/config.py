@@ -45,23 +45,14 @@ OPENARM_BIMANUAL_XACRO = (
     / "openarm_v20.urdf.xacro"
 )
 
-OPENARM_BIMANUAL_MODEL = (
-    RobotModel.from_file(
-        OPENARM_BIMANUAL_XACRO,
-        package_paths={"openarm_description": OPENARM_DESCRIPTION_ROOT},
-        xacro_args={
-            "robot_preset": "default_bimanual",
-            "emit_grasp_frame": "true",
-        },
-    )
-    .with_default_joint_acceleration_limit(1.0)
-    .with_fixed_joints(
-        "openarm_left_finger_joint1",
-        "openarm_left_finger_joint2",
-        "openarm_right_finger_joint1",
-        "openarm_right_finger_joint2",
-    )
-)
+OPENARM_BIMANUAL_MODEL = RobotModel.from_file(
+    OPENARM_BIMANUAL_XACRO,
+    package_paths={"openarm_description": OPENARM_DESCRIPTION_ROOT},
+    xacro_args={
+        "robot_preset": "default_bimanual",
+        "emit_grasp_frame": "true",
+    },
+).with_default_joint_acceleration_limit(1.0)
 
 OPENARM_DOF = 7
 OPENARM_SIDES = ("left", "right")
@@ -69,7 +60,12 @@ OPENARM_SIDES = ("left", "right")
 OPENARM_LEFT_ARM_JOINTS = [f"openarm_left_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 OPENARM_RIGHT_ARM_JOINTS = [f"openarm_right_joint{i}" for i in range(1, OPENARM_DOF + 1)]
 OPENARM_ARM_JOINTS = [*OPENARM_LEFT_ARM_JOINTS, *OPENARM_RIGHT_ARM_JOINTS]
-OPENARM_GRIPPER_JOINTS = ["left_gripper", "right_gripper"]
+# Each jaw turns on finger_joint1, in rad; the URDF has finger_joint2 copy it.
+# The left jaw is open at its joint's upper end, the right at its lower end.
+OPENARM_GRIPPER_JOINTS = [f"openarm_{side}_finger_joint1" for side in OPENARM_SIDES]
+OPENARM_FINGER_JOINTS = [
+    f"openarm_{side}_finger_joint{index}" for side in OPENARM_SIDES for index in (1, 2)
+]
 OPENARM_JOINTS = [*OPENARM_ARM_JOINTS, *OPENARM_GRIPPER_JOINTS]
 OPENARM_HOME_JOINTS = [0.0] * len(OPENARM_ARM_JOINTS)
 OPENARM_GRIPPER_COLLISION_EXCLUSIONS = [
@@ -93,7 +89,8 @@ def openarm_bimanual_model_config(*, robot: str | None = None) -> RobotModelConf
     Collision exclusions cannot span robots, so both arms plan as one robot.
 
     Args:
-        robot: Name the moving joints under this robot, e.g. "arm".
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/openarm_left_joint1" and "arm/openarm_left_finger_joint1".
     """
     canonical_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
     return named_for_robot(
@@ -125,6 +122,7 @@ def openarm_bimanual_model_config(*, robot: str | None = None) -> RobotModelConf
             home_joints=list(OPENARM_HOME_JOINTS),
         ),
         robot,
+        fingers=OPENARM_FINGER_JOINTS,
     )
 
 
@@ -144,6 +142,8 @@ def _bus(side: str) -> DamiaoBus:
         kd=list(OPENARM_KD),
         gripper=DamiaoGripper(
             name=f"{side}_gripper",
+            joint=f"openarm_{side}_finger_joint1",
+            open_at="upper" if side == "left" else "lower",
             motor=DamiaoMotor(f"openarm_{side}_gripper", "DM4310", 0x08, 0x18),
             opening="decreasing_position",
             current=0.15,
