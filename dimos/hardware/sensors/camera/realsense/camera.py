@@ -48,6 +48,8 @@ class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     # The camera's tf link, what a mount edge points at. Imager frames hang off
     # it with `_link` dropped: d435_link -> d435_color_optical_frame.
     frame_id: str | None = "camera_link"
+    # Off, depth keeps its own field of view and frame, and the cloud is depth
+    # alone (x y z, no rgb): color pixels no longer sit on depth pixels.
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_color: bool = True
