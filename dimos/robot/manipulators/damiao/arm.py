@@ -51,7 +51,7 @@ MOTOR_TYPES: dict[str, Any] = {
 
 
 class PhysicalModel:
-    """Numerical arm model: exact joint coordinates, strict limits and gravity."""
+    """Numerical arm model: exact joint coordinates and gravity."""
 
     def __init__(
         self,
@@ -75,15 +75,6 @@ class PhysicalModel:
             raise ValueError("physical model dimensions do not match angular joints")
         if tuple(str(name) for name in model.names[1:]) != self._names:
             raise ValueError("physical model joint order does not match angular joints")
-        self._lower = np.asarray(model.lowerPositionLimit, dtype=np.float64)
-        self._upper = np.asarray(model.upperPositionLimit, dtype=np.float64)
-        if (
-            self._lower.shape != (count,)
-            or self._upper.shape != (count,)
-            or not np.isfinite([self._lower, self._upper]).all()
-            or np.any(self._lower >= self._upper)
-        ):
-            raise ValueError("physical model contains invalid arm position limits")
         self._model = model
         self._data = model.createData()
 
@@ -102,18 +93,6 @@ class PhysicalModel:
         if gravity.shape != positions.shape or not np.isfinite(gravity).all():
             raise ValueError("gravity compensation produced invalid torques")
         return gravity
-
-    def validate(self, positions: list[float]) -> list[float]:
-        """Return the measured arm positions, or raise if any is past a limit."""
-        q = np.asarray(positions, dtype=np.float64)
-        if q.shape != self._lower.shape or not np.isfinite(q).all():
-            raise RuntimeError("arm feedback contains non-finite or invalid positions")
-        for index, name in enumerate(self._names):
-            lower, upper, value = self._lower[index], self._upper[index], q[index]
-            if lower <= value <= upper:
-                continue
-            raise RuntimeError(f"{name} reported {value} outside [{lower}, {upper}]")
-        return [float(value) for value in q]
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,8 +396,6 @@ class DamiaoArm:
                 raise RuntimeError(f"native arm {bus.name!r} returned the wrong state length")
             for output, array in zip((q, dq, tau), arrays, strict=True):
                 output.extend(array.astype(np.float64).tolist())
-        assert self._physical is not None
-        q = self._physical.validate(q)
         for name in self._robot.gripper_joint_names:
             opening = float(self._grippers[name].opening) if self._active else 0.0
             if not np.isfinite(opening) or not 0 <= opening <= 1:

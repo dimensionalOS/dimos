@@ -72,7 +72,8 @@ def _physical(connection_type: type[DamiaoConnection]) -> PhysicalModel:
 
 
 def _middle(physical: PhysicalModel) -> np.ndarray:
-    return (physical._lower + physical._upper) / 2.0
+    model = physical._model
+    return (np.asarray(model.lowerPositionLimit) + np.asarray(model.upperPositionLimit)) / 2.0
 
 
 def _set_pose(native, connection_type: type[DamiaoConnection], pose: np.ndarray) -> None:
@@ -174,24 +175,6 @@ def test_fake_feedback_fault_disables_each_arm(connection_type, ports, boundary,
         assert sum(len(getattr(group, "commands", [])) for group in native.groups.values()) == sent
     finally:
         native.refresh_error = None
-        module.stop()
-
-
-@pytest.mark.parametrize("connection_type,ports", ARMS)
-def test_strict_out_of_limits_latches_each_arm(connection_type, ports, boundary, mocker, tmp_path):
-    physical = _physical(connection_type)
-    native = boundary[0]
-    module, _, _ = _rig(connection_type, ports, boundary, mocker, tmp_path)
-    try:
-        module.start()
-        pose = _middle(physical)
-        pose[0] = physical._upper[0] + 0.5
-        _set_pose(native, connection_type, pose)
-        wait_until(lambda: module._fault is not None, timeout=2)
-        assert "outside" in module._fault
-        assert "disable" in native.events
-    finally:
-        _set_pose(native, connection_type, _middle(physical))
         module.stop()
 
 

@@ -121,16 +121,6 @@ def test_passive_jaw_stays_positioned_without_teaching(boundary):
     assert gripper.mit_commands == []
 
 
-def test_strict_out_of_limits_error(boundary):
-    arm = _arm(boundary)
-    upper = float(arm._physical._upper[0])
-    boundary[0].groups["left_arm"].q[0] = upper + 0.01
-    with pytest.raises(RuntimeError, match="outside"):
-        arm.read()
-    with pytest.raises(RuntimeError, match="outside"):
-        arm.hold()
-
-
 @pytest.mark.parametrize(
     "ports",
     [["can0"], ["can0", "can0"], ["can0", " "], []],

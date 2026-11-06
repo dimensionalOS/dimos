@@ -113,7 +113,6 @@ def test_native_wiring_and_commands(
         )
         codec = mocker.patch.object(damiao, "DamiaoCodec")
     physics = mocker.patch.object(common, "PhysicalModel").return_value
-    physics.validate.side_effect = list
     physics.gravity.return_value = np.zeros(len(groups) * len(motors))
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
