@@ -14,7 +14,6 @@
 
 import asyncio
 import math
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -43,7 +42,7 @@ FIX = Transform(
 
 
 @pytest.fixture
-def make(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def make(monkeypatch: pytest.MonkeyPatch):
     """A PremapModule on an in-process tf, recording what it publishes."""
     built: list[PremapModule] = []
 
@@ -106,7 +105,7 @@ def positions(snapshot: InteractiveMarkerUpdate) -> dict[str, tuple[float, float
     }
 
 
-def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revision(make, tmp_path):
+def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revision(make):
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")})
@@ -122,7 +121,7 @@ def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revisi
     assert [p.seq_num for p in published] == [1, 2, 3]
 
 
-def test_its_own_list_coming_back_changes_nothing(make, tmp_path):
+def test_its_own_list_coming_back_changes_nothing(make):
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map", yaw=0.3)})
@@ -131,7 +130,7 @@ def test_its_own_list_coming_back_changes_nothing(make, tmp_path):
     assert len(published) == 1
 
 
-def test_a_stale_cache_cannot_bring_back_a_renamed_location(make, tmp_path):
+def test_a_stale_cache_cannot_bring_back_a_renamed_location(make):
     """Two viewers edit the same revision: the second is dropped and resynced, no duplicate."""
     module, published = make()
     begin(module)
