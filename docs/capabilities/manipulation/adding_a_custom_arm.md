@@ -53,17 +53,21 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
     `dimos/hardware/whole_body/<yourarm>/_registry.py` and add its name to the `"whole_body"` set in
     `dimos/hardware/test_adapter_registries.py`.
 
-    The adapter's joint order is every arm group in declaration order, then the grippers, and your
-    `HardwareComponent.joints` must use the same order. Name the arm joints after the URDF joints and set
-    `kinematic_joint_names` to every arm joint in declaration order, as the examples do. The model must have
-    exactly those joints, in that order, with finite limits, or `connect()` fails; fix an order error by reordering
-    the arm groups and `HardwareComponent.joints`. Gravity torques, model positions and feedback limits are matched
-    by position, so a `kinematic_joint_names` that differs from the arm order passes `connect()` and `activate()`
-    and applies them to the wrong joints.
+    Everything is matched by position, not by name. The adapter's joint order is every arm group in declaration
+    order, then the grippers; `HardwareComponent.joints` and the `kp`/`kd` tuples must use the same order. List
+    each group's motors in its `arm_joints` order and give each `MotorSpec` its joint's name, as the examples do.
+    Name the arm joints after the URDF joints and set `kinematic_joint_names` to every arm joint in declaration
+    order. The model must contain those joints, in that order, with finite limits, or `connect()` fails; any other
+    joint in it is locked at its neutral position. Fix an order error by reordering the arm groups,
+    `HardwareComponent.joints` and the gain tuples together: a `kinematic_joint_names` that differs from the arm
+    order passes `connect()` and `activate()` and applies gravity torques and feedback limits to the wrong joints.
 
-2. **Motor types.** Use the stock `damiao.MotorType` that matches each motor in the vendor's motor table. A
-    wrong type scales velocity and torque incorrectly. Define a custom `damiao.MotorProfile` only when the motor
-    firmware uses non-standard protocol scaling (MakerMods Metal is the example in this repo).
+2. **Motors.** Use the stock `damiao.MotorType` that matches each motor in the vendor's motor table. A wrong
+    type scales velocity and torque incorrectly. Define a custom `damiao.MotorProfile`, registered with
+    `damiao.DamiaoCodec(profiles=[...])`, only when the motor firmware uses non-standard protocol scaling (MakerMods
+    Metal is the example in this repo). dimOS has no per-joint sign or zero offset: each motor's zero pose and
+    positive direction must match the URDF, or gravity compensation, the feedback limits and planned motions are
+    wrong. Do the vendor's motor ID and zero-pose procedure first, and confirm each joint's direction on the arm.
 
 3. **Transport.** Don't implement Damiao framing or a serial protocol yourself. `_make_can_bus()` picks each
     bus's transport from its device: SocketCAN on Linux, gs_usb on macOS, and a Damiao USB-CAN bridge for a
@@ -72,11 +76,12 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
     index `i` on macOS, where `i` is its position in `bus_names`. The adapter rejects
     `HardwareComponent.address`. If a transport you need is missing, add it to the shared stack, not to your arm.
 
-4. **Gains.** `WholeBodyConfig` holds one `kp` and one `kd` per joint (0.0 for gripper slots). For every motor
-    type the Damiao codec accepts `kp` from 0 to 500 and `kd` from 0 to 5. A value outside those ranges raises
-    `CodecError`, and `write_motor_commands()` returns `False` on every tick: joints declared before the offending
-    motor are still commanded, while that motor, the rest of its arm, later arms and the grippers are not. Check
-    gains copied from a vendor SDK against these ranges. The codec also checks each command's position, velocity
+4. **Gains.** `WholeBodyConfig` holds one `kp` and one `kd` per joint, in `HardwareComponent.joints` order (0.0
+    for gripper slots); without it every joint gets `kp` 40 and `kd` 3. For every motor type the Damiao codec
+    accepts `kp` from 0 to 500 and `kd` from 0 to 5. A value outside those ranges raises `CodecError`, and
+    `write_motor_commands()` returns `False` on every tick: the offending motor, the rest of its arm, later arms
+    and the grippers get no command (on the USB-CAN bridge, joints declared before it still do). Check gains
+    copied from a vendor SDK against these ranges. The codec also checks each command's position, velocity
     and torque, including the gravity term the adapter adds, against the motor type's limits.
 
 5. **Gripper.** `add_gripper` needs `opening_direction` (`"increasing_position"` or `"decreasing_position"`).
@@ -104,8 +109,9 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
 
 8. **Tests and docs.** Add `dimos/hardware/whole_body/<yourarm>/test_adapter.py` modeled on
     `openyam_damiao/test_adapter.py`, which runs on `can_motor_control.MockCanBus`, and a test that loads the real
-    kinematic model and checks its joint order and limits, like
-    `test_openarm_feedback_limits_match_urdf_joint_limits` in `openarm_damiao/test_adapter.py`. On `MockCanBus`
+    kinematic model and checks the kinematic joints' order and limits, like
+    `test_openarm_feedback_limits_match_urdf_joint_limits` in `openarm_damiao/test_adapter.py` (a `self_hosted`
+    test: run it with `-m self_hosted`). On `MockCanBus`
     the adapter's `DamiaoCodec` gets no feedback, so `activate()` fails at the gripper's mode read-back; to test
     activation and calibration offline, patch `can_motor_control.damiao.DamiaoCodec` to return
     `can_motor_control.MockFeedbackCodec(<gripper recv_id>)`. Add
@@ -130,7 +136,6 @@ dimos/hardware/manipulators/
 ├── xarm/
 ├── piper/
 └── yourarm/             # ← New directory
-    ├── __init__.py
     ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
 ```
@@ -468,19 +473,16 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in dimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm: coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
+Each arm in dimOS gets its own folder under `dimos/robot/manipulators/`. This is where you define all blueprints for your arm: coordinator, planning, perception, etc. The existing arms there, such as `xarm/`, are the reference.
 
 ### 3a. Create the robot directory
 
 ```
-dimos/robot/
-├── unitree/                 # Unitree robots (reference example)
-│   ├── go2/
-│   │   └── blueprints/
-│   └── g1/
-│       └── blueprints/
+dimos/robot/manipulators/
+├── xarm/                    # An existing arm (reference example)
+│   ├── blueprints/
+│   └── config.py
 └── yourarm/                 # ← New directory for your robot
-    ├── __init__.py
     └── blueprints.py
 ```
 
@@ -527,7 +529,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        joint_trajectory_task([f"arm_joint{i+1}" for i in range(6)]),
+        joint_trajectory_task(make_joints("arm", 6)),
     ],
 )
 
@@ -889,7 +891,7 @@ coordinator.stop()
 ### Test the real adapter standalone
 
 ```python skip
-from dimos.hardware.manipulators.yourarm import YourArmAdapter
+from dimos.hardware.manipulators.yourarm.adapter import YourArmAdapter
 
 adapter = YourArmAdapter(address="192.168.1.100", dof=6)
 assert adapter.connect() is True
@@ -913,10 +915,8 @@ adapter.disconnect()
 
 Files to create:
 
-- [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
 - [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
 - [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
-- [ ] `dimos/robot/manipulators/yourarm/__init__.py`
 - [ ] `dimos/robot/manipulators/yourarm/blueprints.py` (coordinator + planning blueprints)
 
 Files to modify:
