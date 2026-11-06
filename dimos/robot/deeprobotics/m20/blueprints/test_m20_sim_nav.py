@@ -24,7 +24,7 @@ from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
-from dimos.robot.deeprobotics.m20.blueprints.m20_nav import m20_nav
+from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode import m20_sim_nav_episode
 from dimos.robot.deeprobotics.m20.rerun import m20_nav_overrides, m20_nav_static
@@ -44,7 +44,7 @@ def _remappings(
 
 
 def test_sim_composes_the_navigation_the_robot_runs() -> None:
-    sim, robot = _atoms(m20_sim_nav), _atoms(m20_nav)
+    sim, robot = _atoms(m20_sim_nav), _atoms(m20)
     sim_stack, robot_stack = _atoms(m20_nav_stack(SIM_M20)), _atoms(m20_nav_stack())
     for name in robot_stack:
         assert (robot[name].module, robot[name].kwargs) == (
@@ -55,7 +55,7 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
             sim_stack[name].module,
             sim_stack[name].kwargs,
         )
-        assert _remappings(m20_sim_nav, name) == _remappings(m20_nav, name)
+        assert _remappings(m20_sim_nav, name) == _remappings(m20, name)
 
 
 def test_the_sim_plans_only_steps_its_policy_climbs() -> None:
@@ -73,9 +73,9 @@ def test_the_world_feeds_the_streams_the_vendor_lio_and_the_urdf_manager_read() 
 
 def test_teleop_cancel_reaches_the_planner() -> None:
     def goal_topic(module: type[ModuleBase]) -> tuple[str | type[ModuleBase] | type[Spec], type]:
-        (atom,) = (a for a in m20_nav.active_blueprints if a.module is module)
+        (atom,) = (a for a in m20.active_blueprints if a.module is module)
         (stream,) = (s for s in atom.streams if s.name == "goal")
-        return m20_nav.remapping_map.get((atom.name, "goal"), "goal"), stream.type
+        return m20.remapping_map.get((atom.name, "goal"), "goal"), stream.type
 
     assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
 

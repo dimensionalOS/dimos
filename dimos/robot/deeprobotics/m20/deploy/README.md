@@ -35,14 +35,14 @@ run again.
 
 ## Start DimOS
 
-The robot stands up when `m20-nav` starts and sits down when it stops, so clear
+The robot stands up when `m20` starts and sits down when it stops, so clear
 the space around it first.
 
 ```bash
 cd /var/opt/robot/data/dimos-m20
 source .venv/bin/activate
 dimos --robot-ip 10.21.31.106 \
-  run m20-nav --rerunbridgemodule.host 0.0.0.0 \
+  run m20 --rerunbridgemodule.host 0.0.0.0 \
   --rerunwebsocketserver.host 0.0.0.0 --daemon
 ```
 

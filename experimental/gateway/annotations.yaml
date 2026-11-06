@@ -384,7 +384,7 @@ robots:
       manufacturer: DeepRobotics
       dirs: [dimos/robot/deeprobotics/m20]
       blueprints:
-        m20-nav:
+        m20:
           title: 'M20: navigation'
           description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
           recommended_config:
