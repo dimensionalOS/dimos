@@ -17,13 +17,15 @@
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.core.module import ModuleConfig
+from dimos.manipulation.grasping.grasp_generator_module import GraspGeneratorModule
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -48,7 +50,7 @@ class HeuristicGraspModuleConfig(ModuleConfig):
     palm_behind_tcp: float | None = None
 
 
-class HeuristicGraspModule(Module, GraspGenSpec):
+class HeuristicGraspModule(GraspGeneratorModule):
     """Generate one top-down parallel-jaw grasp from a gravity-aligned point cloud.
 
     The input frame's XY plane must be horizontal and its -Z axis must point down.
@@ -79,6 +81,34 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
             [GraspCandidate(pose, score=1.0)],
         )
+
+    @skill
+    def propose_grasps_for(
+        self,
+        object_id: str,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Propose a straight-down grasp on a scanned box, can or other upright object.
+
+        Instant and needs no GPU, but it only ever makes one top-down grasp, so an
+        approach from the side finds none. The grasps are not checked for reach or
+        collisions. Pass one entry of ``grasps`` to pick_object as ``grasp``.
+
+        Args:
+            object_id: ID from the latest scan_objects call.
+            approach: Unit vector [x, y, z] in the arm's base frame: the direction
+                the gripper moves in, from the operator's hand into the object.
+                [0, 0, -1] is straight down. None accepts any direction.
+            max_angle_deg: Half-angle of the cone around approach, degrees.
+            limit: How many grasps to return, best first.
+
+        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
+        made, which says how far off approach is when ``grasps`` is empty.
+        """
+        return self._propose_for(object_id, approach, max_angle_deg, limit)
 
     def _tip_height(self, low_z: float, high_z: float) -> float:
         """Tool tip height (metres) that puts the closed pads at the object's mid-height.

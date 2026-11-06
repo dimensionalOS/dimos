@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,10 +43,13 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -175,17 +179,29 @@ class PickAndPlaceModule(Module):
 
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
-        self, object_id: str, planning_group: PlanningGroupID | None = None
+        self,
+        object_id: str,
+        planning_group: PlanningGroupID | None = None,
+        grasp: dict[str, Any] | None = None,
     ) -> SkillResult:
-        """Generate ranked grasps and pick one object from the latest scan.
+        """Pick one object from the latest scan.
 
-        ``contact_rejected`` in the result counts the grasps dropped because the
-        arm cannot reach them, or the robot would touch the object off its finger
-        pads or hit the scene.
+        To choose the grasp, get one from a grasp generator's propose_grasps_for
+        and pass it as ``grasp``: it is tried first, and grasps are generated
+        here only if the planner finds no path to it. Without ``grasp``, ranked
+        grasps are generated and tried in order.
+
+        ``source`` in the result says which grasp was used: the given grasp's
+        ``generator`` ("operator" when it has none), or "provider" for one
+        generated here. ``contact_rejected`` counts the generated grasps dropped
+        because the arm cannot reach them, or the robot would touch the object
+        off its finger pads or hit the scene.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
+            grasp: One entry of propose_grasps_for's ``grasps``; only ``position``
+                and ``orientation`` are needed.
         """
         if self._holding_object:
             return SkillResult(
@@ -205,16 +221,28 @@ class PickAndPlaceModule(Module):
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         group = self._gripper_group(planning_group)
-        candidates = self._grasp_generator.propose_grasps(pointcloud)
-        candidates, facts = self._drop_touching(object_id, pointcloud, candidates, group)
-        self._grasp_candidates = candidates
-        self._manipulation.show_grasp_proposals(candidates)
-        if candidates.header.frame_id != self.config.planning_frame:
-            raise RuntimeError(
-                f"Grasp candidates are in frame {candidates.header.frame_id!r}; "
-                f"the planning frame is {self.config.planning_frame!r}"
+        facts: dict[str, Any] = {}
+        tries: Iterable[tuple[str, GraspCandidateArray]]
+        if grasp is None:
+            tries = [("provider", self._generate(object_id, pointcloud, group, facts))]
+        else:
+            given = str(grasp.get("generator", "operator"))
+            pose = Pose(Vector3(*grasp["position"]), Quaternion(*grasp["orientation"]))
+            chosen = GraspCandidateArray(
+                Header(self.config.planning_frame),
+                [GraspCandidate(pose, float(grasp.get("score", 0.0)))],
             )
-        if not candidates.candidates:
+            self._grasp_candidates = chosen
+            self._manipulation.show_grasp_proposals(chosen)
+
+            def given_first() -> Iterator[tuple[str, GraspCandidateArray]]:
+                yield given, chosen
+                # Reached only when the planner finds no path to the given grasp.
+                generated = self._generate(object_id, pointcloud, group, facts, chosen.candidates)
+                yield "provider", generated
+
+            tries = given_first()
+        if not self._grasp_candidates.candidates:
             note = ""
             if rejected := facts.get("contact_rejected"):
                 note = (
@@ -230,12 +258,47 @@ class PickAndPlaceModule(Module):
         if box is not None:
             self._leave_out(Pose(position=box.center), box.size, pointcloud.frame_id or None)
         try:
-            result = self._pick_from(candidates, object_id, box, group)
+            result = self._pick_from(tries, object_id, box, group)
         finally:
             if not self._holding_object:
                 self._clear_target_box()
         result.metadata = {**facts, **result.metadata}
+        if grasp is not None and result.metadata.get("source") == given:
+            result.metadata["rank"] = grasp.get("rank", 0)
         return result
+
+    def _generate(
+        self,
+        object_id: str,
+        pointcloud: PointCloud2,
+        group: PlanningGroupID,
+        facts: dict[str, Any],
+        ahead: list[GraspCandidate] | None = None,
+    ) -> GraspCandidateArray:
+        """Generate grasps, keep those that pass the contact check and show them in the viewer.
+
+        Args:
+            object_id: The object to grasp, from the latest scan.
+            pointcloud: The target's points, planning frame, metres.
+            group: Planning group whose tool tip the grasps pose.
+            facts: The pick's result facts; the contact check's are added to it.
+            ahead: Grasps already being tried, shown before the generated ones.
+
+        Raises RuntimeError when the grasps are not in the planning frame.
+        """
+        candidates = self._grasp_generator.propose_grasps(pointcloud)
+        candidates, found = self._drop_touching(object_id, pointcloud, candidates, group)
+        facts.update(found)
+        self._grasp_candidates = GraspCandidateArray(
+            candidates.header, [*(ahead or []), *candidates.candidates]
+        )
+        self._manipulation.show_grasp_proposals(self._grasp_candidates)
+        if candidates.header.frame_id != self.config.planning_frame:
+            raise RuntimeError(
+                f"Grasp candidates are in frame {candidates.header.frame_id!r}; "
+                f"the planning frame is {self.config.planning_frame!r}"
+            )
+        return candidates
 
     def _drop_touching(
         self,
@@ -293,7 +356,7 @@ class PickAndPlaceModule(Module):
 
     def _pick_from(
         self,
-        candidates: GraspCandidateArray,
+        tries: Iterable[tuple[str, GraspCandidateArray]],
         object_id: str,
         box: TargetBox | None,
         group: PlanningGroupID,
@@ -301,7 +364,9 @@ class PickAndPlaceModule(Module):
         """Open the gripper and try the ranked grasps in order until one holds the object.
 
         Args:
-            candidates: Ranked grasps in the planning frame, best first.
+            tries: (source, grasps) in the order to try them, each source's grasps
+                best first, planning frame. A generator is advanced only as far
+                as the pick gets.
             object_id: ID of the object being picked, for the report.
             box: Bounds of the object's point cloud, or None when it has none.
             group: Gripper-capable planning group doing the pick.
@@ -310,10 +375,17 @@ class PickAndPlaceModule(Module):
             return not_open
 
         last_plan = ""
-        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+        tried = 0
+        attempts = (
+            (source, rank, candidate, array.header)
+            for source, array in tries
+            for rank, candidate in enumerate(array.candidates[: self.config.max_grasp_attempts])
+        )
+        for source, rank, candidate, header in attempts:
+            tried += 1
             grasp = PoseStamped(
-                ts=candidates.header.timestamp,
-                frame_id=candidates.header.frame_id,
+                ts=header.timestamp,
+                frame_id=header.frame_id,
                 position=candidate.pose.position,
                 orientation=candidate.pose.orientation,
             )
@@ -361,14 +433,14 @@ class PickAndPlaceModule(Module):
                 "Pick complete",
                 metadata={
                     "object_id": object_id,
+                    "source": source,
                     "rank": rank,
                     "score": candidate.score,
-                    "candidates": len(candidates.candidates),
+                    "candidates": len(self._grasp_candidates.candidates),
                 },
             )
-        attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
         return SkillResult(
-            f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
+            f"The planner found no path to any of the {tried} grasp candidate(s) tried "
             f"for object {object_id}; last planner result {last_plan}."
         )
 
