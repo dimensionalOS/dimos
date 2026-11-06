@@ -133,17 +133,20 @@ class OperatorHoldTask(BaseControlTask):
         name: str = OPERATOR_HOLD_TASK_NAME,
         priority: int = OPERATOR_HOLD_PRIORITY,
         status_interval: float = 1.0,
+        excluded_joints: Iterable[str] = (),
     ) -> None:
         """
         Args:
             name: Task name; callers address request/acknowledge to it.
             priority: Arbitration priority. Must exceed every other task's.
             status_interval: Seconds between repeated status messages while on.
+            excluded_joints: Command-only resources that must never be held positionally.
         """
         if not math.isfinite(status_interval) or status_interval <= 0.0:
             raise ValueError(f"status_interval must be positive seconds, got {status_interval}")
         self._name = name
         self._priority = priority
+        self._excluded_joints = frozenset(excluded_joints)
         self._status_interval = status_interval
         self._publish: Callable[[OperatorHoldStatus], None] | None = None
 
@@ -175,6 +178,14 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             self._base_axes = tuple(dict.fromkeys(axes))
 
+    def exclude_joints(self, joints: Iterable[str]) -> None:
+        """Add connection command-only resources without hiding their feedback."""
+        with self._lock:
+            self._excluded_joints = self._excluded_joints.union(joints)
+            for name in self._excluded_joints:
+                self._held.pop(name, None)
+                self._unheld.discard(name)
+
     def claim(self) -> ResourceClaim:
         """Every joint frozen so far; empty until the first tick after a request."""
         with self._lock:
@@ -197,7 +208,7 @@ class OperatorHoldTask(BaseControlTask):
             # Freeze nothing while e-stopped, so after the clear the hold
             # takes each joint where it is then. _held is empty until then.
             for name, position in state.joints.joint_positions.items():
-                if self._estopped or name in self._held:
+                if self._estopped or name in self._held or name in self._excluded_joints:
                     continue
                 if math.isfinite(position):
                     self._held[name] = _hold_value(name, position)
@@ -209,7 +220,7 @@ class OperatorHoldTask(BaseControlTask):
             # never show up above: hold each at zero, needing no reading.
             if not self._estopped:
                 for axis in self._base_axes:
-                    if axis not in self._held:
+                    if axis not in self._held and axis not in self._excluded_joints:
                         self._held[axis] = 0.0
             if (
                 self._last_status_t is None
@@ -345,6 +356,7 @@ class OperatorHoldTaskParams(BaseConfig):
     """Task-owned parameters from ``TaskConfig.params``."""
 
     status_interval: float = Field(default=1.0, gt=0.0, allow_inf_nan=False)
+    excluded_joints: frozenset[str] = frozenset()
 
 
 def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
@@ -357,4 +369,8 @@ def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
             "operator hold claims every joint the coordinator reads; leave joint_names empty"
         )
     params = OperatorHoldTaskParams.model_validate(cfg.params)
-    return OperatorHoldTask(priority=cfg.priority, status_interval=params.status_interval)
+    return OperatorHoldTask(
+        priority=cfg.priority,
+        status_interval=params.status_interval,
+        excluded_joints=params.excluded_joints,
+    )
