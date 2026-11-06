@@ -64,6 +64,27 @@ def test_latest_selects_newest_before_rate_gate_and_preserves_quiet_keys(mailbox
     assert budget.used == 0
 
 
+def test_refresh_hands_over_the_newer_sample_within_the_period_and_keeps_the_gate(mailboxes):
+    mailbox = mailboxes("latest", 10, TopicIngressBudget(), lambda: None)
+    first = sample("camera", b"first")
+    mailbox.offer(first)
+    assert mailbox.take(10) == ([first], None)
+    assert mailbox.refresh("camera") is None
+    mailbox.offer(sample("camera", b"newer"))
+    mailbox.offer(sample("camera", b"newest"))
+    gated, delay = mailbox.take(10.05)
+    assert gated == []
+    assert delay == pytest.approx(0.05)
+    assert mailbox.refresh("camera") == sample("camera", b"newest")
+    assert mailbox.refresh("camera") is None
+    # The schedule is where the take left it: a later sample waits for 10.1.
+    mailbox.offer(sample("camera", b"later"))
+    gated, delay = mailbox.take(10.05)
+    assert gated == []
+    assert delay == pytest.approx(0.05)
+    assert mailbox.take(10.1) == ([sample("camera", b"later")], None)
+
+
 def test_reliable_order_and_in_progress_samples_remain_within_aggregate_budget(mailboxes):
     event = sample("event", b"one")
     budget = TopicIngressBudget(limit=3 * event.size)
