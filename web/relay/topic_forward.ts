@@ -237,11 +237,11 @@ export class TopicEgress {
   }
 
   reap(nowMs: number): void {
-    // Accepted streams also expire on healthy links. Only backpressured
-    // resets are evidence of congestion; disposal and replacement are not.
-    const congested = [...this.#latest].some((frame) => !frame.accepted);
+    // Accepted streams also expire on healthy links. Only a stream the
+    // transport never accepted within its lifetime was backpressured; a
+    // fresh write beside an expiring accepted one is no evidence either.
     for (const frame of this.#latest) {
-      if (nowMs - frame.at >= LATEST_LIFETIME_MS) this.#abortLatest(frame, congested);
+      if (nowMs - frame.at >= LATEST_LIFETIME_MS) this.#abortLatest(frame, !frame.accepted);
     }
     if (this.delivery === "latest") this.#drain();
   }

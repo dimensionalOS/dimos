@@ -248,6 +248,25 @@
       }
     },
     {
+      "name": "invalid_capabilities_4",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "videoReconfigure": 1
+        }
+      }
+    },
+    {
       "name": "boolean_version",
       "message": {
         "t": "topic_sources",

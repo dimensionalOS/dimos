@@ -68,6 +68,9 @@ export interface TopicCapabilities {
   /** Updatable settings per profile. An older provider omits this and
    * accepts nothing beyond rate changes. */
   profileOptions?: Record<string, OptionRanges>;
+  /** An open video variant takes new settings in place from `topic_variant`.
+   * An older provider opens another variant for every settings change. */
+  videoReconfigure?: boolean;
 }
 /** The settings a subscription runs with. Keys beyond maxHz exist only where
  * the profile supports them; the acknowledgement reports the values in force. */
@@ -450,6 +453,7 @@ const profileOptionsOk = (v: unknown): boolean =>
 export const topicCapabilitiesOk = (v: unknown): v is TopicCapabilities =>
   record(v) && typeof v.read === "boolean" && typeof v.write === "boolean" &&
   (v.guardedPublishers === undefined || typeof v.guardedPublishers === "boolean") &&
+  (v.videoReconfigure === undefined || typeof v.videoReconfigure === "boolean") &&
   (v.profileOptions === undefined || profileOptionsOk(v.profileOptions)) &&
   Array.isArray(v.profiles) && v.profiles.length <= 16 && v.profiles.every((p) => string(p, 64));
 

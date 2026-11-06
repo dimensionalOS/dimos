@@ -890,6 +890,7 @@ def capabilities(config: TopicServiceConfig, *, video: bool = False) -> TopicCap
         profiles=profiles,
         guardedPublishers=config.write and config.guarded_publishers,
         profileOptions={name: PROFILE_OPTIONS[name] for name in profiles},
+        videoReconfigure=video,
     )
 
 

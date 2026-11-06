@@ -181,6 +181,7 @@ class TopicCapabilities(_TopicModel):
     profiles: list[TopicProfile] = Field(max_length=16)
     guardedPublishers: bool = False
     profileOptions: Annotated[ProfileOptions | None, BeforeValidator(_reject_none)] = None
+    videoReconfigure: bool = False
 
 
 class TopicSourceInfo(_TopicModel):
@@ -191,6 +192,7 @@ class TopicSourceInfo(_TopicModel):
     profiles: list[TopicProfile] = Field(max_length=16)
     guardedPublishers: bool = False
     profileOptions: Annotated[ProfileOptions | None, BeforeValidator(_reject_none)] = None
+    videoReconfigure: bool = False
 
 
 class TopicSources(_TopicModel):

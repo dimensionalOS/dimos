@@ -691,18 +691,22 @@ export class TopicRegistry {
       sub.state.reply({ t: "topic_applied", id: sub.spec.id, revision, settings });
       return;
     }
-    // A sole viewer can keep its RTP peer and track while its encoder emits
-    // a new SPS/PPS and IDR. Never mutate a variant another viewer targets.
+    // A sole viewer of a provider that reconfigures encoders keeps its RTP
+    // peer and track while its encoder emits a new SPS/PPS and IDR. Never
+    // mutate a variant another viewer targets, and never duplicate a variant
+    // that already encodes the settings: the viewer moves there instead.
     const current = sub.variant;
-    const sole = isVideo(group.spec.profile) && current !== null &&
-      current !== group.opening &&
+    const key = variantKey(settings, group.spec.profile);
+    const sole = isVideo(group.spec.profile) &&
+      group.source.capabilities.videoReconfigure === true &&
+      current !== null && current !== group.opening && current.key !== key &&
       ![...group.subs].some((other) =>
         other !== sub && (other.variant === current || other.target?.variant === current)
-      );
-    if (sole && current.key !== variantKey(settings, group.spec.profile)) {
+      ) && ![...group.variants.values()].some((variant) => variant.key === key);
+    if (sole) {
       const previous = sub.target?.variant;
       current.settings = { ...settings };
-      current.key = variantKey(settings, group.spec.profile);
+      current.key = key;
       current.ready = false;
       sub.target = {
         variant: current,

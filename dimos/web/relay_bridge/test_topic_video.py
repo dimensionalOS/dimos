@@ -515,6 +515,19 @@ async def test_closing_routes_returns_the_registry_to_empty(harness: Harness) ->
     assert {close.reason for close in harness.closes()} == {"route_closed"}
 
 
+async def test_the_target_bitrate_follows_the_encoded_size_under_the_request(harness):
+    pc = await harness.offer("r1")
+    pc.connect()
+    route = harness.video._routes["@t:p1"]
+    encoder = route.encoders["v1"]
+    assert encoder.max_bitrate == 4_500_000  # the default box is 1080p
+    for size, bitrate in (((640, 360), 1_000_000), ((1280, 720), 2_500_000)):
+        async with harness.transforms.slots:
+            await route.encode("v1", frame(1, *size))
+        assert encoder._codec is not None
+        assert encoder._codec.bit_rate == bitrate
+
+
 async def test_reconfigure_keeps_the_peer_and_emits_an_idr_with_monotonic_pts(harness):
     pc = await harness.offer("r1")
     pc.connect()

@@ -125,6 +125,7 @@ const controlMsgs: Record<string, Msg> = {
       write: false,
       profiles: ["raw", "depth.lossless.v1"],
       guardedPublishers: false,
+      videoReconfigure: false,
     },
   },
   // A media provider advertises the settings each profile accepts; the
@@ -141,6 +142,7 @@ const controlMsgs: Record<string, Msg> = {
       profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
       guardedPublishers: false,
       profileOptions: topicProfileOptions,
+      videoReconfigure: true,
     },
   },
   topic_sources: {
@@ -153,6 +155,7 @@ const controlMsgs: Record<string, Msg> = {
       write: false,
       profiles: ["raw"],
       guardedPublishers: false,
+      videoReconfigure: false,
     }],
   },
   topic_sources_options: {
@@ -166,6 +169,7 @@ const controlMsgs: Record<string, Msg> = {
       profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
       guardedPublishers: false,
       profileOptions: topicProfileOptions,
+      videoReconfigure: true,
     }],
   },
   topic_sub: {
@@ -1201,11 +1205,22 @@ const invalidTopics = {
       name,
       message: { ...controlMsgs.topic_guard_ready, ...fields as Record<string, unknown> },
     })),
-    ...[null, { read: 1, write: false, profiles: ["raw"] }, {
-      read: true,
-      write: false,
-      profiles: new Array(17).fill("raw"),
-    }, { read: true, write: false, profiles: [""] }].map((topicCapabilities, i) => ({
+    ...[
+      null,
+      { read: 1, write: false, profiles: ["raw"] },
+      {
+        read: true,
+        write: false,
+        profiles: new Array(17).fill("raw"),
+      },
+      { read: true, write: false, profiles: [""] },
+      {
+        read: true,
+        write: false,
+        profiles: ["raw"],
+        videoReconfigure: 1,
+      },
+    ].map((topicCapabilities, i) => ({
       name: `invalid_capabilities_${i}`,
       message: { ...controlMsgs.hello_topic_source, topicCapabilities },
     })),

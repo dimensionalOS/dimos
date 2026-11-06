@@ -240,7 +240,9 @@ class SharedEncoder:
         codec.width = width
         codec.height = height
         codec.pix_fmt = "yuv420p"
-        codec.bit_rate = self.max_bitrate
+        # fit_box never upscales: a small camera under a large box keeps the
+        # target of its own size, and the request only lowers it.
+        codec.bit_rate = min(self.max_bitrate, video_bitrate(width, height))
         codec.time_base = VIDEO_TIME_BASE
         codec.framerate = fractions.Fraction(self.max_hz).limit_denominator(1000)
         codec.gop_size = max(1, round(SAFETY_KEYFRAME_S * self.max_hz))

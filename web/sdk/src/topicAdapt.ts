@@ -60,7 +60,9 @@ export interface AdaptTarget {
   ready(): boolean;
   ceiling(): TopicSettings;
   settings(): TopicSettings;
-  apply(cap: Partial<TopicSettings>): Promise<TopicSettings>;
+  /** Resolves with the acknowledged settings. `applied` runs with the
+   * acknowledgement itself, before a queued page update can inherit the cap. */
+  apply(cap: Partial<TopicSettings>, applied: () => void): Promise<TopicSettings>;
   receiver(): RTCRtpReceiver | null;
 }
 interface Rung {
@@ -513,18 +515,18 @@ export class TopicAdaptation {
   }
   #change(s: State, index: number): void {
     const ladder = this.#ladder(s);
-    const rung = ladder[Math.min(index, ladder.length - 1)];
+    const rung = Math.min(index, ladder.length - 1);
+    const cooldown = () =>
+      Date.now() + (s.target.profile === "video.h264.v1" ? VIDEO_COOLDOWN_MS : DATA_COOLDOWN_MS);
     s.pending = true;
-    s.cooldown = Date.now() +
-      (s.target.profile === "video.h264.v1" ? VIDEO_COOLDOWN_MS : DATA_COOLDOWN_MS);
-    s.target.apply(rung.cap).then(() => {
-      s.cooldown = Date.now() +
-        (s.target.profile === "video.h264.v1" ? VIDEO_COOLDOWN_MS : DATA_COOLDOWN_MS);
-      s.index = Math.min(index, ladder.length - 1);
-      s.rung = rung.name;
+    s.cooldown = cooldown();
+    s.target.apply(ladder[rung].cap, () => {
+      s.cooldown = cooldown();
+      s.index = rung;
+      s.rung = ladder[rung].name;
       s.rejected = undefined;
       s.retry = undefined;
-    }, (error: { code?: string }) => {
+    }).catch((error: { code?: string }) => {
       s.rejected = error.code ?? "update_failed";
       s.retry = index;
     }).finally(() => {
