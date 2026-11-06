@@ -12,7 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Robot-local M20 integration for the current DimOS 3D navigation stack."""
+"""Robot-local M20 integration for the current DimOS 3D navigation stack.
+
+It also runs the premap relocalizer, which keeps named map locations. The M20's live LIO
+frame is already called ``map``, so the premap gets its own ``premap`` frame (``map -> premap``
+is the fix). A new map, where the locations get named::
+
+    dtk run deeprobotics-m20-kronknav-control \\
+        --record sqlite --record-topics 'tf,global_map,named_locations'
+
+Back on that map, relocalized against that recording's last global_map, with its locations::
+
+    dtk run deeprobotics-m20-kronknav-control \\
+        --map-file <that recording>.db --map-stream global_map
+"""
 
 from typing import Any
 
@@ -20,6 +33,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
+from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.navigation.embodiment.m20 import M20
@@ -178,9 +193,19 @@ deeprobotics_m20_kronknav_control = (
         LocalPlannerNative.blueprint(embodiment=M20, world_frame=WORLD_FRAME),
         TrajectoryFollowerNative.blueprint(embodiment=M20),
         MovementManager.blueprint(),
+        # loaded_map is a never-drop channel under zenoh, so no republish
+        LocalMapRelocalization.blueprint(
+            world_frame=WORLD_FRAME,
+            map_frame="premap",
+            relocalize=MID360_NAV,
+            republish_loaded_map=0.0,
+            new_map=True,
+            save_locations_to="named_locations.db",
+            tf_interval=1.0,
+        ),
     )
     .global_config(
-        n_workers=4,
+        n_workers=5,
         transport="zenoh",
     )
     .transports(
