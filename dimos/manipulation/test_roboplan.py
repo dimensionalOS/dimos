@@ -110,8 +110,8 @@ class FakeCartesianPlannerOptions:
         self.max_angular_speed = 0.5
         self.max_linear_acceleration = 0.5
         self.max_angular_acceleration = 2.5
-        self.max_position_error = 0.005
-        self.max_orientation_error = 0.01
+        self.position_tolerance = 0.005
+        self.orientation_tolerance = 0.01
         self.position_cost = 1.0
         self.orientation_cost = 1.0
         self.task_gain = 1.0
@@ -1771,8 +1771,8 @@ def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
         "max_angular_speed": 0.6,
         "max_linear_acceleration": 0.7,
         "max_angular_acceleration": 2.0,
-        "max_position_error": 0.006,
-        "max_orientation_error": 0.02,
+        "position_tolerance": 0.006,
+        "orientation_tolerance": 0.02,
         "position_cost": 2.0,
         "orientation_cost": 3.0,
         "task_gain": 0.8,

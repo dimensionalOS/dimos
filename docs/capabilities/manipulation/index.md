@@ -226,8 +226,8 @@ bounded_config = RoboPlanCartesianPathConfig(
     max_angular_speed=0.5,
     max_linear_acceleration=0.5,
     max_angular_acceleration=2.5,
-    max_position_error=0.005,
-    max_orientation_error=0.01,
+    position_tolerance=0.005,
+    orientation_tolerance=0.01,
 )
 ```
 
