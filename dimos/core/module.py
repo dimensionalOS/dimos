@@ -198,17 +198,6 @@ class ModuleBase(Configurable, CompositeResource):
             return f"{self.config.frame_id_prefix}/{base}"
         return base
 
-    def frame(self, name: str) -> str:
-        """``name`` behind the config's ``frame_id_prefix``, e.g. "left/arm_base", or just
-        "arm_base" without one.
-
-        Use it for every frame a module stamps or looks up by a name of its own (a URDF link,
-        a sensor mount): ``Blueprint.namespace()`` sets the prefix, and a namespaced copy of a
-        module must share no frames with its siblings or two of the same arm collide on tf.
-        """
-        prefix = self.config.frame_id_prefix
-        return f"{prefix}/{name}" if prefix and name else name
-
     @rpc
     def build(self) -> None:
         """Optional build step for heavy one-time work (docker builds, LFS downloads, etc.).
