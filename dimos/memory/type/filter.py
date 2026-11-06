@@ -169,7 +169,7 @@ class StreamQuery:
                 emb = getattr(obs, "embedding", None)
                 if emb is not None:
                     sim = float(emb @ query_emb)
-                    scored.append(obs.derive(data=obs.data, similarity=sim))
+                    scored.append(obs.derive_lazy(similarity=sim))
             scored.sort(key=lambda o: getattr(o, "similarity", 0.0) or 0.0, reverse=True)
             if self.search_k is not None:
                 scored = scored[: self.search_k]
