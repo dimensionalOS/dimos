@@ -42,6 +42,7 @@ also exist.
 | Stream | Type | Contents |
 |---|---|---|
 | `odom` | `PoseStamped` | base pose in the world frame |
+| `odometry` | `Odometry` | base pose and velocity |
 | `color_image` | `Image` | front camera |
 | `camera_info` | `CameraInfo` | camera intrinsics (`K`) |
 | `lidar` | `PointCloud2` | lidar points |

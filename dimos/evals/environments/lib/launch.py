@@ -107,7 +107,9 @@ def _ping(timeout: float, client_env: Mapping[str, str]) -> None:
         raise TimeoutError("the coordinator ping did not finish") from e
     if result.returncode:
         lines = result.stderr.decode(errors="replace").strip().splitlines()
-        raise TimeoutError(lines[-1] if lines else "no coordinator answered")
+        if lines and lines[-1].startswith("TimeoutError"):
+            raise TimeoutError(lines[-1])
+        raise RuntimeError("the coordinator ping could not run: " + " / ".join(lines[-3:]))
 
 
 def validate_blueprints(names: Sequence[str]) -> None:
