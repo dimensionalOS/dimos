@@ -767,3 +767,28 @@ def test_joint_velocity_limits_replace_only_requested_limits(tmp_path: Path) -> 
         robot_model.RobotModel.from_file(urdf).with_joint_velocity_limits(
             {"slide": 0.2}
         ).with_joint_velocity_limits({"slide": 0.3}).load()
+
+
+def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='tip'/>"
+        "<joint name='slide' type='prismatic'><parent link='base'/><child link='tip'/>"
+        "<limit lower='0' upper='1' effort='10' velocity='50'/></joint></robot>"
+    )
+    original = robot_model.RobotModel.from_file(urdf)
+    renamed = original.with_renamed_joints({"slide": "arm/slide"})
+    renamed.load()
+    limited = renamed.with_joint_velocity_limits({"arm/slide": 0.2})
+    limited_joint = limited.load().get_joint("arm/slide")
+    renamed_joint = renamed.load().get_joint("arm/slide")
+    original_joint = original.load().get_joint("slide")
+    assert limited_joint is not None
+    assert renamed_joint is not None
+    assert original_joint is not None
+    assert limited_joint.velocity == 0.2
+    assert renamed_joint.velocity == 50.0
+    assert original_joint.velocity == 50.0
+    transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
+    assert transferred_joint is not None
+    assert transferred_joint.velocity == 0.2

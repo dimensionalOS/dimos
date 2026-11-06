@@ -23,6 +23,7 @@ from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection impor
     openyam_quest_collection,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import build_openyam_rollout
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import (
     OpenYamCoordinator,
     OpenYamTeleopCoordinator,
@@ -33,9 +34,6 @@ from dimos.robot.manipulators.openyam.coordinator import (
     "blueprint",
     [
         openyam_teach_collection,
-        openyam_quest_collection,
-        build_openyam_rollout(),
-        build_openyam_rollout(quest_control=True),
     ],
 )
 async def test_can_override_reaches_hardware_without_changing_teaching_gains(
@@ -75,3 +73,27 @@ async def test_can_override_reaches_hardware_without_changing_teaching_gains(
         setup.assert_called_once_with()
     finally:
         coordinator.stop()
+
+
+@pytest.mark.parametrize(
+    "blueprint",
+    [openyam_quest_collection, build_openyam_rollout(), build_openyam_rollout(quest_control=True)],
+)
+def test_collection_and_rollout_can_selector_belongs_to_connection(blueprint, tmp_path):
+    flags = ["--openyamconnection.can-port", "/dev/ttyACM0"]
+    if blueprint is openyam_quest_collection:
+        flags.extend(["--recorder.recording", str(tmp_path / "session"), "--episodes.task", "pick"])
+    else:
+        flags.extend(["--policy.policy-path", "checkpoint", "--policy.task", "pick"])
+    parsed = BlueprintConfigParser(blueprint).parse(flags, environ={})
+    assert parsed.module_kwargs("openyamconnection")["can_port"] == "/dev/ttyACM0"
+    assert (
+        next(
+            atom for atom in blueprint.active_blueprints if atom.module is OpenYamConnection
+        ).kwargs["source"]
+        == "arm"
+    )
+    coordinator = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    assert not coordinator.kwargs.get("hardware")

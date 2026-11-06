@@ -32,7 +32,6 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
-    OPENYAM_HARDWARE_ID,
     OPENYAM_HOME_JOINTS,
     OPENYAM_MODEL_PATH,
     make_openyam_model_config,
@@ -72,7 +71,7 @@ def test_make_openyam_model_config_uses_canonical_arm_joints(mocker) -> None:
     assert config.joint_names == OPENYAM_ARM_JOINTS
     assert config.base_link == "base"
     assert config.planning_groups[0].tip_link == "gripper_tip"
-    assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
+    assert "gripper_hardware_id" not in config.model_dump()
     assert config.home_joints == OPENYAM_HOME_JOINTS
     download.assert_not_called()
 
@@ -153,7 +152,7 @@ def test_openyam_basic_trajectory_accepts_all_deployed_joints(blueprint: Bluepri
         "arm_gripper",
         [_GRIPPER_JOINT],
     )
-    assert gripper.name == f"{_MODEL.gripper_hardware_id}_gripper"
+    assert gripper.name == "arm_gripper"
 
 
 @pytest.mark.parametrize(

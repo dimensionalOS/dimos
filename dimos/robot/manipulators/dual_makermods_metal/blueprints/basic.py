@@ -75,6 +75,7 @@ dual_makermods_metal_planner_coordinator = autoconnect(
         ],
     ),
     DualMetalManipulationModule.blueprint(
+        gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
         model=DualMetalConnection.planning_model("arm"),
         visualization={"backend": "viser"},
         default_speed_scale=0.2,

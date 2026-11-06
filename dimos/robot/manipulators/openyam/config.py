@@ -18,6 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -37,6 +42,40 @@ OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 OPENYAM_PACKAGE = LfsPath("yam_description")
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
+
+
+def openyam_hardware(*, bus_devices: dict[str, str] | None = None) -> HardwareComponent:
+    """Keep the PD/passive-gripper adapter for hand-guided teaching only.
+
+    Position-control and policy stacks use OpenYamConnection instead. Teaching
+    requires zero stiffness and passive jaws, not a position-holding connection.
+    """
+    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
+    adapter_kwargs: dict[str, object] = {}
+    limits: JointLimits | None = None
+    if global_config.simulation:
+        limits = JointLimits(
+            position_lower=[*([None] * OPENYAM_DOF), 0.0],
+            position_upper=[*([None] * OPENYAM_DOF), 1.0],
+            velocity_max=[None] * len(OPENYAM_JOINTS),
+        )
+    else:
+        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
+            bus_devices=bus_devices or {}, gravity_comp=True
+        )
+    return HardwareComponent(
+        hardware_id=OPENYAM_HARDWARE_ID,
+        hardware_type=HardwareType.WHOLE_BODY,
+        joints=list(OPENYAM_JOINTS),
+        adapter_type=adapter_type,
+        auto_enable=True,
+        limits=limits,
+        adapter_kwargs=adapter_kwargs,
+        wb_config=WholeBodyConfig(
+            kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0),
+            kd=(5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0),
+        ),
+    )
 
 
 def make_openyam_model_config(

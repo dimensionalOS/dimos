@@ -31,7 +31,9 @@ def test_planner_joint_names_gripper_task_and_can_selection_match():
     tasks = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name)).tasks
     assert model.joint_names == [f"arm/joint{i}" for i in range(1, 7)]
     assert tasks[0].joint_names == model.joint_names
-    assert model.gripper_hardware_id == "metal"
+    assert ManipulationModuleConfig.model_validate(
+        parsed.module_kwargs(planner.name)
+    ).gripper_tasks == {"arm": "metal_gripper"}
     assert tasks[1].name == "metal_gripper"
     assert tasks[1].joint_names == ["arm/gripper"]
     assert parsed.module_kwargs("metalconnection")["can_port"] == "serial123"

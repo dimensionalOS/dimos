@@ -3,7 +3,10 @@
 OpenYAM and Dual OpenYAM use `ConnectionModule` implementations that own the
 native `can-motor-control` robot. The coordinator receives `JointState` feedback
 and sends position commands through streams. It does not construct hardware
-adapters.
+adapters. The exception is `openyam-teach-collection`, which retains the shared
+Damiao adapter for zero-stiffness, gravity-compensated hand guiding with passive
+grippers. Seeed B601-DM also retains that compatibility base; it is not migrated
+by this change.
 
 ## Run without hardware
 
@@ -61,6 +64,9 @@ rejected before connection. `--simulation` composes a separate
 for example `--openyamconnection.can-port can0` or
 `--dualopenyamconnection.left-can-port can0`.
 
+A selector starting with `/dev/` uses `DmSerialBus` on either Linux or macOS,
+preserving the native Damiao serial USB-CAN transport.
+
 ## Models and joint names
 
 The canonical planning assets retain their arm joint names. Shipped deployments
@@ -77,8 +83,18 @@ separate physical model for gravity compensation. Dual YAM uses its arm-only
 combined model for planning and gravity compensation.
 
 `OpenYamConnection()` and `DualOpenYamConnection()` default to sources `yam` and
-`dual_openyam` when used directly. Use `.models(source=...)` for a matching
-coordinator/planner model when composing a custom stack.
+`dual_openyam` when used directly. Use `.planning_model(source)` and
+`.control_model(source)` for matching planner and coordinator model views when
+composing a custom stack.
+
+New Quest recordings and policy rollout use the deployed seven-coordinate names.
+Hand-guided teaching retains its original bare names, PD gains and passive-jaw
+behavior; its CAN override remains `--controlcoordinator.can-port`.
+
+Planner gripper routing is explicit through `ManipulationModuleConfig.gripper_tasks`:
+single YAM binds `manipulator` to `arm_gripper`; dual YAM binds
+`left_manipulator` and `right_manipulator` to their respective `*_arm_gripper`
+tasks for both command dispatch and feedback.
 
 ## Teleoperation
 

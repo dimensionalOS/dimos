@@ -15,6 +15,8 @@
 
 """OpenYAM keyboard and WebXR teleoperation over its connection."""
 
+from copy import deepcopy
+
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -52,11 +54,16 @@ keyboard_teleop_openyam = autoconnect(
         coordinator=DamiaoTwistCoordinator,
         tasks=[_eef_twist_task(), _gripper_task()],
     ),
-    ManipulationModule.blueprint(model=_openyam_model, visualization={"backend": "viser"}),
+    ManipulationModule.blueprint(
+        model=_openyam_model,
+        gripper_tasks={"manipulator": "arm_gripper"},
+        visualization={"backend": "viser"},
+    ),
 )
 
 OPENYAM_WEBXR_TASK_NAME = "teleop_openyam"
-_openyam_webxr_pink = PinkKinematicsConfig(
+OPENYAM_QUEST_MODEL = _openyam_model
+OPENYAM_QUEST_KINEMATICS = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
@@ -74,40 +81,49 @@ _openyam_webxr_task = TaskConfig(
         "robot_model": _openyam_model,
         "solver_type": OpenYamPinkPoseTargetSolver,
         "bindings": [{"hand": "right", "target_frame": "gripper_tip"}],
-        "pink": _openyam_webxr_pink,
+        "pink": OPENYAM_QUEST_KINEMATICS,
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
         "joint_command_filter_cutoff_hz": 30.0,
     },
 )
+
+
+def openyam_quest_tasks() -> list[TaskConfig]:
+    """Build fresh canonical Quest tasks, including policy takeover priorities."""
+    return [
+        deepcopy(_openyam_webxr_task),
+        TaskConfig(
+            name="arm_gripper",
+            type="gripper",
+            joint_names=["arm/gripper"],
+            priority=20,
+            params={"hold_duration": 0.1},
+            stream_bind={"gripper_command": "right_gripper_command"},
+        ),
+        _trajectory_task(priority=10),
+    ]
+
+
 teleop_webxr_openyam = autoconnect(
     ArmTeleopModule.blueprint(zero_button="B"),
     connect_damiao(
         OpenYamConnection,
         coordinator=DamiaoTeleopCoordinator,
-        tasks=[
-            _openyam_webxr_task,
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=["arm/gripper"],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            _trajectory_task(priority=10),
-        ],
+        tasks=openyam_quest_tasks(),
     ),
     ManipulationModule.blueprint(
         model=_openyam_model,
-        kinematics=_openyam_webxr_pink,
+        gripper_tasks={"manipulator": "arm_gripper"},
+        kinematics=OPENYAM_QUEST_KINEMATICS,
         visualization={"backend": "viser"},
     ),
 ).remappings([(ArmTeleopModule, "right_controller_output", "right_cartesian_command")])
 
 keyboard_teleop_openyam_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    planner(model=_openyam_model),
+    planner(model=_openyam_model, gripper_tasks={"manipulator": "arm_gripper"}),
     connect_damiao(
         OpenYamConnection,
         coordinator=DamiaoTwistCoordinator,

@@ -35,10 +35,28 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
     )
 
 
+def _gripper_tasks() -> list[TaskConfig]:
+    return [
+        TaskConfig(
+            name=f"{side}_arm_gripper",
+            type="gripper",
+            joint_names=[f"arm/{side}_gripper"],
+            priority=20,
+        )
+        for side in ("left", "right")
+    ]
+
+
 coordinator_dual_openyam = connect_damiao(
-    DualOpenYamConnection, tasks=[dual_openyam_trajectory_task()]
+    DualOpenYamConnection, tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()]
 ).remappings([])
 dual_openyam_planner_coordinator = autoconnect(
-    planner(model=_dual_openyam),
-    connect_damiao(DualOpenYamConnection, tasks=[dual_openyam_trajectory_task()]),
+    planner(
+        model=_dual_openyam,
+        gripper_tasks={
+            "left_manipulator": "left_arm_gripper",
+            "right_manipulator": "right_arm_gripper",
+        },
+    ),
+    coordinator_dual_openyam,
 )

@@ -111,7 +111,6 @@ class DamiaoConnection(ConnectionModule):
                     replace(group, joint_names=tuple(names[name] for name in group.joint_names))
                     for group in planning.planning_groups
                 ],
-                "gripper_hardware_id": source if len(cls.gripper_joints) == 1 else None,
             }
         )
 
@@ -148,6 +147,8 @@ class DamiaoConnection(ConnectionModule):
 
     def _make_can_bus(self, name: str) -> Any:
         devices = self._bus_devices
+        if devices[name].startswith("/dev/"):
+            return can_motor_control.DmSerialBus(devices[name])
         if sys.platform == "linux":
             return can_motor_control.SocketCanBus(devices[name])
         if sys.platform == "darwin":

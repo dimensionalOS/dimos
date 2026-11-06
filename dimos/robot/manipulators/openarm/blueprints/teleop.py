@@ -118,6 +118,10 @@ teleop_webxr_openarm = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={
+            "left_arm": "left_arm_gripper",
+            "right_arm": "right_arm_gripper",
+        },
         model=_MODEL,
         kinematics=_openarm_webxr_pink,
         visualization={"backend": "viser"},

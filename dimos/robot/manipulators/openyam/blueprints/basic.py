@@ -37,6 +37,6 @@ coordinator_openyam = connect_damiao(
     OpenYamConnection, tasks=[_trajectory_task(), _gripper_task()]
 ).remappings([])
 openyam_planner_coordinator = autoconnect(
-    planner(model=_openyam),
+    planner(model=_openyam, gripper_tasks={"manipulator": "arm_gripper"}),
     connect_damiao(OpenYamConnection, tasks=[_trajectory_task(), _gripper_task()]),
 )

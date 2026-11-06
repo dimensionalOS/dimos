@@ -44,6 +44,8 @@ def test_collection_uses_normal_module_configuration(blueprint, tmp_path):
             "pick up the block",
             "--wrist.hardware.camera-index",
             "/dev/video3",
+            "--can-port",
+            "test-can",
         ],
         environ={},
     )

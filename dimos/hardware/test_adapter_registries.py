@@ -62,7 +62,7 @@ EXPECTED_NAMES = {
     },
     "whole_body": {
         "mock_whole_body",
-        "makermods_metal",
+        "openyam_damiao",
         "seeed_b601_dm",
         "sim_mujoco_g1",
         "transport_lcm",
@@ -104,6 +104,9 @@ def test_every_adapter_dir_has_a_manifest(registry, family) -> None:
     checked = 0
     for pkg_name, max_depth in registry.manifest_roots:
         for sub_pkg, dir_path, depth in _adapter_dirs(pkg_name):
+            # The generic Damiao base is abstract, not a selectable robot.
+            if sub_pkg == "dimos.hardware.whole_body.damiao":
+                continue
             assert depth <= max_depth, (
                 f"{dir_path} is deeper than the registry scan depth ({max_depth}); "
                 f"its manifest would never be discovered"

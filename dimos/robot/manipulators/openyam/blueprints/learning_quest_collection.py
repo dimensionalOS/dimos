@@ -24,15 +24,17 @@ from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_webxr_openyam
-from dimos.robot.manipulators.openyam.joints import OPENYAM_JOINTS
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+
+_JOINTS = [*OpenYamConnection.planning_model("arm").joint_names, "arm/gripper"]
 
 _state = FeatureSpec(
     stream="coordinator_joint_state",
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(OPENYAM_JOINTS),),
-    names=list(OPENYAM_JOINTS),
+    shape=(len(_JOINTS),),
+    names=list(_JOINTS),
 )
 _profile = CollectionProfile(
     observations={

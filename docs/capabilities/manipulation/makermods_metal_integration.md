@@ -24,7 +24,8 @@ for repository setup, command checks, and deadman checks.
 ## Select native hardware
 
 Configure the existing CAN interfaces before starting the connection. Use a
-SocketCAN interface name on Linux, or a gs_usb serial number on macOS.
+SocketCAN interface name on Linux, a gs_usb serial number on macOS, or a
+`/dev/...` Damiao serial USB-CAN bridge on either platform.
 
 ```bash
 uv run dimos run makermods-metal-planner-coordinator --can-port can0
@@ -63,8 +64,9 @@ names. Logical gripper coordinates are `arm/left_gripper` and
 
 The coordinator retains the tasks `left_arm_gripper` and `right_arm_gripper`.
 The grippers can be commanded independently through those tasks or their
-left/right gripper streams. ManipulationModule's group-based gripper API remains
-unbound for the dual setup, as on main.
+left/right gripper streams. `ManipulationModuleConfig.gripper_tasks` explicitly
+binds `left_arm` and `right_arm` to those task names for both commands and
+feedback. The single-Metal planner binds `arm` to `metal_gripper`.
 
 ## Validation scope
 

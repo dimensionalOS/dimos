@@ -46,5 +46,5 @@ def test_metal_model_schema_is_lazy_and_namespaces_both_planner_and_gripper(mock
         "arm/gripper",
     ]
     assert deployed.planning_groups[0].joint_names == tuple(deployed.joint_names)
-    assert deployed.gripper_hardware_id == "arm"
+    assert "gripper_hardware_id" not in deployed.model_dump()
     load.assert_not_called()

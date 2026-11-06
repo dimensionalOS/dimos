@@ -2,8 +2,11 @@
 
 These robots use `ConnectionModule` directly. Each connection owns one native
 `can_motor_control.Robot`, its CAN buses, gripper calibration, state reader,
-and MIT commands. The former whole-body adapters, registry entries, and
-`*_hardware` factories have been removed. Coordinators communicate through
+and MIT commands. Position-control stacks retire their former whole-body adapters
+and registry entries. The generic Damiao adapter remains for Seeed B601-DM and
+OpenYAM hand-guided collection, which requires PD gains and passive jaws rather
+than position holding. Their compatibility factories remain available.
+Direct-connection coordinators communicate through
 `position_command` and `joint_state` streams.
 
 ## Run software tests first
@@ -120,7 +123,7 @@ uv run dimos stop
 
 Physical startup enables motors and runs the upstream gripper endpoint
 calibration, so the grippers move. Prepare the supported robot and clear its
-jaws before starting. Use the declared `can-motor-control>=0.0.11` dependency;
+jaws before starting. Use the declared `can-motor-control==0.0.12` dependency;
 Metal requires its custom `MotorProfile` API.
 
 After the mock checks, choose existing, configured interfaces explicitly:
@@ -133,7 +136,9 @@ uv run dimos run teleop-webxr-dual-openyam --left-can-port can0 --right-can-port
 ```
 
 Run only the command for your robot. OpenArm and dual YAM require both selectors,
-and they must differ. On macOS, selectors are gs_usb serial numbers. The modules
+and they must differ. On macOS, selectors are gs_usb serial numbers. A `/dev/...`
+selector on Linux or macOS uses the native Damiao `DmSerialBus` USB-CAN bridge.
+The modules
 do not configure interfaces or request sudo. They add no startup home motion.
 Native startup requires explicit CAN selectors. `--simulation` composes a separate
 `MockJointConnection`; it never opens the native connection.
@@ -170,3 +175,18 @@ Logical gripper links do not animate the physical finger meshes.
 Planner groups and task joints derive from the same
 connection's `planning_model()` and `control_model()` views. Existing recordings using the old bare names retain
 their original schema; newly collected Quest recordings use the deployed names.
+
+`ManipulationModuleConfig.gripper_tasks` maps planning-group IDs to complete
+coordinator task names; grippers are not configured on `RobotModelConfig`.
+Single YAM maps `manipulator` to `arm_gripper`, and Metal maps `arm` to
+`metal_gripper`. Dual YAM maps `left_manipulator` / `right_manipulator` to
+`left_arm_gripper` / `right_arm_gripper`; dual Metal and OpenArm teleop use
+`left_arm` / `right_arm` with those same task names. This mapping drives both
+normalized gripper commands and feedback; an unbound group has no gripper API.
+
+OpenYAM policy rollout and Quest collection use direct connections and namespaced
+seven-coordinate state/action vectors. `openyam-teach-collection` deliberately
+keeps the adapter-based hand-guiding path: zero stiffness, teaching damping,
+gravity compensation and passive gripper commands on every tick. It retains the
+bare joint names in its recording schema and `--controlcoordinator.can-port`;
+the direct stacks take `--openyamconnection.can-port` (or `--can-port`).

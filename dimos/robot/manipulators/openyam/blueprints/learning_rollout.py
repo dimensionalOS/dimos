@@ -24,25 +24,22 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoTeleopCoordinator,
+    connect_damiao,
+)
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
-    OPENYAM_QUEST_HARDWARE,
     OPENYAM_QUEST_KINEMATICS,
     OPENYAM_QUEST_MODEL,
     openyam_quest_tasks,
 )
-from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_JOINTS,
-    openyam_hardware,
-)
-from dimos.robot.manipulators.openyam.coordinator import (
-    OpenYamCoordinator,
-    OpenYamTeleopCoordinator,
-)
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 _WRIST_WIDTH = 640
 _WRIST_HEIGHT = 480
 _WRIST_FPS = 30.0
+OPENYAM_ROLLOUT_JOINTS = [*OpenYamConnection.planning_model("arm").joint_names, "arm/gripper"]
 
 
 def build_openyam_rollout(
@@ -59,7 +56,7 @@ def build_openyam_rollout(
         **({"policy_path": checkpoint} if checkpoint is not None else {}),
         **({"task": task} if task is not None else {}),
         device=device,
-        joint_names=list(OPENYAM_JOINTS),
+        joint_names=list(OPENYAM_ROLLOUT_JOINTS),
         fps=_WRIST_FPS,
         robot_type="openyam",
         image_width=_WRIST_WIDTH,
@@ -81,13 +78,14 @@ def build_openyam_rollout(
         blueprint = autoconnect(
             policy,
             ArmTeleopModule.blueprint(),
-            OpenYamTeleopCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                hardware=[OPENYAM_QUEST_HARDWARE],
+            connect_damiao(
+                OpenYamConnection,
+                coordinator=DamiaoTeleopCoordinator,
                 tasks=openyam_quest_tasks(),
             ),
             camera,
             ManipulationModule.blueprint(
+                gripper_tasks={"manipulator": "arm_gripper"},
                 model=OPENYAM_QUEST_MODEL,
                 kinematics=OPENYAM_QUEST_KINEMATICS,
                 visualization={"backend": "viser"},
@@ -101,10 +99,9 @@ def build_openyam_rollout(
     else:
         blueprint = autoconnect(
             policy,
-            OpenYamCoordinator.blueprint(
-                instance_name="ControlCoordinator",
-                hardware=[openyam_hardware()],
-                tasks=[joint_trajectory_task(OPENYAM_JOINTS)],
+            connect_damiao(
+                OpenYamConnection,
+                tasks=[joint_trajectory_task(OPENYAM_ROLLOUT_JOINTS)],
             ),
             camera,
         )
