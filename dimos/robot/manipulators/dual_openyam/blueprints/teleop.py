@@ -14,6 +14,9 @@
 
 """WebXR teleoperation for Dual OpenYAM, with each arm engaged by its own controller."""
 
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -73,16 +76,41 @@ _dual_openyam_webxr_tasks = {
 }
 
 
+def dual_openyam_webxr_tasks(
+    *,
+    max_joint_velocity_rad_s: float = 2.0,
+    joint_velocity_limits_rad_s: Mapping[str, float] | None = None,
+) -> list[TaskConfig]:
+    """The stock per-arm teleop tasks with the joint-speed ceilings as their knobs."""
+    limits = dict(joint_velocity_limits_rad_s or {})
+    return [
+        replace(
+            task,
+            params={
+                **task.params,
+                "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
+                "joint_velocity_limits_rad_s": {
+                    joint: limits[joint] for joint in task.joint_names if joint in limits
+                },
+            },
+        )
+        for task in _dual_openyam_webxr_tasks.values()
+    ]
+
+
 def build_dual_openyam_webxr(
-    *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
+    *,
+    visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
+    teleop_tasks: Sequence[TaskConfig] | None = None,
+    zero_button: str | None = "B",
 ) -> Blueprint:
-    """Compose dual-arm teleop with deployment-specific visualization."""
+    """Compose dual-arm teleop with deployment-specific visualization and tuning."""
     return autoconnect(
-        ArmTeleopModule.blueprint(zero_button="B"),
+        ArmTeleopModule.blueprint(zero_button=zero_button),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
-                *_dual_openyam_webxr_tasks.values(),
+                *(teleop_tasks if teleop_tasks is not None else _dual_openyam_webxr_tasks.values()),
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",

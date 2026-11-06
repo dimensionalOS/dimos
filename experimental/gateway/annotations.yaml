@@ -709,6 +709,12 @@ robots:
         teleop-webxr-dual-openyam:
           title: Dual OpenYAM VR teleop
           description: Coupled VR teleoperation of both OpenYAM arms.
+        teleop-webxr-dual-openyam-collection:
+          title: Dual OpenYAM VR teleop, collection pacing
+          description: VR teleoperation of both OpenYAM arms at the collection speed ceilings.
+        dual-openyam-quest-d405-collection:
+          title: Dual OpenYAM demonstration recording
+          description: Teleoperate both OpenYAM arms in VR and record demonstrations from three D405s.
     openarm:
       name: OpenArm
       description: The bimanual OpenArm, over CAN.
