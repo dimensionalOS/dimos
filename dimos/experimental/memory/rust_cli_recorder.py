@@ -31,7 +31,6 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
-from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
@@ -176,11 +175,6 @@ def _prepare_artifact(plan: RustRecordingPlan) -> None:
     plan.path.parent.mkdir(parents=True, exist_ok=True)
     if plan.path.exists():
         plan.path.unlink()
-    if global_config.record == "mcap":
-        return
-    with SqliteStore(path=str(plan.path)) as store:
-        for stream in plan.streams:
-            store.stream(stream.name, plan.payload_types[stream.name], codec=stream.codec)
 
 
 class RustRecordingSession:

@@ -157,7 +157,7 @@ def test_unconfigured_json_options_are_omitted_from_native_streams(codec: str) -
     ]
 
 
-def test_store_preparation_creates_a_python_readable_registry(
+def test_store_preparation_leaves_selected_streams_unregistered(
     tmp_path: Path, make_recorder: Any
 ) -> None:
     path = tmp_path / "recording.db"
@@ -174,9 +174,7 @@ def test_store_preparation_creates_a_python_readable_registry(
     recorder._prepare_store(specs)
 
     with SqliteStore(path=str(path), must_exist=True) as store:
-        assert store.list_streams() == ["color_image", "odometry"]
-        assert store.stream("color_image").count() == 0
-        assert store.stream("odometry").count() == 0
+        assert store.list_streams() == []
 
 
 def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder: Any) -> None:
@@ -196,7 +194,7 @@ def test_append_replaces_only_the_recorded_streams(tmp_path: Path, make_recorder
 
     with SqliteStore(path=str(path), must_exist=True) as store:
         assert store.stream("keep").count() == 1
-        assert store.stream("odometry").count() == 0
+        assert store.list_streams() == ["keep"]
 
 
 def test_unsupported_python_payload_fails_before_native_process_starts(

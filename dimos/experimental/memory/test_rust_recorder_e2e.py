@@ -55,6 +55,7 @@ from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tap import TransportRecorder
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -439,17 +440,26 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
-    session = RustRecordingSession(rust_cli_recorder.make_plan({("imu", Imu): publisher}))
+    idle: LCMTransport[Imu] = LCMTransport(channel + "-idle", Imu, url=lcm_url)
+    transports = {("imu", Imu): publisher, ("idle", Imu): idle}
+    session = RustRecordingSession(rust_cli_recorder.make_plan(transports))
     expected = Imu(ts=22.5, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
-    try:
-        publisher.start()
+    python_path = tmp_path / "python.db"
+    with ExitStack() as stack:
+        python_store = stack.enter_context(SqliteStore(path=str(python_path)))
+        python_recorder = TransportRecorder(python_store)
+        stack.callback(python_recorder.close)
+        for (name, payload_type), transport in transports.items():
+            transport.start()
+            stack.callback(transport.stop)
+            unsubscribe = python_recorder.tap(name, payload_type, transport)
+            assert unsubscribe is not None
+            stack.callback(unsubscribe)
         session.start()
+        stack.callback(session.stop)
         for _ in range(3):
             publisher.broadcast(None, expected)
             time.sleep(0.05)
-    finally:
-        session.stop()
-        publisher.stop()
 
     memory: SqliteStore | McapStore
     if store_kind == "mcap" and not _MCAP_AVAILABLE:
@@ -461,7 +471,8 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
         memory = SqliteStore(path=str(artifact))
     else:
         memory = McapStore(path=str(artifact))
-    with memory:
+    with memory, SqliteStore(path=str(python_path), must_exist=True) as python_memory:
+        assert memory.list_streams() == python_memory.list_streams() == ["imu"]
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 22.5
         assert isinstance(observation.data, Imu)
