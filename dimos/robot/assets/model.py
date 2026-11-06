@@ -382,6 +382,14 @@ class RobotModel:
         """Replace named joint velocity limits in every planning backend."""
         if not limits or any(not math.isfinite(value) or value <= 0 for value in limits.values()):
             raise ValueError("Joint velocity limits must be positive and finite")
+        if self._renamed_joints:
+            # Renamed joints only exist after the base view loads; carry the
+            # limits on a view of that loaded model so they apply to the new names.
+            return RobotModel(
+                _source_path=self._source_path,
+                _base_model=self,
+                _joint_velocity_limits=tuple(limits.items()),
+            )
         return replace(self, _joint_velocity_limits=(*self._joint_velocity_limits, *limits.items()))
 
     def with_default_joint_acceleration_limit(self, value: float) -> RobotModel:
