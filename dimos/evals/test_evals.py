@@ -43,6 +43,7 @@ from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
+from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.constants import RAW_README
@@ -415,11 +416,43 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
 
 
-def test_mcp_client_adapter_needs_an_mcp_server_beside_a_python_guide() -> None:
-    env = DimSimEnvironment(blueprint=["unitree-go2"])
-    with pytest.raises(RuntimeError, match="add mcp-server"):
-        McpClientAdapter(modules=("mcp-client",)).preflight(env)
-    McpClientAdapter(modules=("mcp-server", "mcp-client")).preflight(env)
+def test_agents_that_need_mcp_bring_it_to_a_python_api_suite() -> None:
+    python_api = DimSimEnvironment(blueprint=["unitree-go2"])
+    client = McpClientAdapter(modules=("mcp-client",))
+    assert client.launch_modules(python_api) == ("mcp-client", "mcp-server")
+    assert client.launch_modules(_sim()) == ("mcp-client",)  # the suite serves MCP
+    # An attached dimos is used as it runs, so attach still accepts the agent.
+    attached = DimSimEnvironment(blueprint=["unitree-go2"], attach=True)
+    assert McpClientAdapter().launch_modules(attached) == ()
+
+
+def test_a_blueprint_with_mcp_server_fails_without_its_mcp_url(
+    dataset: str, mocker: MockerFixture
+) -> None:
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.global_args = []
+    proc.extra_env = {}
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(run_id="r1", mcp_url=None),
+    )
+    mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
+    env = _sim(scene="empty", launch_timeout_s=4.0)
+    try:
+        with pytest.raises(RuntimeError, match="r1 has no McpServer"):
+            env.start(())
+    finally:
+        env.stop()
+
+
+def test_agents_without_dimos_skip_the_python_api_guide_check(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    mocker.patch("dimos.evals.environments.live.PYTHON_API_GUIDE", tmp_path / "missing.md")
+    env = DimSimEnvironment(blueprint=["unitree-go2"], raw_bridge=True, raw_guide=RAW_README)
+    env.preflight(PiAdapter(no_dimos=True))
+    with pytest.raises(RuntimeError, match="Python API guide"):
+        env.preflight(PiAdapter())
 
 
 def test_question_answer_encodes_the_recording_into_one_call(

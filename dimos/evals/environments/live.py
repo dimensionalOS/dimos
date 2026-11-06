@@ -32,7 +32,7 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-from dimos.evals.constants import RAW_ENDPOINT
+from dimos.evals.constants import MCP_SERVER, RAW_ENDPOINT
 from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.environments.lib.launch import (
     attached_mcp_url,
@@ -98,14 +98,22 @@ class LiveEnvironment(Environment):
         return self.config.raw_guide
 
     @property
+    def attached(self) -> bool:
+        return self.config.attach
+
+    @property
+    def serves_mcp(self) -> bool:
+        """Whether the blueprint itself offers agents MCP tools."""
+        return MCP_SERVER in self.config.blueprint
+
+    @property
     def python_guide(self) -> Path | None:
-        return None if "mcp-server" in self.config.blueprint else PYTHON_API_GUIDE
+        return None if self.serves_mcp else PYTHON_API_GUIDE
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._recording: Store | None = None
         self._raw_endpoint = RAW_ENDPOINT  # an attached dimos runs its bridge on the default
-        self._mcp_url: str | None = None
 
     @abstractmethod
     def configure_launch(self, proc: DimosCliCall) -> None:
@@ -125,8 +133,9 @@ class LiveEnvironment(Environment):
         return cast("PoseStamped", recording.streams.odom.last().data)
 
     def preflight(self, agent: EvalSubject) -> None:
-        if self.python_guide is not None and not self.python_guide.is_file():
-            raise RuntimeError(f"Python API guide {self.python_guide} does not exist")
+        guide = self.python_guide
+        if guide is not None and not agent.config.no_dimos and not guide.is_file():
+            raise RuntimeError(f"Python API guide {guide} does not exist")
         modules = agent.launch_modules(self)
         if self.config.attach:
             if modules:
@@ -165,14 +174,18 @@ class LiveEnvironment(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
-            mcp_url = launched_run(proc.process, deadline).mcp_url or ""
+            entry = launched_run(proc.process, deadline)
+            if MCP_SERVER in (*self.config.blueprint, *modules) and entry.mcp_url is None:
+                raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
+            mcp_url = entry.mcp_url or ""
             wait_connectable(deadline, proc.process)
         else:
             wait_connectable(time.monotonic() + self.config.launch_timeout_s)
             mcp_url = attached_mcp_url()
+            if self.serves_mcp and not mcp_url:
+                raise RuntimeError("the attached dimos serves no McpServer")
         if mcp_url:
             self._wait_mcp(mcp_url, proc, deadline)
-        self._mcp_url = mcp_url or None
         self.setup_scene()
         path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
@@ -282,7 +295,6 @@ class LiveEnvironment(Environment):
             super().stop()
         finally:
             self._recording = None
-            self._mcp_url = None
 
 
 def _free_port() -> int:
