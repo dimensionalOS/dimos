@@ -99,7 +99,7 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 class RustRecorderConfig(NativeModuleConfig):
     """Configuration for :class:`RustRecorder`.
 
-    Python owns artifact lifecycle and stream registration. The native process
+    Python owns artifact lifecycle; the native writer registers populated streams. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
     ``streams`` list over stdin.
     """
@@ -313,14 +313,6 @@ class RustRecorder(NativeModule):
                 existing = set(store.list_streams())
                 for name in {spec.name for spec in specs}.intersection(existing):
                     store.delete_stream(name)
-
-            ports = self.inputs
-            for spec in specs:
-                tf_payload_type = f"{TFMessage.__module__}.{TFMessage.__qualname__}"
-                payload_type = (
-                    TFMessage if spec.payload_type == tf_payload_type else ports[spec.port].type
-                )
-                store.stream(spec.name, payload_type, codec=spec.codec)
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """Launch the stdin-only recorder without topic or configuration arguments."""

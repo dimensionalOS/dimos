@@ -29,7 +29,6 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
-from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
@@ -106,15 +105,16 @@ def test_plan_rejects_mixed_transport_sessions() -> None:
         )
 
 
-def test_sqlite_artifact_registration_matches_the_native_plan(tmp_path: Path) -> None:
+def test_sqlite_artifact_preparation_leaves_stream_creation_to_native_writer(
+    tmp_path: Path,
+) -> None:
     plan = rust_cli_recorder.make_plan(
         {("odom", PoseStamped): _lcm("/odom"), ("camera", Image): _lcm("/camera")}
     )
 
     rust_cli_recorder._prepare_artifact(plan)
 
-    with SqliteStore(path=str(tmp_path / "memory.db"), must_exist=True) as store:
-        assert store.list_streams() == ["camera", "odom"]
+    assert not plan.path.exists()
 
 
 class _CapturedInput:

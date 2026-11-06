@@ -31,42 +31,48 @@ pub struct McapRecordingStore {
 }
 
 impl McapRecordingStore {
-    pub fn open(path: &str, streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
+    pub fn open(path: &str, _streams: &[StreamConfig], compression_threads: usize) -> Result<Self> {
         let file = File::create(path).with_context(|| format!("failed to create {path}"))?;
         let options = WriteOptions::new()
             .profile("dimos")
             .library("dimos-memory-recorder")
             .compression(Some(Compression::Zstd))
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
-        let mut writer = Writer::with_options(BufWriter::new(file), options)?;
-        let mut channels = HashMap::new();
-        for stream in streams {
-            let metadata = BTreeMap::from([
-                (
-                    "dimos.payload_type".to_string(),
-                    stream.payload_type.clone(),
-                ),
-                ("dimos.stream_name".to_string(), stream.name.clone()),
-                ("dimos.port".to_string(), stream.port.clone()),
-                (
-                    "dimos.observation_time".to_string(),
-                    "publish_time".to_string(),
-                ),
-            ]);
-            let schema_id = if let Some(schema) = &stream.json_schema {
-                writer.add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
-            } else {
-                0
-            };
-            let channel =
-                writer.add_channel(schema_id, &stream.name, stream.codec.id(), &metadata)?;
-            channels.insert(stream.name.clone(), channel);
-        }
+        let writer = Writer::with_options(BufWriter::new(file), options)?;
         Ok(Self {
             writer,
-            channels,
+            channels: HashMap::new(),
             sequences: HashMap::new(),
         })
+    }
+
+    fn ensure_channel(&mut self, stream: &StreamConfig) -> Result<u16> {
+        if let Some(&channel) = self.channels.get(&stream.name) {
+            return Ok(channel);
+        }
+        let metadata = BTreeMap::from([
+            (
+                "dimos.payload_type".to_string(),
+                stream.payload_type.clone(),
+            ),
+            ("dimos.stream_name".to_string(), stream.name.clone()),
+            ("dimos.port".to_string(), stream.port.clone()),
+            (
+                "dimos.observation_time".to_string(),
+                "publish_time".to_string(),
+            ),
+        ]);
+        let schema_id = if let Some(schema) = &stream.json_schema {
+            self.writer
+                .add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
+        } else {
+            0
+        };
+        let channel =
+            self.writer
+                .add_channel(schema_id, &stream.name, stream.codec.id(), &metadata)?;
+        self.channels.insert(stream.name.clone(), channel);
+        Ok(channel)
     }
 }
 
@@ -85,7 +91,7 @@ impl RecordingStore for McapRecordingStore {
                     observation.stream.name
                 )
             })?;
-            let channel_id = self.channels[&observation.stream.name];
+            let channel_id = self.ensure_channel(&observation.stream)?;
             let sequence = self
                 .sequences
                 .entry(observation.stream.name.clone())
@@ -124,6 +130,50 @@ mod tests {
     use crate::Codec;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn channels_and_schemas_are_created_only_for_observed_streams() {
+        let file = NamedTempFile::new().unwrap();
+        let active = Arc::new(StreamConfig {
+            port: "active".into(),
+            name: "active".into(),
+            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            codec: Codec::Json,
+            timestamp_field: None,
+            json_schema: Some(serde_json::json!({"type": "object"})),
+        });
+        let idle = StreamConfig {
+            name: "idle".into(),
+            port: "idle".into(),
+            ..(*active).clone()
+        };
+        let mut store =
+            McapRecordingStore::open(file.path().to_str().unwrap(), &[(*active).clone(), idle], 1)
+                .unwrap();
+        for source_ts in [12.5, 13.5] {
+            store
+                .write_batch(&[Observation {
+                    stream: Arc::clone(&active),
+                    source_ts,
+                    reception_ts: 100.0,
+                    data: b"{}".to_vec(),
+                }])
+                .unwrap();
+        }
+        store.finish().unwrap();
+        let bytes = std::fs::read(file.path()).unwrap();
+        let summary = mcap::Summary::read(&bytes).unwrap().unwrap();
+        assert_eq!(summary.channels.len(), 1);
+        assert_eq!(summary.schemas.len(), 1);
+        assert_eq!(summary.channels.values().next().unwrap().topic, "active");
+        let messages = mcap::MessageStream::new(&bytes)
+            .unwrap()
+            .collect::<mcap::McapResult<Vec<_>>>()
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].sequence, 0);
+        assert_eq!(messages[1].sequence, 1);
+    }
 
     #[test]
     fn timestamp_conversion_rejects_unrepresentable_times_without_panicking() {
@@ -167,6 +217,9 @@ mod tests {
         store.finish().unwrap();
         let bytes = std::fs::read(file.path()).unwrap();
         assert_eq!(mcap::MessageStream::new(&bytes).unwrap().count(), 0);
+        let summary = mcap::Summary::read(&bytes).unwrap().unwrap();
+        assert!(summary.channels.is_empty());
+        assert!(summary.schemas.is_empty());
 
         let sqlite_file = NamedTempFile::new().unwrap();
         let mut sqlite = super::super::open(
