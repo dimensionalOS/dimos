@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!--
+  Livox MID-360, the source for the baked USD in module.py (_MID360_USD). Regenerate with:
+
+      python -c "from dimos.robot.assets.model import RobotModel; \
+                 from dimos.robot.assets.usd import urdf_to_usd; \
+                 print(urdf_to_usd(RobotModel.from_file(
+                     'dimos/hardware/sensors/lidar/livox/mid360.urdf').load()))"
+
+  then re-insert the dimos:link / dimos:joint placeholders (@LIDAR@, @IMU@).
+
+  Dimensions are from the Livox MID-360 specs: 65 x 65 x 60 mm, 265 g, four M3 holes in the
+  base. The link names here are the canonical ones; module.py substitutes the configured
+  frame ids into the attributes.
+
+  The root link is the point cloud origin, which is the frame the driver stamps its cloud
+  with, not the mounting face. So a mount transform onto this points at the optical origin.
+-->
+<robot name="mid360">
+  <link name="lidar_link"/>
+
+  <!-- The body hangs off the origin rather than containing it: the puck's shell is what a
+       renderer draws, but the cloud arrives in the origin frame.
+
+       PLACEHOLDER: the -20 mm z offset is inferred, not from Livox. The IMU sits 44.12 mm
+       below the origin (see below) and the puck is 60 mm tall, which puts the origin near the
+       top of the shell, but Livox publishes the origin only in a dimensioned drawing, so
+       the exact figure is unverified. It moves the drawn box, nothing measured. -->
+  <link name="lidar_link_body">
+    <visual>
+      <geometry><box size="0.065 0.065 0.060"/></geometry>
+      <material name="livox_grey"><color rgba="0.25 0.25 0.27 1"/></material>
+    </visual>
+    <collision>
+      <geometry><box size="0.065 0.065 0.060"/></geometry>
+    </collision>
+  </link>
+  <joint name="lidar_link_to_body" type="fixed">
+    <parent link="lidar_link"/><child link="lidar_link_body"/>
+    <origin xyz="0 0 -0.020"/>
+  </joint>
+
+  <!-- Built-in ICM40609. The offset is PointLioConfig.extrinsic_t (the lidar origin in the
+       IMU frame) negated, so this is the IMU origin in the lidar frame. That default is the
+       in-repo source of truth for this extrinsic; keep the two in step. -->
+  <link name="imu_link"/>
+  <joint name="lidar_link_to_imu_link" type="fixed">
+    <parent link="lidar_link"/><child link="imu_link"/>
+    <origin xyz="0.011 0.02329 -0.04412"/>
+  </joint>
+</robot>

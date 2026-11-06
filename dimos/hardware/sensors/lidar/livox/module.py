@@ -23,6 +23,12 @@ Usage::
         Mid360.blueprint(lidar_ip="192.168.1.155"),  # host_ip auto-detected
         SomeConsumer.blueprint(),
     )).loop()
+
+The sensor also describes itself as USD over the ``get_usd`` RPC, so a UrdfManager can take it
+as a ``mounts`` value and graft it onto whatever frame it is bolted to. That layer is baked
+into ``_MID360_USD`` rather than converted on the fly, because usd-core has no
+linux-aarch64 wheel and this module runs on a Jetson. Its source is ``mid360.urdf`` next to
+this file, which carries the regeneration recipe.
 """
 
 from __future__ import annotations
@@ -109,6 +115,107 @@ class Mid360Config(NativeModuleConfig):
         return config
 
 
+# The MID-360 as a USD layer, baked rather than converted at runtime: usd-core has no
+# linux-aarch64 wheel, and this module's whole job happens on a Jetson. Produced one-off from
+# a hand-written URDF by dimos.robot.assets.usd.urdf_to_usd -- see the module docstring for
+# how to regenerate it.
+#
+# @LIDAR@ / @IMU@ stand in for the configured frame names. They appear only in the
+# dimos:link / dimos:joint attributes, which are the names that travel (graft_usd matches a
+# mount frame on dimos:link); prim names stay fixed USD identifiers, so no sanitising is
+# needed here and none of this depends on pxr.
+_LIDAR_TOKEN = "@LIDAR@"
+_IMU_TOKEN = "@IMU@"
+
+_MID360_USD = """\
+#usda 1.0
+(
+    defaultPrim = "mid360"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "mid360"
+{
+    def Xform "lidar_link" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        custom string dimos:link = "@LIDAR@"
+
+        def Xform "lidar_link_body" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            custom string dimos:link = "@LIDAR@_body"
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, -0.02, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Cube "visual_0"
+            {
+                color3f[] primvars:displayColor = [(0.25, 0.25, 0.27)]
+                double size = 1
+                float3 xformOp:scale = (0.065, 0.065, 0.06)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
+            }
+
+            def Cube "collision_1" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 1
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.065, 0.065, 0.06)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
+            }
+        }
+
+        def Xform "imu_link" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            custom string dimos:link = "@IMU@"
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.011, 0.02329, -0.04412, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+    }
+
+    def Scope "joints"
+    {
+        def PhysicsFixedJoint "lidar_link_to_body"
+        {
+            custom string dimos:joint = "@LIDAR@_to_body"
+            rel physics:body0 = </mid360/lidar_link>
+            rel physics:body1 = </mid360/lidar_link/lidar_link_body>
+            point3f physics:localPos0 = (0, 0, -0.02)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "lidar_link_to_imu_link"
+        {
+            custom string dimos:joint = "@LIDAR@_to_@IMU@"
+            rel physics:body0 = </mid360/lidar_link>
+            rel physics:body1 = </mid360/lidar_link/imu_link>
+            point3f physics:localPos0 = (0.011, 0.02329, -0.04412)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+    }
+}
+
+"""
+
+
+def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
+    """The baked MID-360 layer with its frame names filled in."""
+    return _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame).replace(_IMU_TOKEN, imu_frame)
+
+
 def _resolved_host_ip(config: Mid360Config) -> str | None:
     """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
@@ -135,6 +242,15 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+    @rpc
+    def get_usd(self) -> str:
+        """This sensor as a USD layer, in the frames this instance is configured to stamp.
+
+        A UrdfManager asks for this when the MID-360 is one of its ``mounts``, and grafts the
+        answer onto the frame the sensor is bolted to.
+        """
+        return mid360_usd(self.config.frame_id, self.config.imu_frame_id)
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
