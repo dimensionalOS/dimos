@@ -50,7 +50,7 @@ def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:
     if not Path(path).exists():
         logger.warning(f"named locations file {path} does not exist yet, starting with none")
         return {}
-    with open_store(path) as store:
+    with open_store(path, decode_metadata=True) as store:
         name = find_stream(store.list_streams(), stream)
         if name is None:
             logger.warning(f"{path} has no {stream!r} stream, starting with no named locations")

@@ -233,6 +233,40 @@ def test_a_missing_file_loads_nothing(tmp_path):
     assert load_locations(str(tmp_path / "absent.db"), "named_locations") == {}
 
 
+@pytest.mark.parametrize(
+    "topic, metadata",
+    [
+        # dimos's own tools and the Map Editor
+        (
+            "named_locations",
+            {
+                "dimos.payload_type": "dimos.msgs.visualization_msgs.InteractiveMarkerUpdate.InteractiveMarkerUpdate"
+            },
+        ),
+        # the dim-controller recorder, for a type it can't transcode to CDR
+        ("/named_locations", {"lcm_type": "visualization_msgs.InteractiveMarkerUpdate"}),
+    ],
+)
+def test_locations_are_loaded_from_an_mcap(tmp_path, topic, metadata):
+    mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
+    path = tmp_path / "walk.mcap"
+    snapshot = InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map"))])
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        channel = writer.register_channel(
+            topic=topic, message_encoding="lcm", schema_id=0, metadata=metadata
+        )
+        writer.add_message(
+            channel_id=channel, log_time=1, publish_time=1, data=snapshot.lcm_encode()
+        )
+        writer.finish()
+
+    loaded = load_locations(str(path), "named_locations")
+    assert list(loaded) == ["dock"]
+    assert (loaded["dock"].position.x, loaded["dock"].position.y) == (1, 2)
+
+
 def test_a_list_in_another_frame_goes_through_tf(make):
     """Only world/map come from the module's own fix; any other frame is looked up in tf."""
     module, _ = make()
