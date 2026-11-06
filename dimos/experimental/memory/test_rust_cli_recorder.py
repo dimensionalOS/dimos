@@ -359,3 +359,19 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
     assert popen.call_args.args[0] == "nix build -L path:."
+
+
+def test_build_failure_reports_build_output_at_error_level(tmp_path, mocker):
+    mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
+    process = mocker.Mock()
+    process.stdout = [b"error: experimental Nix feature 'flakes' is disabled\n"]
+    process.wait.return_value = 1
+    mocker.patch.object(rust_cli_recorder.subprocess, "Popen", return_value=process)
+    error = mocker.patch.object(rust_cli_recorder.logger, "error")
+
+    with pytest.raises(RuntimeError, match="Rust recorder build failed") as exc:
+        rust_cli_recorder.prepare_rust_recorder()
+
+    assert "experimental Nix feature 'flakes' is disabled" in str(exc.value)
+    assert "exit 1" in str(exc.value)
+    error.assert_called_once_with(str(exc.value), module="rust-recorder-build")
