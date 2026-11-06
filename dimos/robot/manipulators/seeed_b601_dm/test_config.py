@@ -104,7 +104,11 @@ def test_connection_builds_seeed_motor_table(mocker) -> None:
 
     builder = Builder()
     mocker.patch.object(can_motor_control, "MotorSpec", side_effect=lambda *args: args)
-    mocker.patch.object(can_motor_control, "SocketCanBus", side_effect=lambda name: name)
+    # The bus object is transport-specific (SocketCAN, gs_usb, serial); the
+    # motor table is what this asserts, so resolve the selector without one.
+    mocker.patch.object(
+        B601DMConnection, "_make_can_bus", lambda self, name: self._bus_devices[name]
+    )
     mocker.patch.object(
         can_motor_control, "Robot", SimpleNamespace(builder=lambda: builder), create=True
     )
