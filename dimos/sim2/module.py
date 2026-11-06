@@ -112,7 +112,7 @@ class SimModule(SharedConfigModule):
         self._threads = [threading.Thread(target=self._run, name="sim2-physics", daemon=True)]
         try:
             self._threads[0].start()
-            self._ready.result(timeout=30)
+            self._ready.result(timeout=self.config.startup_timeout_s)
             publisher = threading.Thread(
                 target=self._publish, name="sim2-observations", daemon=True
             )

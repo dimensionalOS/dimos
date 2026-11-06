@@ -20,12 +20,8 @@ part of the main hall, facing +X. Furniture and doors are static in this demo.
 """
 
 from dataclasses import replace
-from functools import partial
-import os
-from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sim2 import (
     CAMERA,
     ENCODERS,
@@ -39,24 +35,14 @@ from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
+from dimos.sim2.scenes.sf555.config import ASSETS as ASSETS, OFFICE_MODEL, OFFICE_RENDERER
 from dimos.sim2.sensors.camera.module import SimCameraModule
-from dimos.sim2.sensors.camera.renderers.unreal.renderer import UnrealRenderer
 from dimos.sim2.sensors.encoder.module import SimJointEncoderModule
 from dimos.sim2.sensors.imu.module import SimImuModule
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 
-ASSETS = Path(os.environ.get("DIMOS_SF555_ASSETS", str(Path.home() / ".cache/dimos/sf555")))
-PROJECT = Path(
-    os.environ.get("DIMOS_UNREAL_PROJECT", str(ASSETS / "DimosRenderer/DimosRenderer.uproject"))
-)
-EXECUTABLE = Path(
-    os.environ.get(
-        "DIMOS_UNREAL_EXECUTABLE",
-        "/Users/Shared/Epic Games/UE_5.7/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor",
-    )
-)
-MODELS = {"g1": G1_MODEL, "office": RobotModel.from_file(ASSETS / "office.urdf")}
+MODELS = {"g1": G1_MODEL, "office": OFFICE_MODEL}
 SCENE = SceneConfig(
     instances=(replace(G1_SCENE.instances[0], xyz=(16, 1, 0.793)), Instance("office")),
     ground_plane=False,
@@ -76,16 +62,7 @@ unitree_g1_sim2_sf555 = autoconnect(
     SimCameraModule.blueprint(
         scene=SCENE,
         sensor=replace(CAMERA, width=640, height=480, fx=376.72, fy=376.72, cx=320, cy=240),
-        renderer=partial(
-            UnrealRenderer,
-            executable=EXECUTABLE,
-            project=PROJECT,
-            level="/Game/SF555/Maps/Office",
-            authored_instances=("office",),
-            log_path=ASSETS / "unreal-camera.log",
-            startup_timeout=600,
-            capture_timeout=30,
-        ),
+        renderer=OFFICE_RENDERER,
     ),
     SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster),
     G1PolicyModule.blueprint(),
