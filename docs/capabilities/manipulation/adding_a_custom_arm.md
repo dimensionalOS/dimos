@@ -32,6 +32,67 @@ dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is re
 
 > See also: `dimos/hardware/manipulators/README.md` for a quick reference.
 
+## Arms with Damiao motors
+
+If dimOS talks to your arm's Damiao motors directly (DM4310, DM4340, DM8009 and similar, each on its own CAN
+ID, through a CAN adapter or a Damiao USB-CAN bridge), don't write a vendor-SDK `ManipulatorAdapter` (Step 1
+below). The Damiao motor protocol, the CAN transports, gripper calibration, gravity compensation and feedback
+limit checks live in a shared stack: the `can-motor-control` library (installed by the `control` extra) and
+`dimos/hardware/whole_body/damiao/`. These arms are whole-body hardware (`HardwareType.WHOLE_BODY`,
+`whole_body_adapter_registry`). Your arm only declares what is specific to it. Start from the closest example:
+`openyam_damiao/` (one arm, one bus) or `openarm_damiao/` (two arms, two buses), and its robot folder under
+`dimos/robot/manipulators/`.
+
+1. **Adapter.** Subclass `DamiaoWholeBodyAdapter` (`dimos/hardware/whole_body/damiao/adapter.py`) in
+    `dimos/hardware/whole_body/<yourarm>/adapter.py`. It declares the arm and gripper joints, the CAN bus names,
+    the kinematic joints and model (used for gravity compensation and joint-limit checks), the gripper's
+    normalized opening range in `get_limits()` (0.0 closed, 1.0 open), and `_build_robot()`, which builds the
+    `can_motor_control.Robot` from the vendor's motor table as `MotorSpec(name, type, send_id, recv_id)`, where
+    `recv_id` is the feedback ID. The adapter's joint order is every arm group in declaration order, then the
+    grippers, and your `HardwareComponent.joints` must use the same order. Register the adapter in
+    `dimos/hardware/whole_body/<yourarm>/_registry.py` and add its name to the `"whole_body"` set in
+    `dimos/hardware/test_adapter_registries.py`.
+
+2. **Motor types.** Use the stock `damiao.MotorType` that matches each motor in the vendor's motor table. A
+    wrong type scales velocity and torque incorrectly. Define a custom `damiao.MotorProfile` only when the motor
+    firmware uses non-standard protocol scaling (MakerMods Metal is the example in this repo).
+
+3. **Transport.** Don't implement Damiao framing or a serial protocol yourself. The shared adapter builds each
+    bus from its device: SocketCAN on Linux, gs_usb on macOS, and a Damiao USB-CAN bridge for a `/dev/...`
+    serial path. Pass devices as `DamiaoRuntimeConfig(bus_devices={"<bus name>": "<device>"})`, as
+    `openyam_hardware(bus_devices=...)` does; the adapter rejects `HardwareComponent.address`. If a transport you
+    need is missing, add it to the shared stack, not to your arm.
+
+4. **Gains.** `WholeBodyConfig` holds one `kp` and one `kd` per joint (0.0 for gripper slots). For every motor
+    type the Damiao codec accepts `kp` from 0 to 500 and `kd` from 0 to 5. With a value outside those ranges the
+    codec raises `CodecError` and `write_motor_commands()` returns `False` on every tick, so the arm can't be
+    controlled. Check gains copied from a vendor SDK against these ranges. The codec also checks each command's
+    position, velocity and torque, including the gravity term the adapter adds, against the motor type's limits.
+
+5. **Gripper.** `add_gripper` needs `opening_direction` (`"increasing_position"` or `"decreasing_position"`).
+    `default_current` is a per-unit current in (0, 1], not amperes, and `calibration_travel` (radians, default
+    4.0) must exceed the gripper's full stroke. These depend on the physical gripper: take them from the vendor
+    or measure them, and say which values are unverified. Activation calibrates the gripper by driving it to
+    both of its stops.
+
+6. **Gravity compensation.** `DamiaoRuntimeConfig.gravity_comp` is on by default and needs the kinematic model
+    with real inertias. Set `gravity_comp=False` only when you can't provide them (MakerMods Metal does this for
+    commissioning).
+
+7. **Robot config and blueprints.** Follow the closest example's robot folder: the joint names; a hardware
+    config that returns a `HardwareComponent` with `HardwareType.WHOLE_BODY` and falls back to the
+    `mock_whole_body` adapter when no hardware is attached; a coordinator that takes the CAN port from the command
+    line (`--can-port`, see `makermods_metal/coordinator.py`; one port per bus for a two-bus arm, as in
+    `openarm/blueprints/basic.py`), with `instance_name="ControlCoordinator"` so RPC clients find it; a
+    `TaskConfig(type="gripper")` next to the trajectory task and `gripper_tasks` on the planner; and planner and
+    coordinator blueprints. Steps 4 (URDF and planning) and 5 (register blueprints) below apply; the other steps
+    describe the vendor-SDK path.
+
+8. **Tests and docs.** Add `dimos/hardware/whole_body/<yourarm>/test_adapter.py` modeled on
+    `openyam_damiao/test_adapter.py`, which runs on `can_motor_control.MockCanBus`. A mock bus can't calibrate a
+    gripper, so `activate()` needs the real arm. Add `docs/capabilities/manipulation/<yourarm>_integration.md`,
+    modeled on [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
+
 ## Prerequisites
 
 1. **Vendor SDK**: The Python SDK for your robot arm (e.g., `xarm-python-sdk`, `piper-sdk`)
@@ -556,9 +617,9 @@ zero, negative, or non-finite limits fail startup and identify the affected
 joint.
 
 ```python skip
-from dimos.manipulation.manipulation_module import manipulation_module
+from dimos.robot.manipulators.common.blueprints import planner
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -620,7 +681,7 @@ Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator b
 
 ```python skip
 
-yourarm_planner = manipulation_module(
+yourarm_planner = planner(
     model=_make_yourarm_config(),
     planning_timeout=10.0,
     visualization={"backend": "meshcat"},
@@ -639,7 +700,7 @@ To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
 parametrizer after adding the URDF limits described above:
 
 ```python skip
-yourarm_planner = manipulation_module(
+yourarm_planner = planner(
     model=_make_yourarm_config(),
     world_backend="roboplan",
     trajectory_parametrization={

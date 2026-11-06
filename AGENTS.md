@@ -145,6 +145,8 @@ docs/
 
 If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
 
+Adding a robot arm: follow `docs/capabilities/manipulation/adding_a_custom_arm.md`.
+
 ---
 
 ## Architecture
