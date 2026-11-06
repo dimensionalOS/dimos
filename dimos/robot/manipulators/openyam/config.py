@@ -26,6 +26,7 @@ from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
@@ -35,21 +36,26 @@ from dimos.robot.manipulators.openyam.joints import (
     OPENYAM_GRIPPER_JOINT as OPENYAM_GRIPPER_JOINT,
     OPENYAM_JOINTS as OPENYAM_JOINTS,
 )
-from dimos.utils.data import LfsPath
 
 OPENYAM_HARDWARE_ID = "openyam"
 OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
-OPENYAM_PACKAGE = LfsPath("yam_description")
-OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
-OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
+OPENYAM_DESCRIPTION_SOURCE = RobotDescriptionSource(
+    url="https://github.com/dimensionalOS/dim_description",
+    ref="f9853344bbc9fa00aade6ff3ffb7db6532d185e1",
+)
+OPENYAM_PACKAGE = OPENYAM_DESCRIPTION_SOURCE / "openyam_single"
+OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "openyam_single.urdf"
+OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"openyam_single": OPENYAM_PACKAGE}
 
 
 def openyam_hardware(*, bus_devices: dict[str, str] | None = None) -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
-    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
+    use_mock = bool(global_config.simulation)
+    adapter_type = "mock_whole_body" if use_mock else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
     limits: JointLimits | None = None
-    if global_config.simulation:
+    if use_mock:
+        adapter_kwargs["initial_positions"] = [*OPENYAM_HOME_JOINTS, 0.0]
         limits = JointLimits(
             position_lower=[*([None] * OPENYAM_DOF), 0.0],
             position_upper=[*([None] * OPENYAM_DOF), 1.0],
@@ -81,10 +87,17 @@ def make_openyam_model_config(
 ) -> RobotModelConfig:
     """Build the canonical visualization and planning config for OpenYAM."""
     model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
-    model = RobotModel.from_file(
-        OPENYAM_MODEL_PATH,
-        package_paths=OPENYAM_PACKAGE_PATHS,
-    ).with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
+    model = (
+        RobotModel.from_file(
+            OPENYAM_MODEL_PATH,
+            package_paths=OPENYAM_PACKAGE_PATHS,
+        )
+        .with_renamed_joints(
+            dict(zip(joint_names(OPENYAM_DOF, prefix="arm_joint_"), model_joint_names, strict=True))
+        )
+        .with_fixed_joints("hand_finger_joint1", "hand_finger_joint2")
+        .with_fixed_frame("gripper_tip", "arm_tcp")
+    )
     return RobotModelConfig(
         model=model.with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,

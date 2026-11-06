@@ -61,7 +61,8 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 
 def test_make_openyam_model_config_uses_canonical_arm_joints(mocker) -> None:
     download = mocker.patch(
-        "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
+        "dimos.robot.assets.git_cache.GitAssetCache.resolve",
+        side_effect=AssertionError("Config must not download models"),
     )
     config = make_openyam_model_config()
 
@@ -78,9 +79,18 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
     model = prepare_robot_model(config).description
 
-    assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
+    assert OPENYAM_MODEL_PATH.parts[-2:] == ("openyam_single", "openyam_single.urdf")
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
+    )
+    assert [joint.name for joint in model.joints if joint.type != "fixed"] == OPENYAM_ARM_JOINTS
+    assert model.get_joint("hand_finger_joint1").type == "fixed"
+    assert model.get_joint("hand_finger_joint2").type == "fixed"
+    tip = model.get_joint("gripper_tip_joint")
+    assert (tip.parent_link, tip.child_link, tip.origin_xyz) == (
+        "arm_tcp",
+        "gripper_tip",
+        (0.0, 0.0, 0.0),
     )
 
 
