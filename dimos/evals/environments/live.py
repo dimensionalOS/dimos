@@ -96,22 +96,25 @@ class LiveEnvironment(Environment):
         return self.config.raw_guide
 
     @property
-    def attached(self) -> bool:
-        return self.config.attach
-
-    @property
     def serves_mcp(self) -> bool:
         """Whether the blueprint itself offers agents MCP tools."""
         return MCP_SERVER in self.config.blueprint
 
     @property
     def python_guide(self) -> Path | None:
+        """DIMOS.md source when agents drive the robot through the Python API."""
         return None if self.serves_mcp else PYTHON_API_GUIDE
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._recording: Store | None = None
         self._raw_endpoint = RAW_ENDPOINT  # an attached dimos runs its bridge on the default
+
+    def _launch_modules(self, modules: Sequence[str], requires_mcp: bool) -> tuple[str, ...]:
+        """``modules``, plus McpServer for an agent that needs one the blueprint leaves out."""
+        if requires_mcp and not self.serves_mcp and MCP_SERVER not in modules:
+            return (*modules, MCP_SERVER)
+        return tuple(modules)
 
     @abstractmethod
     def configure_launch(self, proc: DimosCliCall) -> None:
@@ -134,14 +137,13 @@ class LiveEnvironment(Environment):
         guide = self.python_guide
         if guide is not None and not agent.config.no_dimos and not guide.is_file():
             raise RuntimeError(f"Python API guide {guide} does not exist")
-        modules = agent.launch_modules(self)
         if self.config.attach:
-            if modules:
+            if agent.config.modules:
                 raise RuntimeError(
                     f"{type(self).__name__} attaches to an existing dimos; "
-                    f"{type(agent).__name__} also adds modules {modules!r}"
+                    f"{type(agent).__name__} also adds modules {agent.config.modules!r}"
                 )
-            if self.serves_mcp:
+            if self.serves_mcp or agent.requires_mcp:
                 mcp_url = attached_mcp_url()
                 if not mcp_url or not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
                     raise RuntimeError(f"attach needs a running dimos serving MCP at {mcp_url!r}")
@@ -151,9 +153,10 @@ class LiveEnvironment(Environment):
             except TimeoutError as e:
                 raise RuntimeError("attach needs a running dimos") from e
             return
+        modules = self._launch_modules(agent.config.modules, agent.requires_mcp)
         validate_blueprints((*self.config.blueprint, *modules, *self.config.disable))
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         # SQLite memory codecs are only needed for a running robot.
         from dimos.memory.store.sqlite import SqliteStore
 
@@ -165,6 +168,7 @@ class LiveEnvironment(Environment):
                 f"attach with raw_bridge needs a running raw-robot-bridge at {self._raw_endpoint}"
             )
         if not self.config.attach:
+            modules = self._launch_modules(modules, requires_mcp)
             proc = DimosCliCall()
             self.configure_launch(proc)
             proc.global_args.append("--record")
@@ -185,7 +189,7 @@ class LiveEnvironment(Environment):
                 wait_connectable(deadline, proc.process)
         else:
             mcp_url = attached_mcp_url()
-            if self.serves_mcp and not mcp_url:
+            if (self.serves_mcp or requires_mcp) and not mcp_url:
                 raise RuntimeError("the attached dimos serves no McpServer")
             if not mcp_url:
                 wait_connectable(time.monotonic() + self.config.launch_timeout_s)

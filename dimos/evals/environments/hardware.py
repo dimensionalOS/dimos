@@ -59,14 +59,14 @@ class HardwareEnvironment(LiveEnvironment):
             raise RuntimeError("hardware evals need an operator at an interactive terminal")
         super().preflight(agent)
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         answer = input(
             f"\nNext eval task: {self.config.task}\n"
             "Is the scene reset and the robot ready, with the area clear? [y/N] "
         )
         if not answer.strip().lower().startswith("y"):
             raise RuntimeError("operator did not confirm the robot is ready")
-        return super().start(modules)
+        return super().start(modules, requires_mcp=requires_mcp)
 
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = None  # the real robot: no --simulation

@@ -41,15 +41,15 @@ class ImageFile(Environment):
         super().__init__(path=path, **kwargs)
 
     def preflight(self, agent: EvalSubject) -> None:
-        if modules := agent.launch_modules(self):
+        if agent.config.modules:
             raise RuntimeError(
                 f"ImageFile({self.config.path}) launches nothing; "
-                f"{type(agent).__name__} adds modules {modules!r}"
+                f"{type(agent).__name__} adds modules {agent.config.modules!r}"
             )
         if not self.config.path.is_file():
             raise FileNotFoundError(f"image does not exist: {self.config.path}")
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
         from dimos.msgs.sensor_msgs.Image import Image
 
