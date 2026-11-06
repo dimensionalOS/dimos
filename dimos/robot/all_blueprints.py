@@ -98,6 +98,7 @@ all_blueprints = {
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
     "learning-collect-webxr-piper": "dimos.imitation.collection.blueprint:learning_collect_webxr_piper",
+    "learning-collect-webxr-xarm6": "dimos.imitation.collection.blueprint:learning_collect_webxr_xarm6",
     "learning-collect-webxr-xarm7": "dimos.imitation.collection.blueprint:learning_collect_webxr_xarm7",
     "lite6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:lite6_planner_coordinator",
     "makermods-metal-planner-coordinator": "dimos.robot.manipulators.makermods_metal.blueprints.planning:makermods_metal_planner_coordinator",
