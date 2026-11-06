@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
@@ -188,6 +189,42 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
             prim.SetDisplayName(f"{prefix}/{prim.GetDisplayName() or prim.GetName()}")
     return str(layer.ExportToString())
+
+
+def resolve_usd_assets(usd: str, root: str) -> str:
+    """``usd`` with every relative asset path rewritten to sit under ``root``.
+
+    A layer only says where its meshes are relative to something; the module that answered for
+    it is the only thing that knows what. So a subtree is rebased as it arrives, before it joins
+    a scene whose other subtrees were rooted somewhere else entirely.
+
+    An absolute path is left alone, and so is everything when ``root`` is empty.
+    """
+    if not root:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    base = Path(root)
+    changed = False
+    stack = [layer.pseudoRoot]
+    while stack:
+        spec = stack.pop()
+        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+        rebased = []
+        for ref in items:
+            asset = ref.assetPath
+            if asset and not Path(asset).is_absolute():
+                rebased.append(pxr.Sdf.Reference(str(base / asset), ref.primPath))
+                changed = True
+            else:
+                rebased.append(ref)
+        if rebased and changed:
+            if spec.referenceList.explicitItems:
+                spec.referenceList.explicitItems = rebased
+            else:
+                spec.referenceList.prependedItems = rebased
+        stack.extend(spec.nameChildren)
+    return str(layer.ExportToString()) if changed else usd
 
 
 def _layer_from(pxr: Any, usd: str, what: str) -> Any:

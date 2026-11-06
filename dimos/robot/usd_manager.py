@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The robot's description and its live joint state: joints on tf, files for renderers, USD on request.
-
-Named for what it is becoming rather than what it reads: USD is the description format dimos is
-moving to, and this module is the thing that answers for a robot's description. The model it
-loads is still authored as URDF, and its tf and file serving are still URDF-shaped; get_usd and
-get_scene are the USD side, converting on the way out.
-"""
+"""One URDF and the live joint state: every joint on tf, and the URDF and its files for renderers."""
 
 from __future__ import annotations
 
@@ -43,7 +37,12 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames, urdf_to_usd
+from dimos.robot.assets.usd import (
+    graft_usd,
+    prefix_usd_frames,
+    resolve_usd_assets,
+    urdf_to_usd,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -54,6 +53,20 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 # The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
+
+# What get_usd and get_scene answer with: [asset_root, usd].
+#
+# A USD layer names its meshes relative to something, and only the module that answered for it
+# knows what. Without the root travelling alongside, a subtree's mesh paths are unresolvable the
+# moment they leave the process that produced them -- the answering module's cwd is not the
+# asker's, and two subtrees need not share a root at all.
+#
+# asset_root is absolute, or relative to the answering process's cwd, or empty when the layer
+# names no files.
+ASSET_ROOT, USD = 0, 1
+
+# get_scene waits forever, so say so periodically rather than hang silently.
+_WAITING_LOG_EVERY = 20
 
 
 @dataclass(frozen=True)
@@ -138,9 +151,10 @@ class UsdManagerConfig(ModuleConfig):
     # Keys are links of this robot's own URDF, unprefixed: the user writes them against the URDF
     # they passed in, and frame_id_prefix is applied on the way out to tf, not here.
     mounts: dict[str, Mount] = Field(default_factory=dict)
-    # get_scene has every subtree or it has nothing, so it waits this long for the slowest one.
-    scene_timeout_s: float = Field(default=60.0, gt=0.0)
-    # A module that is not up yet answers nothing, so retry it this often inside that budget.
+    # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
+    # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
+    # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
+    # named a module that has to be there.
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
     @field_validator("mounts", mode="before")
@@ -153,11 +167,7 @@ class UsdManagerConfig(ModuleConfig):
 
 
 class UsdManager(Module):
-    """Answers for one robot's description: its joints on tf, its files to renderers, its USD.
-
-    Poses every URDF joint from the joint state onto tf, serves the URDF and the files it names,
-    and hands out the whole physical tree as USD (see get_scene and the mounts config).
-    """
+    """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
 
     config: UsdManagerConfig
 
@@ -221,36 +231,50 @@ class UsdManager(Module):
         super().stop()
 
     @rpc
-    def get_usd(self) -> str:
-        """This robot's own URDF as a USD layer, with nothing attached to it.
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: this robot's own URDF as a USD layer, nothing attached.
 
-        Every module that can be mounted on another answers this, UsdManager included,
-        so one bolted to another robot's frame needs no special case.
+        Every module that can be mounted on another answers this, UsdManager included, so one
+        bolted to another robot's frame needs no special case.
+
+        The root is the URDF's own directory. RobotModel.load() has already rewritten the
+        description's relative asset paths to absolute ones, so in practice nothing in this
+        layer needs it -- but a mounted module whose paths are relative does, and the asker
+        cannot tell the two apart.
         """
         with self._usd_lock:
             if self._usd is None:
                 self._usd = urdf_to_usd(self._description)
-            return self._usd
+            return [self._asset_root(), self._usd]
+
+    def _asset_root(self) -> str:
+        """The directory this description's asset paths resolve against."""
+        source = self._description.source_path
+        return str(source.parent) if source is not None else ""
 
     @rpc
-    async def get_scene(self) -> str:
-        """The whole tree as one USD layer: this URDF with every mounted subtree on it.
+    async def get_scene(self) -> list[str]:
+        """``[asset_root, usd]``: this URDF with every mounted subtree grafted on.
 
-        Async and meant to be called before start(): it waits for every module in the map, because a
-        scene missing an arm is worse than a scene that arrives late. Raises TimeoutError when one of
-        them has not answered within scene_timeout_s.
+        Async and meant to be called before start(): it waits for every module in the map, with no
+        deadline, because a scene missing an arm is not a scene. A mount that never answers hangs
+        the caller rather than handing back half a robot.
+
+        Each subtree is rebased onto the root its own module reported before it is grafted, so
+        the one root this answers with covers the whole scene.
         """
         subtrees = await self._subtrees()
         root = self.get_usd()
-        return graft_usd(root, subtrees) if subtrees else root
+        if not subtrees:
+            return root
+        return [root[ASSET_ROOT], graft_usd(root[USD], subtrees)]
 
     async def _subtrees(self) -> dict[str, str]:
         mounts = self.config.mounts
         if not mounts:
             return {}
-        deadline = time.monotonic() + self.config.scene_timeout_s
         results = await asyncio.gather(
-            *(self._subtree(frame_id, mount, deadline) for frame_id, mount in mounts.items())
+            *(self._subtree(frame_id, mount) for frame_id, mount in mounts.items())
         )
         return dict(zip(mounts, results, strict=True))
 
@@ -270,38 +294,55 @@ class UsdManager(Module):
             self._subtree_clients[mount.remote_name] = client
         return client
 
-    async def _subtree(self, frame_id: str, mount: Mount, deadline: float) -> str:
-        """The mounted module's USD, retried until it answers or the deadline passes."""
+    async def _subtree(self, frame_id: str, mount: Mount) -> str:
+        """The mounted module's USD, rebased and renamed, retried until it answers.
+
+        No deadline: a mount is a module the blueprint says is physically there, so not
+        answering is a thing to wait out rather than to give up on.
+        """
         client = self._subtree_client(mount)
         name = mount.remote_name
         attempts = 0
         while True:
             attempts += 1
-            usd = await asyncio.to_thread(self._ask_for_usd, client, frame_id)
-            if usd:
+            answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id)
+            if answer is not None:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
-                # A namespaced module's frames are renamed here rather than at its end: it holds
-                # one description and does not know which copy of itself it is, while the name it
-                # was deployed under says exactly that.
-                return await asyncio.to_thread(prefix_usd_frames, usd, mount.frame_prefix)
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"{name} did not answer {SUBTREE_RPC}() for frame {frame_id!r} "
-                    f"within {self.config.scene_timeout_s}s ({attempts} attempts)"
+                return await asyncio.to_thread(self._adopt, answer, mount)
+            if attempts % _WAITING_LOG_EVERY == 0:
+                logger.warning(
+                    f"still waiting on {name} for {SUBTREE_RPC}() at frame {frame_id!r} "
+                    f"after {attempts} asks"
                 )
             await asyncio.sleep(self.config.scene_retry_s)
 
-    def _ask_for_usd(self, client: Any, frame_id: str) -> str | None:
+    def _adopt(self, answer: list[str], mount: Mount) -> str:
+        """One subtree, made fit to graft onto this robot.
+
+        Its asset paths are rebased onto the root it reported, because it is leaving the only
+        process that knew that root. Its frames are renamed here rather than at its end: a
+        module holds one description and does not know which copy of itself it is, while the
+        name it was deployed under says exactly that.
+        """
+        usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
+        return prefix_usd_frames(usd, mount.frame_prefix)
+
+    def _ask_for_usd(self, client: Any, frame_id: str) -> list[str] | None:
         """One RPC attempt; a module that is not serving yet is a retry, not a failure."""
         try:
-            usd = getattr(client, SUBTREE_RPC)()
+            answer = getattr(client, SUBTREE_RPC)()
         except Exception as exc:
             logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} did not answer yet: {exc}")
             return None
-        if not isinstance(usd, str) or not usd:
-            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} answered {usd!r}, retrying")
+        if (
+            not isinstance(answer, (list, tuple))
+            or len(answer) != 2
+            or not all(isinstance(part, str) for part in answer)
+            or not answer[USD]
+        ):
+            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} answered {answer!r}, retrying")
             return None
-        return usd
+        return list(answer)
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
