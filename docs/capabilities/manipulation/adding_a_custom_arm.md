@@ -45,53 +45,72 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
 
 1. **Adapter.** Subclass `DamiaoWholeBodyAdapter` (`dimos/hardware/whole_body/damiao/adapter.py`) in
     `dimos/hardware/whole_body/<yourarm>/adapter.py`. It declares the arm and gripper joints, the CAN bus names,
-    the kinematic joints and model (used for gravity compensation and joint-limit checks), the gripper's
+    the kinematic joints and model (used for gravity compensation and feedback limit checks), the gripper's
     normalized opening range in `get_limits()` (0.0 closed, 1.0 open), and `_build_robot()`, which builds the
-    `can_motor_control.Robot` from the vendor's motor table as `MotorSpec(name, type, send_id, recv_id)`, where
-    `recv_id` is the feedback ID. The adapter's joint order is every arm group in declaration order, then the
-    grippers, and your `HardwareComponent.joints` must use the same order. Register the adapter in
+    `can_motor_control.Robot`: one `add_bus` per name in `bus_names`, with `self._make_can_bus(name)` and its own
+    `damiao.DamiaoCodec()`; the vendor's motor table as `MotorSpec(name, type, send_id, recv_id)`, where `recv_id`
+    is the feedback ID; one `add_arm` per arm group and one `add_gripper` per gripper. Register the adapter in
     `dimos/hardware/whole_body/<yourarm>/_registry.py` and add its name to the `"whole_body"` set in
     `dimos/hardware/test_adapter_registries.py`.
+
+    The adapter's joint order is every arm group in declaration order, then the grippers, and your
+    `HardwareComponent.joints` must use the same order. Name the arm joints after the URDF joints and set
+    `kinematic_joint_names` to every arm joint in declaration order, as the examples do. The model must have
+    exactly those joints, in that order, with finite limits, or `connect()` fails; fix an order error by reordering
+    the arm groups and `HardwareComponent.joints`. Gravity torques, model positions and feedback limits are matched
+    by position, so a `kinematic_joint_names` that differs from the arm order passes `connect()` and `activate()`
+    and applies them to the wrong joints.
 
 2. **Motor types.** Use the stock `damiao.MotorType` that matches each motor in the vendor's motor table. A
     wrong type scales velocity and torque incorrectly. Define a custom `damiao.MotorProfile` only when the motor
     firmware uses non-standard protocol scaling (MakerMods Metal is the example in this repo).
 
-3. **Transport.** Don't implement Damiao framing or a serial protocol yourself. The shared adapter builds each
-    bus from its device: SocketCAN on Linux, gs_usb on macOS, and a Damiao USB-CAN bridge for a `/dev/...`
-    serial path. Pass devices as `DamiaoRuntimeConfig(bus_devices={"<bus name>": "<device>"})`, as
-    `openyam_hardware(bus_devices=...)` does; the adapter rejects `HardwareComponent.address`. If a transport you
-    need is missing, add it to the shared stack, not to your arm.
+3. **Transport.** Don't implement Damiao framing or a serial protocol yourself. `_make_can_bus()` picks each
+    bus's transport from its device: SocketCAN on Linux, gs_usb on macOS, and a Damiao USB-CAN bridge for a
+    `/dev/...` serial path. Pass devices as `DamiaoRuntimeConfig(bus_devices={"<bus name>": "<device>"})`, as
+    `openyam_hardware(bus_devices=...)` does. Without a `bus_devices` entry, a bus gets `can<i>` on Linux or gs_usb
+    index `i` on macOS, where `i` is its position in `bus_names`. The adapter rejects
+    `HardwareComponent.address`. If a transport you need is missing, add it to the shared stack, not to your arm.
 
 4. **Gains.** `WholeBodyConfig` holds one `kp` and one `kd` per joint (0.0 for gripper slots). For every motor
-    type the Damiao codec accepts `kp` from 0 to 500 and `kd` from 0 to 5. With a value outside those ranges the
-    codec raises `CodecError` and `write_motor_commands()` returns `False` on every tick, so the arm can't be
-    controlled. Check gains copied from a vendor SDK against these ranges. The codec also checks each command's
-    position, velocity and torque, including the gravity term the adapter adds, against the motor type's limits.
+    type the Damiao codec accepts `kp` from 0 to 500 and `kd` from 0 to 5. A value outside those ranges raises
+    `CodecError`, and `write_motor_commands()` returns `False` on every tick: joints declared before the offending
+    motor are still commanded, while that motor, the rest of its arm, later arms and the grippers are not. Check
+    gains copied from a vendor SDK against these ranges. The codec also checks each command's position, velocity
+    and torque, including the gravity term the adapter adds, against the motor type's limits.
 
 5. **Gripper.** `add_gripper` needs `opening_direction` (`"increasing_position"` or `"decreasing_position"`).
     `default_current` is a per-unit current in (0, 1], not amperes, and `calibration_travel` (radians, default
     4.0) must exceed the gripper's full stroke. These depend on the physical gripper: take them from the vendor
     or measure them, and say which values are unverified. Activation calibrates the gripper by driving it to
-    both of its stops.
+    both of its stops; deactivation removes motor torque.
 
-6. **Gravity compensation.** `DamiaoRuntimeConfig.gravity_comp` is on by default and needs the kinematic model
-    with real inertias. Set `gravity_comp=False` only when you can't provide them (MakerMods Metal does this for
-    commissioning).
+6. **Gravity compensation and feedback limits.** `DamiaoRuntimeConfig.gravity_comp` is on by default and needs
+    the kinematic model with real inertias. Set `gravity_comp=False` only when you can't provide them (MakerMods
+    Metal does this for commissioning). Feedback more than `feedback_clamp_margin_rad` (0.05 rad) outside the URDF
+    joint limits latches a fault and disables the motors, so an arm without brakes falls. Check the URDF limits
+    against the arm's real stops (MakerMods Metal raises the margin to 0.06 rad).
 
 7. **Robot config and blueprints.** Follow the closest example's robot folder: the joint names; a hardware
-    config that returns a `HardwareComponent` with `HardwareType.WHOLE_BODY` and falls back to the
-    `mock_whole_body` adapter when no hardware is attached; a coordinator that takes the CAN port from the command
-    line (`--can-port`, see `makermods_metal/coordinator.py`; one port per bus for a two-bus arm, as in
-    `openarm/blueprints/basic.py`), with `instance_name="ControlCoordinator"` so RPC clients find it; a
-    `TaskConfig(type="gripper")` next to the trajectory task and `gripper_tasks` on the planner; and planner and
-    coordinator blueprints. Steps 4 (URDF and planning) and 5 (register blueprints) below apply; the other steps
-    describe the vendor-SDK path.
+    config that returns a `HardwareComponent` with `HardwareType.WHOLE_BODY` and selects the `mock_whole_body`
+    adapter, with the gripper's 0.0 to 1.0 `limits` on the component, when it isn't configured for hardware
+    (`--simulation` in `openyam/config.py`; no CAN port in `openarm/config.py` and `makermods_metal/config.py`);
+    a coordinator that takes the CAN port from the command line (`--can-port`, see
+    `makermods_metal/coordinator.py`; one port per bus for a two-bus arm, as in `openarm/blueprints/basic.py`),
+    with `instance_name="ControlCoordinator"` so RPC clients find it; a `TaskConfig(type="gripper")` next to the
+    trajectory task and `gripper_tasks` on the planner (`openyam/blueprints/basic.py`, and
+    `openarm/blueprints/teleop.py` for two arms); and planner and coordinator blueprints. Steps 4 (URDF and
+    planning) and 5 (register blueprints) below apply; the other steps describe the vendor-SDK path.
 
 8. **Tests and docs.** Add `dimos/hardware/whole_body/<yourarm>/test_adapter.py` modeled on
-    `openyam_damiao/test_adapter.py`, which runs on `can_motor_control.MockCanBus`. A mock bus can't calibrate a
-    gripper, so `activate()` needs the real arm. Add `docs/capabilities/manipulation/<yourarm>_integration.md`,
-    modeled on [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
+    `openyam_damiao/test_adapter.py`, which runs on `can_motor_control.MockCanBus`, and a test that loads the real
+    kinematic model and checks its joint order and limits, like
+    `test_openarm_feedback_limits_match_urdf_joint_limits` in `openarm_damiao/test_adapter.py`. On `MockCanBus`
+    the adapter's `DamiaoCodec` gets no feedback, so `activate()` fails at the gripper's mode read-back; to test
+    activation and calibration offline, patch `can_motor_control.damiao.DamiaoCodec` to return
+    `can_motor_control.MockFeedbackCodec(<gripper recv_id>)`. Add
+    `docs/capabilities/manipulation/<yourarm>_integration.md`, modeled on
+    [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
 
 ## Prerequisites
 
@@ -467,7 +486,7 @@ dimos/robot/
 
 ### 3b. Define your blueprints
 
-Create `dimos/robot/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
+Create `dimos/robot/manipulators/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
 
 ```python skip
 """Blueprints for YourArm robot.
@@ -478,7 +497,7 @@ Usage:
     dimos run yourarm-planner              # Start planner (optional, for motion planning)
 
     # Or programmatically:
-    from dimos.robot.yourarm.blueprints import coordinator_yourarm
+    from dimos.robot.manipulators.yourarm.blueprints import coordinator_yourarm
     coordinator = coordinator_yourarm.build()
     coordinator.loop()
 """
@@ -542,7 +561,7 @@ robot asset cache. Use `LfsPath` only when the description is intentionally
 vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
-parametrizer, dimOS requires RoboPlan `0.6.x`. Every movable joint in
+parametrizer, dimOS requires RoboPlan `0.7.x`. Every movable joint in
 each selected planning group must provide finite, positive velocity and
 acceleration limits. An authored extended acceleration limit is accepted:
 
@@ -677,14 +696,14 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
 
 ### 4c. Create a planning blueprint
 
-Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator blueprint:
+Add this to your `dimos/robot/manipulators/yourarm/blueprints.py` alongside the coordinator blueprint:
 
 ```python skip
 
 yourarm_planner = planner(
     model=_make_yourarm_config(),
     planning_timeout=10.0,
-    visualization={"backend": "meshcat"},
+    visualization={"backend": "viser"},
     trajectory_parametrization={"backend": "simple_trapezoid"},
 )
 # The planner's `coordinator_joint_state` input auto-connects to the
@@ -897,8 +916,8 @@ Files to create:
 - [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
 - [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
 - [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
-- [ ] `dimos/robot/yourarm/__init__.py`
-- [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
+- [ ] `dimos/robot/manipulators/yourarm/__init__.py`
+- [ ] `dimos/robot/manipulators/yourarm/blueprints.py` (coordinator + planning blueprints)
 
 Files to modify:
 
