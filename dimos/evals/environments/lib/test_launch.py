@@ -104,7 +104,7 @@ def test_a_forced_transport_pings_from_a_client_started_with_it(mocker) -> None:
     wait_connectable(time.monotonic() + 5, client_env={"DIMOS_TRANSPORT": other})
     assert run.call_count == 2
     assert run.call_args.kwargs["env"]["DIMOS_TRANSPORT"] == other
-    connect.assert_not_called()  # this process's transport would miss it
+    connect.assert_not_called()
 
 
 def test_wait_connectable_fails_when_dimos_exits_or_the_deadline_passes(mocker) -> None:
