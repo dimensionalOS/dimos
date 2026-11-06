@@ -581,6 +581,27 @@ def test_with_fixed_joints_requires_a_joint(tmp_path: Path) -> None:
         robot_model.RobotModel.from_file(urdf).with_fixed_joints()
 
 
+def test_with_mimic_joint_makes_one_finger_copy_the_other(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='hand'/><link name='left'/><link name='right'/>"
+        "<joint name='left_finger' type='prismatic'><parent link='hand'/><child link='left'/>"
+        "<limit lower='0' upper='0.04' effort='1' velocity='1'/></joint>"
+        "<joint name='right_finger' type='prismatic'><parent link='hand'/><child link='right'/>"
+        "<limit lower='-0.04' upper='0' effort='1' velocity='1'/></joint></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_renamed_joints({"left_finger": "arm/left_finger", "right_finger": "arm/right_finger"})
+        .with_mimic_joint("arm/right_finger", "arm/left_finger", multiplier=-1.0, offset=0.01)
+        .load()
+    )
+
+    assert loaded.get_joint("arm/left_finger").mimic is None
+    assert loaded.get_joint("arm/right_finger").mimic == ("arm/left_finger", -1.0, 0.01)
+
+
 def test_with_renamed_joints_updates_model_references(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(

@@ -196,6 +196,8 @@ class RobotModel:
     _default_joint_acceleration_limit: float | None = None
     _base_model: RobotModel | None = None
     _added_joints: tuple[JointDescription, ...] = ()
+    # (follower, leader, multiplier, offset) per joint that copies another.
+    _mimic_joints: tuple[tuple[str, str, float, float], ...] = ()
 
     @classmethod
     def from_file(
@@ -358,6 +360,31 @@ class RobotModel:
             raise ValueError("At least one joint must be added")
         return RobotModel(_source_path=self._source_path, _base_model=self, _added_joints=joints)
 
+    def with_mimic_joint(
+        self, follower: str, leader: str, multiplier: float = 1.0, offset: float = 0.0
+    ) -> RobotModel:
+        """Make one joint copy another, e.g. a gripper's second finger following the first.
+
+        The follower then sits at ``multiplier * leader + offset`` and is no
+        longer driven on its own. Names are the joints as this model calls them.
+
+        Args:
+            follower: The joint that copies.
+            leader: The joint it copies.
+            multiplier: How far the follower moves per unit of the leader.
+            offset: The follower's position when the leader is at 0, in the
+                follower's unit (m or rad).
+        """
+        if not follower or not leader or follower == leader:
+            raise ValueError("A mimic joint needs two different joint names")
+        if not math.isfinite(multiplier) or not math.isfinite(offset):
+            raise ValueError("Mimic multiplier and offset must be finite")
+        return RobotModel(
+            _source_path=self._source_path,
+            _base_model=self,
+            _mimic_joints=((follower, leader, float(multiplier), float(offset)),),
+        )
+
     def with_joint_position_limits(
         self,
         name: str,
@@ -464,6 +491,8 @@ class RobotModel:
             xml = _add_joints(xml, self._added_joints)
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
+        if self._mimic_joints:
+            xml = _set_mimic_joints(xml, self._mimic_joints)
         if self._joint_position_limits:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
         if self._joint_velocity_limits:
@@ -782,6 +811,25 @@ def _set_joints_fixed(xml: str, names: tuple[str, ...]) -> str:
             if element.tag in movable_elements:
                 joint.remove(element)
 
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_mimic_joints(xml: str, mimics: tuple[tuple[str, str, float, float], ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    for follower, leader, multiplier, offset in mimics:
+        for name in (follower, leader):
+            joint = joints.get(name)
+            if joint is None:
+                raise ValueError(f"Joint not found: {name}")
+            if joint.get("type") == "fixed":
+                raise ValueError(f"Joint is fixed and cannot mimic or be mimicked: {name}")
+        element = joints[follower]
+        if element.find("mimic") is not None:
+            raise ValueError(f"Joint already mimics another: {follower}")
+        ET.SubElement(
+            element, "mimic", joint=leader, multiplier=str(multiplier), offset=str(offset)
+        )
     return ET.tostring(root, encoding="unicode")
 
 
