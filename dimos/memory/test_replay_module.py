@@ -228,6 +228,35 @@ def test_slow_first_decode_does_not_skip_other_streams(
     assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
 
 
+def test_slow_stream_setup_does_not_skip_the_first_frames(
+    recording: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The streams are subscribed one after another once the anchor is pinned, so the
+    setup of the ones before odom (the anchor stream) puts its first frame behind the
+    wall clock. On a loaded CI runner that exceeded the late tolerance and the frame
+    was skipped as late."""
+    from dimos.memory import replay as replay_mod
+
+    real = replay_mod.ReplayStream._base_stream
+
+    def slow(self: Any) -> Any:
+        time.sleep(0.1)  # twice the late tolerance, on every query a subscribe makes
+        return real(self)
+
+    monkeypatch.setattr(replay_mod.ReplayStream, "_base_stream", slow)
+    module = replay_module(recording)(dataset=recording)
+    got: dict[str, list[float]] = {"odom": [], "goal": []}
+    module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
+    module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
+    module.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
+        time.sleep(0.01)
+    module.stop()
+    assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
+    assert [round(t, 3) for t in got["goal"]] == [1.05]
+
+
 def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
     from dimos.memory.replay_module import recorded_rerun_config
 
