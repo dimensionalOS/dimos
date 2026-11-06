@@ -125,7 +125,7 @@ scene = graft_usd(root, {"arm_mount": arm_usd})
 ```
 
 A converted layer is a string, not a file: a description already travels as one
-string (`UrdfManager.file_info`), and a stage naming external layers would need a
+string (`UsdManager.file_info`), and a stage naming external layers would need a
 second resolution contract on the consumer side. `mesh_mode="inline"` therefore
 bakes mesh triangles into the layer; `"reference"` leaves the path the URDF named.
 

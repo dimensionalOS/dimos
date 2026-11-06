@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One URDF and the live joint state: every joint on tf, and the URDF and its files for renderers."""
+"""The robot's description and its live joint state: joints on tf, files for renderers, USD on request.
+
+Named for what it is becoming rather than what it reads: USD is the description format dimos is
+moving to, and this module is the thing that answers for a robot's description. The model it
+loads is still authored as URDF, and its tf and file serving are still URDF-shaped; get_usd and
+get_scene are the USD side, converting on the way out.
+"""
 
 from __future__ import annotations
 
@@ -116,7 +122,7 @@ class Mount:
         return cls(atoms[0].module, atoms[0].name, atoms[0].kwargs.get("frame_id_prefix") or "")
 
 
-class UrdfManagerConfig(ModuleConfig):
+class UsdManagerConfig(ModuleConfig):
     model: RobotModel
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
@@ -149,12 +155,16 @@ class UrdfManagerConfig(ModuleConfig):
         return {frame: Mount.of(v) for frame, v in value.items()}
 
 
-class UrdfManager(Module):
-    """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
+class UsdManager(Module):
+    """Answers for one robot's description: its joints on tf, its files to renderers, its USD.
 
-    config: UrdfManagerConfig
+    Poses every URDF joint from the joint state onto tf, serves the URDF and the files it names,
+    and hands out the whole physical tree as USD (see get_scene and the mounts config).
+    """
 
-    # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
+    config: UsdManagerConfig
+
+    # IO: the joints it poses are published on it (and UsdManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
@@ -217,7 +227,7 @@ class UrdfManager(Module):
     def get_usd(self) -> str:
         """This robot's own URDF as a USD layer, with nothing attached to it.
 
-        Every module that can be mounted on another answers this, UrdfManager included,
+        Every module that can be mounted on another answers this, UsdManager included,
         so one bolted to another robot's frame needs no special case.
         """
         with self._usd_lock:

@@ -16,7 +16,7 @@
 
 USD is becoming the description format, so this is the bridge while the robots are still
 authored as URDF. A converted stage is a string (a ``.usda`` layer), never a file: the
-description already travels as one string through ``UrdfManager.file_info``, and a stage
+description already travels as one string through ``UsdManager.file_info``, and a stage
 that names external layers would need a second resolution contract on the renderer side.
 """
 
@@ -58,7 +58,7 @@ def _pxr() -> Any:
     """The pxr modules, imported on first use.
 
     Deferred because usd-core is an optional extra with no linux-aarch64 wheel: importing a
-    UrdfManager on a Jetson must not need it, only asking one for a USD scene does.
+    UsdManager on a Jetson must not need it, only asking one for a USD scene does.
     """
     try:
         from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics
@@ -344,7 +344,7 @@ def _define_mesh(
     mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
     resolved = _resolve(geometry.filename, base_dir)
     if mesh_mode == "reference":
-        # The path the URDF named, kept verbatim: UrdfManager serves exactly those names.
+        # The path the URDF named, kept verbatim: UsdManager serves exactly those names.
         mesh.GetPrim().CreateAttribute(
             "dimos:meshFile", pxr.Sdf.ValueTypeNames.Asset, custom=True
         ).Set(pxr.Sdf.AssetPath(str(resolved)))
@@ -425,7 +425,7 @@ def _define_joint(pxr: Any, stage: Any, path: str, joint: JointDescription) -> A
     if joint.type == "fixed":
         return pxr.UsdPhysics.FixedJoint.Define(stage, path)
     # floating and planar have no UsdPhysics equivalent that matches URDF's semantics, and
-    # their pose comes from odometry rather than the model (see UrdfManager).
+    # their pose comes from odometry rather than the model (see UsdManager).
     logger.debug(f"joint {joint.name!r} of type {joint.type!r} is left out of the USD")
     return None
 

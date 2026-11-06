@@ -51,7 +51,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -182,6 +182,6 @@ hybrid_teleop_sim = autoconnect(
         instance_name="ControlCoordinator",
     ),
     # Serves the URDF and its meshes; the planner already puts the links on tf.
-    UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
+    UsdManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
 )

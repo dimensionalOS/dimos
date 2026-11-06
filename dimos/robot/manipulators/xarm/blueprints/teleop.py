@@ -50,7 +50,7 @@ from dimos.robot.manipulators.xarm.config import (
     xarm_model,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
@@ -321,7 +321,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 def _teleop(arm: XArmType) -> Blueprint:
     """Jog an xArm's end and open and close its xArm Gripper from the Desktop
-    Manipulation app, through ``XArmConnection``. ``UrdfManager`` serves the
+    Manipulation app, through ``XArmConnection``. ``UsdManager`` serves the
     arm's URDF and puts its joints on tf, so the app can draw it.
 
     Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
@@ -365,7 +365,7 @@ def _teleop(arm: XArmType) -> Blueprint:
             ],
         ),
         XArmConnection.blueprint(arm=arm, gripper="xarm"),
-        UrdfManager.blueprint(model=model),
+        UsdManager.blueprint(model=model),
     )
 
 

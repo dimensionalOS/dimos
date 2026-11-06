@@ -41,7 +41,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     WORLD_FRAME,
 )
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.visualization.vis_module import vis_module
 
 VOXEL_SIZE_M = 0.08
@@ -146,7 +146,7 @@ deeprobotics_m20_kronknav_control = (
         M20Connection.blueprint(auto_stand=True).remappings(
             [(M20Connection, "odometry", "slam_odom")]
         ),
-        UrdfManager.blueprint(model=M20_MODEL),
+        UsdManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_M,

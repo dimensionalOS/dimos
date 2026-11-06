@@ -63,7 +63,7 @@ def test_the_configured_frames_are_the_names_the_layer_carries() -> None:
 
     stage = _stage(mid360_usd("front/lidar", "front/imu"))
 
-    # dimos:link is what a UrdfManager matches a mount frame on, so these are the names that
+    # dimos:link is what a UsdManager matches a mount frame on, so these are the names that
     # have to follow the config rather than the canonical ones baked into the prim names.
     assert _links(stage) == {"front/lidar", "front/lidar_body", "front/imu"}
 
@@ -86,7 +86,7 @@ def test_the_defaults_describe_the_frames_the_driver_actually_stamps() -> None:
 
 
 def test_the_sensor_grafts_onto_the_frame_it_is_bolted_to() -> None:
-    # The point of get_usd: a UrdfManager puts this under one of its own links.
+    # The point of get_usd: a UsdManager puts this under one of its own links.
     pytest.importorskip("pxr")
     from dimos.robot.assets.usd import graft_usd
 
@@ -144,9 +144,9 @@ def test_describing_itself_costs_no_usd_dependency() -> None:
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_the_sensor_satisfies_the_urdf_manager_mount_contract() -> None:
-    # The reason get_usd exists: UrdfManager rejects a mount whose module cannot be asked.
-    from dimos.robot.urdf_manager import Mount
+def test_the_sensor_satisfies_the_usd_manager_mount_contract() -> None:
+    # The reason get_usd exists: UsdManager rejects a mount whose module cannot be asked.
+    from dimos.robot.usd_manager import Mount
 
     mount = Mount.of(Mid360.blueprint(lidar_ip="192.168.1.155").namespace("front"))
 

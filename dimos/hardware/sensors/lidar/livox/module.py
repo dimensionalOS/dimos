@@ -24,7 +24,7 @@ Usage::
         SomeConsumer.blueprint(),
     )).loop()
 
-The sensor also describes itself as USD over the ``get_usd`` RPC, so a UrdfManager can take it
+The sensor also describes itself as USD over the ``get_usd`` RPC, so a UsdManager can take it
 as a ``mounts`` value and graft it onto whatever frame it is bolted to. That layer is baked
 into ``_MID360_USD`` rather than converted on the fly, because usd-core has no
 linux-aarch64 wheel and this module runs on a Jetson. Its source is ``mid360.urdf`` next to
@@ -247,7 +247,7 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     def get_usd(self) -> str:
         """This sensor as a USD layer, in the frames this instance is configured to stamp.
 
-        A UrdfManager asks for this when the MID-360 is one of its ``mounts``, and grafts the
+        A UsdManager asks for this when the MID-360 is one of its ``mounts``, and grafts the
         answer onto the frame the sensor is bolted to.
         """
         return mid360_usd(self.config.frame_id, self.config.imu_frame_id)
