@@ -107,6 +107,19 @@ def test_a_forced_transport_pings_from_a_client_started_with_it(mocker) -> None:
     connect.assert_not_called()
 
 
+def test_a_ping_client_that_cannot_start_fails_at_once(mocker) -> None:
+    other = "lcm" if global_config.transport == "zenoh" else "zenoh"
+    run = mocker.patch(
+        "dimos.evals.environments.lib.launch.subprocess.run",
+        return_value=SimpleNamespace(
+            returncode=1, stderr=b"ModuleNotFoundError: No module named x"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="could not run: ModuleNotFoundError"):
+        wait_connectable(time.monotonic() + 30, client_env={"DIMOS_TRANSPORT": other})
+    run.assert_called_once()
+
+
 def test_wait_connectable_fails_when_dimos_exits_or_the_deadline_passes(mocker) -> None:
     mocker.patch(
         "dimos.evals.environments.lib.launch.CoordinatorRPC.connect", side_effect=TimeoutError()

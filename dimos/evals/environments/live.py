@@ -177,7 +177,7 @@ class LiveEnvironment(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
-            client_env = {k: v for k, v in proc.extra_env.items() if k == "DIMOS_TRANSPORT"}
+            client_env = {k: v for k, v in proc.extra_env.items() if k in _CLIENT_ENV}
             entry = launched_run(proc.process, deadline)
             if MCP_SERVER in (*self.config.blueprint, *modules) and entry.mcp_url is None:
                 raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
@@ -303,6 +303,10 @@ class LiveEnvironment(Environment):
             super().stop()
         finally:
             self._recording = None
+
+
+# Launch variables a client of the launched dimos must share to reach it.
+_CLIENT_ENV = ("DIMOS_TRANSPORT",)
 
 
 def _free_port() -> int:

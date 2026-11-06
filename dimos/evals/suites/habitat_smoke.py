@@ -38,10 +38,7 @@ def sensor_score(outcome: Outcome) -> float:
 SUITE: Suite = [
     EvalCase(
         id="habitat_observe",
-        inputs=(
-            "Use the available observation tool to inspect the scene. "
-            "Briefly describe what you see."
-        ),
+        inputs=("Observe the scene through dimOS. Briefly describe what you see."),
         environment=HabitatEnvironment(
             blueprint=["habitat-nav", "observe-skill"],
         ),
