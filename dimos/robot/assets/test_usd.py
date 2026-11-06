@@ -254,9 +254,6 @@ def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
     assert graft_usd(root, {}) == root
 
 
-# --- prefix_usd_frames ------------------------------------------------------------------------
-
-
 def _attrs(stage: Any, name: str) -> set[str]:
     return {
         str(prim.GetAttribute(name).Get())

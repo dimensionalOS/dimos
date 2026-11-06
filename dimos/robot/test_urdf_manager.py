@@ -457,9 +457,6 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
         )
 
 
-# --- mounts and the USD scene ---------------------------------------------------
-
-
 class _FakeArm(Module):
     """Stands in for a module bolted to the robot: all a mounted module owes is get_usd."""
 
@@ -626,9 +623,6 @@ def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="no @rpc get_usd"):
         make_manager(mounts={"arm": _NoUsd})
-
-
-# --- namespacing: two of the same arm, and prefixed frames -------------------------------------
 
 
 def test_a_module_class_names_the_only_instance_of_itself() -> None:
