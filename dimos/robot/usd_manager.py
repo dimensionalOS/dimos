@@ -135,7 +135,7 @@ class Mount:
         return cls(atoms[0].module, atoms[0].name, atoms[0].kwargs.get("frame_id_prefix") or "")
 
 
-class UrdfManagerConfig(ModuleConfig):
+class UsdManagerConfig(ModuleConfig):
     model: RobotModel
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
@@ -166,12 +166,12 @@ class UrdfManagerConfig(ModuleConfig):
         return {frame: Mount.of(v) for frame, v in value.items()}
 
 
-class UrdfManager(Module):
+class UsdManager(Module):
     """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
 
-    config: UrdfManagerConfig
+    config: UsdManagerConfig
 
-    # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
+    # IO: the joints it poses are published on it (and UsdManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
@@ -234,7 +234,7 @@ class UrdfManager(Module):
     def get_usd(self) -> list[str]:
         """``[asset_root, usd]``: this robot's own URDF as a USD layer, nothing attached.
 
-        Every module that can be mounted on another answers this, UrdfManager included, so one
+        Every module that can be mounted on another answers this, UsdManager included, so one
         bolted to another robot's frame needs no special case.
 
         The root is the URDF's own directory. RobotModel.load() has already rewritten the

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A UrdfManager that also cuts the robot out of a point cloud; kept apart so a plain UrdfManager never needs RoboPlan."""
+"""A UsdManager that also cuts the robot out of a point cloud; kept apart so a plain UsdManager never needs RoboPlan."""
 
 from __future__ import annotations
 
@@ -30,14 +30,14 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
+from dimos.robot.usd_manager import MULTI_DOF_JOINT_TYPES, UsdManager, UsdManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class UrdfManagerPointClearingConfig(UrdfManagerConfig):
+class UsdManagerPointClearingConfig(UsdManagerConfig):
     padding_m: float = Field(default=0.01, ge=0.0)
     # How far a cloud's capture time may be from the tf and joint state it is matched with.
     tf_tolerance_s: float = Field(default=0.02, ge=0.0)
@@ -48,10 +48,10 @@ class UrdfManagerPointClearingConfig(UrdfManagerConfig):
     filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
 
 
-class UrdfManagerPointClearing(UrdfManager):
-    """A UrdfManager that also drops the robot's own returns from `pointcloud` at their capture time."""
+class UsdManagerPointClearing(UsdManager):
+    """A UsdManager that also drops the robot's own returns from `pointcloud` at their capture time."""
 
-    config: UrdfManagerPointClearingConfig
+    config: UsdManagerPointClearingConfig
 
     pointcloud: In[PointCloud2]
     filtered_pointcloud: Out[PointCloud2]

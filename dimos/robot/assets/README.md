@@ -125,8 +125,8 @@ scene = graft_usd(root, {"arm_mount": arm_usd})
 ```
 
 A converted layer is a string, not a file: a description already travels as one
-string (`UrdfManager.file_info`). A `<mesh>` becomes a standard USD reference to
-the path the URDF named, and nothing is converted — `UrdfManager` already serves
+string (`UsdManager.file_info`). A `<mesh>` becomes a standard USD reference to
+the path the URDF named, and nothing is converted — `UsdManager` already serves
 exactly those paths over `render_file_request`, so resolving them is the
 consumer's job, the same as it already is for the URDF itself.
 

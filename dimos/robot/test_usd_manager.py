@@ -45,8 +45,8 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import Mount, UrdfManager
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.usd_manager import Mount, UsdManager
+from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
@@ -80,12 +80,12 @@ _TWO_ARM_URDF = """<?xml version="1.0"?>
 
 
 @pytest.fixture
-def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointClearing]]:
+def make_filter(tmp_path: Path) -> Iterator[Callable[..., UsdManagerPointClearing]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[UrdfManagerPointClearing] = []
+    modules: list[UsdManagerPointClearing] = []
 
-    def make(**overrides: Any) -> UrdfManagerPointClearing:
+    def make(**overrides: Any) -> UsdManagerPointClearing:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {
             "model": RobotModel.from_file(urdf),
@@ -94,7 +94,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointCleari
             "tf_forward_tolerance_s": 0.0,
         }
         settings.update(overrides)
-        module = UrdfManagerPointClearing(**settings)
+        module = UsdManagerPointClearing(**settings)
         cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
         modules.append(module)
         return module
@@ -105,7 +105,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UrdfManagerPointCleari
         module.dispose()
 
 
-def _place_arm(module: UrdfManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
+def _place_arm(module: UsdManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
     """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -127,7 +127,7 @@ def _cloud(points: list[list[float]], ts: float = 1.0) -> PointCloud2:
 
 
 def test_points_on_the_robot_are_dropped_and_the_rest_survive(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
@@ -140,7 +140,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 
 
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
@@ -402,7 +402,7 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
 
 
 def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_capture_is_still_filtered(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     module = make_filter()
     _place_arm(module, (0.0, 0.0, 0.0), 2.0)
@@ -427,7 +427,7 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
     pytest.importorskip("roboplan.core")
     description = R1PRO_MODEL.load()
     roboplan = RoboPlanBodyFilter(description, padding_m=0.0)
-    module = UrdfManager(model=R1PRO_MODEL)
+    module = UsdManager(model=R1PRO_MODEL)
     rng = np.random.default_rng(0)
     positions = {
         joint.name: rng.uniform(
@@ -522,16 +522,16 @@ class _FakeClient:
 
 
 @pytest.fixture
-def make_manager(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
+def make_manager(tmp_path: Path) -> Iterator[Callable[..., UsdManager]]:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(_URDF)
-    modules: list[UrdfManager] = []
+    modules: list[UsdManager] = []
 
-    def make(**overrides: Any) -> UrdfManager:
+    def make(**overrides: Any) -> UsdManager:
         urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {"model": RobotModel.from_file(urdf)}
         settings.update(overrides)
-        module = UrdfManager(**settings)
+        module = UsdManager(**settings)
         modules.append(module)
         return module
 
@@ -555,18 +555,18 @@ def _link_of(stage: Any, path: str) -> str:
     return prim.GetDisplayName() or prim.GetName()
 
 
-def _scene(module: UrdfManager) -> str:
+def _scene(module: UsdManager) -> str:
     """The USD out of get_scene, on a loop of this test's own so its executor dies with it."""
     return _scene_answer(module)[1]
 
 
-def _scene_answer(module: UrdfManager) -> list[str]:
-    coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+def _scene_answer(module: UsdManager) -> list[str]:
+    coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
     return cast("list[str]", asyncio.run(coroutine()))
 
 
 def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
@@ -577,7 +577,7 @@ def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
     assert stage.GetPrimAtPath("/box_robot/base/arm")
 
 
-def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManager]) -> None:
+def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UsdManager]) -> None:
     pytest.importorskip("pxr")
     module = make_manager()
 
@@ -585,7 +585,7 @@ def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManage
 
 
 def test_get_scene_without_mounts_is_just_the_robot(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # The empty default is what keeps every existing blueprint working untouched.
     pytest.importorskip("pxr")
@@ -595,7 +595,7 @@ def test_get_scene_without_mounts_is_just_the_robot(
 
 
 def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -607,7 +607,7 @@ def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
 
 
 def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
@@ -621,7 +621,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
 
 
 def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """Half a scene would hand a renderer a robot with no arm, so there is no partial answer.
 
@@ -634,7 +634,7 @@ def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
     module._subtree_clients["_FakeArm"] = cast("Any", client)
 
     async def wait_a_moment() -> None:
-        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(coroutine(), 0.2)
 
@@ -644,14 +644,14 @@ def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
 
 
 def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     with pytest.raises(ValueError, match="not a link of this URDF"):
         make_manager(mounts={"elbow": _FakeArm})
 
 
 def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     with pytest.raises(ValueError, match="no @rpc get_usd"):
         make_manager(mounts={"arm": _NoUsd})
@@ -707,7 +707,7 @@ def test_a_value_that_is_neither_a_module_a_blueprint_nor_a_name_is_rejected() -
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -770,7 +770,7 @@ def test_an_instance_name_falls_back_to_the_namespace_in_the_name(
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(
@@ -797,7 +797,7 @@ def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
 
 
 def test_an_un_namespaced_subtree_keeps_the_link_names_its_description_gave_it(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -809,7 +809,7 @@ def test_an_un_namespaced_subtree_keeps_the_link_names_its_description_gave_it(
 
 
 def test_the_roots_own_links_are_never_renamed(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # One URDF, so its link names are already unique; only what is grafted on needs moving.
     pytest.importorskip("pxr")
@@ -826,7 +826,7 @@ def test_the_roots_own_links_are_never_renamed(
 
 
 def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
-    make_manager: Callable[..., UrdfManager], tmp_path: Path
+    make_manager: Callable[..., UsdManager], tmp_path: Path
 ) -> None:
     # A layer only says where its meshes are relative to something, and the asker has no way
     # to guess what. The URDF's own directory is that something.
@@ -837,7 +837,7 @@ def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
 
 
 def test_a_subtree_mesh_path_is_rebased_onto_the_root_the_module_reported(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """The point of the root travelling with the USD.
 
@@ -858,7 +858,7 @@ def test_a_subtree_mesh_path_is_rebased_onto_the_root_the_module_reported(
 
 
 def test_a_subtree_with_no_root_keeps_its_paths_untouched(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # An empty root means "nothing to resolve"; an absolute path needs no rebasing either.
     pytest.importorskip("pxr")
@@ -873,7 +873,7 @@ def test_a_subtree_with_no_root_keeps_its_paths_untouched(
     "answer", [[], ["only-a-root"], ["root", "usd", "extra"], ["root", ""], [1, 2]]
 )
 def test_an_answer_that_is_not_a_root_and_a_usd_is_retried(
-    make_manager: Callable[..., UrdfManager], answer: Any
+    make_manager: Callable[..., UsdManager], answer: Any
 ) -> None:
     # A malformed answer is treated like a module that is not up yet, not grafted blindly.
     pytest.importorskip("pxr")
