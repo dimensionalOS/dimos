@@ -78,6 +78,31 @@ def test_lcm_channel_decodes_from_native_metadata(tmp_path: Path, explicit: bool
         assert latest_observation.data.lcm_encode() == expected.lcm_encode()
 
 
+def test_lcm_channel_decodes_from_its_short_lcm_type(tmp_path: Path) -> None:
+    path = tmp_path / "recording.mcap"
+    expected = Imu(ts=3.0, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos", library="test")
+        channel_id = writer.register_channel(
+            topic="/imu",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={"lcm_type": "sensor_msgs.Imu"},
+        )
+        writer.add_message(
+            channel_id=channel_id,
+            log_time=3_000_000_000,
+            publish_time=3_000_000_000,
+            data=expected.lcm_encode(),
+        )
+        writer.finish()
+
+    with McapStore(path=str(path)) as store:
+        (name,) = store.list_streams()
+        assert store.stream(name).first().data.lcm_encode() == expected.lcm_encode()
+
+
 @pytest.mark.parametrize("explicit", [False, True])
 def test_wrapped_codec_decodes_from_native_metadata(tmp_path: Path, explicit: bool) -> None:
     path = tmp_path / "recording.mcap"
