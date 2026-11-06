@@ -16,6 +16,10 @@
 
 The real ``PhysicalModel`` is used, so each arm's own URDF limits and gravity
 are exercised; only the native robot and its transports are fakes.
+
+OpenYAM's descriptions are large LFS archives, so those cases (and the teach
+case, which reads the same gravity model) only run where big LFS pulls are
+allowed; the regular CI job caps them at 1 MiB on purpose.
 """
 
 from __future__ import annotations
@@ -37,12 +41,15 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 from dimos.utils.testing.waiting import wait_until
 
+_LFS = pytest.mark.self_hosted
+
 ARMS = [
-    pytest.param(OpenYamConnection, {"can_port": "can0"}, id="openyam"),
+    pytest.param(OpenYamConnection, {"can_port": "can0"}, id="openyam", marks=_LFS),
     pytest.param(
         DualOpenYamConnection,
         {"left_can_port": "can0", "right_can_port": "can1"},
         id="dual-openyam",
+        marks=_LFS,
     ),
     pytest.param(
         OpenArmConnection,
@@ -188,6 +195,7 @@ def test_strict_out_of_limits_latches_each_arm(connection_type, ports, boundary,
         module.stop()
 
 
+@pytest.mark.self_hosted
 def test_teach_mode_zero_stiffness_passive_jaw_and_live_gravity(boundary, mocker, tmp_path):
     native = boundary[0]
     module, commands, readings = _rig(

@@ -38,9 +38,6 @@ from dimos.robot.manipulators.damiao.connection import (
 )
 from dimos.utils.testing.waiting import wait_until
 
-__all__ = ["TEST_ROBOT", "make_test_robot"]
-
-
 @pytest.fixture
 def connection_class():
     class Config(DamiaoConnectionConfig):
