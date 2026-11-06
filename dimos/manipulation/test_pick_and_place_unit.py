@@ -639,33 +639,20 @@ def test_the_source_names_the_generator_the_given_grasp_came_from(
     assert result.metadata["source"] == "GraspGenXModule"
 
 
-def test_grasps_are_generated_only_when_the_given_one_has_no_path(
+def test_a_given_grasp_with_no_path_is_reported_and_no_other_is_tried(
     module: PickAndPlaceModule,
 ) -> None:
     manipulation: Any = module._manipulation
     grasp_generator: Any = module._grasp_generator
-    manipulation.plan_to_poses.side_effect = [NO_PATH, PLANNED]
+    manipulation.plan_to_poses.return_value = NO_PATH
 
     result = module.pick_object("cup-1", grasp=_given(0.5, generator="HeuristicGraspModule"))
 
-    assert result.message == "Pick complete"
-    assert (result.metadata["source"], result.metadata["rank"]) == ("provider", 0)
-    assert module._selected_grasp is not None
-    assert module._selected_grasp.position.x == pytest.approx(0.1)
-    grasp_generator.propose_grasps.assert_called_once()
-    # The viewer shows the given grasp, then it and the generated ones.
-    assert [c.pose.position.x for c in module.get_grasp_candidates().candidates] == [0.5, 0.1]
-
-
-def test_no_path_to_the_given_grasp_or_the_generated_ones_is_reported(
-    module: PickAndPlaceModule,
-) -> None:
-    manipulation: Any = module._manipulation
-    manipulation.plan_to_poses.return_value = NO_PATH
-
-    result = module.pick_object("cup-1", grasp=_given(0.5))
-
-    assert result.message.startswith("The planner found no path to any of the 2 grasp")
+    assert result.message.startswith("The planner found no path to any of the 1 grasp")
+    assert result.metadata["no_path"] is True
+    assert result.metadata["source"] == "HeuristicGraspModule"
+    assert manipulation.plan_to_poses.call_count == 1
+    grasp_generator.propose_grasps.assert_not_called()
     assert not module._holding_object
 
 
