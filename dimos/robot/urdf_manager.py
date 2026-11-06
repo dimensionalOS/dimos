@@ -50,9 +50,6 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 class UrdfManagerConfig(ModuleConfig):
     model: RobotModel | None = None
     models: dict[str, RobotModel] = Field(default_factory=dict)
-    # Desktop's wildcard display request can omit solver-only collision meshes.
-    # Named URDF requests and shared physical models always remain complete.
-    render_collision_geometry: bool = True
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -88,29 +85,6 @@ class UrdfManager(Module):
             raise ValueError("UrdfManager requires at least one model")
         self._descriptions = {name: model.load() for name, model in sources.items()}
         self._description = next(iter(self._descriptions.values()))
-        self._render_xml = self._description.xml
-        if len(self._descriptions) > 1:
-            # Desktop asks for one render tree. Each link is still posed by TF;
-            # these display-only root joints do not weld the physical models.
-            root = ET.Element("robot", name="dimos_world")
-            ET.SubElement(root, "link", name="world")
-            for name, model in self._descriptions.items():
-                tree = ET.fromstring(model.xml)
-                for element in tree:
-                    if element.tag == "link" and element.get("name") == "world":
-                        continue
-                    root.append(element)
-                if model.root_link != "world":
-                    mount = ET.SubElement(root, "joint", name=f"world/{name}", type="floating")
-                    ET.SubElement(mount, "parent", link="world")
-                    ET.SubElement(mount, "child", link=model.root_link)
-            self._render_xml = ET.tostring(root, encoding="unicode")
-        if not self.config.render_collision_geometry:
-            display = ET.fromstring(self._render_xml)
-            for link in display.findall("link"):
-                for collision in link.findall("collision"):
-                    link.remove(collision)
-            self._render_xml = ET.tostring(display, encoding="unicode")
         self._file_paths = set().union(
             *(_files_named_by(m.xml) for m in self._descriptions.values())
         )
@@ -135,9 +109,6 @@ class UrdfManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(".urdf"):
-            if name == "*.urdf":
-                self.file_info.publish(File(name, self._render_xml.encode()))
-                return
             description = self._descriptions.get(Path(name).stem, self._description)
             self.file_info.publish(File(name, description.xml.encode()))
             return

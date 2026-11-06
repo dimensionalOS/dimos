@@ -71,6 +71,7 @@ class R1ProSimControl(SharedConfigModule):
         self._ramped_targets = np.array(HOME)
         self._limits: dict[str, tuple[float, float]] = {}
         self._wheel_positions: list[tuple[float, float]] = []
+        self._steer_limits: dict[str, tuple[float, float]] = {}
 
     def config_receive(self, config_senders: ConfigSenders) -> None:
         clocks = [
@@ -90,6 +91,10 @@ class R1ProSimControl(SharedConfigModule):
             assert joint.lower is not None and joint.upper is not None
             self._limits[name] = (joint.lower, joint.upper)
         self._wheel_positions = [tuple(joints[name].origin_xyz[:2]) for name in STEER_JOINTS]
+        for name in STEER_JOINTS:
+            joint = joints[name]
+            assert joint.lower is not None and joint.upper is not None
+            self._steer_limits[name] = (joint.lower, joint.upper)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.3) -> None:
@@ -162,7 +167,10 @@ class R1ProSimControl(SharedConfigModule):
                     y,
                     measured[name],
                 )
-                steering.append(target)
+                # Soft physical stops can allow a measured angle just outside
+                # the legal command range, especially while holding still.
+                lower, upper = self._steer_limits[name]
+                steering.append(min(upper, max(lower, target)))
                 wheels.append(velocity)
             positions = [*self._ramped_targets, *steering, 0.0, 0.0, 0.0]
             velocities = [0.0] * 21 + wheels

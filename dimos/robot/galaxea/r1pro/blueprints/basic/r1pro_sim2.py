@@ -21,6 +21,7 @@ from dataclasses import replace
 from functools import partial
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, MODEL, SCENE as ROBOT_SCENE
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
 from dimos.robot.urdf_manager import UrdfManager
@@ -63,7 +64,7 @@ LIDAR = LidarConfig(
 )
 
 r1pro_sim2 = autoconnect(
-    UrdfManager.blueprint(models=MODELS, render_collision_geometry=False),
+    UrdfManager.blueprint(models=MODELS),
     SimModule.blueprint(
         scene=SCENE,
         backend=MujocoBackend,
@@ -83,6 +84,11 @@ r1pro_sim2 = autoconnect(
         sensor=ImuConfig("r1pro/imu_torso_link", orientation="ideal"),
     ).remappings([("torso_imu", "imu", "imu_torso")]),
     SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=OFFICE_RENDERER),
-    SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster),
+    SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
+        [(SimLidarModule, "lidar", "lidar_raw")]
+    ),
+    VoxelGridMapper.blueprint(
+        device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
+    ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
     R1ProSimControl.blueprint(),
-).global_config(viewer="none", transport="zenoh", n_workers=8)
+).global_config(viewer="none", transport="zenoh", n_workers=9)

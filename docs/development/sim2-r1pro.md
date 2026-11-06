@@ -40,8 +40,9 @@ blueprint gives startup 120 seconds.
 | Streams | Source | Requested rate |
 |---|---|---|
 | `color_image`, `depth_image`, `camera_info` | Head-left optical frame, native Unreal | 15 Hz ceiling |
-| `lidar` | Chassis Mid-360 frame, rolling ray acquisition | 10 Hz |
+| `lidar_raw` | Chassis Mid-360 frame, rolling ray acquisition | 10 Hz |
 | `pointcloud` | Truth-registered lidar for visualization | 10 Hz |
+| `global_map` | VoxelGridMapper accumulating registered lidar | Every 5 scans |
 | `imu_chassis`, `imu_torso` | Independent vendor IMU frames | 200 Hz |
 | `joint_state` | 24 motor encoders | 50 Hz |
 | `tf` | Actual simulated body poses, through UrdfManager | 30 Hz |
@@ -57,12 +58,13 @@ from its rays by the standard raycaster. `pointcloud` is privileged truth
 registration, not an odometry estimate. The IMUs have ideal orientation and no
 added noise. Physics steps at 200 Hz; control stays at 50 Hz.
 
-Desktop requests one URDF display tree. UrdfManager now combines named models
-for `*.urdf`, with TF placing their roots, while preserving individual models
-for named requests and physical consumers. This blueprint omits collision
-meshes from that display response: the office has over ten thousand solver
-geometries, whereas its visual scene uses sixteen mesh chunks. The physical
-collision geometry and lidar query geometry remain intact.
+Desktop displays the R1 Pro model and `global_map`, following the original G1
+sim2 blueprint. UrdfManager serves the first named model (R1 Pro) for Desktop's
+wildcard URDF request. The office remains available to physics, lidar and Unreal,
+but its asset meshes are not included in that display response. VoxelGridMapper
+accumulates truth-registered scans on CPU with 5 cm voxels and emits every five
+scans. Enable `global_map` in Desktop and disable raw lidar/pointcloud layers.
+As in the G1 blueprint, robot returns can accumulate in this preview map.
 
 ## Robot assumptions
 
@@ -81,7 +83,7 @@ are not implemented by this blueprint.
 
 The initial empty-scene test ran at 1.00x real time; that result does not describe
 the office configuration. A ten-second office measurement after warmup recorded
-1.01x real time, 6.7 RGB-D acquisitions/s and 10.1 lidar scans/s, with no new
+1.01x real time before enabling the mapper, 6.7 RGB-D acquisitions/s and 10.1 lidar scans/s, with no new
 lidar gaps or late physics steps during that interval. Desktop's drive endpoint
 moved the base 0.306 m at a requested 0.15 m/s for two seconds. Both IMU streams
 were approximately 200 Hz. Desktop visibly rendered the robot, office, lidar
@@ -90,9 +92,9 @@ not achieved end to end. Full-office measurements and actual camera evidence
 are saved locally under `~/.cache/dimos/sf555/validation/r1pro/`.
 
 Validation covers the actual Desktop drive endpoint, a moving free base, RGB-D
-camera output, both IMUs, lidar and encoders, and the composed display model.
-Unit tests cover steering, command timeout, limits, collision exclusions and
-multi-model render requests. The blueprint registry, Ruff and targeted mypy
+camera output, both IMUs, lidar and encoders. The current display uses the robot
+URDF and accumulated global map. Unit tests cover steering, command timeout,
+limits, collision exclusions and render requests. The blueprint registry, Ruff and targeted mypy
 checks are also run.
 
 The controller can replay an action in response to a repeated lockstep

@@ -18,7 +18,6 @@ import asyncio
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
-import xml.etree.ElementTree as ET
 
 import numpy as np
 from open3d.core import Tensor
@@ -58,42 +57,6 @@ _URDF = """<?xml version="1.0"?>
   </joint>
 </robot>
 """
-
-
-@pytest.mark.parametrize("render_collisions", [True, False])
-async def test_desktop_wildcard_includes_all_models_but_named_request_keeps_one(
-    tmp_path, mocker, render_collisions
-):
-    robot = tmp_path / "robot.urdf"
-    robot.write_text(_URDF)
-    models = {
-        "robot": RobotModel.from_file(robot),
-        "office": RobotModel.from_root_link("office/world"),
-    }
-    manager = UrdfManager(models=models, render_collision_geometry=render_collisions)
-    try:
-        publish = mocker.patch.object(manager.file_info, "publish")
-        await manager.handle_render_file_request(String("*.urdf"))
-        combined = ET.fromstring(publish.call_args.args[0].data)
-        assert len(combined.findall(".//collision")) == int(render_collisions)
-        assert {link.get("name") for link in combined.findall("link")} == {
-            "world",
-            "base",
-            "arm",
-            "office/world",
-        }
-        for name, child in (("robot", "base"), ("office", "office/world")):
-            mount = combined.find(f"joint[@name='world/{name}']")
-            assert mount is not None and mount.get("type") == "floating"
-            assert mount.find("parent").get("link") == "world"
-            assert mount.find("child").get("link") == child
-        await manager.handle_render_file_request(String("office.urdf"))
-        assert publish.call_args.args[0].data.decode() == models["office"].load().xml
-        # The physical descriptions distributed to sensors remain separate.
-        assert manager.robot_models()["robot_models"]["robot"].root_link == "base"
-        assert "<collision>" in manager.robot_models()["robot_models"]["robot"].xml
-    finally:
-        manager.dispose()
 
 
 @pytest.fixture

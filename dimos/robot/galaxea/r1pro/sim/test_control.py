@@ -102,3 +102,13 @@ def test_upper_body_targets_are_bounded_and_rate_limited(controller):
     action = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
     assert action.joint_commands[0].values[4] == pytest.approx(-0.01)
     assert action.joint_commands[0].values[:4] == [0, 0, 0, 0]
+
+
+@pytest.mark.parametrize("measured,expected", [(3.15, 3.14), (-3.15, -3.14)])
+def test_stopped_steering_keeps_commands_legal_after_soft_stop_overshoot(
+    controller, measured, expected
+):
+    positions = [measured if name in STEER_JOINTS else 0.0 for name in JOINTS]
+    action = controller.compute(JointState(name=list(JOINTS), position=positions, ts=0))
+    assert action.joint_commands[0].values[18:21] == [expected] * 3
+    assert action.joint_commands[1].values[-3:] == [0.0] * 3
