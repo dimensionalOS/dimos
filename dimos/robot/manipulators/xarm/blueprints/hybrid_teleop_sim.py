@@ -133,6 +133,7 @@ _xarm7_sim_hw = make_xarm7_sim_hardware()
 
 hybrid_teleop_sim = autoconnect(
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_xarm7_sim_model,
         planning_timeout=10.0,
         visualization={"backend": "viser"},
