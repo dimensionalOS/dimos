@@ -709,22 +709,42 @@ def test_each_namespaced_arm_is_asked_under_its_own_name(
     assert stage.GetPrimAtPath("/box_robot/base/right_mount/other_arm")
 
 
-def test_a_bare_class_has_no_namespace_to_prefix_with() -> None:
-    assert PhysicalConnection.of(_FakeArm).namespace == ""
+def test_a_bare_class_has_no_prefix_to_move_its_frames_under() -> None:
+    assert PhysicalConnection.of(_FakeArm).frame_prefix == ""
+
+
+def test_a_namespaced_blueprint_carries_the_prefix_namespace_gave_it() -> None:
+    connection = PhysicalConnection.of(_FakeArm.blueprint().namespace("left"))
+
+    assert connection.frame_prefix == "left"
+
+
+def test_a_nested_namespace_carries_the_whole_prefix() -> None:
+    blueprint = _FakeArm.blueprint().namespace("robot0").namespace("fleet")
+
+    assert PhysicalConnection.of(blueprint).frame_prefix == "fleet/robot0"
+
+
+def test_a_hand_set_frame_id_prefix_wins_over_the_namespace() -> None:
+    # namespace() keeps a user-set frame_id_prefix, and that override is the answer to "what
+    # are this module's frames called" -- so it is read off the module, not off its name.
+    blueprint = _FakeArm.blueprint(frame_id_prefix="custom").namespace("left")
+
+    connection = PhysicalConnection.of(blueprint)
+
+    assert connection.remote_name == "left/_fakearm"
+    assert connection.frame_prefix == "custom"
 
 
 @pytest.mark.parametrize(
-    ("remote_name", "namespace"),
-    [
-        ("left/xarm", "left"),
-        # namespace() nests by composition, so everything before the last "/" is the prefix.
-        ("fleet/robot0/xarm", "fleet/robot0"),
-    ],
+    ("remote_name", "prefix"),
+    [("left/xarm", "left"), ("fleet/robot0/xarm", "fleet/robot0"), ("xarm", "")],
 )
-def test_the_namespace_is_everything_before_the_instance_name(
-    remote_name: str, namespace: str
+def test_an_instance_name_falls_back_to_the_namespace_in_the_name(
+    remote_name: str, prefix: str
 ) -> None:
-    assert PhysicalConnection.of(remote_name).namespace == namespace
+    # Nothing to read a frame_id_prefix off, so the name is all there is to go on.
+    assert PhysicalConnection.of(remote_name).frame_prefix == prefix
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(

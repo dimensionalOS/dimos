@@ -52,10 +52,11 @@ SUBTREE_RPC = "get_usd"
 
 @dataclass(frozen=True)
 class PhysicalConnection:
-    """A module owning a subtree, and the name it answers RPC under.
+    """A module owning a subtree: the name it answers RPC under, and the one its frames take.
 
-    The two come apart as soon as a robot has two of the same arm: both are the same class,
-    and only the deployed instance name tells them apart. Build one with
+    Both come apart from the class as soon as a robot has two of the same arm. The class is
+    shared, so only the deployed instance name reaches the right one, and the description is
+    shared, so only its namespace tells their frames apart. Build one with
     ``PhysicalConnection.of(...)`` rather than by hand.
     """
 
@@ -63,25 +64,20 @@ class PhysicalConnection:
     # fail-fast get_usd check has to be skipped for it.
     module: type[Module] | None
     remote_name: str
-
-    @property
-    def namespace(self) -> str:
-        """The namespace this module is deployed under: "left" out of "left/xarm", "" without one.
-
-        Blueprint.namespace() builds the instance name as ``{prefix}/{name}`` and nests by
-        composition, so everything before the last "/" is the prefix ("fleet/robot0/xarm" ->
-        "fleet/robot0"). Same rule as the coordinator's own _atom_namespace.
-        """
-        return self.remote_name.rsplit("/", 1)[0] if "/" in self.remote_name else ""
+    # The namespaced module's own frame_id_prefix, read straight off it rather than derived from
+    # remote_name: namespace() sets the two together but keeps a frame_id_prefix the user set
+    # by hand, and that override is the answer to "what are this module's frames called".
+    frame_prefix: str = ""
 
     @classmethod
     def of(cls, value: object) -> PhysicalConnection:
         """Normalize a physical_connections value.
 
         A module class names the only instance of itself. A ``Blueprint`` (the useful form:
-        ``XArm.blueprint(...).namespace("left")``) names the exact instance it deploys, so two
-        copies of one class stay addressable. A plain string is the instance name of a module
-        deployed elsewhere, where the class is not importable here.
+        ``XArm.blueprint(...).namespace("left")``) names the exact instance it deploys and
+        carries its frame_id_prefix, so two copies of one class stay both addressable and
+        distinguishable. A plain string is the instance name of a module deployed elsewhere,
+        where the class is not importable here.
         """
         # Imported here, as Module.blueprint does, to keep this module out of the import cycle.
         from dimos.core.coordination.blueprints import Blueprint
@@ -91,7 +87,9 @@ class PhysicalConnection:
         if isinstance(value, Blueprint):
             return cls._from_blueprint(value)
         if isinstance(value, str):
-            return cls(None, value)
+            # No object to read a frame_id_prefix off, so take the namespace out of the name:
+            # everything before the last "/", the rule the coordinator's _atom_namespace uses.
+            return cls(None, value, value.rsplit("/", 1)[0] if "/" in value else "")
         if isinstance(value, type) and issubclass(value, Module):
             # Matches RPCClient.remote's own default for a module with no instance_name.
             return cls(value, value.__name__)
@@ -116,7 +114,7 @@ class PhysicalConnection:
                 f"{SUBTREE_RPC}() ({sorted(atom.name for atom in atoms)}); name the one that owns "
                 f"the subtree instead of the whole blueprint"
             )
-        return cls(atoms[0].module, atoms[0].name)
+        return cls(atoms[0].module, atoms[0].name, atoms[0].kwargs.get("frame_id_prefix") or "")
 
 
 class UrdfManagerConfig(ModuleConfig):
@@ -282,7 +280,7 @@ class UrdfManager(Module):
                 # A namespaced module's frames are renamed here rather than at its end: it holds
                 # one description and does not know which copy of itself it is, while the name it
                 # was deployed under says exactly that.
-                return await asyncio.to_thread(prefix_usd_frames, usd, connection.namespace)
+                return await asyncio.to_thread(prefix_usd_frames, usd, connection.frame_prefix)
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"{name} did not answer {SUBTREE_RPC}() for frame {frame_id!r} "
