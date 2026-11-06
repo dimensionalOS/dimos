@@ -257,7 +257,7 @@ class PiAdapter(EvalSubject):
                 guide = run_dir / "DIMOS.md"
                 # Its links are relative to the checkout; the copy is not.
                 text = env.python_guide.read_text()
-                guide.write_text(text.replace("](/docs/", f"]({DIMOS_PROJECT_ROOT}/docs/"))
+                guide.write_text(text.replace("](/", f"]({DIMOS_PROJECT_ROOT}/"))
                 files["robot"] = guide
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
@@ -271,7 +271,7 @@ class PiAdapter(EvalSubject):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if env.mcp_url and env.python_guide is None and not self.config.no_dimos:
+        if env.mcp_url and not self.config.no_dimos:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"

@@ -30,6 +30,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 from pydantic.alias_generators import to_camel
 
+from dimos.evals.agents.base import with_mcp_server
 from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.pi import PiAdapter, PiAdapterConfig, read_pi_events
 from dimos.evals.environments.base import Environment
@@ -131,11 +132,8 @@ class DimosAgentAdapter(PiAdapter):
             )
 
     def launch_modules(self, environment: Environment) -> tuple[str, ...]:
-        modules = super().launch_modules(environment)
-        # A Python API suite leaves McpServer out for Pi; the gateway still links through one.
-        if environment.python_guide is not None and "mcp-server" not in modules:
-            return (*modules, "mcp-server")
-        return modules
+        # The gateway links through McpServer.
+        return with_mcp_server(environment, super().launch_modules(environment))
 
     def preflight(self, environment: Environment) -> None:
         super().preflight(environment)

@@ -25,7 +25,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from dimos.agents.llm_trace import last_request_unanswered, list_llm_trace_pairs
 from dimos.agents.mcp.constants import TURN_FAILED_KEY
-from dimos.evals.agents.base import EvalSubject
+from dimos.evals.agents.base import EvalSubject, with_mcp_server
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
@@ -101,16 +101,15 @@ class McpClientAdapter(EvalSubject):
         """The shipped agent can call every tool its MCP server exposes."""
         return environment_tools
 
+    def launch_modules(self, environment: Environment) -> tuple[str, ...]:
+        # McpClient reaches the robot only through McpServer.
+        return with_mcp_server(environment, super().launch_modules(environment))
+
     def preflight(self, environment: Environment) -> None:
         if not environment.has_robot and not self.config.modules:
             raise RuntimeError(
                 f"McpClientAdapter needs a running Agent; {type(environment).__name__} "
                 "has no robot and this agent adds no modules"
-            )
-        if environment.python_guide is not None and "mcp-server" not in self.config.modules:
-            raise RuntimeError(
-                f"McpClientAdapter needs an McpServer; {type(environment).__name__} drives the "
-                "robot through the Python API, so add mcp-server to this agent's modules"
             )
 
     def run(

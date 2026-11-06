@@ -60,6 +60,11 @@ class Environment(Configurable, ABC):
         return None
 
     @property
+    def attached(self) -> bool:
+        """Whether this environment drives an already running dimos it did not launch."""
+        return False
+
+    @property
     def python_guide(self) -> Path | None:
         """DIMOS.md source when agents drive the robot through the Python API, not MCP."""
         return None

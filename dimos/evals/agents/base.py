@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import Field, field_validator, model_validator
 from typing_extensions import Self
 
-from dimos.evals.constants import MAX_TOOL_SECONDS, NO_DIMOS_KEYWORDS
+from dimos.evals.constants import MAX_TOOL_SECONDS, MCP_SERVER, NO_DIMOS_KEYWORDS
 from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
@@ -134,3 +134,13 @@ class EvalSubject(Configurable, ABC):
         Return only after agent work is finished. Agents that support a time
         limit return their partial trajectory marked ``timeout`` when it expires.
         """
+
+
+def with_mcp_server(environment: Environment, modules: tuple[str, ...]) -> tuple[str, ...]:
+    """``modules`` plus McpServer, for an agent that needs one where the suite leaves it out.
+
+    A Python API suite has none, for Pi; an attached dimos is used as it runs.
+    """
+    if environment.python_guide is None or environment.attached or MCP_SERVER in modules:
+        return modules
+    return (*modules, MCP_SERVER)
