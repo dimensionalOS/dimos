@@ -27,7 +27,6 @@ from typing import Any
 from pydantic import JsonValue, TypeAdapter
 import pytest
 
-from dimos.evals.agents.dimcode import DimcodeAdapter
 from dimos.evals.agents.lib import pi_config
 from dimos.evals.agents.lib.pi_config import Provider
 from dimos.evals.agents.pi import PiAdapter
@@ -229,7 +228,7 @@ class NativeHarness:
         )
 
 
-@pytest.fixture(params=["pi", "dimcode"])
+@pytest.fixture(params=["pi"])
 def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NativeHarness]:
     name = str(request.param)
     executable = shutil.which(os.environ.get(f"EVAL_{name.upper()}_CLI", name))
@@ -241,7 +240,7 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NativeHa
         stream = store.stream("facts", str)
         stream.append("selected-observation", ts=1)
         yield NativeHarness(
-            DimcodeAdapter if name == "dimcode" else PiAdapter,
+            PiAdapter,
             executable,
             run_dir,
             RunningEnvironment(mcp_url="", streams=(stream,), artifacts={}),

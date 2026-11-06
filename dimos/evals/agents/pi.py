@@ -385,7 +385,9 @@ class PiAdapter(EvalSubject):
         # The runtime dir hosts Unix sockets, whose paths are capped near 100 bytes; a
         # deeply nested cache (pytest tmp dirs on CI) falls back to the system temp dir.
         parent = (
-            paths.cache if len(str(paths.cache / "run-XXXXXXXX" / "dimcode.sock")) < 96 else None
+            paths.cache
+            if len(str(paths.cache / "run-XXXXXXXX" / "dimos-agent.sock")) < 96
+            else None
         )
         with tempfile.TemporaryDirectory(prefix="run-", dir=parent) as runtime:
             self._runtime_dir = Path(runtime)
