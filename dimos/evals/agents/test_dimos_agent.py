@@ -24,9 +24,7 @@ from dimos.agents.llm_trace import request_path, response_path
 from dimos.evals.agents import pi
 from dimos.evals.agents.dimos_agent import DimosAgentAdapter
 from dimos.evals.agents.lib.pi_config import RunPaths
-from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.environments.dataset import Dataset
-from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.types import RunningEnvironment, ToolCall
 
 
@@ -174,20 +172,17 @@ def test_run_records_tool_results_and_reports_unanswered_cases(
     assert not Path(process_env["XDG_RUNTIME_DIR"]).exists()
 
 
-def test_the_python_guide_reaches_the_agent_as_dimos_md(tmp_path):
+def test_its_own_mcp_server_gives_the_agent_dimos_md_not_a_tool_list(tmp_path, mocker):
+    listing = mocker.patch("dimos.evals.agents.pi.tool_listing")
     guide = tmp_path / "python_api.md"
-    guide.write_text("# Manipulation from Python")
+    guide.write_text("# Python API")
     run_dir = tmp_path / "case"
     run_dir.mkdir()
-    agent = DimosAgentAdapter()
-    env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=guide)
-    prompt = agent._prepare_case(env, run_dir)
-    assert (run_dir / "DIMOS.md").is_file() and "DIMOS.md" in prompt
-
-
-def test_the_agent_brings_its_own_mcp_server_to_a_python_api_suite():
-    python_api = MujocoEnvironment(blueprint=["xarm-sim"])
-    assert DimosAgentAdapter().launch_modules(python_api) == ("mcp-server",)
-    assert PiAdapter().launch_modules(python_api) == ()
-    with_mcp = MujocoEnvironment(blueprint=["xarm-sim", "mcp-server"])
-    assert DimosAgentAdapter().launch_modules(with_mcp) == ()
+    # The McpServer the agent brought is its gateway's link, not tools for the prompt.
+    env = RunningEnvironment(
+        mcp_url="http://127.0.0.1:9990/mcp", streams=(), artifacts={}, python_guide=guide
+    )
+    prompt = DimosAgentAdapter()._prepare_case(env, run_dir)
+    assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
+    assert "dimos mcp call" not in prompt
+    listing.assert_not_called()

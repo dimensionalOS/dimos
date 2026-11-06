@@ -15,9 +15,11 @@
 import os
 import time
 from types import SimpleNamespace
+import uuid
 
 import pytest
 
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.run_registry import RunEntry
 from dimos.evals.environments.lib.launch import launched_mcp_url, launched_run, wait_connectable
 
@@ -81,8 +83,10 @@ def test_wait_connectable_retries_until_the_coordinator_answers(mocker) -> None:
     client.stop.assert_called_once()
 
 
-def test_wait_connectable_times_out_with_no_coordinator_running() -> None:
-    # The real client, unmocked: no coordinator must surface as a timeout, which is retried.
+def test_wait_connectable_times_out_with_no_coordinator_running(mocker) -> None:
+    # The real client: no coordinator must surface as a timeout, which is retried. A name no
+    # other coordinator on the bus answers keeps a concurrent one from passing the ping.
+    mocker.patch.object(CoordinatorRPC, "NAME", f"eval-test-{uuid.uuid4().hex}")
     with pytest.raises(TimeoutError, match="launch deadline"):
         wait_connectable(time.monotonic() + 1)
 
