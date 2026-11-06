@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -151,6 +151,8 @@ class RunningEnvironment:
     raw_endpoint: str | None = None  # vendor-shaped robot topics for agents without dimOS
     raw_guide: str | None = None  # ROBOT.md template for raw_endpoint, required with it
     python_guide: Path | None = None  # DIMOS.md: the Python API guide, when there are no MCP tools
+    # Variables a dimOS client needs to reach this dimos, e.g. a transport the launch forced.
+    client_env: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, kw_only=True)

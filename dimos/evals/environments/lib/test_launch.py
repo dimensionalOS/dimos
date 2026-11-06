@@ -20,6 +20,7 @@ import uuid
 import pytest
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.global_config import global_config
 from dimos.core.run_registry import RunEntry
 from dimos.evals.environments.lib.launch import launched_mcp_url, launched_run, wait_connectable
 
@@ -88,6 +89,22 @@ def test_wait_connectable_times_out_with_no_coordinator_running(mocker) -> None:
     mocker.patch.object(CoordinatorRPC, "NAME", f"eval-test-{uuid.uuid4().hex}")
     with pytest.raises(TimeoutError, match="launch deadline"):
         wait_connectable(time.monotonic() + 1)
+
+
+def test_a_forced_transport_pings_from_a_client_started_with_it(mocker) -> None:
+    other = "lcm" if global_config.transport == "zenoh" else "zenoh"
+    run = mocker.patch(
+        "dimos.evals.environments.lib.launch.subprocess.run",
+        side_effect=[
+            SimpleNamespace(returncode=1, stderr=b"TimeoutError"),
+            SimpleNamespace(returncode=0),
+        ],
+    )
+    connect = mocker.patch("dimos.evals.environments.lib.launch.CoordinatorRPC.connect")
+    wait_connectable(time.monotonic() + 5, client_env={"DIMOS_TRANSPORT": other})
+    assert run.call_count == 2
+    assert run.call_args.kwargs["env"]["DIMOS_TRANSPORT"] == other
+    connect.assert_not_called()  # this process's transport would miss it
 
 
 def test_wait_connectable_fails_when_dimos_exits_or_the_deadline_passes(mocker) -> None:
