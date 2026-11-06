@@ -54,9 +54,15 @@ controllers drive the whole 18-DOF upper body (torso 4 + arm 7 + arm 7)
 through one `teleop_ik` task, so the torso participates in the same IK solve
 as the arms rather than being pinned. Each trigger drives its own jaw through
 a separate feedback-gated gripper task; the jaws never enter the IK model or a
-trajectory. The coordinator declares no `r1pro_cmd_vel` output and nothing in
-the stack publishes either base command stream (`cmd_vel`, `twist_command`),
-so the chassis has no source of motion targets here.
+trajectory. Left thumbstick controls forward/lateral velocity and right
+thumbstick x controls yaw, reusing Go2's thumbstick mapping and deadzone.
+`ArmThumbstickTeleopModule.twist_command` feeds the coordinator's `vel_chassis`
+velocity task, then `r1pro_cmd_vel` reaches the selected connection. The same
+path applies to fake and real, with limits ±1/±1 m/s and ±2 rad/s. Centred,
+missing or stale sticks command zero; arm poses and triggers never drive the
+chassis. Thumbsticks do not require the arm grips. No keyboard/nav input is wired.
+Operator hold arbitrates arm positions and zero base speeds, excluding the
+command-only jaws. E-stop clear leaves the hold latched until acknowledged.
 
 It starts on the **fake backend by default** — `FakeR1ProConnection`, an
 in-memory closed loop on the same contract (`position_command`, `cmd_vel`,
@@ -69,15 +75,19 @@ deliberate operation:
 
 ```bash
 dimos run r1pro-vr-teleop                       # fake, safe anywhere
-# real (assembly only; bringing it up on hardware is a separate step):
+# real (assembly only, does NOT start hardware):
 #   python -c "from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop \
-#       import make_r1pro_vr_teleop; make_r1pro_vr_teleop(backend='real').build().loop()"
+#       import make_r1pro_vr_teleop; make_r1pro_vr_teleop(backend='real')"
 ```
 
 Both backends share the Quest input module, the task set, the IK model and
 the coordinator; only the connection module differs. Opening
 `https://<host>:8443/teleop` in the headset connects the browser; the actual
 headset session is verified by a human, not by CI.
+
+In fake mode, `FakeR1ProConnection.base_state()` reads the in-memory integrated
+chassis x/y/yaw and vx/vy/wz over RPC (`dimos shell`); joint feedback is also
+available on `coordinator_joint_state`. No physical base driver is started.
 
 **Deadman and session teardown.** Middle-finger grips engage both hands and
 capture the controller references. Releasing either grip, controller input

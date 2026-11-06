@@ -14,13 +14,14 @@
 
 """Tests for the R1 Pro Quest VR teleop blueprint.
 
-The chain under test is the real one: a live ``ArmTeleopModule`` fed
-programmatic Quest packets (``_on_pose_bytes``/``_on_joy_bytes``, the same
-decoders the websocket routes call) → the coordinator's ``teleop_ik`` and
-gripper tasks → the per-robot contract ports → ``FakeR1ProConnection`` →
-``joint_state`` feedback back into the coordinator. No ROS 2, no robot, no
-vendor stack, no browser. The actual Quest browser session remains to be
-verified by a human on a headset.
+The chain under test is the real one: a live ``ArmThumbstickTeleopModule``
+fed programmatic Quest packets (``_on_pose_bytes``/``_on_joy_bytes``, the same
+decoders the websocket routes call) → the coordinator's ``teleop_ik``,
+gripper and ``vel_chassis`` tasks → the per-robot contract ports →
+``FakeR1ProConnection`` → ``joint_state`` feedback (and the simulated
+chassis pose) back into the coordinator. No ROS 2, no robot, no vendor
+stack, no browser. The actual Quest browser session remains to be verified
+by a human on a headset.
 """
 
 from __future__ import annotations
@@ -41,20 +42,22 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.robot.galaxea.r1pro._connection_test_fakes import LocalTransport
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import (
+    R1PRO_VR_CHASSIS_TASK_NAME,
     R1PRO_VR_TARGET_FRAMES,
     R1PRO_VR_TASK_NAME,
     R1ProVrCoordinator,
     _vr_tasks,
     make_r1pro_vr_teleop,
 )
-from dimos.robot.galaxea.r1pro.config import R1PRO_COORDINATOR_MODEL
+from dimos.robot.galaxea.r1pro.config import R1PRO_COORDINATOR_MODEL, R1PRO_PLANAR_BASE
 from dimos.robot.galaxea.r1pro.connection import (
+    R1PRO_BASE_JOINTS,
     R1PRO_GRIPPER_JOINTS,
     R1PRO_UPPER_BODY_JOINTS,
     R1ProConnection,
 )
 from dimos.robot.galaxea.r1pro.fake_connection import FakeR1ProConnection
-from dimos.teleop.webxr.extensions import ArmTeleopModule
+from dimos.teleop.webxr.extensions import ArmThumbstickTeleopModule
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -73,18 +76,25 @@ def _pose_bytes(hand: str, x: float, y: float, z: float) -> bytes:
     ).lcm_encode()
 
 
-def _joy_bytes(hand: str, *, trigger: float, grip: float) -> bytes:
+def _joy_bytes(
+    hand: str,
+    *,
+    trigger: float,
+    grip: float,
+    stick_x: float = 0.0,
+    stick_y: float = 0.0,
+) -> bytes:
     # axes: [thumbstick_x, thumbstick_y, trigger_analog, grip_analog]
     return Joy(
         ts=time.time(),
         frame_id=hand,
-        axes=[0.0, 0.0, trigger, grip],
+        axes=[stick_x, stick_y, trigger, grip],
         buttons=[0, 0, 0, 0, 0, 0],
     ).lcm_encode()
 
 
 class Chain:
-    """ArmTeleopModule → R1ProVrCoordinator → FakeR1ProConnection, in-process.
+    """ArmThumbstickTeleopModule → R1ProVrCoordinator → FakeR1ProConnection.
 
     The streams the blueprint wires share one ``LocalTransport`` per logical
     name, so messages flow exactly as the blueprint routes them; every other
@@ -113,6 +123,11 @@ class Chain:
             ("teleop", "right_gripper_command"),
             ("coordinator", "right_gripper_command"),
         ),
+        # The thumbstick Twist: teleop → coordinator's twist bus → the
+        # vel_chassis task's arbitration → the coordinator's base port → the
+        # connection's cmd_vel.
+        "twist_command": (("teleop", "cmd_vel"), ("coordinator", "twist_command")),
+        "r1pro_cmd_vel": (("coordinator", "r1pro_cmd_vel"), ("fake", "cmd_vel")),
         "position_command": (
             ("coordinator", "r1pro_position_command"),
             ("fake", "position_command"),
@@ -124,7 +139,14 @@ class Chain:
     }
 
     def __init__(self, *, input_timeout_s: float = 1.0, deadman_s: float = 5.0) -> None:
-        self.teleop = ArmTeleopModule(server_port=_free_port(), input_timeout_s=input_timeout_s)
+        #: Full stick deflection is the chassis' base_range, as in the blueprint.
+        vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
+        self.teleop = ArmThumbstickTeleopModule(
+            server_port=_free_port(),
+            input_timeout_s=input_timeout_s,
+            linear_speed=min(vx, vy),
+            angular_speed=wz,
+        )
         self.coordinator = R1ProVrCoordinator(
             tick_rate=100,
             model=R1PRO_COORDINATOR_MODEL,
@@ -145,11 +167,7 @@ class Chain:
         for module in modules.values():
             for port in {**module.inputs, **module.outputs}:
                 if (id(module), port) not in wired:
-                    transport = LocalTransport()
-                    module.set_transport(port, transport)  # type: ignore[arg-type]
-                    if module is self.fake and port == "cmd_vel":
-                        # Nothing in this stack may ever publish here.
-                        self.cmd_vel_transport = transport
+                    module.set_transport(port, LocalTransport())  # type: ignore[arg-type]
 
     def __enter__(self) -> Chain:
         self.teleop.start()
@@ -170,8 +188,25 @@ class Chain:
     def send_joy(self, hand: str, *, trigger: float, grip: float) -> None:
         self.teleop._on_joy_bytes(_joy_bytes(hand, trigger=trigger, grip=grip))
 
+    def send_sticks(
+        self,
+        *,
+        left_x: float = 0.0,
+        left_y: float = 0.0,
+        right_x: float = 0.0,
+        left_trigger: float = 1.0,
+        right_trigger: float = 1.0,
+    ) -> None:
+        """Both controllers present with the given sticks (grips released)."""
+        self.teleop._on_joy_bytes(
+            _joy_bytes("left", trigger=left_trigger, grip=0.0, stick_x=left_x, stick_y=left_y)
+        )
+        self.teleop._on_joy_bytes(
+            _joy_bytes("right", trigger=right_trigger, grip=0.0, stick_x=right_x, stick_y=0.0)
+        )
+
     def hold(self, *, trigger_left: float = 1.0, trigger_right: float = 1.0) -> None:
-        """Both controllers present, both grips held (the engage condition).
+        """Both controllers present, both grips held (the IK engage condition).
 
         Triggers default to 1.0, i.e. a fully-closed command (opening 0), so
         the jaws stay put unless a test drives them.
@@ -202,6 +237,15 @@ class Chain:
     def gripper_opening(self, side: str) -> float:
         with self.fake._lock:
             return self.fake._gripper_measured[side]
+
+    def base_state(self) -> dict[str, float]:
+        return self.fake.base_state()
+
+    def chassis_speeds(self) -> list[tuple[float, float, float]]:
+        """Every (vx, vy, wz) the coordinator sent the connection, oldest first."""
+        return [
+            (msg.linear.x, msg.linear.y, msg.angular.z) for msg in self.stream["r1pro_cmd_vel"].sent
+        ]
 
 
 # Assembly / backend switching
@@ -255,36 +299,57 @@ def _twist_wiring(blueprint: Any) -> tuple[set[str], set[str]]:
     return produced, consumed
 
 
-def test_no_cmd_vel_source_anywhere_in_the_stack() -> None:
-    """The stack cannot produce a base command: no producer, no route, no task."""
+def test_thumbstick_twist_is_the_only_chassis_command_path() -> None:
+    """One producer of a base Twist (the teleop sticks), one robot base port.
+
+    The stack's only Twist streams are the coordinator's twist bus and the
+    R1 Pro's ``cmd_vel`` port: the thumbstick publishes the former, the
+    ``vel_chassis`` task arbitrates it onto the latter, and nothing else can
+    inject a base speed.
+    """
     for backend in ("fake", "real"):
         blueprint = make_r1pro_vr_teleop(backend=backend, boot_vendor_stack=False)
+        connection_cls = FakeR1ProConnection if backend == "fake" else R1ProConnection
         produced, consumed = _twist_wiring(blueprint)
-        # The connection's cmd_vel input and the coordinator's inherited
-        # twist_command port exist (same contract as the real stack), but no
-        # module produces either, so neither can ever carry a base command.
-        assert "cmd_vel" not in produced, produced
-        assert "twist_command" not in produced, produced
-        # The viewer websocket's keyboard output is the only possible Twist
-        # producer, and it is not routed into the base input of either module.
-        assert produced <= {"tele_cmd_vel"}, produced
-        assert "tele_cmd_vel" not in consumed, consumed
-        assert "cmd_vel" in consumed
+        assert produced == {"twist_command", "r1pro_cmd_vel"}, produced
+        assert consumed == {"twist_command", "r1pro_cmd_vel"}, consumed
+        teleop_atom = next(a for a in blueprint.blueprints if a.module is ArmThumbstickTeleopModule)
+        connection_atom = next(a for a in blueprint.blueprints if a.module is connection_cls)
+        # The teleop module's sticks produce the bus twist; the connection's
+        # cmd_vel input is the per-robot base port, fed by the coordinator.
+        assert blueprint.remapping_map[(teleop_atom.name, "cmd_vel")] == "twist_command"
+        assert blueprint.remapping_map[(connection_atom.name, "cmd_vel")] == "r1pro_cmd_vel"
         # No explicit bus override either.
         assert {name for (name, msg_type) in blueprint.transport_map if msg_type is Twist} == set()
-    # The coordinator declares no <robot>_cmd_vel port.
+
     coordinator = R1ProVrCoordinator(
         model=R1PRO_COORDINATOR_MODEL,
         command_only_joints=list(R1PRO_GRIPPER_JOINTS),
         tasks=[],
     )
     try:
-        assert "r1pro_cmd_vel" not in coordinator.outputs
+        assert "r1pro_cmd_vel" in coordinator.outputs
+        assert "twist_command" in coordinator.inputs
     finally:
         coordinator.stop()
-    # No task claims the chassis axes.
-    for task in _vr_tasks():
-        assert all("/base/" not in joint for joint in task.joint_names)
+
+    # Exactly one task drives the chassis, in velocity mode, and its axes are
+    # the base port's own; nothing else claims a base axis.
+    chassis = [task for task in _vr_tasks() if any("/base/" in joint for joint in task.joint_names)]
+    assert [task.name for task in chassis] == [R1PRO_VR_CHASSIS_TASK_NAME]
+    assert chassis[0].type == "velocity"
+    assert chassis[0].joint_names == R1PRO_BASE_JOINTS
+    assert chassis[0].params == {"timeout": 0.2, "zero_on_timeout": True}
+
+
+def test_blueprint_teleop_scaling_matches_the_base_range() -> None:
+    """Full stick deflection is the chassis' limit, so teleop cannot overshoot."""
+    vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
+    for backend in ("fake", "real"):
+        blueprint = make_r1pro_vr_teleop(backend=backend, boot_vendor_stack=False)
+        atom = next(a for a in blueprint.blueprints if a.module is ArmThumbstickTeleopModule)
+        assert atom.kwargs["linear_speed"] == pytest.approx(min(vx, vy))
+        assert atom.kwargs["angular_speed"] == pytest.approx(wz)
 
 
 def test_ik_model_is_torso_plus_both_arms_grippers_excluded() -> None:
@@ -292,8 +357,8 @@ def test_ik_model_is_torso_plus_both_arms_grippers_excluded() -> None:
     # All 18 upper-body joints, torso included, in the vendor layout order.
     assert teleop.joint_names == R1PRO_UPPER_BODY_JOINTS
     assert len(teleop.joint_names) == 18
-    # The jaws never enter the IK set or any trajectory.
-    assert not any("gripper" in joint for joint in teleop.joint_names)
+    # The jaws and the chassis never enter the IK set or any trajectory.
+    assert not any("gripper" in joint or "/base/" in joint for joint in teleop.joint_names)
     trajectory = next(t for t in _vr_tasks() if t.type == "trajectory")
     assert not any("gripper" in joint for joint in trajectory.joint_names)
     # One task, both hands, on the URDF's gripper links.
@@ -320,7 +385,7 @@ def test_ik_model_is_torso_plus_both_arms_grippers_excluded() -> None:
 
 def test_no_input_no_motion() -> None:
     """An idle stack never moves the simulated robot: the coordinator holds
-    the reported zeros and the jaws are never tasked."""
+    the reported zeros, the jaws are never tasked, and the base stays still."""
     with Chain() as chain:
         time.sleep(0.5)
         assert chain.body_q() == [0.0] * 18
@@ -329,7 +394,11 @@ def test_no_input_no_motion() -> None:
         # The only commands are holds at the measured zeros.
         for msg in chain.stream["position_command"].sent:
             assert all(p == pytest.approx(0.0) for p in msg.position)
-        assert chain.cmd_vel_transport.sent == []
+        # No thumbstick has ever deflected, so the base was only ever told zero.
+        assert chain.chassis_speeds()
+        assert all(speeds == (0.0, 0.0, 0.0) for speeds in chain.chassis_speeds())
+        assert chain.base_state()["x"] == pytest.approx(0.0)
+        assert chain.base_state()["vx"] == pytest.approx(0.0)
 
 
 def test_quest_input_drives_upper_body_and_feedback() -> None:
@@ -341,7 +410,7 @@ def test_quest_input_drives_upper_body_and_feedback() -> None:
         # Move the left controller +0.15 m in x from its captured reference.
         chain.send_pose("left", 0.45, 0.1, 1.2)
         wait_until(
-            lambda: any(abs(q) > 1e-3 for q in chain.body_q()),
+            lambda: any(abs(q) > 1e-3 for q in chain.body_q()[:4]),
             timeout=5.0,
             interval=0.05,
         )
@@ -359,9 +428,9 @@ def test_quest_input_drives_upper_body_and_feedback() -> None:
             timeout=2.0,
             interval=0.02,
         )
-        # The chassis was never asked for anything.
+        # The chassis was never asked for anything but zero speed.
         assert chain.stream["position_command"].sent, "coordinator never commanded"
-        assert chain.cmd_vel_transport.sent == []
+        assert all(speeds == (0.0, 0.0, 0.0) for speeds in chain.chassis_speeds())
         last = chain.stream["position_command"].sent[-1]
         assert isinstance(last, JointState)
         # Commands carry the 18 upper-body joints; a jaw rides along only
@@ -438,6 +507,7 @@ def test_estop_clears_the_session_and_stops_commands() -> None:
         # A fresh engagement re-captures both references, so the controller
         # pose that moved the arm pre-estop produces no jump: zero relative
         # motion until the operator actually moves.
+        chain.coordinator.task_invoke("operator_hold", "acknowledge")
         chain.hold()
         wait_until(lambda: chain.task.is_active(), timeout=5.0, interval=0.02)
         time.sleep(0.3)
@@ -483,3 +553,153 @@ def test_gripper_target_latched_during_outage_replays_on_recovery() -> None:
             timeout=5.0,
             interval=0.02,
         )
+
+
+# The thumbstick chassis chain (fake backend, real modules, in-process)
+
+
+def test_thumbstick_drives_the_chassis_through_the_velocity_task() -> None:
+    """Left stick forward → Twist on the bus → vel_chassis → cmd_vel → the fake.
+
+    The base actually moves in the simulated model, so this is the whole
+    chain, not a conversion function.
+    """
+    with Chain() as chain:
+        chain.send_sticks(left_y=-1.0)  # pushed fully forward
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0, interval=0.02
+        )
+        wait_until(lambda: chain.base_state()["x"] > 0.05, timeout=5.0, interval=0.02)
+        # The twist that drove it came from the teleop module's sticks...
+        published = chain.stream["twist_command"].sent
+        assert any(twist.linear.x == pytest.approx(1.0) for twist in published)
+        # ...was arbitrated by the vel_chassis velocity task...
+        chassis_task = chain.coordinator._tasks[R1PRO_VR_CHASSIS_TASK_NAME]
+        assert chassis_task.is_active()
+        # ...and reached the connection's base port within the base range.
+        speeds = chain.chassis_speeds()
+        assert max(vx for vx, _, _ in speeds) == pytest.approx(1.0)
+        assert all(abs(vy) == 0.0 and abs(wz) == 0.0 for _, vy, wz in speeds)
+        # Arms and jaws were never tasked by moving the base.
+        assert chain.gripper_target("left") is None
+        assert chain.body_q() == [0.0] * 18
+
+
+def test_right_stick_turns_the_chassis() -> None:
+    with Chain() as chain:
+        chain.send_sticks(right_x=-1.0)  # pushed fully right → +yaw
+        wait_until(
+            lambda: chain.base_state()["wz"] == pytest.approx(2.0), timeout=5.0, interval=0.02
+        )
+        wait_until(lambda: abs(chain.base_state()["yaw"]) > 0.02, timeout=5.0, interval=0.02)
+        assert chain.base_state()["vx"] == pytest.approx(0.0)
+        assert max(wz for _, _, wz in chain.chassis_speeds()) == pytest.approx(2.0)
+
+
+def test_thumbstick_cannot_exceed_the_base_range() -> None:
+    """Sticks beyond their physical range are still clamped by the limits table.
+
+    The task's value reaches the per-robot port as asked; the connection is
+    what holds the chassis inside ``base_range``, exactly as for any other
+    twist publisher, and the simulated base follows the clamped speed.
+    """
+    with Chain() as chain:
+        chain.send_sticks(left_y=-5.0, right_x=5.0)  # 5 m/s, -10 rad/s as asked
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0, interval=0.02
+        )
+        state = chain.base_state()
+        assert state["vx"] == pytest.approx(1.0)  # base_range vx
+        assert state["wz"] == pytest.approx(-2.0)  # base_range wz, opposite sign
+        # Whatever was asked for, the connection never accepted more.
+        assert chain.fake.status().last_rejection is None
+        assert chain.fake.status().last_error is None
+
+
+def test_centred_sticks_send_zero_speed_not_the_last_one() -> None:
+    with Chain() as chain:
+        chain.send_sticks(left_y=-1.0)
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0, interval=0.02
+        )
+        chain.send_sticks()  # sticks centred, no deflection
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(0.0), timeout=5.0, interval=0.02
+        )
+        # Zero speed is what went out on the wire, not a held last value.
+        assert chain.chassis_speeds()[-1] == (0.0, 0.0, 0.0)
+        assert chain.stream["twist_command"].sent[-1].linear.x == pytest.approx(0.0)
+        stopped = chain.base_state()["x"]
+        time.sleep(0.2)
+        assert chain.base_state()["x"] == pytest.approx(stopped, abs=1e-6)
+
+
+def test_arm_and_jaw_commands_never_reach_the_chassis() -> None:
+    with Chain() as chain:
+        chain.hold()
+        wait_until(lambda: chain.task.is_active(), timeout=5.0, interval=0.02)
+        chain.send_pose("left", 0.45, 0.1, 1.2)
+        wait_until(lambda: any(abs(q) > 1e-3 for q in chain.body_q()), timeout=5.0, interval=0.05)
+        # The arms moved, the sticks never left centre: the base did not.
+        assert all(speeds == (0.0, 0.0, 0.0) for speeds in chain.chassis_speeds())
+        assert chain.base_state()["x"] == pytest.approx(0.0)
+        assert chain.base_state()["vx"] == pytest.approx(0.0)
+
+
+def test_twist_timeout_zeroes_the_chassis_instead_of_holding_speed() -> None:
+    """No twist frames → the velocity task times out to zero, then the deadman."""
+    with Chain(deadman_s=5.0) as chain:
+        chain.send_sticks(left_y=-1.0)
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0, interval=0.02
+        )
+        # The Quest stops sending: no more joy packets, so no more twist frames.
+        chain.teleop._stop_control_loop()
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(0.0), timeout=5.0, interval=0.02
+        )
+        assert chain.chassis_speeds()[-1] == (0.0, 0.0, 0.0)
+        # The deadman has not fired: the zero came from the task's timeout.
+        assert not chain.fake.status().deadman_fired
+
+
+def test_operator_hold_blocks_continuous_sticks_and_excludes_jaws() -> None:
+    with Chain() as chain:
+        chain.send_sticks(left_y=-1.0)
+        wait_until(lambda: chain.base_state()["vx"] == 1.0, timeout=5.0)
+        chain.coordinator.task_invoke("operator_hold", "request", {"route": "manual"})
+        wait_until(lambda: chain.base_state()["vx"] == 0.0, timeout=0.5)
+        position = chain.base_state()["x"]
+        for _ in range(20):
+            chain.send_sticks(left_y=-1.0, left_x=1.0, right_x=1.0)
+            time.sleep(0.02)
+            assert chain.chassis_speeds()[-1] == (0.0, 0.0, 0.0)
+        assert chain.base_state()["x"] == pytest.approx(position)
+        claimed = chain.coordinator._tasks["operator_hold"].claim().joints
+        assert set(R1PRO_BASE_JOINTS) <= claimed
+        assert not set(R1PRO_GRIPPER_JOINTS) & claimed
+
+
+def test_estop_stops_the_chassis_and_clearing_it_does_not_resume_motion() -> None:
+    with Chain(deadman_s=0.5) as chain:
+        chain.send_sticks(left_y=-1.0)
+        wait_until(
+            lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0, interval=0.02
+        )
+        assert chain.coordinator.set_estop(True)
+        sent_at_estop = len(chain.chassis_speeds())
+        time.sleep(0.3)
+        # While estopped the coordinator sends the connection nothing.
+        assert len(chain.chassis_speeds()) == sent_at_estop
+        wait_until(lambda: chain.fake.status().deadman_fired, timeout=5.0, interval=0.05)
+        assert chain.base_state()["vx"] == pytest.approx(0.0)
+        # Clearing while fresh deflected-stick packets continue must not
+        # resume: the inherited operator hold requires acknowledgement.
+        chain.send_sticks(left_y=-1.0)
+        assert chain.coordinator.set_estop(False)
+        position = chain.base_state()["x"]
+        for _ in range(20):
+            chain.send_sticks(left_y=-1.0)
+            time.sleep(0.02)
+            assert chain.base_state()["vx"] == pytest.approx(0.0)
+        assert chain.base_state()["x"] == pytest.approx(position, abs=1e-6)

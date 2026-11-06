@@ -217,6 +217,7 @@ all_modules = {
     "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
     "arm-pose-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseTwistCoordinator",
     "arm-teleop-module": "dimos.teleop.webxr.extensions.ArmTeleopModule",
+    "arm-thumbstick-teleop-module": "dimos.teleop.webxr.extensions.ArmThumbstickTeleopModule",
     "arm-twist-coordinator": "dimos.robot.manipulators.common.coordinators.ArmTwistCoordinator",
     "b-box-navigation-module": "dimos.agents.skills.visual_servoing.bbox_navigation.BBoxNavigationModule",
     "b1-connection-module": "dimos.robot.unitree.b1.connection.B1ConnectionModule",
