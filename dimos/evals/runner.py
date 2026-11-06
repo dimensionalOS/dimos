@@ -161,7 +161,7 @@ class EvalRunner(Configurable):
         tools: list[str] = []
         try:
             try:
-                env = case.environment.start(agent.config.modules)
+                env = case.environment.start(agent.launch_modules(case.environment))
                 tools = list(
                     dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url))))
                 )

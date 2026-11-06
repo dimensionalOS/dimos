@@ -131,18 +131,19 @@ class LiveEnvironment(Environment):
     def preflight(self, agent: EvalSubject) -> None:
         if self.config.python_guide is not None and not self.config.python_guide.is_file():
             raise RuntimeError(f"python_guide {self.config.python_guide} does not exist")
+        modules = agent.launch_modules(self)
         if self.config.attach:
-            if agent.config.modules:
+            if modules:
                 raise RuntimeError(
                     f"{type(self).__name__} attaches to an existing dimos; "
-                    f"{type(agent).__name__} also adds modules {agent.config.modules!r}"
+                    f"{type(agent).__name__} also adds modules {modules!r}"
                 )
             try:
                 wait_connectable(time.monotonic() + 2.0)
             except TimeoutError as e:
                 raise RuntimeError("attach needs a running dimos") from e
             return
-        validate_blueprints((*self.config.blueprint, *agent.config.modules, *self.config.disable))
+        validate_blueprints((*self.config.blueprint, *modules, *self.config.disable))
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         # SQLite memory codecs are only needed for a running robot.

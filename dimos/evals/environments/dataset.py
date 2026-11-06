@@ -57,13 +57,14 @@ class Dataset(Environment):
         return bool(self.config.mcp_url)
 
     def preflight(self, agent: EvalSubject) -> None:
-        if agent.config.modules and self.config.mcp_url:
+        modules = agent.launch_modules(self)
+        if modules and self.config.mcp_url:
             raise RuntimeError(
                 f"Dataset({self.config.name!r}) already attaches to {self.config.mcp_url}; "
-                f"{type(agent).__name__} also adds modules {agent.config.modules!r}"
+                f"{type(agent).__name__} also adds modules {modules!r}"
             )
-        if agent.config.modules:
-            validate_blueprints(agent.config.modules)
+        if modules:
+            validate_blueprints(modules)
         with open_dataset(self.config.name) as store:
             for select in self.config.select:
                 select(store)

@@ -41,10 +41,10 @@ class ImageFile(Environment):
         super().__init__(path=path, **kwargs)
 
     def preflight(self, agent: EvalSubject) -> None:
-        if agent.config.modules:
+        if modules := agent.launch_modules(self):
             raise RuntimeError(
                 f"ImageFile({self.config.path}) launches nothing; "
-                f"{type(agent).__name__} adds modules {agent.config.modules!r}"
+                f"{type(agent).__name__} adds modules {modules!r}"
             )
         if not self.config.path.is_file():
             raise FileNotFoundError(f"image does not exist: {self.config.path}")
