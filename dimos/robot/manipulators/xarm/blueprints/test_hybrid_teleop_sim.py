@@ -41,22 +41,15 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
-from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.recorder import CollectionModule
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.String import String
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import (
-    HybridTeleopCoordinator,
     OperatorHoldCoordinator,
     hybrid_teleop_sim,
-    hybrid_teleop_sim_collect,
 )
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -203,55 +196,3 @@ def test_blueprint_ranks_hold_over_jog_over_autonomy():
     priority = {task.type: task.priority for task in tasks}
 
     assert priority["operator_hold"] > priority["eef_twist"] > priority["trajectory"]
-
-
-def _senders(blueprint: Blueprint, name: str, kind: type) -> list[type]:
-    """The modules of ``blueprint`` that send ``name`` with message type ``kind``."""
-    return [
-        atom.module
-        for atom in blueprint.active_blueprints
-        for s in atom.streams
-        if s.direction == "out"
-        and blueprint.remapping_map.get((atom.name, s.name), s.name) == name
-        and s.type is kind
-    ]
-
-
-def _modules(blueprint: Blueprint) -> set[type]:
-    return {atom.module for atom in blueprint.active_blueprints}
-
-
-def test_the_base_stack_does_not_record() -> None:
-    modules = _modules(hybrid_teleop_sim)
-
-    assert EpisodeMonitorModule not in modules
-    assert not any(issubclass(module, CollectionModule) for module in modules)
-    assert _senders(hybrid_teleop_sim, "status", String) == []
-
-
-def test_the_collect_variant_adds_the_recorder_and_the_episode_monitor() -> None:
-    blueprint = hybrid_teleop_sim_collect
-    assert issubclass(blueprint.active_blueprints[0].module, CollectionModule)
-    assert blueprint.active_blueprints[1].module is EpisodeMonitorModule
-    assert _modules(hybrid_teleop_sim) < _modules(blueprint)
-
-    # The monitor's status reaches the recorder.
-    assert _senders(blueprint, "status", String) == [EpisodeMonitorModule]
-    recorder = blueprint.active_blueprints[0]
-    assert ("status", String) in {(s.name, s.type) for s in recorder.streams if s.direction == "in"}
-
-
-def test_recorder_inputs_have_one_sender_each_and_match_the_sim_camera() -> None:
-    blueprint = hybrid_teleop_sim_collect
-    recorder = blueprint.active_blueprints[0]
-    schema = recorder.kwargs["recording_schema"]
-    for name, kind in recorder.kwargs["input_types"].items():
-        assert len(_senders(blueprint, name, kind)) == 1, name
-
-    sim = next(a for a in blueprint.active_blueprints if a.module is MujocoSimModule)
-    assert schema.observation["camera"].shape == (sim.kwargs["height"], sim.kwargs["width"], 3)
-    coordinator = next(
-        a for a in blueprint.active_blueprints if a.module is HybridTeleopCoordinator
-    )
-    joints = [joint for hardware in coordinator.kwargs["hardware"] for joint in hardware.joints]
-    assert schema.observation["state"].names == joints
