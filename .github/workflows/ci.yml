@@ -913,16 +913,16 @@ jobs:
         # HOME is /github/home, a bind mount owned by the runner's host user,
         # and PulseAudio refuses a home directory it does not own ("Home
         # directory not accessible"), daemon and client alike: keep its
-        # runtime and state directories under RUNNER_TEMP instead, and hand
-        # the runtime path to every later step so clients find the socket.
+        # runtime and state directories in the container's /tmp instead, and
+        # hand the runtime path to every later step so clients find the socket.
         if: matrix.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y pulseaudio
-          echo "PULSE_RUNTIME_PATH=$RUNNER_TEMP/pulse" >> "$GITHUB_ENV"
-          export PULSE_RUNTIME_PATH="$RUNNER_TEMP/pulse" PULSE_STATE_PATH="$RUNNER_TEMP/pulse-state"
-          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target="file:$RUNNER_TEMP/pulseaudio.log" ||
-            { cat "$RUNNER_TEMP/pulseaudio.log"; exit 1; }
+          echo "PULSE_RUNTIME_PATH=/tmp/pulse" >> "$GITHUB_ENV"
+          export PULSE_RUNTIME_PATH=/tmp/pulse PULSE_STATE_PATH=/tmp/pulse-state
+          pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=file:/tmp/pulseaudio.log ||
+            { cat /tmp/pulseaudio.log; exit 1; }
           uv run python -c "import sounddevice"
       - name: Install Node 24 for the Pi and dimcode CLIs
         uses: actions/setup-node@v7
