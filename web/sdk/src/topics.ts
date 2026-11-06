@@ -202,6 +202,8 @@ interface Identity extends AdaptPolicy {
 interface PendingUpdate {
   handle: Handle;
   cap?: Partial<TopicSettings>;
+  /** Runs with the acknowledgement, before the next queued change. */
+  applied?: () => void;
   options: TopicSettingsUpdate;
   resolve: (settings: TopicSettings) => void;
   reject: (error: TopicError) => void;
@@ -209,6 +211,7 @@ interface PendingUpdate {
 interface InFlight {
   revision: number;
   cap: Partial<TopicSettings>;
+  applied?: () => void;
   /** The request in force once the relay acknowledges. */
   requested: Record<string, unknown>;
   resolve: (settings: TopicSettings) => void;
@@ -573,14 +576,14 @@ export class TopicClient implements Topics {
             }
             return null;
           },
-          apply: (cap) =>
+          apply: (cap, applied) =>
             new Promise((resolve, reject) => {
               const handle = [...group!.handles].find((h) => h.group === group);
               if (!handle) {
                 reject(new TopicError("closed", "rejected"));
                 return;
               }
-              const update: PendingUpdate = { handle, cap, options: {}, resolve, reject };
+              const update: PendingUpdate = { handle, cap, applied, options: {}, resolve, reject };
               if (group!.pending === null) this.#change(group!, update);
               else group!.queued.push(update);
             }),
@@ -719,7 +722,14 @@ export class TopicClient implements Topics {
     if (inPlace) {
       if (this.#groups.get(group.signature) === group) this.#groups.delete(group.signature);
       const revision = ++group.revision;
-      group.pending = { revision, requested, cap, resolve: update.resolve, reject: update.reject };
+      group.pending = {
+        revision,
+        requested,
+        cap,
+        applied: update.applied,
+        resolve: update.resolve,
+        reject: update.reject,
+      };
       const options: TopicSettingsUpdate = { ...update.options };
       const previous = applyCap(group.requested, group.cap);
       // A disappearing cap resets the relay override, including null for a
@@ -1079,6 +1089,9 @@ export class TopicClient implements Topics {
       group.signature = signatureOf(group.keyExpr, group.identity, pending.requested);
     }
     group.settings = msg.settings;
+    // The controller's rung goes with the cap: a page update drained below
+    // may split the group, and the new group inherits both.
+    pending.applied?.();
     for (const handle of group.handles) if (handle.group === group) handle.applied();
     pending.resolve(msg.settings);
     this.#next(group);

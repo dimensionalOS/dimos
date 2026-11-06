@@ -69,9 +69,10 @@ function controller() {
       ceiling: () => ceiling,
       settings: () => settings,
       receiver: () => null,
-      apply: vi.fn((cap) => {
+      apply: vi.fn((cap, applied) => {
         changes.push({ profile, at: Date.now(), cap });
         settings = applyCap(ceiling, cap);
+        applied();
         return Promise.resolve(settings);
       }),
     };
@@ -415,11 +416,13 @@ function clientSetup() {
       settings: normalizeTopicSettings(ranges[sub.profile], requested.get(sub.id)!).settings!,
     });
   };
+  let holding = false;
+  const held: (() => void)[] = [];
   client.connected((msg) => {
     sent.push(msg);
     if (msg.t === "topic_sub") queueMicrotask(() => ready(msg));
     if (msg.t === "topic_update") {
-      queueMicrotask(() => {
+      const reply = () => {
         const request = requested.get(msg.id)!;
         for (const [k, v] of Object.entries(msg.options)) {
           if (v === null) delete request[k];
@@ -431,7 +434,9 @@ function clientSetup() {
           revision: msg.revision,
           settings: normalizeTopicSettings(ranges[profiles.get(msg.id)!], request).settings!,
         });
-      });
+      };
+      if (holding) held.push(reply);
+      else queueMicrotask(reply);
     }
   }, vi.fn());
   client.onMessage({
@@ -447,7 +452,21 @@ function clientSetup() {
     }],
   });
   const updates = () => sent.filter((m): m is TopicUpdateMsg => m.t === "topic_update");
-  return { client, sent, updates, tick: (ms = 500) => vi.advanceTimersByTimeAsync(ms) };
+  /** Keep the relay's acknowledgements until `release`. */
+  const hold = (on: boolean) => {
+    holding = on;
+  };
+  const release = () => {
+    for (const reply of held.splice(0)) reply();
+  };
+  return {
+    client,
+    sent,
+    updates,
+    hold,
+    release,
+    tick: (ms = 500) => vi.advanceTimersByTimeAsync(ms),
+  };
 }
 
 describe("acknowledged cap layer", () => {
@@ -514,6 +533,28 @@ describe("acknowledged cap layer", () => {
     expect(one.settings()).toMatchObject({ quality: 75, maxHz: 30 });
     expect(two.settings()).toMatchObject({ quality: 75, maxHz: 12 });
     expect(vi.getTimerCount()).toBe(0);
+  });
+  it("lifts the cap a page update inherited while the reduction was being acknowledged", async () => {
+    const h = clientSetup();
+    const one = h.client.subscribe("camera", { profile: JPEG }, vi.fn());
+    const two = h.client.subscribe("camera", { profile: JPEG }, vi.fn());
+    await h.tick(0);
+    h.hold(true);
+    h.client.pong(1);
+    await h.tick(1000);
+    expect(h.updates()).toHaveLength(1);
+    // Queued behind the reduction: acknowledging it drains this update at
+    // once, and the group it splits off inherits the cap with its rung.
+    const moved = two.update({ maxHz: 12 });
+    h.release();
+    h.hold(false);
+    await h.tick(0);
+    await expect(moved).resolves.toMatchObject({ quality: 56, maxHz: 12 });
+    expect(one.settings()).toMatchObject({ quality: 56, maxHz: 30 });
+    h.client.setAdaptation(false);
+    await h.tick(2000);
+    expect(one.settings()).toMatchObject({ quality: 75, maxHz: 30 });
+    expect(two.settings()).toMatchObject({ quality: 75, maxHz: 12 });
   });
   it("checks a page update against the ranges before the cap hides it", async () => {
     const h = clientSetup();

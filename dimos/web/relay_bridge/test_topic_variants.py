@@ -37,7 +37,7 @@ from dimos.web.relay_bridge.topic_catalog import TopicCatalog
 from dimos.web.relay_bridge.topic_mailbox import TopicIngressBudget, TopicSample
 from dimos.web.relay_bridge.topic_profiles import normalize_settings
 from dimos.web.relay_bridge.topic_protocol import TopicOpen
-from dimos.web.relay_bridge.topic_service import _Route
+from dimos.web.relay_bridge.topic_service import TopicServiceConfig, _Route, capabilities
 from dimos.web.relay_bridge.topic_transform import TopicTransforms
 from dimos.web.relay_bridge.topic_transport import LatestTopicWriter, TopicByteBudget
 from dimos.web.relay_bridge.topic_video import TopicVideo, resolve_encoder
@@ -335,6 +335,12 @@ async def test_a_variant_retired_while_encoding_drops_its_frame_and_keeps_the_ro
     assert route._error is None
     assert harness.client.sent == []
     assert harness.frames.empty()
+
+
+def test_in_place_video_reconfiguration_is_advertised_with_the_video_profile():
+    config = TopicServiceConfig(source="workspace", relay_url="http://127.0.0.1:1")
+    assert capabilities(config, video=True).videoReconfigure
+    assert not capabilities(config, video=False).videoReconfigure
 
 
 async def test_video_variant_settings_change_in_place(harness, mocker):

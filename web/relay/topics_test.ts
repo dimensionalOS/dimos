@@ -859,6 +859,7 @@ const rejection = (revision: number, code: string, id = "cam"): Msg => ({
 function mediaSetup(
   profileOptions: Record<string, OptionRanges> | null = OPTIONS,
   profiles = ["raw", "image.jpeg.low.v1"],
+  videoReconfigure = false,
 ) {
   let clock = 1000;
   const registry = new TopicRegistry(() => clock);
@@ -868,6 +869,7 @@ function mediaSetup(
     write: false,
     profiles,
     ...(profileOptions === null ? {} : { profileOptions }),
+    ...(videoReconfigure ? { videoReconfigure } : {}),
   });
   provider.messages = [];
   const viewers = new Map<string, Viewer>();
@@ -1351,8 +1353,12 @@ const VIDEO_OPTIONS: Record<string, OptionRanges> = {
     maxBitrate: { kind: "int", min: 100000, max: 4500000, default: 4500000 },
   },
 };
-function videoSetup() {
-  const h = mediaSetup(VIDEO_OPTIONS, ["raw", "image.jpeg.low.v1", "video.h264.v1"]);
+function videoSetup(videoReconfigure = true) {
+  const h = mediaSetup(
+    VIDEO_OPTIONS,
+    ["raw", "image.jpeg.low.v1", "video.h264.v1"],
+    videoReconfigure,
+  );
   const v = h.subscribe("cam", undefined, { profile: "video.h264.v1" });
   h.opened();
   const ready = v.ready()[0];
@@ -1713,22 +1719,26 @@ Deno.test("topic load is per negotiated viewer and congestion resets exclude hea
   const budget = new TopicBudget(10);
   const other = new TopicBudget(10);
   const sink = new Sink();
+  let clock = 0;
   const egress = new TopicEgress("latest", sink, [budget], () => {
     throw new Error("unexpected overflow");
-  }, () => 0);
+  }, () => clock);
   try {
     egress.offer("a", new Uint8Array(4));
-    egress.offer("a", new Uint8Array(4));
+    egress.offer("a", new Uint8Array(4)); // per-key replacement
     assertEquals(budget.aborted, 0);
     egress.activate();
-    await flush();
-    egress.reap(500);
+    await flush(); // "a" accepted
+    clock = 499;
+    egress.offer("b", new Uint8Array(4)); // fits beside "a", not yet accepted
+    clock = 500;
+    egress.reap(clock); // "a" expires accepted beside a 1 ms old write: healthy
     assertEquals(budget.aborted, 0);
-    egress.offer("a", new Uint8Array(6));
-    await flush();
-    egress.offer("b", new Uint8Array(6));
+    await flush(); // "b" accepted
+    egress.offer("c", new Uint8Array(8)); // the bound resets accepted "b"
     assertEquals(budget.aborted, 1);
-    egress.reap(500);
+    clock = 1000;
+    egress.reap(clock); // "c" was never accepted within its lifetime
     assertEquals(budget.aborted, 2);
     assertEquals(other.aborted, 0);
   } finally {
@@ -1762,8 +1772,66 @@ Deno.test("a sole video viewer reconfigures its variant without replacing its pe
   }
 });
 
+Deno.test("a provider without videoReconfigure moves a sole viewer to a new variant and re-offers", () => {
+  const h = videoSetup(false);
+  try {
+    h.offer();
+    const [peer] = h.forwarded();
+    h.fromProvider({ ...peer, t: "topic_rtc_answer", sdp: "answer" });
+    h.update(h.v, 1, { maxHz: 15 });
+    assertEquals(h.variants().map((m) => [m.variant, m.settings.maxHz]), [["v2", 15]]);
+    h.variantReady();
+    assertEquals(h.rtc().map((m) => m.t), ["topic_rtc_answer", "topic_rtc_close"]);
+    assertEquals(h.v.messages.at(-1), {
+      t: "topic_applied",
+      id: "cam",
+      revision: 1,
+      settings: { maxHz: 15, maxResolution: [1920, 1080], maxBitrate: 4500000 },
+    });
+    assertEquals(
+      h.provider.messages.filter((m) => m.t === "topic_rtc_close").map((m) => m.reason),
+      ["settings_changed"],
+    );
+  } finally {
+    h.close();
+  }
+});
+
+Deno.test("a sole viewer asking for settings another variant encodes moves there instead of duplicating it", () => {
+  const h = videoSetup();
+  try {
+    const profile = "video.h264.v1";
+    const two = h.subscribe("two", { maxResolution: [640, 360] }, { profile });
+    assertEquals(h.variants().map((m) => m.variant), ["v2"]);
+    h.variantReady();
+    assertEquals(two.ready().length, 1);
+    h.update(two, 1, { maxResolution: null });
+    // v1 already encodes the default: v2 is not rewritten into a duplicate.
+    assertEquals(h.variants().map((m) => m.variant), ["v2"]);
+    assertEquals(two.messages.at(-1), {
+      t: "topic_applied",
+      id: "cam",
+      revision: 1,
+      settings: { maxHz: 30, maxResolution: [1920, 1080], maxBitrate: 4500000 },
+    });
+    h.tick(VARIANT_GRACE_MS);
+    assertEquals(
+      h.provider.messages.filter((m) => m.t === "topic_variant_close").map((m) => m.variant),
+      ["v2"],
+    );
+    // Four distinct configurations fit the variant limit.
+    for (const [name, maxHz] of [["twenty", 20], ["ten", 10], ["five", 5]] as const) {
+      const viewer = h.subscribe(name, { maxHz }, { profile });
+      assertEquals(viewer.messages.filter((m) => m.t === "topic_error"), []);
+    }
+    assertEquals(h.variants().map((m) => m.settings.maxHz), [30, 20, 10, 5]);
+  } finally {
+    h.close();
+  }
+});
+
 Deno.test("a video variant still opening cannot change in place", () => {
-  const h = mediaSetup(VIDEO_OPTIONS, ["video.h264.v1"]);
+  const h = mediaSetup(VIDEO_OPTIONS, ["video.h264.v1"], true);
   try {
     const viewer = h.subscribe("cam", undefined, { profile: "video.h264.v1" });
     h.update(viewer, 1, { maxResolution: [640, 360] });
