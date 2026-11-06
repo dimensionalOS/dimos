@@ -109,3 +109,13 @@ def test_the_chest_stacks_calibrate_a_fixed_camera_against_the_held_plate() -> N
     assert tuple(config["nominal_translation"]) == (0.6, -0.5, 0.7)
     assert config["board"]["ids_from"] == 100 and config["board"]["squares_x"] == 5
     assert list(config["home_joints"]) == XARM6_CHEST_CALIBRATION_HOME
+
+
+def test_the_shipped_wrist_result_is_a_passed_link6_mount() -> None:
+    from dimos.manipulation.calibration.store import load_hand_eye_file
+    from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_CALIBRATION_DIR
+
+    mount = load_hand_eye_file(XARM_CALIBRATION_DIR / "xarm6_wrist_camera.json")
+    assert mount is not None
+    assert (mount.frame_id, mount.child_frame_id) == ("link6", "camera_link")
+    assert abs(mount.translation.x - 0.077) < 0.002

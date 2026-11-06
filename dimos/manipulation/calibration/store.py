@@ -85,8 +85,15 @@ def save_hand_eye(
 
 
 def load_hand_eye(name: str) -> Transform | None:
-    """The mount transform of a calibration that passed, or None when there is none."""
-    path = hand_eye_path(name)
+    """The mount transform of a calibration that passed on this machine, or None."""
+    return load_hand_eye_file(hand_eye_path(name))
+
+
+def load_hand_eye_file(path: Path) -> Transform | None:
+    """The mount transform in a result file, or None when the file is missing or did not pass.
+
+    Takes the state file of a run on this machine or a measured result shipped with a robot
+    package, both written in the ``save_hand_eye`` layout."""
     if not path.exists():
         return None
     data = json.loads(path.read_text())
