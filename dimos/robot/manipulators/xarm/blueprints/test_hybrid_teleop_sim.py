@@ -22,11 +22,13 @@ deterministic.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     OperatorHoldStatus,
@@ -106,6 +108,8 @@ class Rig:
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
         )
+        # The coordinator reads joint positions from its tick loop's last tick.
+        self.coordinator._tick_loop = self._loop
 
     def tick(self) -> None:
         self._loop._tick()
@@ -181,3 +185,14 @@ def test_request_operator_reaches_the_coordinator() -> None:
     assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
         "ControlCoordinator"
     )
+
+
+def test_blueprint_ranks_hold_over_jog_over_autonomy():
+    tasks = next(
+        cast("list[TaskConfig]", cast("dict[str, Any]", atom.kwargs)["tasks"])
+        for atom in hybrid_teleop_sim.blueprints
+        if issubclass(atom.module, ControlCoordinator)
+    )
+    priority = {task.type: task.priority for task in tasks}
+
+    assert priority["operator_hold"] > priority["eef_twist"] > priority["trajectory"]

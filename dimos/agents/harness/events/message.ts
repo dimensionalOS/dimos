@@ -27,6 +27,7 @@ export class EventDrafts {
     return {
       source: { kind: "event", event },
       text: lines.join("\n"),
+      // Events keep inline images: InputGate truncates text, so Preview: paths alone would drop exports.
       images: rendering?.images ?? [],
       render: rendering?.details ?? null,
       whenBusy: "followUp",

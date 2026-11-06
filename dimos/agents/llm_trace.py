@@ -41,7 +41,7 @@ logger = setup_logger()
 
 REQUEST_SUFFIX = "-request.json"
 RESPONSE_SUFFIX = "-response.json"
-_DROPPED_HEADERS = {"authorization", "x-api-key", "openai-organization", "cookie"}
+_DROPPED_HEADERS = {"authorization", "x-api-key", "x-goog-api-key", "openai-organization", "cookie"}
 
 
 def _next_seq(trace_dir: Path) -> int:

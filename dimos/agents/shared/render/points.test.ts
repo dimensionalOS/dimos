@@ -133,7 +133,7 @@ test(
     );
     assert.equal(
       rendering.text,
-      `probe.json · ${path} · sha256 ${exported.sha256} · 600 points, frame map, timestamp 1700000000.25, painted projection`,
+      `probe.json · ${path} · sha256 ${exported.sha256} · 600 points, frame map, timestamp 1700000000.25, painted projection\nPreview: ${view.preview.path}`,
     );
     assert.deepEqual(await readFile(path), original);
 

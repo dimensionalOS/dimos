@@ -15,10 +15,11 @@
 """Simulated xArm7 pick and place that an operator can hold and e-stop.
 
 The same modules as xarm-perception-sim, plus the operator hold task, the
-request_operator skill an agent calls to ask for the hold, on/off streams for
-the hold and the e-stop, a point cloud of the scene on ``scene_pointcloud`` and
-the arm's URDF, so a Desktop page can show the arm and the scene and stop or
-hold it.
+request_operator skill an agent calls to ask for the hold, an end-effector jog
+on ``ee_twist_command``, on/off streams for the hold and the e-stop, a point
+cloud of the scene on ``scene_pointcloud`` and the arm's URDF, so a Desktop page
+can show the arm and the scene, stop or hold it, and drive it by hand after
+taking over.
 """
 
 from __future__ import annotations
@@ -39,7 +40,12 @@ from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
+from dimos.robot.manipulators.common.blueprints import (
+    coordinator,
+    eef_twist_task,
+    trajectory_task,
+)
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
     XARM_HEURISTIC_AIM,
@@ -113,6 +119,14 @@ class OperatorHoldCoordinator(ControlCoordinator):
             logger.exception("Publishing e-stop status failed")
 
 
+class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
+    """OperatorHoldCoordinator plus the ``ee_twist_command`` input the jog task reads.
+
+    A TwistStamped on ``ee_twist_command`` moves the gripper tip at that
+    velocity (m/s, rad/s, world frame); a zero twist, or none for 0.3 s, stops it.
+    """
+
+
 # The planner publishes these links on tf at the arm's real mount; the Desktop
 # draws each URDF link at its tf frame.
 _ARM_LINKS = ["link_base", *(f"link{i}" for i in range(1, 8))]
@@ -153,6 +167,12 @@ hybrid_teleop_sim = autoconnect(
         hardware=[_xarm7_sim_hw],
         tasks=[
             trajectory_task(_xarm7_sim_hw),
+            eef_twist_task(
+                _xarm7_sim_hw,
+                robot_model=_xarm7_sim_model,
+                target_frame="link_tcp",
+                priority=20,
+            ),
             TaskConfig(
                 name="arm_gripper",
                 type="gripper",
@@ -161,7 +181,7 @@ hybrid_teleop_sim = autoconnect(
             ),
             operator_hold_task(),
         ],
-        cls=OperatorHoldCoordinator,
+        cls=HybridTeleopCoordinator,
         instance_name="ControlCoordinator",
     ),
     # Serves the URDF and its meshes; the planner already puts the links on tf.

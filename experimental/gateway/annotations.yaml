@@ -128,18 +128,6 @@ robots:
           title: Several Go2s, keyboard driving
           description: Several Go2s, with a keyboard driving window per robot.
           recommended_config: *fleet_config
-        unitree-go2-nav-3d:
-          title: Go2 3D navigation (Mid-360)
-          description: '3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.'
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization:
-          title: Go2 3D navigation in a saved map
-          description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization-replay:
-          title: Go2 3D navigation in a saved map (replay)
-          description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-          recommended_config: *robot_ip_only
         unitree-go2-map:
           title: Go2 with a permanent map
           description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
@@ -213,9 +201,11 @@ robots:
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
+          recommended_config: []
         go2-sim-nav:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+          recommended_config: []
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
@@ -390,7 +380,7 @@ robots:
       blueprints:
         deeprobotics-m20-kronknav-control:
           title: M20 3D navigation
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning and holonomic control.'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
@@ -468,13 +458,23 @@ robots:
             placeholder: 192.168.1.185
             required: false
             when: {simulation: ''}
+        xarm7-teleop:
+          title: xArm7 teleop
+          description: Move a real xArm7's end and its gripper from the Desktop Manipulation app, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-teleop:
+          title: xArm6 teleop
+          description: Move a real xArm6's end and its gripper from the Desktop Manipulation app, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
         xarm-perception-sim-agent:
           title: xArm pick and place agent (sim)
           description: The simulated pick-and-place stack plus an AI agent with manipulation skills.
           recommended_config: []
         hybrid-teleop-sim:
           title: xArm pick and place with operator hold (sim)
-          description: 'Simulated xArm7 pick and place that an operator can hold, release and e-stop: no robot needed.'
+          description: 'Simulated xArm7 pick and place that an operator can hold, jog by hand, release and e-stop: no robot needed.'
           recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
@@ -614,6 +614,36 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+    makermods_metal:
+      name: MakerMods Metal
+      description: The six-joint Metal arm and gripper, over CAN.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: can_port, label: CAN port or USB serial}
+      blueprints:
+        coordinator-makermods-metal:
+          title: Metal coordinator
+          description: A Metal arm behind a ControlCoordinator.
+        makermods-metal-planner-coordinator:
+          title: Metal motion planning
+          description: Motion planning, execution, and Viser for a Metal arm.
+    dual_makermods_metal:
+      name: Dual MakerMods Metal
+      description: Two Metal arms in one planning and collision world.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/dual_makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: ControlCoordinator, field: left_can_port, label: Left CAN port or USB serial}
+        - {module: ControlCoordinator, field: right_can_port, label: Right CAN port or USB serial}
+      blueprints:
+        dual-makermods-metal-planner-coordinator:
+          title: Dual Metal motion planning
+          description: Coordinated motion planning, execution, and Viser for two Metal arms.
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -623,6 +653,15 @@ robots:
       defaults:
         recommended_config: *can_arm_config
       blueprints:
+        openyam-teach-collection:
+          title: OpenYAM hand-guided recording
+          description: Guide an OpenYAM arm by hand and record demonstrations.
+        openyam-lerobot-rollout:
+          title: OpenYAM policy rollout
+          description: Run a trained LeRobot policy on an OpenYAM arm.
+        openyam-lerobot-quest-rollout:
+          title: OpenYAM VR policy rollout
+          description: Run a trained policy with VR control for an OpenYAM arm.
         keyboard-teleop-openyam:
           title: OpenYAM keyboard driving
           description: Move an OpenYAM arm with this computer's keyboard.
@@ -673,6 +712,27 @@ robots:
         teleop-webxr-openarm:
           title: OpenArm VR teleop
           description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+    seeed_b601_dm:
+      name: Seeed reBot B601-DM
+      description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
+      type: arm
+      manufacturer: Seeed Studio
+      dirs: [dimos/robot/manipulators/seeed_b601_dm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - module: controlcoordinator
+          field: can_port
+          label: CAN port
+          placeholder: /dev/ttyACM0
+          when: {simulation: ''}
+      blueprints:
+        seeed-b601-dm-planner-coordinator:
+          title: B601-DM motion planning
+          description: Motion planning and execution for a Seeed reBot B601-DM arm.
+        coordinator-seeed-b601-dm:
+          title: B601-DM coordinator
+          description: A B601-DM behind a ControlCoordinator (a building block).
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
@@ -764,10 +824,6 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/assembly, dimos/hardware/sensors]
       blueprints:
-        mid360-fastlio:
-          title: Mid-360 SLAM (FAST-LIO)
-          description: Live SLAM from a Livox Mid-360 lidar.
-          starter: 20
         real-sense-camera-vis:
           title: RealSense viewer
           description: A RealSense's color, depth and RGBD cloud in Rerun.
@@ -779,12 +835,6 @@ robots:
         mid360:
           title: Mid-360 lidar
           description: A Livox Mid-360's point cloud and IMU.
-        mid360-fastlio-voxels:
-          title: Mid-360 FAST-LIO + voxel map
-          description: FAST-LIO SLAM feeding a voxel grid map.
-        mid360-fastlio-voxels-native:
-          title: Mid-360 FAST-LIO voxels (native)
-          description: FAST-LIO with its own native voxel map.
         mid360-pointlio:
           title: Mid-360 SLAM (Point-LIO)
           description: Live Point-LIO SLAM from a Livox Mid-360.
@@ -800,9 +850,6 @@ robots:
         demo-mid360-pcap-replay:
           title: Mid-360 pcap replay
           description: Replays a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap) through the live driver.
-        demo-virtual-mid360-fastlio:
-          title: Virtual Mid-360 + FAST-LIO
-          description: FAST-LIO fed by a virtual Mid-360 replaying a capture.
         demo-virtual-mid360-pointlio:
           title: Virtual Mid-360 + Point-LIO
           description: Point-LIO fed by a virtual Mid-360 replaying a capture.

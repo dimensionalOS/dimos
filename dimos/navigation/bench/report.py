@@ -31,7 +31,6 @@ from typing import Literal, TypeAlias, get_args
 from jinja2 import Environment, FileSystemLoader
 from pydantic import TypeAdapter
 
-from dimos.navigation.bench.ground_truth import GO2
 from dimos.navigation.bench.paired import (
     Attempt,
     LevelTally,
@@ -45,7 +44,7 @@ from dimos.navigation.bench.paired import (
 from dimos.navigation.bench.runner import RECORDING_FILE, RESULTS_FILE, RUN_FILE, SUITE_FILE
 from dimos.navigation.bench.scorer import Outcome, contact_name, definitions
 from dimos.navigation.bench.snapshot import bounds, sample, snapshot_path
-from dimos.navigation.bench.suite import PROBES, Case, Manifest, Pose, Rules
+from dimos.navigation.bench.suite import PROBES, REFERENCE_ENVELOPE, Case, Manifest, Pose, Rules
 from dimos.simulation.scenes.procedural import Rect
 
 REPORT_FILE = "report.html"
@@ -84,6 +83,7 @@ class Row:
     final_error_xy: float | None
     collisions: int | None
     feature_m: float | None
+    feature_met: bool | None
     first_contact_speed: float | None
     near_fall: bool
     mismatch: bool
@@ -319,6 +319,7 @@ def _row(case: Case, record: dict[str, object], episode: Path) -> Row:
         final_error_xy=_float(metrics.get("final_error_xy")),
         collisions=None if metrics.get("collisions") is None else int(metrics["collisions"]),
         feature_m=_float(metrics.get("feature_m")),
+        feature_met=_feature_met(metrics),
         first_contact_speed=_float(metrics.get("first_contact_speed")),
         near_fall=record["outcome"] != "fall" and bool(metrics.get("trunk_floor_s")),
         mismatch=bool(metrics.get("mismatch")),
@@ -334,6 +335,14 @@ def _contact(name: str) -> str:
 
 def _text(value: object) -> str | None:
     return None if value is None else str(value)
+
+
+def _feature_met(metrics: dict[str, object]) -> bool | None:
+    """Whether the body reached the feature, at the reference half width if results lack the flag."""
+    if (met := metrics.get("feature_met")) is not None:
+        return bool(met)
+    feature_m = _float(metrics.get("feature_m"))
+    return None if feature_m is None else feature_m < REFERENCE_ENVELOPE.half_width
 
 
 def _float(value: object) -> float | None:
@@ -387,7 +396,7 @@ def encountered(report: Report) -> set[int] | None:
     rows = controls(report)
     if not rows:
         return None
-    return {r.case.seed for r in rows if r.feature_m is not None and r.feature_m < GO2.radius}
+    return {r.case.seed for r in rows if r.feature_met}
 
 
 def by_level(report: Report) -> list[LevelRow]:
@@ -496,7 +505,7 @@ def thumbnail(report: Report) -> Thumbnail | None:
                 box.center[1] + box.half[1],
             ),
             turn_deg=math.degrees(box.yaw),
-            raised=box.center[2] - box.half[2] > scene.start[2] + GO2.step,
+            raised=box.center[2] - box.half[2] > scene.start[2] + REFERENCE_ENVELOPE.step,
         )
         for box in scene.boxes
         if box.kind != "floor"
