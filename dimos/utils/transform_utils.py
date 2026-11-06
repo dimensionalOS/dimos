@@ -106,7 +106,7 @@ def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
 
     Args:
         pose: Input pose
-        transform_matrix: 4x4 transformation matrix to apply
+        transform: 4x4 transformation matrix or Transform to apply
 
     Returns:
         Transformed pose
