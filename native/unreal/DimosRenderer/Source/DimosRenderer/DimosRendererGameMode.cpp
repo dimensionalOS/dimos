@@ -39,6 +39,7 @@
 #include "Sockets.h"
 #include "UnrealClient.h"
 #include "UObject/Package.h"
+#include "Widgets/SWindow.h"
 
 #include <limits>
 #include <atomic>
@@ -314,6 +315,8 @@ ADimosRendererGameMode::ADimosRendererGameMode()
 void ADimosRendererGameMode::StartPlay()
 {
     Super::StartPlay();
+    bHeadless = FParse::Param(FCommandLine::Get(), TEXT("DimosHeadless"));
+    if (bHeadless) FViewport::SetGameRenderingEnabled(false);
     // This process serves explicit sensor captures. Rendering the unused player
     // viewport as well spends GPU time on a third view on every engine tick.
     if (auto* Viewport = GetWorld()->GetGameViewport()) Viewport->bDisableWorldRendering = true;
@@ -409,6 +412,16 @@ void ADimosRendererGameMode::EndPlay(const EEndPlayReason::Type Reason)
 void ADimosRendererGameMode::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    // Metal's windowed present path waits for a display drawable even with
+    // NoVSync. RenderOffscreen also forces Slate to draw hidden windows, so the
+    // client uses DimosHeadless instead on macOS. SceneCapture remains active.
+    if (bHeadless)
+    {
+        if (auto* Viewport = GetWorld()->GetGameViewport())
+        {
+            if (auto Window = Viewport->GetWindow(); Window && Window->IsVisible()) Window->HideWindow();
+        }
+    }
     PollCapture();
     if (Socket && !PumpSocket()) FPlatformMisc::RequestExit(false);
 }

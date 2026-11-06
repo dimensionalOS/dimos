@@ -50,7 +50,11 @@ wait in texture staging maps. One pending capture owns its snapshot identity,
 and another request cannot change the scene until its result has been sent.
 Completed replies are sent in the same game tick. The unused player viewport
 is disabled so only sensor views render; camera Lumen, reflections, and temporal
-AA stay enabled. Physics does not wait for the camera.
+AA stay enabled. On macOS, offscreen launches use `-DimosHeadless` to disable
+viewport drawing and hide the Slate window. UE 5.7's `-RenderOffscreen` forces
+Slate to draw even hidden windows, and Metal's windowed present path still waits
+for a display drawable despite `-NoVSync`. Other platforms retain
+`-RenderOffscreen`. Physics does not wait for the camera.
 
 Rendering features available on the host GPU still determine whether Lumen uses
 software or hardware tracing. URDF robot visuals currently use diffuse colors;
@@ -172,8 +176,22 @@ source of the generated `office.urdf`.
   from 7.64fps to 10.86fps; median adapter latency fell from 130.9ms to 92.7ms.
   This includes removing the unused player viewport. The configured 15Hz is
   still an acquisition ceiling, not an achieved frame rate.
+- Profiling on the M4 Max identified a further presentation stall: 935/2220 RHI
+  thread samples were in Metal drawable acquisition. GPU-buffer CPU readback
+  cost only 0.35ms. Controlled 640×480 RGB-D captures averaged 84.9ms; half
+  resolution still took 75.2ms. Disabling the game viewport alone did not help.
+  Suppressing both viewport drawing and Slate presentation reduced the same
+  capture benchmark to 61.6ms (16.2fps), retaining the rendering features.
+- The resulting headless path still does **not** sustain 15fps in the full stack:
+  two 15s steady intervals measured 12.9fps and 14.0fps. In the second run,
+  native capture averaged 65.7ms and the socket transaction 67.2ms; replaying
+  the exact same camera pose with physics/policy/lidar stopped reduced those
+  to 60.0ms and 61.6ms. The replay freezes the pose, so this comparison includes
+  both contention and changing geometry/camera updates; it does not isolate
+  either contribution or establish a pure GPU execution time. The second walking check
+  covered 0.59m and passed, as did native calibration and the 39 renderer tests.
 - Camera, lidar, and physics reported no runtime errors; all workers and the
-  owned Unreal process stopped cleanly. The existing control gate rejected 33
+  owned Unreal process stopped cleanly. The existing control gate rejected
   duplicate/out-of-order commands. The camera reported no input drops or gaps;
   lidar input drops and initial gaps are recorded in the saved report.
 - 85 sim2 tests passed with native integration tests excluded from that suite;
@@ -184,3 +202,7 @@ source of the generated `office.urdf`.
 
 These measurements validate a short flat-floor walk, not traversal of every
 stair, obstacle, or room. Evidence is in the local `validation` directory.
+
+Detailed timing JSON, raw GPU CSVs, a CPU sample, and the temporary profiling
+harness are saved locally under `validation/performance`. The profiling-only
+native code is not part of the runtime build.

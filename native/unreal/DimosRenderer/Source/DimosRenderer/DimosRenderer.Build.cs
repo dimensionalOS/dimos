@@ -7,7 +7,7 @@ public class DimosRenderer : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "InputCore", "Json", "JsonUtilities",
-            "Sockets", "Networking", "ProceduralMeshComponent", "RenderCore", "RHI", "PhysicsCore"
+            "Sockets", "Networking", "ProceduralMeshComponent", "RenderCore", "RHI", "PhysicsCore", "SlateCore"
         });
     }
 }

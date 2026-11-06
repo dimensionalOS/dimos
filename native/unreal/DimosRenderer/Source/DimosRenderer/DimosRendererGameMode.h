@@ -41,6 +41,7 @@ private:
     FString CaptureEpoch;
     bool bExitAfterSend = false;
     bool bHasScene = false;
+    bool bHeadless = false;
     TSharedPtr<FDimosCaptureReadback, ESPMode::ThreadSafe> PendingCapture;
 
     UPROPERTY() TMap<int32, TObjectPtr<USceneComponent>> Geometries;

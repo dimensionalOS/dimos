@@ -30,6 +30,7 @@ import re
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, BinaryIO
@@ -302,7 +303,9 @@ class RendererProcess:
                 f"-abslog={self.log_path.with_suffix('.engine.log').resolve()}",
             ]
             if self.offscreen:
-                args.append("-RenderOffscreen")
+                # UE 5.7 Metal still presents a window with RenderOffscreen.
+                # Our headless mode suppresses viewport and Slate presentation.
+                args.append("-DimosHeadless" if sys.platform == "darwin" else "-RenderOffscreen")
             process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT)
             with self._state_lock:
                 self.process = process
