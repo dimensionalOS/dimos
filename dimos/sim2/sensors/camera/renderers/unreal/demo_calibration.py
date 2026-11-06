@@ -16,6 +16,7 @@
 
 import argparse
 from contextlib import ExitStack
+from dataclasses import replace
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -76,11 +77,34 @@ def validate(executable: Path, project: Path, output: Path) -> None:
         assert rgb[63, 77, 0] > rgb[63, 77, 1] + 50
         Image.fromarray(rgb).save(output / "color.png")
         np.save(output / "depth.npy", depth)
+        # Exercise consecutive asynchronous captures, target resizing, epoch
+        # changes, and dimensions that don't fill a compute workgroup. Moving
+        # the camera also detects a stale depth buffer paired with a new header.
+        captures = []
+        for width, height, camera_x in [(201, 153, 0.5), (317, 119, -0.25), (200, 150, 0.0)]:
+            renderer.camera = replace(renderer.camera, width=width, height=height)
+            state.header.sequence += 1
+            state.header.time_ns += 1
+            state.header.epoch += 1
+            camera_pose = poses_by_id(state)["camera"]
+            camera_pose.position.x = camera_x
+            renderer.set_poses(state)
+            next_rgb, next_depth = renderer.render(camera_pose)
+            assert next_rgb.shape == (height, width, 3)
+            assert next_depth.shape == (height, width)
+            expected_depth = 2.5 - camera_x
+            assert abs(float(next_depth[63, 77]) - expected_depth) < 0.0001
+            assert next_rgb[63, 77, 0] > next_rgb[63, 77, 1] + 50
+            assert np.isinf(next_depth[0, 0])
+            captures.append(
+                {"width": width, "height": height, "center_depth_m": float(next_depth[63, 77])}
+            )
         report = {
             "center_depth_m": float(depth[63, 77]),
             "projected_center_px": [float(xx.mean()), float(yy.mean())],
             "time_ns": state.header.time_ns,
             "sequence": state.header.sequence,
+            "resized_captures": captures,
             "passed": True,
         }
         (output / "report.json").write_text(json.dumps(report, indent=2))

@@ -321,6 +321,7 @@ class RendererProcess:
                     break
                 except TimeoutError:
                     continue
+            connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             client = RendererClient(connection)
             with self._state_lock:
                 self.client = client

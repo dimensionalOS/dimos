@@ -3,7 +3,7 @@
   "EngineAssociation": "5.7",
   "Category": "Robotics",
   "Description": "DimOS camera renderer driven by authoritative physics snapshots.",
-  "Modules": [{"Name": "DimosRenderer", "Type": "Runtime", "LoadingPhase": "Default"}],
+  "Modules": [{"Name": "DimosRenderer", "Type": "Runtime", "LoadingPhase": "PostConfigInit"}],
   "Plugins": [
     {"Name": "ProceduralMeshComponent", "Enabled": true},
     {"Name": "PythonScriptPlugin", "Enabled": true},

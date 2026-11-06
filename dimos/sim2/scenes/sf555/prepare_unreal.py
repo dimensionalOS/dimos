@@ -30,7 +30,7 @@ def prepare(source: Path, destination: Path, engine: Path) -> None:
     if project.resolve().is_relative_to(source.resolve()):
         raise ValueError("renderer output must be separate from the source office project")
     template = DIMOS_PROJECT_ROOT / "native/unreal/DimosRenderer"
-    for name in ("Source", "Config", "Scripts"):
+    for name in ("Source", "Config", "Scripts", "Shaders"):
         shutil.copytree(template / name, project / name, dirs_exist_ok=True)
     shutil.copy2(template / "DimosRenderer.uproject", project / "DimosRenderer.uproject")
     shutil.copytree(original / "Content", project / "Content", dirs_exist_ok=True)

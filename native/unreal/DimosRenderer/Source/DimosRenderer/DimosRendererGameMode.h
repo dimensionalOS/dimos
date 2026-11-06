@@ -10,6 +10,7 @@ class USceneComponent;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
 class UMaterialInterface;
+struct FDimosCaptureReadback;
 
 UCLASS()
 class DIMOSRENDERER_API ADimosRendererGameMode : public AGameModeBase
@@ -30,6 +31,8 @@ private:
     void Fail(const FString& Message);
     void SetPose(USceneComponent* Component, const TSharedPtr<FJsonObject>& Pose);
     bool PumpSocket();
+    bool FlushSocket();
+    void PollCapture();
 
     FSocket* Socket = nullptr;
     TArray<uint8> ReceiveBuffer;
@@ -38,6 +41,7 @@ private:
     FString CaptureEpoch;
     bool bExitAfterSend = false;
     bool bHasScene = false;
+    TSharedPtr<FDimosCaptureReadback, ESPMode::ThreadSafe> PendingCapture;
 
     UPROPERTY() TMap<int32, TObjectPtr<USceneComponent>> Geometries;
     UPROPERTY() TObjectPtr<USceneCaptureComponent2D> ColorCapture;

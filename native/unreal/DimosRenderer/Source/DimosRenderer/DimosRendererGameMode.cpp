@@ -9,6 +9,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Dom/JsonObject.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -27,6 +28,11 @@
 #include "Misc/PackageName.h"
 #include "ProceduralMeshComponent.h"
 #include "RenderingThread.h"
+#include "RHIGPUReadback.h"
+#include "GlobalShader.h"
+#include "RenderGraphBuilder.h"
+#include "RenderGraphUtils.h"
+#include "ShaderParameterStruct.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "SocketSubsystem.h"
@@ -35,6 +41,39 @@
 #include "UObject/Package.h"
 
 #include <limits>
+#include <atomic>
+
+// One request owns the paired RGB-D staging buffer and its snapshot header.
+// RHI access stays on the render thread; Complete publishes the CPU payload.
+struct FDimosCaptureReadback
+{
+    FRHIGPUBufferReadback Pixels{TEXT("DimosRGBD")};
+    TSharedPtr<FJsonObject> Header;
+    TArray<uint8> Payload;
+    FString Error;
+    int32 Width = 0;
+    int32 Height = 0;
+    double Far = 0;
+    double Started = 0;
+    std::atomic<bool> PollQueued{false};
+    std::atomic<bool> Complete{false};
+};
+
+// Pack into a buffer because UE 5.7 Metal's staging TEXTURE map unconditionally
+// waits for GPU idle. Buffer readback only waits if its fence is not ready.
+class FDimosPackCaptureCS : public FGlobalShader
+{
+    DECLARE_GLOBAL_SHADER(FDimosPackCaptureCS);
+    SHADER_USE_PARAMETER_STRUCT(FDimosPackCaptureCS, FGlobalShader);
+    BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+        SHADER_PARAMETER(FIntPoint, ImageSize)
+        SHADER_PARAMETER(uint32, ColorIsSRGB)
+        SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ColorTexture)
+        SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DepthTexture)
+        SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, PackedPixels)
+    END_SHADER_PARAMETER_STRUCT()
+};
+IMPLEMENT_GLOBAL_SHADER(FDimosPackCaptureCS, "/DimosRenderer/PackCapture.usf", "MainCS", SF_Compute);
 
 #if WITH_EDITOR
 #include "ShaderCompiler.h"
@@ -275,6 +314,9 @@ ADimosRendererGameMode::ADimosRendererGameMode()
 void ADimosRendererGameMode::StartPlay()
 {
     Super::StartPlay();
+    // This process serves explicit sensor captures. Rendering the unused player
+    // viewport as well spends GPU time on a third view on every engine tick.
+    if (auto* Viewport = GetWorld()->GetGameViewport()) Viewport->bDisableWorldRendering = true;
     FString BackgroundLevel;
     const bool bBackground = FParse::Value(FCommandLine::Get(), TEXT("DimosLevel="), BackgroundLevel);
     if (bBackground && (!FPackageName::IsValidLongPackageName(BackgroundLevel) ||
@@ -349,6 +391,12 @@ void ADimosRendererGameMode::StartPlay()
 
 void ADimosRendererGameMode::EndPlay(const EEndPlayReason::Type Reason)
 {
+    // Only teardown waits for outstanding render commands, never acquisition.
+    if (PendingCapture)
+    {
+        FlushRenderingCommands();
+        PendingCapture.Reset();
+    }
     if (Socket)
     {
         Socket->Close();
@@ -361,10 +409,11 @@ void ADimosRendererGameMode::EndPlay(const EEndPlayReason::Type Reason)
 void ADimosRendererGameMode::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    PollCapture();
     if (Socket && !PumpSocket()) FPlatformMisc::RequestExit(false);
 }
 
-bool ADimosRendererGameMode::PumpSocket()
+bool ADimosRendererGameMode::FlushSocket()
 {
     while (SendOffset < SendBuffer.Num())
     {
@@ -378,7 +427,12 @@ bool ADimosRendererGameMode::PumpSocket()
     }
     SendBuffer.Reset();
     SendOffset = 0;
-    if (bExitAfterSend) return false;
+    return !bExitAfterSend;
+}
+
+bool ADimosRendererGameMode::PumpSocket()
+{
+    if (!FlushSocket()) return false;
     // Recv also observes EOF: HasPendingData alone hides a peer that closed idle.
     uint8 Chunk[64 * 1024];
     for (;;)
@@ -389,6 +443,9 @@ bool ADimosRendererGameMode::PumpSocket()
         if (ReceiveBuffer.Num() + Received > MaxMessageBytes + 4) return false;
         ReceiveBuffer.Append(Chunk, Received);
     }
+    // Serialize requests through capture AND transmission. A slow client cannot
+    // overwrite a pending frame or grow an unbounded queue of GPU work.
+    if (PendingCapture || SendBuffer.Num() != 0) return true;
     if (ReceiveBuffer.Num() < 4) return true;
     const uint32 Length = uint32(ReceiveBuffer[0]) | uint32(ReceiveBuffer[1]) << 8 |
                           uint32(ReceiveBuffer[2]) << 16 | uint32(ReceiveBuffer[3]) << 24;
@@ -402,9 +459,9 @@ bool ADimosRendererGameMode::PumpSocket()
     if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Json), Command) || !Command)
         Error = TEXT("Invalid JSON command");
     else if (HandleCommand(Command, Error))
-        return true;
+        return FlushSocket();
     Fail(Error);
-    return true;
+    return FlushSocket();
 }
 
 void ADimosRendererGameMode::Reply(const TSharedPtr<FJsonObject>& Header, const TArray<uint8>& Payload)
@@ -694,48 +751,97 @@ bool ADimosRendererGameMode::Capture(const TSharedPtr<FJsonObject>& Command, FSt
         CaptureComponent->FOVAngle = FMath::RadiansToDegrees(2 * FMath::Atan(Width / (2 * Fx)));
         CaptureComponent->bCameraCutThisFrame = bNewEpoch;
     }
+    // Pose updates and both captures are ordered on the render command queue.
+    // EnqueueCopy follows those captures; no game-thread flush/readback is needed.
     GetWorld()->SendAllEndOfFrameUpdates();
-    FlushRenderingCommands();
     ColorCapture->CaptureScene();
     DepthCapture->CaptureScene();
-    TArray<FColor> Colors;
-    TArray<FLinearColor> Depth;
-    FReadSurfaceDataFlags ColorFlags(RCM_UNorm);
-    ColorFlags.SetLinearToGamma(false);
-    FReadSurfaceDataFlags DepthFlags(RCM_MinMax);
-    DepthFlags.SetLinearToGamma(false);
-    if (!ColorTarget->GameThread_GetRenderTargetResource()->ReadPixels(Colors, ColorFlags) ||
-        !DepthTarget->GameThread_GetRenderTargetResource()->ReadLinearColorPixels(Depth, DepthFlags) ||
-        Colors.Num() != Width * Height || Depth.Num() != Width * Height)
-    { Error = TEXT("GPU readback failed"); return false; }
-    TArray<uint8> Payload;
-    const int32 Pixels = Width * Height;
-    Payload.SetNumUninitialized(Pixels * 8);
-    for (int32 Index = 0; Index < Pixels; ++Index)
-    {
-        Payload[Index * 4] = Colors[Index].R;
-        Payload[Index * 4 + 1] = Colors[Index].G;
-        Payload[Index * 4 + 2] = Colors[Index].B;
-        Payload[Index * 4 + 3] = 255;
-        // UE 5.7 adds 1e-8 to the inverse-depth denominator when linearizing
-        // device Z. Undo that bias, then classify the cleared far plane as no hit.
-        const double RawCentimeters = Depth[Index].R;
-        float Meters = 0.01 * RawCentimeters / (1.0 - 1e-8 * RawCentimeters);
-        if (!FMath::IsFinite(Meters) || Meters <= 0 || Meters >= Far * (1.0 - 1e-6))
-            Meters = std::numeric_limits<float>::infinity();
-        FMemory::Memcpy(Payload.GetData() + Pixels * 4 + Index * 4, &Meters, 4);
-    }
+    auto Frame = MakeShared<FDimosCaptureReadback, ESPMode::ThreadSafe>();
+    Frame->Width = Width;
+    Frame->Height = Height;
+    Frame->Far = Far;
+    Frame->Started = Started;
     auto Header = Message(TEXT("frame"));
     for (const TCHAR* Key : {TEXT("clock_id"), TEXT("epoch"), TEXT("time_ns"), TEXT("source_id"), TEXT("sequence"), TEXT("model_revision")})
         Header->SetField(Key, Command->TryGetField(Key));
     Header->SetNumberField(TEXT("width"), Width);
     Header->SetNumberField(TEXT("height"), Height);
-    Header->SetNumberField(TEXT("rgba_bytes"), Pixels * 4);
-    Header->SetNumberField(TEXT("depth_bytes"), Pixels * 4);
+    Header->SetNumberField(TEXT("rgba_bytes"), Width * Height * 4);
+    Header->SetNumberField(TEXT("depth_bytes"), Width * Height * 4);
     Header->SetStringField(TEXT("depth_unit"), TEXT("m"));
     Header->SetStringField(TEXT("depth_kind"), TEXT("axial"));
-    Header->SetNumberField(TEXT("capture_ms"), (FPlatformTime::Seconds() - Started) * 1000);
-    Reply(Header, Payload);
+    Frame->Header = Header;
+    PendingCapture = Frame;
+    auto* ColorResource = ColorTarget->GameThread_GetRenderTargetResource();
+    auto* DepthResource = DepthTarget->GameThread_GetRenderTargetResource();
+    ENQUEUE_RENDER_COMMAND(DimosCopyCapture)(
+        [Frame, ColorResource, DepthResource](FRHICommandListImmediate& RHICmdList)
+        {
+            FRDGBuilder GraphBuilder(RHICmdList);
+            auto* Parameters = GraphBuilder.AllocParameters<FDimosPackCaptureCS::FParameters>();
+            Parameters->ImageSize = FIntPoint(Frame->Width, Frame->Height);
+            Parameters->ColorIsSRGB = EnumHasAnyFlags(ColorResource->GetRenderTargetTexture()->GetDesc().Flags, TexCreate_SRGB);
+            Parameters->ColorTexture = GraphBuilder.RegisterExternalTexture(
+                CreateRenderTarget(ColorResource->GetRenderTargetTexture(), TEXT("DimosColor")));
+            Parameters->DepthTexture = GraphBuilder.RegisterExternalTexture(
+                CreateRenderTarget(DepthResource->GetRenderTargetTexture(), TEXT("DimosDepth")));
+            auto Buffer = GraphBuilder.CreateBuffer(
+                FRDGBufferDesc::CreateStructuredDesc(4, Frame->Width * Frame->Height * 2), TEXT("DimosRGBD"));
+            Parameters->PackedPixels = GraphBuilder.CreateUAV(Buffer);
+            TShaderMapRef<FDimosPackCaptureCS> Shader(GetGlobalShaderMap(GMaxRHIFeatureLevel));
+            FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("DimosPackRGBD"), Shader, Parameters,
+                FIntVector(FMath::DivideAndRoundUp(Frame->Width, 8), FMath::DivideAndRoundUp(Frame->Height, 8), 1));
+            AddEnqueueCopyPass(GraphBuilder, &Frame->Pixels, Buffer, Frame->Width * Frame->Height * 8);
+            GraphBuilder.Execute();
+        });
     CaptureEpoch = NextEpoch;
     return true;
+}
+
+void ADimosRendererGameMode::PollCapture()
+{
+    if (!PendingCapture) return;
+    auto Frame = PendingCapture;
+    if (Frame->Complete.load(std::memory_order_acquire))
+    {
+        if (Frame->Error.IsEmpty())
+        {
+            Frame->Header->SetNumberField(TEXT("capture_ms"), (FPlatformTime::Seconds() - Frame->Started) * 1000);
+            Reply(Frame->Header, Frame->Payload);
+        }
+        else Fail(Frame->Error);
+        PendingCapture.Reset();
+        return;
+    }
+    if (Frame->PollQueued.exchange(true)) return;
+    ENQUEUE_RENDER_COMMAND(DimosPollCapture)(
+        [Frame](FRHICommandListImmediate& RHICmdList)
+        {
+            if (!Frame->Pixels.IsReady())
+            {
+                Frame->PollQueued.store(false);
+                return;
+            }
+            const int32 Pixels = Frame->Width * Frame->Height;
+            const auto* Data = static_cast<const uint8*>(Frame->Pixels.Lock(Pixels * 8));
+            if (!Data) Frame->Error = TEXT("GPU buffer readback failed");
+            else
+            {
+                Frame->Payload.SetNumUninitialized(Pixels * 8);
+                FMemory::Memcpy(Frame->Payload.GetData(), Data, Pixels * 4);
+                for (int32 Index = 0; Index < Pixels; ++Index)
+                {
+                    float RawDepth;
+                    FMemory::Memcpy(&RawDepth, Data + Pixels * 4 + Index * 4, 4);
+                    // Undo UE 5.7's inverse-depth bias; far/no hit stays +inf.
+                    const double RawCentimeters = RawDepth;
+                    float Meters = 0.01 * RawCentimeters / (1.0 - 1e-8 * RawCentimeters);
+                    if (!FMath::IsFinite(Meters) || Meters <= 0 || Meters >= Frame->Far * (1.0 - 1e-6))
+                        Meters = std::numeric_limits<float>::infinity();
+                    FMemory::Memcpy(Frame->Payload.GetData() + Pixels * 4 + Index * 4, &Meters, 4);
+                }
+                Frame->Pixels.Unlock();
+            }
+            Frame->Complete.store(true, std::memory_order_release);
+        });
 }

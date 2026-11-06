@@ -1,3 +1,14 @@
 #include "Modules/ModuleManager.h"
+#include "Misc/Paths.h"
+#include "ShaderCore.h"
 
-IMPLEMENT_PRIMARY_GAME_MODULE(FDefaultGameModuleImpl, DimosRenderer, "DimosRenderer");
+class FDimosRendererModule : public FDefaultGameModuleImpl
+{
+public:
+    virtual void StartupModule() override
+    {
+        AddShaderSourceDirectoryMapping(TEXT("/DimosRenderer"), FPaths::Combine(FPaths::ProjectDir(), TEXT("Shaders")));
+    }
+};
+
+IMPLEMENT_PRIMARY_GAME_MODULE(FDimosRendererModule, DimosRenderer, "DimosRenderer");

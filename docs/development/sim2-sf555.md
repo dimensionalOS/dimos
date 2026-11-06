@@ -43,12 +43,18 @@ state on every capture; this project enables the scene's rendering features.
 See [Epic's SceneCapture API](https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/USceneCaptureComponent)
 and [CaptureScene](https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Runtime/Engine/USceneCaptureComponent2D/CaptureScene).
 
-GPU readback is synchronous **inside the independent camera process**. Physics
-does not wait for it. This is a correctness-first RGB-D bridge, not a claim of
-high-throughput GPU streaming; asynchronous GPU readback is a future performance
-improvement. Rendering features available on the host GPU still determine
-whether Lumen uses software or hardware tracing. URDF robot visuals currently
-use diffuse colors; native office materials retain their textures.
+GPU readback is asynchronous inside the independent camera process. A compute
+pass packs RGB and depth into one buffer, and `FRHIGPUBufferReadback` maps it only
+after its GPU fence is ready. This avoids UE 5.7 Metal's unconditional GPU-idle
+wait in texture staging maps. One pending capture owns its snapshot identity,
+and another request cannot change the scene until its result has been sent.
+Completed replies are sent in the same game tick. The unused player viewport
+is disabled so only sensor views render; camera Lumen, reflections, and temporal
+AA stay enabled. Physics does not wait for the camera.
+
+Rendering features available on the host GPU still determine whether Lumen uses
+software or hardware tracing. URDF robot visuals currently use diffuse colors;
+native office materials retain their textures.
 
 Wire protocol v2 echoes clock ID, epoch, source ID, sequence, nanoseconds, and
 model revision as strings, preserving full int64 counters through Unreal JSON.
@@ -153,19 +159,28 @@ source of the generated `office.urdf`.
 
 - Native Unreal 5.7 module compiled; off-centre pinhole calibration returned
   2.4999998m for a surface at 2.5m, while preserving counters above 2^53.
+  Consecutive captures with changing poses/epochs and image sizes 201×153,
+  317×119, and 200×150 returned the expected 2m, 2.75m, and 2.5m depths.
+  RGB channel ordering and far-plane/no-hit values also passed.
 - Full office: 10,260 MuJoCo geoms, approximately 13s cold model import;
   all 45 support probes and nine doorway-clearance probes passed.
-- Full blueprint with explicit Lumen/TAA capture: G1 walked 0.60m, with pelvis
-  height 0.741m at the end. 4.104 simulated seconds took 4.154 wall seconds.
-  The camera produced 29 frames during that walk (about 7fps at 640×480).
-  The configured 15Hz is an acquisition ceiling, not an achieved frame rate.
+- Full blueprint with asynchronous readback and explicit Lumen/TAA capture:
+  G1 walked 0.60m, with pelvis height 0.743m at the end. 4.102 simulated seconds
+  took 4.153 wall seconds. The camera produced 43 frames (10.4fps at 640×480),
+  versus 29 frames (about 7fps) with the old synchronous bridge.
+- An isolated office capture benchmark (40 frames, first 10 excluded) improved
+  from 7.64fps to 10.86fps; median adapter latency fell from 130.9ms to 92.7ms.
+  This includes removing the unused player viewport. The configured 15Hz is
+  still an acquisition ceiling, not an achieved frame rate.
 - Camera, lidar, and physics reported no runtime errors; all workers and the
-  owned Unreal process stopped cleanly. The existing control gate rejected 31
-  duplicate/out-of-order commands. Sensor input drops and initial lidar gaps
-  are recorded in the saved report, not treated as complete lossless sampling.
+  owned Unreal process stopped cleanly. The existing control gate rejected 33
+  duplicate/out-of-order commands. The camera reported no input drops or gaps;
+  lidar input drops and initial gaps are recorded in the saved report.
 - 85 sim2 tests passed with native integration tests excluded from that suite;
   the native calibration, static geometry, and full walking checks above ran
-  separately. Mypy passed for the changed production Python modules.
+  separately. After the asynchronous update, all 39 renderer contract/asset
+  tests passed again, as did native calibration and the full walking check.
+  Mypy passed for the three changed Python files.
 
 These measurements validate a short flat-floor walk, not traversal of every
 stair, obstacle, or room. Evidence is in the local `validation` directory.
