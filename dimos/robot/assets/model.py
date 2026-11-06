@@ -180,6 +180,9 @@ class RobotModel:
 
     _source_path: Path | str | os.PathLike[str] | None
     _root_model: _RootModel | None = None
+    # URDF content held in memory instead of a file; _asset_dir resolves its relative mesh paths
+    _source_xml: str | None = None
+    _asset_dir: Path | str | os.PathLike[str] | None = None
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame | _AttachedModel, ...] = ()
@@ -208,6 +211,22 @@ class RobotModel:
         )
 
     @classmethod
+    def from_urdf_string(
+        cls,
+        xml: str,
+        *,
+        asset_dir: Path | str | os.PathLike[str] | None = None,
+        package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
+    ) -> RobotModel:
+        """Create a model from URDF content; relative mesh paths resolve against `asset_dir`."""
+        return cls(
+            _source_path=None,
+            _source_xml=xml,
+            _asset_dir=asset_dir,
+            _package_paths=tuple((package_paths or {}).items()),
+        )
+
+    @classmethod
     def from_root_link(cls, root_link: str, *, name: str = "robot") -> RobotModel:
         """Create a lazy, single-link model in memory for attaching other trees.
 
@@ -220,7 +239,7 @@ class RobotModel:
 
     @property
     def source_path(self) -> Path | str | os.PathLike[str] | None:
-        """Return the source handle, or None for a model created from a root link."""
+        """Return the source handle, or None for a model created from URDF content or a root link."""
         return self._source_path
 
     @property
@@ -391,12 +410,14 @@ class RobotModel:
                 xml = expand_xacro(source_path, package_paths, dict(self._xacro_args))
             else:
                 xml = source_path.read_text()
+        elif self._source_xml is not None:
+            xml = self._source_xml
         elif self._root_model is not None:
             root = ET.Element("robot", name=self._root_model.name)
             ET.SubElement(root, "link", name=self._root_model.root_link)
             xml = ET.tostring(root, encoding="unicode")
         else:
-            raise ValueError("RobotModel requires a source file or root link")
+            raise ValueError("RobotModel requires a source file, URDF content or root link")
         xml = _resolve_package_uris(xml, package_paths)
         if self._subtree_root_link is not None or self._removed_joint_subtrees:
             xml = _select_structural_subtree(
@@ -408,6 +429,7 @@ class RobotModel:
             xml,
             search_directories=(
                 *((source_path.parent,) if source_path is not None else ()),
+                *((Path(os.fspath(self._asset_dir)),) if self._asset_dir is not None else ()),
                 *package_paths.values(),
             ),
         )
