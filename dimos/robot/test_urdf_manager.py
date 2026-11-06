@@ -463,16 +463,27 @@ class _FakeArm(Module):
     config: ModuleConfig
 
     @rpc
-    def get_usd(self) -> str:
-        return _SUBTREE_USD
+    def get_usd(self) -> list[str]:
+        return ["", _SUBTREE_USD]
 
 
 class _NoUsd(Module):
     config: ModuleConfig
 
 
-def _subtree_usd(prim: str, link: str) -> str:
+def _subtree_usd(prim: str, link: str, mesh: str | None = None) -> str:
     """A stand-in subtree in the dialect urdf_to_usd emits: displayName plus RigidBodyAPI."""
+    geometry = (
+        ""
+        if mesh is None
+        else f"""
+    def Mesh "visual_0" (
+        prepend references = @{mesh}@
+    )
+    {{
+    }}
+"""
+    )
     return f"""#usda 1.0
 (
     defaultPrim = "{prim}"
@@ -483,7 +494,7 @@ def Xform "{prim}" (
     displayName = "{link}"
 )
 {{
-}}
+{geometry}}}
 """
 
 
@@ -493,16 +504,19 @@ _SUBTREE_USD = _subtree_usd("fake_arm", "fake_arm_base")
 class _FakeClient:
     """An RPC client that answers get_usd with a scripted sequence; an Exception means 'not up yet'."""
 
-    def __init__(self, *answers: Any) -> None:
+    def __init__(self, *answers: Any, asset_root: str = "") -> None:
         self.answers = list(answers)
         self.asked = 0
+        self.asset_root = asset_root
 
     def get_usd(self) -> Any:
         self.asked += 1
         answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if isinstance(answer, Exception):
             raise answer
-        return answer
+        # A bare string in a script means "that USD, rooted nowhere"; anything else goes
+        # through as-is so a test can hand over a malformed answer on purpose.
+        return [self.asset_root, answer] if isinstance(answer, str) else answer
 
     def stop_rpc_client(self) -> None: ...
 
@@ -542,9 +556,13 @@ def _link_of(stage: Any, path: str) -> str:
 
 
 def _scene(module: UrdfManager) -> str:
-    """get_scene on a loop of this test's own, so its to_thread executor is torn down with it."""
+    """The USD out of get_scene, on a loop of this test's own so its executor dies with it."""
+    return _scene_answer(module)[1]
+
+
+def _scene_answer(module: UrdfManager) -> list[str]:
     coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
-    return cast("str", asyncio.run(coroutine()))
+    return cast("list[str]", asyncio.run(coroutine()))
 
 
 def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
@@ -553,7 +571,7 @@ def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
     pytest.importorskip("pxr")
     module = make_manager()
 
-    stage = _usd_stage(module.get_usd())
+    stage = _usd_stage(module.get_usd()[1])
 
     assert stage.GetDefaultPrim().GetName() == "box_robot"
     assert stage.GetPrimAtPath("/box_robot/base/arm")
@@ -563,7 +581,7 @@ def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManage
     pytest.importorskip("pxr")
     module = make_manager()
 
-    assert module.get_usd() is module.get_usd()
+    assert module.get_usd()[1] is module.get_usd()[1]
 
 
 def test_get_scene_without_mounts_is_just_the_robot(
@@ -573,7 +591,7 @@ def test_get_scene_without_mounts_is_just_the_robot(
     pytest.importorskip("pxr")
     module = make_manager()
 
-    assert _scene(module) == module.get_usd()
+    assert _scene_answer(module) == module.get_usd()
 
 
 def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
@@ -592,7 +610,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01)
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
     client = _FakeClient(RuntimeError("no reply"), None, _SUBTREE_USD)
     module._subtree_clients["_FakeArm"] = cast("Any", client)
 
@@ -602,16 +620,27 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
     assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
 
 
-def test_get_scene_times_out_naming_the_module_that_never_answered(
+def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
-    # Half a scene would hand a renderer a robot with no arm, so it is all or an error.
-    pytest.importorskip("pxr")
-    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01)
-    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(RuntimeError("never")))
+    """Half a scene would hand a renderer a robot with no arm, so there is no partial answer.
 
-    with pytest.raises(TimeoutError, match="_FakeArm did not answer get_usd"):
-        _scene(module)
+    With the deadline gone there is no error to assert, so assert that it is still waiting:
+    wait_for cancels it, which is also what keeps this test from leaking the retry loop.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
+    client = _FakeClient(RuntimeError("never"))
+    module._subtree_clients["_FakeArm"] = cast("Any", client)
+
+    async def wait_a_moment() -> None:
+        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(coroutine(), 0.2)
+
+    asyncio.run(wait_a_moment())
+
+    assert client.asked > 1, "it should have kept asking rather than giving up or answering"
 
 
 def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
@@ -794,3 +823,65 @@ def test_the_roots_own_links_are_never_renamed(
 
     assert _link_of(stage, "/box_robot/base") == "base"
     assert _link_of(stage, "/box_robot/base/left_mount") == "left_mount"
+
+
+def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
+    make_manager: Callable[..., UrdfManager], tmp_path: Path
+) -> None:
+    # A layer only says where its meshes are relative to something, and the asker has no way
+    # to guess what. The URDF's own directory is that something.
+    pytest.importorskip("pxr")
+    module = make_manager()
+
+    assert module.get_usd()[0] == str(tmp_path)
+
+
+def test_a_subtree_mesh_path_is_rebased_onto_the_root_the_module_reported(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """The point of the root travelling with the USD.
+
+    The mounted module's cwd is not this one's, so a relative mesh path means nothing here
+    until it is rebased onto the root that module answered with.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(subtree, asset_root="/opt/arm/desc")
+    )
+
+    scene = _scene(module)
+
+    assert "@/opt/arm/desc/meshes/arm.stl@" in scene
+    assert "@meshes/arm.stl@" not in scene
+
+
+def test_a_subtree_with_no_root_keeps_its_paths_untouched(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # An empty root means "nothing to resolve"; an absolute path needs no rebasing either.
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="/already/abs.stl")
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(subtree))
+
+    assert "@/already/abs.stl@" in _scene(module)
+
+
+@pytest.mark.parametrize(
+    "answer", [[], ["only-a-root"], ["root", "usd", "extra"], ["root", ""], [1, 2]]
+)
+def test_an_answer_that_is_not_a_root_and_a_usd_is_retried(
+    make_manager: Callable[..., UrdfManager], answer: Any
+) -> None:
+    # A malformed answer is treated like a module that is not up yet, not grafted blindly.
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
+    client = _FakeClient(answer, _SUBTREE_USD)
+    module._subtree_clients["_FakeArm"] = cast("Any", client)
+
+    stage = _usd_stage(_scene(module))
+
+    assert client.asked == 2, "the malformed answer should have been asked past"
+    assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
