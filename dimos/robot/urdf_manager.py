@@ -36,7 +36,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import MeshMode, graft_usd, urdf_to_usd
+from dimos.robot.assets.usd import graft_usd, urdf_to_usd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -67,9 +67,6 @@ class UrdfManagerConfig(ModuleConfig):
     scene_timeout_s: float = Field(default=60.0, gt=0.0)
     # A module that is not up yet answers nothing, so retry it this often inside that budget.
     scene_retry_s: float = Field(default=0.5, gt=0.0)
-    # "inline" bakes mesh triangles into the USD (self-contained, which is what a scene string has to be);
-    # "reference" leaves the mesh paths for a consumer that fetches files over render_file_request itself.
-    usd_mesh_mode: MeshMode = "inline"
 
 
 class UrdfManager(Module):
@@ -142,7 +139,7 @@ class UrdfManager(Module):
         """
         with self._usd_lock:
             if self._usd is None:
-                self._usd = urdf_to_usd(self._description, mesh_mode=self.config.usd_mesh_mode)
+                self._usd = urdf_to_usd(self._description)
             return self._usd
 
     @rpc

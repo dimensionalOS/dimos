@@ -24,9 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -41,12 +39,10 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-MeshMode = Literal["inline", "reference"]
-
-# The link a prim stands for, under its original URDF spelling: prim names are USD
-# identifiers, so "base-link" and "base:link" would both come out "base_link".
-LINK_ATTR = "dimos:link"
-JOINT_ATTR = "dimos:joint"
+# A prim's displayName carries the original URDF spelling of the link or joint it stands for.
+# USD prim names are identifiers, so "base-link" and "base:link" would both come out
+# "base_link"; displayName is the standard field for a name that is not so restricted, and it
+# is what a frame_id is matched against.
 
 _NO_USD = (
     "URDF to USD needs usd-core (pxr), which is in the 'scene-cooking' extra and ships no "
@@ -95,18 +91,17 @@ def urdf_to_usd(
     model: LoadedRobotModel,
     *,
     name: str | None = None,
-    mesh_mode: MeshMode = "inline",
     include_collision: bool = True,
 ) -> str:
-    """``model`` as a single self-contained ``.usda`` layer.
+    """``model`` as one ``.usda`` layer.
 
     Links become nested Xforms down the kinematic tree, each posed at the URDF zero pose, so
     a viewer with no physics engine still shows the robot assembled. The joints are also
     written as ``UsdPhysics`` prims under ``/<name>/joints`` for consumers that articulate it.
 
-    ``mesh_mode`` decides what a ``<mesh>`` becomes: "inline" bakes the triangles into the
-    layer (self-contained, and the only form that survives being sent as one string);
-    "reference" leaves the mesh path as an asset path for tooling that resolves files itself.
+    A ``<mesh>`` becomes a reference to the path the URDF named. Nothing is converted here:
+    UsdManager already serves exactly those paths over ``render_file_request``, so resolving
+    them is the consumer's job, the same as it already is for the URDF.
 
     ``name`` is the defaultPrim; it defaults to the URDF's own ``<robot name>``.
     """
@@ -132,8 +127,6 @@ def urdf_to_usd(
         links=links,
         children=children,
         paths=paths,
-        mesh_mode=mesh_mode,
-        base_dir=model.source_path.parent if model.source_path else None,
     )
     _write_joints(pxr, stage, root_path=str(root.GetPath()), joints=model.joints, paths=paths)
     return str(stage.GetRootLayer().ExportToString())
@@ -142,8 +135,7 @@ def urdf_to_usd(
 def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
     """``root_usd`` with each subtree copied in under the prim standing for its frame.
 
-    Each key is a frame_id in ``root_usd`` (a URDF link, matched on its ``dimos:link``
-    attribute) and each value is a USD layer whose default prim is that subtree's root. The
+    Each key is a frame_id in ``root_usd`` (a URDF link, matched on its ``displayName``) and each value is a USD layer whose default prim is that subtree's root. The
     result is one layer again: specs are copied, not referenced, because the scene leaves as
     a string with no layer the far side could resolve.
     """
@@ -206,12 +198,21 @@ def _rebase_relationships(
 
 
 def _link_prim_paths(stage: Any) -> dict[str, str]:
-    """URDF link name -> prim path, for every prim this converter tagged with its link."""
+    """URDF link name -> prim path, for every link prim in ``stage``.
+
+    A link is exactly a prim carrying ``UsdPhysics.RigidBodyAPI``, which is what this converter
+    applies to each one. That is narrower than "any Xform": it leaves out the defaultPrim
+    standing for the robot itself, and the joint prims, either of which could otherwise shadow
+    a link that shares its name.
+
+    The name comes from displayName, falling back to the prim name for a layer that authored
+    none (they agree whenever the URDF name was already a USD identifier).
+    """
+    pxr = _pxr()
     paths: dict[str, str] = {}
     for prim in stage.Traverse():
-        attr = prim.GetAttribute(LINK_ATTR)
-        if attr and attr.HasAuthoredValue():
-            paths[str(attr.Get())] = str(prim.GetPath())
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            paths[prim.GetDisplayName() or prim.GetName()] = str(prim.GetPath())
     return paths
 
 
@@ -224,8 +225,6 @@ def _write_link_tree(
     links: Mapping[str, Sequence[_Geometry]],
     children: Mapping[str, Sequence[JointDescription]],
     paths: dict[str, str],
-    mesh_mode: MeshMode,
-    base_dir: Path | None,
     joint: JointDescription | None = None,
 ) -> None:
     """Define the prim for ``link`` under ``parent_path``, then recurse into its children."""
@@ -237,7 +236,7 @@ def _write_link_tree(
     xform = pxr.UsdGeom.Xform.Define(stage, prim_path)
     prim = xform.GetPrim()
     paths[link] = prim_path
-    prim.CreateAttribute(LINK_ATTR, pxr.Sdf.ValueTypeNames.String, custom=True).Set(link)
+    prim.SetDisplayName(link)
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
     if joint is not None:
         xform.AddTransformOp().Set(_matrix(pxr, joint.parent_from_child(0.0)))
@@ -248,8 +247,6 @@ def _write_link_tree(
             stage,
             f"{prim_path}/{_geometry_name(geometry, index)}",
             geometry,
-            mesh_mode,
-            base_dir,
         )
 
     for child_joint in children.get(link, ()):
@@ -261,8 +258,6 @@ def _write_link_tree(
             links=links,
             children=children,
             paths=paths,
-            mesh_mode=mesh_mode,
-            base_dir=base_dir,
             joint=child_joint,
         )
 
@@ -271,10 +266,8 @@ def _geometry_name(geometry: _Geometry, index: int) -> str:
     return f"{'collision' if geometry.collision else 'visual'}_{index}"
 
 
-def _write_geometry(
-    pxr: Any, stage: Any, path: str, geometry: _Geometry, mesh_mode: MeshMode, base_dir: Path | None
-) -> None:
-    gprim = _define_gprim(pxr, stage, path, geometry, mesh_mode, base_dir)
+def _write_geometry(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> None:
+    gprim = _define_gprim(pxr, stage, path, geometry)
     if gprim is None:
         return
     gprim.AddTransformOp().Set(_matrix(pxr, geometry.origin))
@@ -286,9 +279,7 @@ def _write_geometry(
         pxr.UsdPhysics.CollisionAPI.Apply(gprim.GetPrim())
 
 
-def _define_gprim(
-    pxr: Any, stage: Any, path: str, geometry: _Geometry, mesh_mode: MeshMode, base_dir: Path | None
-) -> Any:
+def _define_gprim(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Any:
     if geometry.kind == "box":
         cube = pxr.UsdGeom.Cube.Define(stage, path)
         # A Cube is a unit cube scaled to the box's extents: USD has no three-sided box.
@@ -306,63 +297,25 @@ def _define_gprim(
         sphere.CreateRadiusAttr(geometry.size[0])
         return sphere
     if geometry.kind == "mesh" and geometry.filename is not None:
-        return _define_mesh(pxr, stage, path, geometry, mesh_mode, base_dir)
+        return _define_mesh(pxr, stage, path, geometry)
     logger.warning(f"skipping URDF geometry of unsupported kind {geometry.kind!r}")
     return None
 
 
-def _define_mesh(
-    pxr: Any, stage: Any, path: str, geometry: _Geometry, mesh_mode: MeshMode, base_dir: Path | None
-) -> Any:
+def _define_mesh(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Any:
+    """A reference to the file the URDF named. Nothing is read, parsed or converted here.
+
+    A reference is USD's own way to say "this geometry lives over there", so the mesh needs no
+    attribute of our own and no triangles of ours in the layer. Resolving it is the consumer's
+    job: UsdManager serves exactly these paths over render_file_request, and USD resolves a
+    non-USD mesh through a file format plugin for that extension.
+    """
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
     mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
-    resolved = _resolve(geometry.filename, base_dir)
-    if mesh_mode == "reference":
-        # The path the URDF named, kept verbatim: UrdfManager serves exactly those names.
-        mesh.GetPrim().CreateAttribute(
-            "dimos:meshFile", pxr.Sdf.ValueTypeNames.Asset, custom=True
-        ).Set(pxr.Sdf.AssetPath(str(resolved)))
-        return mesh
-    triangles = _load_triangles(str(resolved))
-    if triangles is None:
-        return mesh
-    points, faces = triangles
-    # Explicit floats: Gf.Vec3f does not take numpy scalars.
-    mesh.CreatePointsAttr([pxr.Gf.Vec3f(float(x), float(y), float(z)) for x, y, z in points])
-    mesh.CreateFaceVertexIndicesAttr([int(i) for i in faces.reshape(-1)])
-    mesh.CreateFaceVertexCountsAttr([3] * len(faces))
-    mesh.CreateSubdivisionSchemeAttr(pxr.UsdGeom.Tokens.none)
+    # The path the URDF named, kept verbatim: those are the names UsdManager answers for.
+    mesh.GetPrim().GetReferences().AddReference(geometry.filename)
     return mesh
-
-
-def _resolve(filename: str, base_dir: Path | None) -> Path:
-    path = Path(filename)
-    return path if path.is_absolute() or base_dir is None else base_dir / path
-
-
-@lru_cache(maxsize=256)
-def _load_triangles(path: str) -> tuple[NDArray[np.float32], NDArray[np.int32]] | None:
-    """``path`` as triangles, or None when it cannot be read.
-
-    Cached because a URDF names the same mesh for visual and collision, and often once per
-    repeated link; a scene is rebuilt whenever a renderer reconnects.
-    """
-    try:
-        import trimesh
-    except ImportError:
-        logger.warning(f"cannot inline {path}: trimesh is not installed")
-        return None
-    try:
-        mesh = cast("Any", trimesh.load(path, force="mesh", process=False))
-    except Exception as exc:
-        logger.warning(f"cannot inline {path}: {exc}")
-        return None
-    faces = np.asarray(mesh.faces, dtype=np.int32)
-    if faces.size == 0:
-        logger.warning(f"cannot inline {path}: no triangles")
-        return None
-    return np.asarray(mesh.vertices, dtype=np.float32), faces
 
 
 def _write_joints(
@@ -385,9 +338,7 @@ def _write_joints(
             continue
         prim.CreateBody0Rel().SetTargets([pxr.Sdf.Path(parent)])
         prim.CreateBody1Rel().SetTargets([pxr.Sdf.Path(child)])
-        prim.GetPrim().CreateAttribute(JOINT_ATTR, pxr.Sdf.ValueTypeNames.String, custom=True).Set(
-            joint.name
-        )
+        prim.GetPrim().SetDisplayName(joint.name)
         _set_joint_frames(pxr, prim, joint)
         _set_joint_limits(prim, joint)
 
@@ -458,7 +409,7 @@ def _rotation_to_z(axis: tuple[float, float, float]) -> Rotation:
 
 
 def _identifier(pxr: Any, name: str) -> str:
-    """``name`` as a USD prim name; the original stays on the prim as dimos:link/dimos:joint."""
+    """``name`` as a USD prim name; the original spelling stays on the prim as its displayName."""
     return str(pxr.Tf.MakeValidIdentifier(name))
 
 

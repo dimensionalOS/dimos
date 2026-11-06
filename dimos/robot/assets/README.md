@@ -125,15 +125,21 @@ scene = graft_usd(root, {"arm_mount": arm_usd})
 ```
 
 A converted layer is a string, not a file: a description already travels as one
-string (`UrdfManager.file_info`), and a stage naming external layers would need a
-second resolution contract on the consumer side. `mesh_mode="inline"` therefore
-bakes mesh triangles into the layer; `"reference"` leaves the path the URDF named.
+string (`UrdfManager.file_info`). A `<mesh>` becomes a standard USD reference to
+the path the URDF named, and nothing is converted — `UrdfManager` already serves
+exactly those paths over `render_file_request`, so resolving them is the
+consumer's job, the same as it already is for the URDF itself.
 
 Links nest down the kinematic tree at the URDF zero pose, so a viewer with no
 physics engine still shows the robot assembled; the joints are also written as
-`UsdPhysics` prims. Prim names are USD identifiers, so `dimos:link` and
-`dimos:joint` carry the original URDF spelling — that attribute is how a frame_id
-finds its prim.
+`UsdPhysics` prims.
+
+Only standard schemas and fields are authored — no custom attributes, so a
+consumer needs nothing of ours to read the layer. Prim names are USD identifiers,
+so a link called `arm-1` becomes a prim named `arm_1`; the original spelling lives
+in the prim's `displayName`, which is USD's own field for a name that identifier
+syntax cannot hold, and which is how a frame_id finds its prim. A link prim is
+identified by its `UsdPhysics.RigidBodyAPI`.
 
 `usd-core` is in the `scene-cooking` extra and has no linux-aarch64 wheel, so `pxr`
 is imported lazily: importing this module costs nothing, only converting needs it.

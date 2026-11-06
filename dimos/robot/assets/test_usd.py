@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import LINK_ATTR, graft_usd, urdf_to_usd
+from dimos.robot.assets.usd import graft_usd, urdf_to_usd
 
 # usd-core is an optional extra with no linux-aarch64 wheel (see dimos.robot.assets.usd).
 pytest.importorskip("pxr")
@@ -74,9 +74,13 @@ def _stage(usd: str) -> Any:
 
 
 def _prim_by_link(stage: Any, link: str) -> Any:
+    """The link prim whose name is ``link``, the same way graft_usd finds a mount frame."""
+    from pxr import UsdPhysics
+
     for prim in stage.Traverse():
-        attr = prim.GetAttribute(LINK_ATTR)
-        if attr and attr.HasAuthoredValue() and str(attr.Get()) == link:
+        if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            continue
+        if (prim.GetDisplayName() or prim.GetName()) == link:
             return prim
     raise AssertionError(f"no prim for link {link!r}")
 
@@ -94,12 +98,13 @@ def test_links_nest_down_the_kinematic_tree(toy: Any) -> None:
 
 
 def test_a_link_name_that_is_not_a_usd_identifier_keeps_its_urdf_spelling(toy: Any) -> None:
-    # "arm-1" cannot be a prim name, so the original is the only way back to the tf frame.
+    # "arm-1" cannot be a prim name, so displayName is the only way back to the tf frame.
+    # It is USD's own field for a name that identifier syntax cannot hold.
     stage = _stage(urdf_to_usd(toy))
     prim = _prim_by_link(stage, "arm-1")
 
     assert prim.GetName() == "arm_1"
-    assert str(prim.GetAttribute(LINK_ATTR).Get()) == "arm-1"
+    assert prim.GetDisplayName() == "arm-1"
 
 
 def test_each_link_sits_at_its_urdf_zero_pose(toy: Any) -> None:
@@ -179,7 +184,7 @@ def test_a_material_colour_becomes_the_display_colour(toy: Any) -> None:
     np.testing.assert_allclose(colors.Get()[0], (0.2, 0.6, 0.2), atol=1e-6)
 
 
-def _mesh_urdf(mesh_path: Path) -> str:
+def _mesh_urdf(mesh_path: str) -> str:
     return f"""<?xml version="1.0"?>
 <robot name="meshy">
   <link name="base_link">
@@ -191,30 +196,46 @@ def _mesh_urdf(mesh_path: Path) -> str:
 
 @pytest.fixture
 def meshy(tmp_path: Path) -> Any:
-    import trimesh
-
-    mesh_path = tmp_path / "box.stl"
-    trimesh.creation.box((0.1, 0.1, 0.1)).export(mesh_path)
+    # The file never has to exist: nothing here reads it.
     urdf = tmp_path / "meshy.urdf"
-    urdf.write_text(_mesh_urdf(mesh_path))
+    urdf.write_text(_mesh_urdf("meshes/box.stl"))
     return RobotModel.from_file(urdf).load()
 
 
-def test_inline_mesh_mode_bakes_the_triangles_into_the_layer(meshy: Any) -> None:
-    # A scene leaves as one string, so an external mesh file would be unresolvable.
-    stage = _stage(urdf_to_usd(meshy, mesh_mode="inline"))
+def _references(prim: Any) -> list[str]:
+    from pxr import Usd
+
+    items: list[str] = []
+    for spec in prim.GetPrimStack():
+        for ref in spec.referenceList.GetAddedOrExplicitItems():
+            items.append(ref.assetPath)
+    assert Usd  # the import documents where GetPrimStack comes from
+    return items
+
+
+def test_a_mesh_becomes_a_reference_to_the_path_the_urdf_named(meshy: Any) -> None:
+    # A reference is USD's own "this geometry lives over there", so no attribute of ours and
+    # no triangles of ours. UsdManager already serves exactly these paths.
+    stage = _stage(urdf_to_usd(meshy))
     mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
 
-    assert len(mesh.GetAttribute("points").Get()) > 0
-    assert set(mesh.GetAttribute("faceVertexCounts").Get()) == {3}
+    assert _references(mesh) == ["meshes/box.stl"]
 
 
-def test_reference_mesh_mode_keeps_the_path_the_urdf_named(meshy: Any) -> None:
-    stage = _stage(urdf_to_usd(meshy, mesh_mode="reference"))
+def test_a_mesh_carries_no_geometry_of_its_own(meshy: Any) -> None:
+    # Nothing is read, parsed or converted, so trimesh is not a dependency of this path.
+    stage = _stage(urdf_to_usd(meshy))
     mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
 
     assert not mesh.GetAttribute("points").HasAuthoredValue()
-    assert mesh.GetAttribute("dimos:meshFile").Get().path.endswith("box.stl")
+
+
+def test_the_layer_authors_no_custom_attributes(toy: Any) -> None:
+    # Standard schemas only: a consumer should need nothing of ours to read this.
+    usd = urdf_to_usd(toy)
+
+    assert "custom " not in usd
+    assert "dimos:" not in usd
 
 
 def test_a_subtree_is_grafted_under_the_frame_it_names(toy: Any) -> None:
