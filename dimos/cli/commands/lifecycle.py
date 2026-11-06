@@ -211,7 +211,10 @@ def run(
         split_run_arguments,
     )
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import stream_name_types
+    from dimos.core.coordination.module_coordinator import (
+        check_module_dependencies,
+        stream_name_types,
+    )
     from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
     from dimos.core.run_registry import RunEntry, cleanup_stale, generate_run_id
     from dimos.memory.tap import check_topics
@@ -300,6 +303,14 @@ def run(
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
+
+    # Hosted fragments check on their executing host, where dependencies live.
+    if not blueprint.hosted_placements:
+        try:
+            check_module_dependencies(blueprint, parsed_config)
+        except ImportError as error:
+            typer.echo(f"Error: {error}", err=True)
+            raise typer.Exit(1) from error
 
     # Clean stale registry entries only after the full command has validated.
     stale = cleanup_stale()
