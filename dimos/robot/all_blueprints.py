@@ -366,6 +366,7 @@ all_modules = {
     "static-tf-publisher": "dimos.protocol.tf.static_tf_publisher.StaticTfPublisher",
     "teleop-control-coordinator": "dimos.control.teleop_coordinator.TeleopControlCoordinator",
     "teleop-recorder": "dimos.teleop.utils.recorder.TeleopRecorder",
+    "teleop-skills": "dimos.agents.skills.teleop_skills.TeleopSkills",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
     "trajectory-follower-native": "dimos.navigation.trajectory_follower.fancy.native.TrajectoryFollowerNative",
     "twist-teleop-module": "dimos.teleop.webxr.extensions.TwistTeleopModule",
