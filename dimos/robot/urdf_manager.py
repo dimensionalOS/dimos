@@ -46,18 +46,18 @@ logger = setup_logger()
 # Their pose comes from tf (odometry, a planar base), so they are read from tf, never published to it.
 MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
-# The RPC every module in physical_connections answers with its own subtree as a USD string.
+# The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
 
 
 @dataclass(frozen=True)
-class PhysicalConnection:
+class Mount:
     """A module owning a subtree: the name it answers RPC under, and the one its frames take.
 
     Both come apart from the class as soon as a robot has two of the same arm. The class is
     shared, so only the deployed instance name reaches the right one, and the description is
     shared, so only its namespace tells their frames apart. Build one with
-    ``PhysicalConnection.of(...)`` rather than by hand.
+    ``Mount.of(...)`` rather than by hand.
     """
 
     # None when only the instance name was given: the class is not importable here, so the
@@ -70,8 +70,8 @@ class PhysicalConnection:
     frame_prefix: str = ""
 
     @classmethod
-    def of(cls, value: object) -> PhysicalConnection:
-        """Normalize a physical_connections value.
+    def of(cls, value: object) -> Mount:
+        """Normalize a mounts value.
 
         A module class names the only instance of itself. A ``Blueprint`` (the useful form:
         ``XArm.blueprint(...).namespace("left")``) names the exact instance it deploys and
@@ -82,7 +82,7 @@ class PhysicalConnection:
         # Imported here, as Module.blueprint does, to keep this module out of the import cycle.
         from dimos.core.coordination.blueprints import Blueprint
 
-        if isinstance(value, PhysicalConnection):
+        if isinstance(value, Mount):
             return value
         if isinstance(value, Blueprint):
             return cls._from_blueprint(value)
@@ -94,23 +94,22 @@ class PhysicalConnection:
             # Matches RPCClient.remote's own default for a module with no instance_name.
             return cls(value, value.__name__)
         raise TypeError(
-            f"physical_connections values are a Module subclass, a Blueprint or an instance "
-            f"name; got {value!r}"
+            f"mounts values are a Module subclass, a Blueprint or an instance name; got {value!r}"
         )
 
     @classmethod
-    def _from_blueprint(cls, blueprint: Any) -> PhysicalConnection:
+    def _from_blueprint(cls, blueprint: Any) -> Mount:
         """The one atom of ``blueprint`` that answers get_usd, under its deployed name."""
         atoms = [atom for atom in blueprint.blueprints if SUBTREE_RPC in atom.module.rpcs]
         if not atoms:
             raise ValueError(
-                f"physical_connections was given a blueprint of "
+                f"mounts was given a blueprint of "
                 f"{sorted(atom.module.__name__ for atom in blueprint.blueprints)}, none of which "
                 f"has an @rpc {SUBTREE_RPC}() to ask for its subtree"
             )
         if len(atoms) > 1:
             raise ValueError(
-                f"physical_connections was given a blueprint with more than one module answering "
+                f"mounts was given a blueprint with more than one module answering "
                 f"{SUBTREE_RPC}() ({sorted(atom.name for atom in atoms)}); name the one that owns "
                 f"the subtree instead of the whole blueprint"
             )
@@ -132,7 +131,7 @@ class UrdfManagerConfig(ModuleConfig):
     # are unchanged by it, which is what keeps the empty default backwards compatible.
     # Keys are links of this robot's own URDF, unprefixed: the user writes them against the URDF
     # they passed in, and frame_id_prefix is applied on the way out to tf, not here.
-    physical_connections: dict[str, PhysicalConnection] = Field(default_factory=dict)
+    mounts: dict[str, Mount] = Field(default_factory=dict)
     # get_scene has every subtree or it has nothing, so it waits this long for the slowest one.
     scene_timeout_s: float = Field(default=60.0, gt=0.0)
     # A module that is not up yet answers nothing, so retry it this often inside that budget.
@@ -141,13 +140,13 @@ class UrdfManagerConfig(ModuleConfig):
     # "reference" leaves the mesh paths for a consumer that fetches files over render_file_request itself.
     usd_mesh_mode: MeshMode = "inline"
 
-    @field_validator("physical_connections", mode="before")
+    @field_validator("mounts", mode="before")
     @classmethod
-    def _normalize_physical_connections(cls, value: object) -> object:
+    def _normalize_mounts(cls, value: object) -> object:
         """Accept a class, a (namespaced) Blueprint or an instance name for each value."""
         if not isinstance(value, dict):
             return value
-        return {frame: PhysicalConnection.of(v) for frame, v in value.items()}
+        return {frame: Mount.of(v) for frame, v in value.items()}
 
 
 class UrdfManager(Module):
@@ -178,27 +177,27 @@ class UrdfManager(Module):
         # Keyed by remote name: two instances of one class are two different modules to ask.
         self._subtree_clients: dict[str, RPCClient] = {}
         try:
-            self._check_physical_connections()
+            self._check_mounts()
         except Exception:
             # super().__init__ already took a loop thread and an RPC session; hand them back
             # rather than leave a half-built module behind for the caller to notice.
             self.dispose()
             raise
 
-    def _check_physical_connections(self) -> None:
+    def _check_mounts(self) -> None:
         """Fail here rather than at get_scene time, which is a blueprint's last step before start."""
         links = {self._description.root_link, *(j.child_link for j in self._description.joints)}
-        for frame_id, connection in self.config.physical_connections.items():
+        for frame_id, mount in self.config.mounts.items():
             if frame_id not in links:
                 raise ValueError(
-                    f"physical_connections names frame {frame_id!r}, which is not a link of this "
+                    f"mounts names frame {frame_id!r}, which is not a link of this "
                     f"URDF (it has {sorted(links)})"
                 )
             # An instance name on its own carries no class, so there is nothing to check; it fails
             # at get_scene time instead, which is why a class or a blueprint is the better value.
-            if connection.module is not None and SUBTREE_RPC not in connection.module.rpcs:
+            if mount.module is not None and SUBTREE_RPC not in mount.module.rpcs:
                 raise ValueError(
-                    f"physical_connections attaches {connection.module.__name__} at {frame_id!r}, "
+                    f"mounts attaches {mount.module.__name__} at {frame_id!r}, "
                     f"but it has no @rpc {SUBTREE_RPC}() to ask for its subtree"
                 )
 
@@ -218,7 +217,7 @@ class UrdfManager(Module):
     def get_usd(self) -> str:
         """This robot's own URDF as a USD layer, with nothing attached to it.
 
-        Every module that can be a physical_connections value answers this, UrdfManager included,
+        Every module that can be mounted on another answers this, UrdfManager included,
         so one bolted to another robot's frame needs no special case.
         """
         with self._usd_lock:
@@ -228,7 +227,7 @@ class UrdfManager(Module):
 
     @rpc
     async def get_scene(self) -> str:
-        """The whole tree as one USD layer: this URDF with every physical_connections subtree on it.
+        """The whole tree as one USD layer: this URDF with every mounted subtree on it.
 
         Async and meant to be called before start(): it waits for every module in the map, because a
         scene missing an arm is worse than a scene that arrives late. Raises TimeoutError when one of
@@ -239,38 +238,35 @@ class UrdfManager(Module):
         return graft_usd(root, subtrees) if subtrees else root
 
     async def _subtrees(self) -> dict[str, str]:
-        connections = self.config.physical_connections
-        if not connections:
+        mounts = self.config.mounts
+        if not mounts:
             return {}
         deadline = time.monotonic() + self.config.scene_timeout_s
         results = await asyncio.gather(
-            *(
-                self._subtree(frame_id, connection, deadline)
-                for frame_id, connection in connections.items()
-            )
+            *(self._subtree(frame_id, mount, deadline) for frame_id, mount in mounts.items())
         )
-        return dict(zip(connections, results, strict=True))
+        return dict(zip(mounts, results, strict=True))
 
-    def _subtree_client(self, connection: PhysicalConnection) -> RPCClient:
-        """The client for one connection, keyed by remote name so two of one class stay apart.
+    def _subtree_client(self, mount: Mount) -> RPCClient:
+        """The client for one mount, keyed by remote name so two of one class stay apart.
 
         Hand-rolled rather than a declared module ref: a ref is one annotated attribute resolved
         by type, and this is a mapping whose keys are only known per robot.
         """
-        client = self._subtree_clients.get(connection.remote_name)
+        client = self._subtree_clients.get(mount.remote_name)
         if client is None:
-            if connection.module is None:
+            if mount.module is None:
                 # No class to take a signature or an rpc list from, so declare the one rpc we call.
-                client = RPCClient(None, None, connection.remote_name, {SUBTREE_RPC}, rpc=self.rpc)
+                client = RPCClient(None, None, mount.remote_name, {SUBTREE_RPC}, rpc=self.rpc)
             else:
-                client = RPCClient.remote(connection.module, connection.remote_name, rpc=self.rpc)
-            self._subtree_clients[connection.remote_name] = client
+                client = RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
+            self._subtree_clients[mount.remote_name] = client
         return client
 
-    async def _subtree(self, frame_id: str, connection: PhysicalConnection, deadline: float) -> str:
-        """The connected module's USD, retried until it answers or the deadline passes."""
-        client = self._subtree_client(connection)
-        name = connection.remote_name
+    async def _subtree(self, frame_id: str, mount: Mount, deadline: float) -> str:
+        """The mounted module's USD, retried until it answers or the deadline passes."""
+        client = self._subtree_client(mount)
+        name = mount.remote_name
         attempts = 0
         while True:
             attempts += 1
@@ -280,7 +276,7 @@ class UrdfManager(Module):
                 # A namespaced module's frames are renamed here rather than at its end: it holds
                 # one description and does not know which copy of itself it is, while the name it
                 # was deployed under says exactly that.
-                return await asyncio.to_thread(prefix_usd_frames, usd, connection.frame_prefix)
+                return await asyncio.to_thread(prefix_usd_frames, usd, mount.frame_prefix)
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"{name} did not answer {SUBTREE_RPC}() for frame {frame_id!r} "

@@ -45,7 +45,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import PhysicalConnection, UrdfManager
+from dimos.robot.urdf_manager import Mount, UrdfManager
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
@@ -457,11 +457,11 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
         )
 
 
-# --- physical_connections and the USD scene ---------------------------------------------------
+# --- mounts and the USD scene ---------------------------------------------------
 
 
 class _FakeArm(Module):
-    """Stands in for a module bolted to the robot: all a physical_connections value owes is get_usd."""
+    """Stands in for a module bolted to the robot: all a mounted module owes is get_usd."""
 
     config: ModuleConfig
 
@@ -566,7 +566,7 @@ def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManage
     assert module.get_usd() is module.get_usd()
 
 
-def test_get_scene_without_physical_connections_is_just_the_robot(
+def test_get_scene_without_mounts_is_just_the_robot(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     # The empty default is what keeps every existing blueprint working untouched.
@@ -580,7 +580,7 @@ def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(physical_connections={"arm": _FakeArm})
+    module = make_manager(mounts={"arm": _FakeArm})
     module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
 
     stage = _usd_stage(_scene(module))
@@ -592,9 +592,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(
-        physical_connections={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01
-    )
+    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01)
     client = _FakeClient(RuntimeError("no reply"), None, _SUBTREE_USD)
     module._subtree_clients["_FakeArm"] = cast("Any", client)
 
@@ -609,65 +607,63 @@ def test_get_scene_times_out_naming_the_module_that_never_answered(
 ) -> None:
     # Half a scene would hand a renderer a robot with no arm, so it is all or an error.
     pytest.importorskip("pxr")
-    module = make_manager(
-        physical_connections={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01
-    )
+    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01)
     module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(RuntimeError("never")))
 
     with pytest.raises(TimeoutError, match="_FakeArm did not answer get_usd"):
         _scene(module)
 
 
-def test_physical_connections_at_a_frame_the_urdf_does_not_have_is_rejected(
+def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     with pytest.raises(ValueError, match="not a link of this URDF"):
-        make_manager(physical_connections={"elbow": _FakeArm})
+        make_manager(mounts={"elbow": _FakeArm})
 
 
-def test_physical_connections_to_a_module_that_cannot_be_asked_is_rejected(
+def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     with pytest.raises(ValueError, match="no @rpc get_usd"):
-        make_manager(physical_connections={"arm": _NoUsd})
+        make_manager(mounts={"arm": _NoUsd})
 
 
 # --- namespacing: two of the same arm, and prefixed frames -------------------------------------
 
 
 def test_a_module_class_names_the_only_instance_of_itself() -> None:
-    connection = PhysicalConnection.of(_FakeArm)
+    mount = Mount.of(_FakeArm)
 
-    assert connection.module is _FakeArm
+    assert mount.module is _FakeArm
     # RPCClient.remote's own default for a module with no instance_name.
-    assert connection.remote_name == "_FakeArm"
+    assert mount.remote_name == "_FakeArm"
 
 
 def test_a_namespaced_blueprint_names_the_instance_it_deploys() -> None:
-    connection = PhysicalConnection.of(_FakeArm.blueprint().namespace("left"))
+    mount = Mount.of(_FakeArm.blueprint().namespace("left"))
 
-    assert connection.module is _FakeArm
-    assert connection.remote_name == "left/_fakearm"
+    assert mount.module is _FakeArm
+    assert mount.remote_name == "left/_fakearm"
 
 
-def test_two_namespaced_copies_of_one_class_are_two_different_connections() -> None:
+def test_two_namespaced_copies_of_one_class_are_two_different_mounts() -> None:
     # The whole point: before this, both resolved to the class name and collided.
-    left = PhysicalConnection.of(_FakeArm.blueprint().namespace("left"))
-    right = PhysicalConnection.of(_FakeArm.blueprint().namespace("right"))
+    left = Mount.of(_FakeArm.blueprint().namespace("left"))
+    right = Mount.of(_FakeArm.blueprint().namespace("right"))
 
     assert left.remote_name != right.remote_name
 
 
 def test_an_instance_name_on_its_own_is_accepted_with_no_class_to_check() -> None:
-    connection = PhysicalConnection.of("left/_fakearm")
+    mount = Mount.of("left/_fakearm")
 
-    assert connection.module is None
-    assert connection.remote_name == "left/_fakearm"
+    assert mount.module is None
+    assert mount.remote_name == "left/_fakearm"
 
 
 def test_a_blueprint_with_nothing_to_ask_for_a_subtree_is_rejected() -> None:
     with pytest.raises(ValueError, match="none of which has an @rpc get_usd"):
-        PhysicalConnection.of(_NoUsd.blueprint())
+        Mount.of(_NoUsd.blueprint())
 
 
 def test_a_blueprint_with_two_modules_answering_get_usd_is_rejected() -> None:
@@ -676,12 +672,12 @@ def test_a_blueprint_with_two_modules_answering_get_usd_is_rejected() -> None:
     )
 
     with pytest.raises(ValueError, match="more than one module answering get_usd"):
-        PhysicalConnection.of(blueprint)
+        Mount.of(blueprint)
 
 
 def test_a_value_that_is_neither_a_module_a_blueprint_nor_a_name_is_rejected() -> None:
     with pytest.raises(TypeError, match="a Module subclass, a Blueprint or an instance name"):
-        PhysicalConnection.of(42)
+        Mount.of(42)
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name(
@@ -690,7 +686,7 @@ def test_each_namespaced_arm_is_asked_under_its_own_name(
     pytest.importorskip("pxr")
     module = make_manager(
         urdf_xml=_TWO_ARM_URDF,
-        physical_connections={
+        mounts={
             "left_mount": _FakeArm.blueprint().namespace("left"),
             "right_mount": _FakeArm.blueprint().namespace("right"),
         },
@@ -710,19 +706,19 @@ def test_each_namespaced_arm_is_asked_under_its_own_name(
 
 
 def test_a_bare_class_has_no_prefix_to_move_its_frames_under() -> None:
-    assert PhysicalConnection.of(_FakeArm).frame_prefix == ""
+    assert Mount.of(_FakeArm).frame_prefix == ""
 
 
 def test_a_namespaced_blueprint_carries_the_prefix_namespace_gave_it() -> None:
-    connection = PhysicalConnection.of(_FakeArm.blueprint().namespace("left"))
+    mount = Mount.of(_FakeArm.blueprint().namespace("left"))
 
-    assert connection.frame_prefix == "left"
+    assert mount.frame_prefix == "left"
 
 
 def test_a_nested_namespace_carries_the_whole_prefix() -> None:
     blueprint = _FakeArm.blueprint().namespace("robot0").namespace("fleet")
 
-    assert PhysicalConnection.of(blueprint).frame_prefix == "fleet/robot0"
+    assert Mount.of(blueprint).frame_prefix == "fleet/robot0"
 
 
 def test_a_hand_set_frame_id_prefix_wins_over_the_namespace() -> None:
@@ -730,10 +726,10 @@ def test_a_hand_set_frame_id_prefix_wins_over_the_namespace() -> None:
     # are this module's frames called" -- so it is read off the module, not off its name.
     blueprint = _FakeArm.blueprint(frame_id_prefix="custom").namespace("left")
 
-    connection = PhysicalConnection.of(blueprint)
+    mount = Mount.of(blueprint)
 
-    assert connection.remote_name == "left/_fakearm"
-    assert connection.frame_prefix == "custom"
+    assert mount.remote_name == "left/_fakearm"
+    assert mount.frame_prefix == "custom"
 
 
 @pytest.mark.parametrize(
@@ -744,7 +740,7 @@ def test_an_instance_name_falls_back_to_the_namespace_in_the_name(
     remote_name: str, prefix: str
 ) -> None:
     # Nothing to read a frame_id_prefix off, so the name is all there is to go on.
-    assert PhysicalConnection.of(remote_name).frame_prefix == prefix
+    assert Mount.of(remote_name).frame_prefix == prefix
 
 
 def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
@@ -753,7 +749,7 @@ def test_each_namespaced_arm_is_asked_under_its_own_name_and_renamed_to_it(
     pytest.importorskip("pxr")
     module = make_manager(
         urdf_xml=_TWO_ARM_URDF,
-        physical_connections={
+        mounts={
             "left_mount": _FakeArm.blueprint().namespace("left"),
             "right_mount": _FakeArm.blueprint().namespace("right"),
         },
@@ -778,7 +774,7 @@ def test_an_un_namespaced_subtree_keeps_the_link_names_its_description_gave_it(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(physical_connections={"arm": _FakeArm})
+    module = make_manager(mounts={"arm": _FakeArm})
     module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
 
     stage = _usd_stage(_scene(module))
@@ -793,7 +789,7 @@ def test_the_roots_own_links_are_never_renamed(
     pytest.importorskip("pxr")
     module = make_manager(
         urdf_xml=_TWO_ARM_URDF,
-        physical_connections={"left_mount": _FakeArm.blueprint().namespace("left")},
+        mounts={"left_mount": _FakeArm.blueprint().namespace("left")},
     )
     module._subtree_clients["left/_fakearm"] = cast("Any", _FakeClient(_SUBTREE_USD))
 
