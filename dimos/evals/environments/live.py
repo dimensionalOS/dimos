@@ -143,6 +143,11 @@ class LiveEnvironment(Environment):
                     f"{type(self).__name__} attaches to an existing dimos; "
                     f"{type(agent).__name__} also adds modules {modules!r}"
                 )
+            if self.serves_mcp:
+                mcp_url = attached_mcp_url()
+                if not mcp_url or not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
+                    raise RuntimeError(f"attach needs a running dimos serving MCP at {mcp_url!r}")
+                return
             try:
                 wait_connectable(time.monotonic() + 2.0)
             except TimeoutError as e:
@@ -178,12 +183,16 @@ class LiveEnvironment(Environment):
             if MCP_SERVER in (*self.config.blueprint, *modules) and entry.mcp_url is None:
                 raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
             mcp_url = entry.mcp_url or ""
-            wait_connectable(deadline, proc.process)
+            # MCP readiness is checked over HTTP; the coordinator ping uses this process's
+            # transport, which a blueprint with its own (Habitat, Go2 sim) need not share.
+            if not mcp_url:
+                wait_connectable(deadline, proc.process)
         else:
-            wait_connectable(time.monotonic() + self.config.launch_timeout_s)
             mcp_url = attached_mcp_url()
             if self.serves_mcp and not mcp_url:
                 raise RuntimeError("the attached dimos serves no McpServer")
+            if not mcp_url:
+                wait_connectable(time.monotonic() + self.config.launch_timeout_s)
         if mcp_url:
             self._wait_mcp(mcp_url, proc, deadline)
         self.setup_scene()

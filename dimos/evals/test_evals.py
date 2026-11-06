@@ -41,6 +41,7 @@ from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
+from dimos.evals.agents.dimos_agent import DimosAgentAdapter
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter, _Turn
 from dimos.evals.agents.pi import PiAdapter
@@ -51,7 +52,7 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.environments.live import PYTHON_API_GUIDE
+from dimos.evals.environments.live import PYTHON_API_GUIDE, LiveEnvironment
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -294,11 +295,6 @@ def test_attach_checks_the_python_guide_exists(tmp_path: Path, mocker: MockerFix
         env.preflight(McpClientAdapter())
 
 
-def test_a_blueprint_without_mcp_server_gets_the_python_api_guide() -> None:
-    assert DimSimEnvironment(blueprint=["unitree-go2"]).python_guide == PYTHON_API_GUIDE
-    assert _sim().python_guide is None
-
-
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
         _sim(attach=True).preflight(McpClientAdapter(modules=("agent",)))
@@ -314,7 +310,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
         "dimos.evals.environments.live.launched_run",
         return_value=SimpleNamespace(mcp_url="http://x/mcp"),
     )
-    mocker.patch("dimos.evals.environments.live.wait_connectable")
+    connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
     adapter = mocker.patch("dimos.evals.environments.live.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
@@ -329,6 +325,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
 
     try:
         env.start(("agent", "speak-skill"))
+        connectable.assert_not_called()  # MCP is checked over HTTP, in any transport
         assert proc.demo_args == [
             "run",
             "unitree-go2",
@@ -416,14 +413,30 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
 
 
-def test_agents_that_need_mcp_bring_it_to_a_python_api_suite() -> None:
-    python_api = DimSimEnvironment(blueprint=["unitree-go2"])
-    client = McpClientAdapter(modules=("mcp-client",))
-    assert client.launch_modules(python_api) == ("mcp-client", "mcp-server")
-    assert client.launch_modules(_sim()) == ("mcp-client",)  # the suite serves MCP
-    # An attached dimos is used as it runs, so attach still accepts the agent.
-    attached = DimSimEnvironment(blueprint=["unitree-go2"], attach=True)
-    assert McpClientAdapter().launch_modules(attached) == ()
+@pytest.mark.parametrize(
+    ("agent", "environment", "added"),
+    [
+        (DimosAgentAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ("mcp-server",)),
+        (
+            McpClientAdapter(modules=("mcp-client",)),
+            DimSimEnvironment(blueprint=["unitree-go2"]),
+            ("mcp-client", "mcp-server"),
+        ),
+        (PiAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ()),
+        # The suite serves MCP already.
+        (DimosAgentAdapter(), _sim(), ()),
+        (McpClientAdapter(modules=("mcp-client",)), _sim(), ("mcp-client",)),
+        # An attached dimos is used as it runs, so attach still accepts the agent.
+        (McpClientAdapter(), DimSimEnvironment(blueprint=["unitree-go2"], attach=True), ()),
+    ],
+    ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client", "attached"],
+)
+def test_agents_that_need_mcp_bring_it_to_a_python_api_suite(
+    agent: EvalSubject, environment: LiveEnvironment, added: tuple[str, ...]
+) -> None:
+    assert agent.launch_modules(environment) == added
+    # Only a blueprint without McpServer hands out the Python API guide.
+    assert environment.python_guide == (None if environment.serves_mcp else PYTHON_API_GUIDE)
 
 
 def test_a_blueprint_with_mcp_server_fails_without_its_mcp_url(
