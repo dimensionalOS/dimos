@@ -28,6 +28,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import request_path, response_path
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.evals.agents import pi
 from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.lib.pi_config import Provider, RunPaths, RuntimeConfig
@@ -361,13 +362,15 @@ def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
 def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: MockerFixture) -> None:
     listing = mocker.patch("dimos.evals.agents.pi.tool_listing")
     guide = tmp_path / "python_api.md"
-    guide.write_text("# Manipulation from Python")
+    guide.write_text("See the [arm guide](/docs/capabilities/manipulation/python_api.md).")
     run_dir = tmp_path / "case"
     run_dir.mkdir()
     adapter = PiAdapter()
     env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=guide)
     prompt = adapter._prepare_case(env, run_dir)
-    assert (run_dir / "DIMOS.md").read_text() == "# Manipulation from Python"
+    # The copy's links point into the checkout.
+    arm_guide = DIMOS_PROJECT_ROOT / "docs" / "capabilities" / "manipulation" / "python_api.md"
+    assert (run_dir / "DIMOS.md").read_text() == f"See the [arm guide]({arm_guide})."
     assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
     assert "dimos mcp call" not in prompt
     listing.assert_not_called()

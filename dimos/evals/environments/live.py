@@ -50,10 +50,9 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Agents with dimOS drive an arm from Python through this guide, given to them as DIMOS.md.
-MANIPULATION_PYTHON_GUIDE = (
-    DIMOS_PROJECT_ROOT / "docs" / "capabilities" / "manipulation" / "python_api.md"
-)
+# Agents with dimOS get this guide as DIMOS.md when the blueprint offers them no MCP tools;
+# it links to the capability guides (manipulation, ...).
+PYTHON_API_GUIDE = DIMOS_PROJECT_ROOT / "docs" / "usage" / "python-api.md"
 
 
 class LiveEnvironmentConfig(EnvironmentConfig):
@@ -64,9 +63,6 @@ class LiveEnvironmentConfig(EnvironmentConfig):
     raw_bridge: bool = False
     # ROBOT.md template describing this robot's raw topics; required with raw_bridge.
     raw_guide: str | None = None
-    # The Python API guide agents with dimOS drive the robot by, given to them as DIMOS.md. A
-    # blueprint without mcp-server then offers them no MCP tools.
-    python_guide: Path | None = None
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -103,7 +99,7 @@ class LiveEnvironment(Environment):
 
     @property
     def python_guide(self) -> Path | None:
-        return self.config.python_guide
+        return None if "mcp-server" in self.config.blueprint else PYTHON_API_GUIDE
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -129,8 +125,8 @@ class LiveEnvironment(Environment):
         return cast("PoseStamped", recording.streams.odom.last().data)
 
     def preflight(self, agent: EvalSubject) -> None:
-        if self.config.python_guide is not None and not self.config.python_guide.is_file():
-            raise RuntimeError(f"python_guide {self.config.python_guide} does not exist")
+        if self.python_guide is not None and not self.python_guide.is_file():
+            raise RuntimeError(f"Python API guide {self.python_guide} does not exist")
         modules = agent.launch_modules(self)
         if self.config.attach:
             if modules:
@@ -189,7 +185,7 @@ class LiveEnvironment(Environment):
             artifacts=artifacts,
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
             raw_guide=self.config.raw_guide,
-            python_guide=self.config.python_guide,
+            python_guide=self.python_guide,
         )
 
     def _wait_mcp(self, mcp_url: str, proc: DimosCliCall | None, deadline: float) -> None:
