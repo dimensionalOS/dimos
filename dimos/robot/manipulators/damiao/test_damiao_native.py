@@ -24,8 +24,8 @@ import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao import arm as common
-from dimos.robot.manipulators.damiao.arm import DamiaoArm
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import TEST_ROBOT
+from dimos.robot.manipulators.damiao.arm import DamiaoArm
 from dimos.utils.testing.waiting import wait_until
 
 

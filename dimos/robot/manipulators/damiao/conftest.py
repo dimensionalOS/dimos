@@ -29,7 +29,6 @@ from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     FakeGripper,
     FakeRobot,
     LocalTransport,
-    make_test_robot,
 )
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.damiao.connection import (
@@ -37,6 +36,7 @@ from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnectionConfig,
 )
 from dimos.utils.testing.waiting import wait_until
+
 
 @pytest.fixture
 def connection_class():
