@@ -27,7 +27,7 @@ from dimos.robot.deeprobotics.m20.rerun import m20_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
-deeprobotics_m20_kronknav_control = (
+m20_nav = (
     autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
