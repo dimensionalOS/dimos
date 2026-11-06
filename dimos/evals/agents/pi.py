@@ -255,7 +255,6 @@ class PiAdapter(EvalSubject):
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
             if env.python_guide is not None:
                 guide = run_dir / "DIMOS.md"
-                # Its links are relative to the checkout; the copy is not.
                 text = env.python_guide.read_text()
                 guide.write_text(text.replace("](/", f"]({DIMOS_PROJECT_ROOT}/"))
                 files["robot"] = guide

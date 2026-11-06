@@ -132,7 +132,6 @@ class DimosAgentAdapter(PiAdapter):
             )
 
     def launch_modules(self, environment: Environment) -> tuple[str, ...]:
-        # The gateway links through McpServer.
         return with_mcp_server(environment, super().launch_modules(environment))
 
     def preflight(self, environment: Environment) -> None:

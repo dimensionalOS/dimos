@@ -178,7 +178,6 @@ def test_its_own_mcp_server_gives_the_agent_dimos_md_not_a_tool_list(tmp_path, m
     guide.write_text("# Python API")
     run_dir = tmp_path / "case"
     run_dir.mkdir()
-    # The McpServer the agent brought is its gateway's link, not tools for the prompt.
     env = RunningEnvironment(
         mcp_url="http://127.0.0.1:9990/mcp", streams=(), artifacts={}, python_guide=guide
     )
