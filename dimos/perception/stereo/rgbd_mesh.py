@@ -15,8 +15,8 @@
 """Real-time RGB-D TSDF 3D mesh reconstruction module.
 
 Integrates aligned color + depth frames and ``tf`` poses into spatially-chunked
-Open3D ``ScalableTSDFVolume`` instances and publishes dirty region meshes onto
-``mesh`` for live Rerun 3D visualization.
+Open3D ``VoxelBlockGrid`` volumes and publishes dirty region meshes onto ``mesh``
+for live Rerun 3D visualization.
 """
 
 from __future__ import annotations
@@ -45,14 +45,18 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-    import open3d as o3d  # type: ignore[import-untyped]
+    import open3d.core as o3c  # type: ignore[import-untyped]
 
 logger = setup_logger()
 
 DEPTH_UNITS_PER_M = 1000.0
-# ScalableTSDFVolume allocates 16x16x16 voxel volume units; padding by one unit plus
-# sdf_trunc ensures adjacent cells share identical TSDF values across cell boundaries.
-_VOLUME_UNIT_RES = 16
+# VoxelBlockGrid allocates 16x16x16 voxel blocks; padding by one block plus sdf_trunc
+# ensures adjacent cells share identical TSDF values across cell boundaries.
+_BLOCK_RESOLUTION = 16
+# Truncation distance in voxels.
+_TRUNC_VOXELS = 3.0
+# Initial block hash map capacity per cell; it grows as blocks get activated.
+_INITIAL_BLOCK_COUNT = 256
 
 
 def _transform_to_matrix(transform: Transform) -> NDArray[np.float64]:
@@ -104,7 +108,7 @@ class RgbdMesh(Module):
         self._info_lock = threading.Lock()
         self._info_ready = threading.Event()
         self._info: CameraInfo | None = None
-        self._intrinsic: o3d.camera.PinholeCameraIntrinsic | None = None
+        self._intrinsic: o3c.Tensor | None = None
         self._ray_grid: tuple[NDArray[np.float32], NDArray[np.float32]] | None = None
         self._cells: dict[tuple[int, int], Any] = {}
         self._dirty: set[tuple[int, int]] = set()
@@ -151,7 +155,7 @@ class RgbdMesh(Module):
         super().stop()
 
     def _on_camera_info(self, msg: CameraInfo) -> None:
-        import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
 
         with self._info_lock:
             if (
@@ -165,8 +169,8 @@ class RgbdMesh(Module):
                 if fx <= 0 or fy <= 0 or msg.width <= 0 or msg.height <= 0:
                     return
                 self._info = msg
-                self._intrinsic = o3d.camera.PinholeCameraIntrinsic(
-                    msg.width, msg.height, fx, fy, cx, cy
+                self._intrinsic = o3c.Tensor(
+                    [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], o3c.float64
                 )
                 u = (np.arange(msg.width, dtype=np.float32) - np.float32(cx)) / np.float32(fx)
                 v = (np.arange(msg.height, dtype=np.float32) - np.float32(cy)) / np.float32(fy)
@@ -247,6 +251,7 @@ class RgbdMesh(Module):
 
     def _integrate_pair(self, color: Image, depth: Image) -> None:
         import open3d as o3d  # type: ignore[import-untyped]
+        import open3d.core as o3c  # type: ignore[import-untyped]
 
         with self._info_lock:
             info = self._info
@@ -304,9 +309,9 @@ class RgbdMesh(Module):
         yw = z * (R[1, 0] * rx + R[1, 1] * ry + R[1, 2]) + t[1]
 
         voxel_size = self.config.voxel_size
-        sdf_trunc = voxel_size * 3.0
+        sdf_trunc = voxel_size * _TRUNC_VOXELS
         region_m = self.config.region_m
-        pad = _VOLUME_UNIT_RES * voxel_size + sdf_trunc
+        pad = _BLOCK_RESOLUTION * voxel_size + sdf_trunc
 
         xw_valid = xw[valid]
         yw_valid = yw[valid]
@@ -315,7 +320,8 @@ class RgbdMesh(Module):
         iy_min = int(np.floor((float(yw_valid.min()) - pad) / region_m))
         iy_max = int(np.floor((float(yw_valid.max()) + pad) / region_m))
 
-        color_o3d = o3d.geometry.Image(rgb)
+        color_o3d = o3d.t.geometry.Image(o3c.Tensor(rgb))
+        extrinsic_o3d = o3c.Tensor(extrinsic, o3c.float64)
         depth_trunc = self.config.depth_max + 0.1
 
         for ix in range(ix_min, ix_max + 1):
@@ -333,21 +339,30 @@ class RgbdMesh(Module):
                 key = (ix, iy)
                 vol = self._cells.get(key)
                 if vol is None:
-                    vol = o3d.pipelines.integration.ScalableTSDFVolume(
-                        voxel_length=voxel_size,
-                        sdf_trunc=sdf_trunc,
-                        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
+                    vol = o3d.t.geometry.VoxelBlockGrid(
+                        attr_names=("tsdf", "weight", "color"),
+                        attr_dtypes=(o3c.float32, o3c.float32, o3c.float32),
+                        attr_channels=(1, 1, 3),
+                        voxel_size=voxel_size,
+                        block_resolution=_BLOCK_RESOLUTION,
+                        block_count=_INITIAL_BLOCK_COUNT,
                     )
                     self._cells[key] = vol
-                d_cell = np.where(mask, d_raw, zero_val)
-                rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                    color_o3d,
-                    o3d.geometry.Image(d_cell),
-                    depth_scale=depth_scale,
-                    depth_trunc=depth_trunc,
-                    convert_rgb_to_intensity=False,
+                depth_o3d = o3d.t.geometry.Image(o3c.Tensor(np.where(mask, d_raw, zero_val)))
+                blocks = vol.compute_unique_block_coordinates(
+                    depth_o3d, intrinsic, extrinsic_o3d, depth_scale, depth_trunc, _TRUNC_VOXELS
                 )
-                vol.integrate(rgbd, intrinsic, extrinsic)
+                vol.integrate(
+                    blocks,
+                    depth_o3d,
+                    color_o3d,
+                    intrinsic,
+                    intrinsic,
+                    extrinsic_o3d,
+                    depth_scale,
+                    depth_trunc,
+                    _TRUNC_VOXELS,
+                )
                 self._dirty.add(key)
 
         self._integrated_frames += 1
@@ -371,14 +386,14 @@ class RgbdMesh(Module):
             vol = self._cells.get((ix, iy))
             if vol is None:
                 continue
-            o3d_mesh = vol.extract_triangle_mesh()
-            verts = np.asarray(o3d_mesh.vertices, dtype=np.float32)
-            tris = np.asarray(o3d_mesh.triangles, dtype=np.uint32)
+            # weight_threshold=0 keeps every integrated voxel, like the legacy extractor.
+            o3d_mesh = vol.extract_triangle_mesh(weight_threshold=0.0)
+            verts = o3d_mesh.vertex.positions.numpy().astype(np.float32)
+            tris = o3d_mesh.triangle.indices.numpy().astype(np.uint32)
             if len(verts) == 0 or len(tris) == 0:
                 continue
-            o3d_mesh.compute_vertex_normals()
-            normals = np.asarray(o3d_mesh.vertex_normals, dtype=np.float32)
-            colors = (np.asarray(o3d_mesh.vertex_colors) * 255.0).astype(np.uint8)
+            normals = o3d_mesh.vertex.normals.numpy().astype(np.float32)
+            colors = (o3d_mesh.vertex.colors.numpy() * 255.0).astype(np.uint8)
 
             # Keep triangles whose centroids lie in [ix*region_m, (ix+1)*region_m) x [iy*region_m, (iy+1)*region_m)
             # so adjacent regions stitch seamlessly without overlapping duplicate bands.
