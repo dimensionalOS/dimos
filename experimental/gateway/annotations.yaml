@@ -677,7 +677,13 @@ robots:
         openyam-teach-collection:
           title: OpenYAM hand-guided recording
           description: Guide an OpenYAM arm by hand and record demonstrations.
-          recommended_config: *can_arm_config
+          recommended_config:
+          - *robot_or_simulator
+          - module: openyamteachconnection
+            field: can_port
+            label: CAN port or USB serial
+            placeholder: can0
+            when: {simulation: ''}
         openyam-lerobot-rollout:
           title: OpenYAM policy rollout
           description: Run a trained LeRobot policy on an OpenYAM arm.
@@ -751,7 +757,7 @@ robots:
       defaults:
         recommended_config:
         - *robot_or_simulator
-        - module: controlcoordinator
+        - module: b601dmconnection
           field: can_port
           label: CAN port
           placeholder: /dev/ttyACM0

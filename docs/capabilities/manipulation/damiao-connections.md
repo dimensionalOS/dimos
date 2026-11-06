@@ -2,10 +2,11 @@
 
 These robots use `ConnectionModule` directly. Each connection owns one native
 `can_motor_control.Robot`, its CAN buses, gripper calibration, state reader,
-and MIT commands. Position-control stacks retire their former whole-body adapters
-and registry entries. The generic Damiao adapter remains for Seeed B601-DM and
-OpenYAM hand-guided collection, which requires PD gains and passive jaws rather
-than position holding. Their compatibility factories remain available.
+and MIT commands. Position-control stacks retire their former whole-body
+adapters and registry entries. Seeed B601-DM and OpenYAM hand-guided collection
+use the same connection path: the generic Damiao whole-body adapter and its
+OpenYAM/Seeed compatibility factories are gone, so every Damiao robot now has
+one owner and one gain declaration.
 Direct-connection coordinators communicate through
 `position_command` and `joint_state` streams.
 
@@ -133,6 +134,7 @@ uv run dimos run makermods-metal-connection-control --can-port can0
 uv run dimos run openyam-connection-control --can-port can0
 uv run dimos run openarm-connection-control --left-can-port can1 --right-can-port can0
 uv run dimos run teleop-webxr-dual-openyam --left-can-port can0 --right-can-port can1
+uv run dimos run seeed-b601-dm-planner-coordinator --can-port can0
 ```
 
 Run only the command for your robot. OpenArm and dual YAM require both selectors,
@@ -185,8 +187,16 @@ Single YAM maps `manipulator` to `arm_gripper`, and Metal maps `arm` to
 normalized gripper commands and feedback; an unbound group has no gripper API.
 
 OpenYAM policy rollout and Quest collection use direct connections and namespaced
-seven-coordinate state/action vectors. `openyam-teach-collection` deliberately
-keeps the adapter-based hand-guiding path: zero stiffness, teaching damping,
-gravity compensation and passive gripper commands on every tick. It retains the
-bare joint names in its recording schema and `--controlcoordinator.can-port`;
-the direct stacks take `--openyamconnection.can-port` (or `--can-port`).
+seven-coordinate state/action vectors. `openyam-teach-collection` uses
+`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity
+compensation and passive gripper commands on every tick, declared to the
+coordinator as zero-stiffness joints. Its seven-coordinate recording schema uses
+the deployed `arm/...` names. The direct stacks take
+`--openyamteachconnection.can-port` (or `--can-port`).
+
+Hand guiding refuses to start unless the robot declares zero stiffness. For a
+connection, `connect_damiao` derives that declaration from the connection's own
+gains: a whole arm group counts when every `kp` is zero, and a gripper counts
+when it is listed in `passive_grippers`. The coordinator carries it as
+`zero_stiffness_joints` and hands it to the task factory; a position-holding
+connection such as `OpenYamConnection` declares nothing and is rejected.

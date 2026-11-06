@@ -3,10 +3,10 @@
 OpenYAM and Dual OpenYAM use `ConnectionModule` implementations that own the
 native `can-motor-control` robot. The coordinator receives `JointState` feedback
 and sends position commands through streams. It does not construct hardware
-adapters. The exception is `openyam-teach-collection`, which retains the shared
-Damiao adapter for zero-stiffness, gravity-compensated hand guiding with passive
-grippers. Seeed B601-DM also retains that compatibility base; it is not migrated
-by this change.
+adapters. `openyam-teach-collection` uses the same path with
+`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity compensation
+and passive grippers, declared as zero-stiffness joints. Seeed B601-DM also uses
+its own direct connection.
 
 ## Run without hardware
 

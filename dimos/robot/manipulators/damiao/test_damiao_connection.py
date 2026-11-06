@@ -236,3 +236,62 @@ def test_reader_callback_can_stop_without_joining_itself(make_rig):
     assert failures == []
     assert not module._reader.is_alive()
     assert module._robot is None
+
+
+def test_connect_rejects_unknown_passive_gripper(connection_class):
+    class UnknownPassive(connection_class):
+        passive_grippers = frozenset({"missing"})
+
+    module = UnknownPassive()
+    try:
+        with pytest.raises(ValueError, match="unknown passive grippers"):
+            module.connect()
+    finally:
+        module.stop()
+
+
+def test_passive_gripper_is_enabled_in_mit_and_never_positioned(connection_class, boundary, mocker):
+    class Teaching(connection_class):
+        passive_grippers = frozenset({"left_gripper"})
+
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    module = Teaching(deadman_timeout_s=10)
+    commands, readings = LocalTransport(), LocalTransport()
+    module.set_transport("position_command", commands)
+    module.set_transport("joint_state", readings)
+    try:
+        module.start()
+        gripper = boundary[0].groups["left_gripper"]
+        right = boundary[0].groups["right_gripper"]
+        assert gripper.modes == ["mit"]
+        assert gripper.enable_count == 1
+        assert gripper.mit_commands == [(0.0, 0.0, 0.4, 0.0, 0.0)]
+        assert right.modes == right.mit_commands == []
+
+        module.command({"arm/left_gripper/position": 0.9})
+        assert gripper.commands == []
+        assert gripper.mit_commands[-1] == (0.0, 0.0, 0.4, 0.0, 0.0)
+
+        # A passive jaw follows the hand, so an opening target is ignored
+        # rather than validated as an opening.
+        module.write({"arm/left_gripper/position": 2.0})
+        assert gripper.commands == []
+        assert gripper.mit_commands[-1] == (0.0, 0.0, 0.4, 0.0, 0.0)
+    finally:
+        module.stop()
+
+
+def test_active_gripper_still_takes_normalized_openings(connection_class, boundary, mocker):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    module = connection_class(deadman_timeout_s=10)
+    commands, readings = LocalTransport(), LocalTransport()
+    module.set_transport("position_command", commands)
+    module.set_transport("joint_state", readings)
+    try:
+        module.start()
+        module.command({"arm/right_gripper/position": 0.75})
+        assert module._grippers["right_gripper"].commands[-1] == 0.75
+    finally:
+        module.stop()

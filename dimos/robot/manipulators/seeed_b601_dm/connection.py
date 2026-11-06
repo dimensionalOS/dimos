@@ -12,26 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed B601-DM topology for the generic Damiao whole-body adapter.
+"""Seeed B601-DM native CAN topology and connection settings.
 
-SAFETY: the arm has no brakes. Disabling the motors (deactivate, disconnect, a
-feedback fault) lets a raised arm fall, and the arm motors carry no torque
-while activation calibrates the gripper. Rest the arm in its folded pose first.
+SAFETY: the arm has no brakes. Disabling the motors (deactivation, a
+disconnect, or a feedback fault) lets a raised arm fall, and the arm motors
+carry no torque while activation calibrates the gripper. Rest the arm in its
+folded pose first, clear the workspace, and keep the 24 V switch within reach.
 """
 
 from __future__ import annotations
 
 import can_motor_control
 from can_motor_control import damiao
+from pydantic import model_validator
+from typing_extensions import Self
 
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
-from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.seeed_b601_dm.config import B601_DM_MODEL
-from dimos.robot.manipulators.seeed_b601_dm.joints import (
-    B601_DM_ARM_JOINTS,
-    B601_DM_GRIPPER_JOINT,
+from dimos.robot.manipulators.damiao.damiao_connection import (
+    DamiaoConnection,
+    DamiaoConnectionConfig,
 )
+from dimos.robot.manipulators.seeed_b601_dm.config import (
+    B601_DM_MODEL,
+    b601_dm_model_config,
+)
+from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
 
 # Measured on the arm: the gripper motor travels 6.39 rad between its stops,
 # and opening moves it toward more negative positions. Calibration drives
@@ -40,34 +44,46 @@ GRIPPER_CALIBRATION_TRAVEL_RAD = 7.0
 GRIPPER_CURRENT = 0.15
 
 
-class SeeedB601DMAdapter(DamiaoWholeBodyAdapter):
+class B601DMConnectionConfig(DamiaoConnectionConfig):
+    """One explicitly selected CAN interface or Damiao USB-CAN serial port."""
+
+    source: str = "b601_dm"
+    can_port: str
+
+    @model_validator(mode="after")
+    def _set_model(self) -> Self:
+        if not self.can_port.strip():
+            raise ValueError("CAN selector must not be empty")
+        if self.model is None:
+            self.model = B601DMConnection.control_model()
+        return self
+
+
+class B601DMConnection(DamiaoConnection):
     """Six arm motors and a calibrated gripper on one Damiao CAN bus.
 
-    DM4340 and DM4340P share the DM4340 driver profile. The bus is SocketCAN
-    (``can0``) by default; point ``bus_devices`` at the serial port of the
-    Damiao USB-CAN bridge shipped with the arm, for example
-    ``{"b601_dm": "/dev/ttyACM0"}``.
+    DM4340 and DM4340P share the DM4340 driver profile. ``can_port`` is a
+    SocketCAN interface (``can0``) by default; point it at the serial port of
+    the Damiao USB-CAN bridge shipped with the arm (``/dev/ttyACM0``) to use
+    that bridge instead.
     """
 
+    config: B601DMConnectionConfig
     bus_name = "b601_dm"
-    arm_joints = {"arm": B601_DM_ARM_JOINTS}
-    gripper_joints = {"gripper": B601_DM_GRIPPER_JOINT}
-    bus_names = (bus_name,)
-    kinematic_joint_names = B601_DM_ARM_JOINTS
+    bus_names = [bus_name]
+    arm_joints = {"arm": list(B601_DM_ARM_JOINTS)}
+    gripper_joints = {"gripper": "gripper"}
+    kinematic_joint_names = list(B601_DM_ARM_JOINTS)
+    # Seeed's SDK MIT gains; the shoulder kd is capped at the shared codec's
+    # 5.0 maximum. The gripper runs its own current-limited control.
+    kp = {"arm": [120.0, 120.0, 120.0, 18.0, 18.0, 18.0]}
+    kd = {"arm": [5.0, 5.0, 5.0, 2.0, 2.0, 2.0]}
+    kinematic_model = B601_DM_MODEL
+    planning = b601_dm_model_config()
+    gravity_comp = True
 
-    def get_limits(self) -> JointLimits:
-        """Declare the calibrated gripper opening in its local 0-1 coordinate."""
-        unknown = [None] * len(self.kinematic_joint_names)
-        return JointLimits(
-            position_lower=[*unknown, 0.0],
-            position_upper=[*unknown, 1.0],
-            velocity_max=[None] * len(self.joint_names),
-        )
-
-    @property
-    def kinematic_model(self) -> RobotModel:
-        """Return the lazy arm model."""
-        return B601_DM_MODEL
+    def _can_devices(self) -> dict[str, str]:
+        return {self.bus_name: self.config.can_port}
 
     def _build_robot(self) -> can_motor_control.Robot:
         # Seeed's motor table. DM4340P uses the DM4340 driver profile.

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -81,9 +82,26 @@ class FakeGripper:
 
     def __init__(self) -> None:
         self.commands: list[float] = []
+        self.motor = SimpleNamespace(position=0.4)
+        self.modes: list[str] = []
+        self.mit_commands: list[tuple[float, float, float, float, float]] = []
+        self.enable_count = 0
+        self.disable_count = 0
 
     def set_opening(self, opening: float) -> None:
         self.commands.append(opening)
+
+    def set_mode(self, mode: str) -> None:
+        self.modes.append(mode)
+
+    def enable(self) -> None:
+        self.enable_count += 1
+
+    def disable(self) -> None:
+        self.disable_count += 1
+
+    def mit_control(self, kp: float, kd: float, q: float, dq: float, tau: float) -> None:
+        self.mit_commands.append((kp, kd, q, dq, tau))
 
 
 class FakeRobot:

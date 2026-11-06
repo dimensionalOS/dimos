@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Seeed B601-DM model, hardware and planning configuration."""
+"""Seeed B601-DM model and planning configuration."""
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import TaskConfig
-from dimos.hardware.spec import JointLimits
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
@@ -29,7 +25,6 @@ from dimos.robot.manipulators.seeed_b601_dm.joints import (
     B601_DM_ARM_JOINTS,
     B601_DM_DOF,
     B601_DM_GRIPPER_JOINT,
-    B601_DM_JOINTS,
 )
 
 B601_DM_HARDWARE_ID = "b601_dm"
@@ -54,48 +49,6 @@ B601_DM_MODEL = (
     .with_joint_velocity_limits(B601_DM_VELOCITY_LIMITS)
     .with_default_joint_acceleration_limit(B601_DM_ACCELERATION_LIMIT)
 )
-
-
-def b601_dm_hardware(
-    *,
-    can_port: str | None = None,
-    gravity_comp: bool = True,
-) -> HardwareComponent:
-    """Select in-memory hardware, or the physical arm when a port is given.
-
-    ``can_port`` is a SocketCAN interface (``can0``) or the serial port of
-    the Damiao USB-CAN bridge shipped with the arm (``/dev/ttyACM0``).
-    """
-    adapter_kwargs: dict[str, object] = {}
-    limits: JointLimits | None = None
-    if can_port is None:
-        limits = JointLimits(
-            position_lower=[*([None] * B601_DM_DOF), 0.0],
-            position_upper=[*([None] * B601_DM_DOF), 1.0],
-            velocity_max=[None] * len(B601_DM_JOINTS),
-        )
-    else:
-        if not can_port.strip():
-            raise ValueError("B601-DM CAN port must not be empty")
-        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_devices={"b601_dm": can_port},
-            gravity_comp=gravity_comp,
-        )
-    return HardwareComponent(
-        hardware_id=B601_DM_HARDWARE_ID,
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=list(B601_DM_JOINTS),
-        adapter_type="mock_whole_body" if can_port is None else "seeed_b601_dm",
-        auto_enable=True,
-        limits=limits,
-        adapter_kwargs=adapter_kwargs,
-        # Seeed's SDK MIT gains; the shoulder kd is capped at the shared
-        # codec's 5.0 maximum. The gripper runs its own current-limited control.
-        wb_config=WholeBodyConfig(
-            kp=(120.0, 120.0, 120.0, 18.0, 18.0, 18.0, 0.0),
-            kd=(5.0, 5.0, 5.0, 2.0, 2.0, 2.0, 0.0),
-        ),
-    )
 
 
 def b601_dm_gripper_task() -> TaskConfig:

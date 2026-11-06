@@ -63,9 +63,12 @@ def arm(
     readings: Collection[str] = ("joint_state",),
     model: RobotModel | None = ARM_MODEL,
     timeout: float = TIMEOUT,
+    zero_stiffness_joints: Collection[str] = (),
 ) -> ConnectionSource:
     """The arm behind a connection module, with no reading yet."""
-    return ConnectionSource("arm", commands, readings, model, timeout)
+    return ConnectionSource(
+        "arm", commands, readings, model, timeout, zero_stiffness_joints=zero_stiffness_joints
+    )
 
 
 def base(readings: Collection[str] = ("odom", "base_velocity")) -> ConnectionSource:
@@ -313,3 +316,15 @@ def test_a_reading_in_another_robots_frame_is_dropped() -> None:
     source.on_message("odom", PoseStamped(frame_id="go2/odom"))
     source.on_message("base_velocity", TwistStamped(frame_id="base"))
     assert source.ready_for_control()
+
+
+def test_declared_zero_stiffness_joints_are_kept_for_tasks() -> None:
+    source = arm(zero_stiffness_joints=[J1])
+
+    assert source.zero_stiffness_joints == frozenset({J1})
+    assert arm().zero_stiffness_joints == frozenset()
+
+
+def test_declared_zero_stiffness_joint_must_be_in_the_model() -> None:
+    with pytest.raises(ValueError, match="zero-stiffness joints.*arm/missing"):
+        arm(zero_stiffness_joints=["arm/missing"])

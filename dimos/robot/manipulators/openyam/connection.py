@@ -30,6 +30,10 @@ from dimos.robot.manipulators.damiao.damiao_connection import (
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.utils.data import LfsPath
 
+#: Joint damping while an operator guides the arm by hand. Stiffness is zero
+#: and gravity is compensated, so the arm floats instead of holding a pose.
+OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5)
+
 
 class OpenYamConnectionConfig(DamiaoConnectionConfig):
     source: str = "yam"
@@ -93,3 +97,21 @@ class OpenYamConnection(DamiaoConnection):
             )
             .build()
         )
+
+
+class OpenYamTeachConnection(OpenYamConnection):
+    """OpenYAM connection for hand-guided teaching.
+
+    The same topology and gripper as :class:`OpenYamConnection`, but the arm
+    runs with zero stiffness and teaching damping, gravity is compensated, and
+    the gripper is passive: its jaws follow the operator instead of holding an
+    opening. Every command still goes out on the regular position stream, so
+    the coordinator's zero-stiffness declaration and the recorded joint order
+    stay exactly those of the deployed robot.
+    """
+
+    config: OpenYamConnectionConfig
+    kp = {"arm": [0.0] * len(OpenYamConnection.arm_joints["arm"])}
+    kd = {"arm": list(OPENYAM_TEACH_DAMPING)}
+    gravity_comp = True
+    passive_grippers = frozenset({"gripper"})

@@ -73,6 +73,9 @@ class DamiaoConnection(ConnectionModule):
     planning: ClassVar[RobotModelConfig]
     gravity_comp: ClassVar[bool] = True
     feedback_clamp_margin_rad: ClassVar[float] = 0.05
+    # Grippers that follow the hand instead of holding a position: enabled in
+    # MIT mode with zero stiffness and torque, as hand-guided teaching needs.
+    passive_grippers: ClassVar[frozenset[str]] = frozenset()
     config: DamiaoConnectionConfig
     position_command: In[JointState]
     joint_state: Out[JointState]
@@ -113,6 +116,25 @@ class DamiaoConnection(ConnectionModule):
                 ],
             }
         )
+
+    @classmethod
+    def zero_stiffness_joint_names(cls) -> list[str]:
+        """Joints this connection commands with zero stiffness.
+
+        A whole arm group counts when every one of its ``kp`` gains is zero,
+        and a gripper counts when it is passive. Hand-guided tasks use this
+        declaration to prove the deployment will not fight the operator.
+        """
+        joints = [
+            joint
+            for group, group_joints in cls.arm_joints.items()
+            if all(gain == 0.0 for gain in cls.kp[group])
+            for joint in group_joints
+        ]
+        return [
+            *joints,
+            *(joint for joint in cls.gripper_joints.values() if joint in cls.passive_grippers),
+        ]
 
     @classmethod
     def control_model(cls, source: str | None = None) -> RobotModel:
@@ -159,6 +181,9 @@ class DamiaoConnection(ConnectionModule):
 
     def connect(self) -> None:
         assert self.config.model is not None
+        unknown = self.passive_grippers - set(self.gripper_joints.values())
+        if unknown:
+            raise ValueError(f"unknown passive grippers: {sorted(unknown)}")
         if {joint.name for joint in movable_joints(self.config.model)} != set(self.joint_names):
             raise ValueError("connection model joints must match the vendor topology")
         self._state_frame = self.frame(self.config.model.load().root_link)
@@ -210,6 +235,7 @@ class DamiaoConnection(ConnectionModule):
                     source=self.config.source,
                 )
                 self._robot.enable()
+                self._enable_passive_grippers()
                 self._active = True
                 self._read_state()
                 self.register_disposable(
@@ -292,13 +318,35 @@ class DamiaoConnection(ConnectionModule):
         )
         self._send_targets()
 
+    def _passive_gripper_names(self) -> list[str]:
+        """The passive grippers in declared order, so commands stay deterministic."""
+        return [name for name in self.gripper_joints if name in self.passive_grippers]
+
+    def _enable_passive_grippers(self) -> None:
+        """Enable passive jaws in MIT mode with zero stiffness and torque.
+
+        The jaws follow the hand, and one tick applies the zero-impedance
+        command before control starts.
+        """
+        for name in self._passive_gripper_names():
+            gripper = self._grippers[name]
+            gripper.set_mode("mit")
+            gripper.enable()
+            gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
+        if self.passive_grippers:
+            assert self._robot is not None
+            self._robot.tick(1_000)
+
     def _send_targets(self) -> None:
         positions = [self._targets[name] for name in self.joint_names]
         if not np.isfinite(positions).all():
             raise ValueError("position command contains non-finite values")
         arm_count = sum(map(len, self.arm_joints.values()))
-        if any(not 0 <= q <= 1 for q in positions[arm_count:]):
-            raise ValueError("gripper opening must be in [0, 1]")
+        for index, name in enumerate(self.gripper_joints):
+            if name in self.passive_grippers:
+                continue
+            if not 0 <= positions[arm_count + index] <= 1:
+                raise ValueError("gripper opening must be in [0, 1]")
         if self._robot is None or not self._active:
             raise RuntimeError("Damiao robot is inactive")
         assert self._physical is not None
@@ -326,7 +374,11 @@ class DamiaoConnection(ConnectionModule):
         for name, rows in arm_rows:
             self._arms[name].mit_control(rows)
         for name in self.gripper_joints:
-            self._grippers[name].set_opening(positions[offset])
+            if name in self.passive_grippers:
+                gripper = self._grippers[name]
+                gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
+            else:
+                self._grippers[name].set_opening(positions[offset])
             offset += 1
         self._robot.tick(1_000)
 

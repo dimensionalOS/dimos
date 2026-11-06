@@ -87,6 +87,11 @@ def connect_damiao(
             instance_name="ControlCoordinator",
             model=connection.control_model("arm"),
             tasks=list(tasks),
+            # The connection's own gains decide this; tasks that require zero
+            # stiffness read the declaration rather than trusting the gains.
+            zero_stiffness_joints=[
+                f"arm/{name}" for name in connection.zero_stiffness_joint_names()
+            ],
         ),
         connection_blueprint,
     ).remappings(
