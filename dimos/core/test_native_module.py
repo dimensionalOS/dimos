@@ -286,6 +286,7 @@ def run_build(tmp_path: Path, mocker, *, build_native: bool) -> Path:
     sentinel = tmp_path / "build_ran"
     exe = tmp_path / "already_built"
     exe.touch()
+    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path)
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     module = StubBuildModule(
         source_dir=".",
@@ -563,6 +564,7 @@ def test_json_mode_malformed_falls_back_to_plain_text() -> None:
 def test_builtin_build_outputs_use_shared_checkout(
     module_path, class_name, executable, tmp_path, mocker
 ):
+    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     module_class = getattr(importlib.import_module(module_path), class_name)
     options = {"setup_network": False} if class_name == "VirtualMid360" else {}
@@ -615,6 +617,7 @@ def test_external_binary_does_not_fetch_checkout(mocker):
 
 
 def test_source_config_is_lazy_and_subclass_location_independent(tmp_path, mocker):
+    mocker.patch("dimos.core.native_module.DIMOS_PROJECT_ROOT", tmp_path / "installed")
     root = mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
 
     class RobotRecorderConfig(RustRecorderConfig):
@@ -628,6 +631,42 @@ def test_source_config_is_lazy_and_subclass_location_independent(tmp_path, mocke
         tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
     )
     assert "source_dir" not in config.to_config_dict()
+
+
+@pytest.mark.parametrize("manifest", ["Cargo.toml", "flake.nix"])
+def test_source_build_prefers_packaged_sources(tmp_path, monkeypatch, mocker, manifest):
+    package_root = tmp_path / "site-packages"
+    source = package_root / "dimos/mapping/ray_tracing/rust"
+    source.mkdir(parents=True)
+    (source / manifest).touch()
+    monkeypatch.setattr(native_module_mod, "DIMOS_PROJECT_ROOT", package_root)
+    fetch = mocker.patch("dimos.core.native_module.get_project_root")
+    config = NativeModuleConfig(
+        source_dir="dimos/mapping/ray_tracing/rust", executable="result/bin/voxel_ray_tracing"
+    )
+
+    assert config.resolve_paths() == (str(source), str(source / "result/bin/voxel_ray_tracing"))
+    fetch.assert_not_called()
+
+
+@pytest.mark.parametrize("empty_source_dir", [False, True])
+def test_source_build_falls_back_without_packaged_manifest(
+    tmp_path, monkeypatch, mocker, empty_source_dir
+):
+    package_root = tmp_path / "site-packages"
+    source_dir = "dimos/mapping/ray_tracing/rust"
+    if empty_source_dir:
+        (package_root / source_dir).mkdir(parents=True)
+    monkeypatch.setattr(native_module_mod, "DIMOS_PROJECT_ROOT", package_root)
+    checkout = tmp_path / "checkout"
+    fetch = mocker.patch("dimos.core.native_module.get_project_root", return_value=checkout)
+    config = NativeModuleConfig(source_dir=source_dir, executable="result/bin/voxel_ray_tracing")
+
+    assert config.resolve_paths() == (
+        str(checkout / source_dir),
+        str(checkout / source_dir / "result/bin/voxel_ray_tracing"),
+    )
+    fetch.assert_called_once_with()
 
 
 def test_external_binary_paths_are_anchored_at_initialization(tmp_path, monkeypatch, mocker):

@@ -3,15 +3,21 @@ global-exclude __pycache__
 global-exclude .DS_Store
 
 # --- Runtime data shipped inside the package ---
-# include-package-data=true maps everything matched here into the wheel too.
-# Scoped by extension on purpose: docs (*.md), native build files (*.nix,
-# *.lock, *.patch, CMakeLists.txt, Dockerfile) and .gitignore are NOT Python
-# runtime data and must stay out. Add a new extension here when code starts
-# loading a new data type — never go back to per-package globs.
+# Keep these sdist inputs in sync with tool.setuptools.package-data. Wheel data
+# is selected explicitly there, independently of this manifest.
 recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
 include dimos/robot/galaxea/r1pro/vendor_setup.sh
 
+# Native modules build these release-matched sources at runtime, including
+# nested workspaces, C shims, vendored licenses and hidden Cargo config.
+recursive-include dimos/**/rust *.rs *.toml Cargo.lock *.nix flake.lock *.c *.h LICENSE* README.md *.cdr
+recursive-include dimos/**/rust/**/.cargo *.toml
+
 # --- Exclusions (must come after the includes above so they win) ---
+prune dimos/**/rust/**/target
+prune dimos/**/rust/**/build
+prune dimos/**/rust/**/result*
+
 # Test fixtures must never ship.
 recursive-exclude dimos/agents/fixtures *
 recursive-exclude dimos/agents/mcp/fixtures *

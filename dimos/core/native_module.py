@@ -55,7 +55,7 @@ from typing import IO, Any
 
 from pydantic import Field, model_validator
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -178,8 +178,11 @@ class NativeModuleConfig(ModuleConfig):
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
-            root = get_project_root()
-            build_cwd = root / self.source_dir
+            # Wheels ship native sources alongside the Python that configures them.
+            # In a checkout this resolves to the same source tree as before.
+            build_cwd = DIMOS_PROJECT_ROOT / self.source_dir
+            if not any((build_cwd / name).is_file() for name in ("flake.nix", "Cargo.toml")):
+                build_cwd = get_project_root() / self.source_dir
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)
