@@ -50,8 +50,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Agents with dimOS get this guide as DIMOS.md when the blueprint offers them no MCP tools;
-# it links to the capability guides (manipulation, ...).
+# Given to agents with dimOS as DIMOS.md when the blueprint has no McpServer.
 PYTHON_API_GUIDE = DIMOS_PROJECT_ROOT / "docs" / "usage" / "python-api.md"
 
 
@@ -183,8 +182,6 @@ class LiveEnvironment(Environment):
             if MCP_SERVER in (*self.config.blueprint, *modules) and entry.mcp_url is None:
                 raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
             mcp_url = entry.mcp_url or ""
-            # MCP readiness is checked over HTTP; the coordinator ping uses this process's
-            # transport, which a blueprint with its own (Habitat, Go2 sim) need not share.
             if not mcp_url:
                 wait_connectable(deadline, proc.process)
         else:

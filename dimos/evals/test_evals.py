@@ -325,7 +325,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
 
     try:
         env.start(("agent", "speak-skill"))
-        connectable.assert_not_called()  # MCP is checked over HTTP, in any transport
+        connectable.assert_not_called()
         assert proc.demo_args == [
             "run",
             "unitree-go2",
@@ -423,10 +423,8 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
             ("mcp-client", "mcp-server"),
         ),
         (PiAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ()),
-        # The suite serves MCP already.
         (DimosAgentAdapter(), _sim(), ()),
         (McpClientAdapter(modules=("mcp-client",)), _sim(), ("mcp-client",)),
-        # An attached dimos is used as it runs, so attach still accepts the agent.
         (McpClientAdapter(), DimSimEnvironment(blueprint=["unitree-go2"], attach=True), ()),
     ],
     ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client", "attached"],
@@ -435,7 +433,6 @@ def test_agents_that_need_mcp_bring_it_to_a_python_api_suite(
     agent: EvalSubject, environment: LiveEnvironment, added: tuple[str, ...]
 ) -> None:
     assert agent.launch_modules(environment) == added
-    # Only a blueprint without McpServer hands out the Python API guide.
     assert environment.python_guide == (None if environment.serves_mcp else PYTHON_API_GUIDE)
 
 

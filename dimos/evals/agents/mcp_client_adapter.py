@@ -102,7 +102,6 @@ class McpClientAdapter(EvalSubject):
         return environment_tools
 
     def launch_modules(self, environment: Environment) -> tuple[str, ...]:
-        # McpClient reaches the robot only through McpServer.
         return with_mcp_server(environment, super().launch_modules(environment))
 
     def preflight(self, environment: Environment) -> None:

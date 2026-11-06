@@ -84,8 +84,7 @@ def test_wait_connectable_retries_until_the_coordinator_answers(mocker) -> None:
 
 
 def test_wait_connectable_times_out_with_no_coordinator_running(mocker) -> None:
-    # The real client: no coordinator must surface as a timeout, which is retried. A name no
-    # other coordinator on the bus answers keeps a concurrent one from passing the ping.
+    # A name no other coordinator answers, so a concurrent one cannot pass the ping.
     mocker.patch.object(CoordinatorRPC, "NAME", f"eval-test-{uuid.uuid4().hex}")
     with pytest.raises(TimeoutError, match="launch deadline"):
         wait_connectable(time.monotonic() + 1)

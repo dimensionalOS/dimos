@@ -368,7 +368,6 @@ def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: Mock
     adapter = PiAdapter()
     env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=guide)
     prompt = adapter._prepare_case(env, run_dir)
-    # The copy's links point into the checkout.
     arm_guide = DIMOS_PROJECT_ROOT / "docs" / "capabilities" / "manipulation" / "python_api.md"
     cbor = DIMOS_PROJECT_ROOT / "dimos" / "cbor.py"
     assert (run_dir / "DIMOS.md").read_text() == f"[arm]({arm_guide}) [cbor]({cbor})"
