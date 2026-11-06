@@ -93,8 +93,9 @@ class EvalSubject(Configurable, ABC):
     with no tools (question/answer, blind). The runner gives it the case prompt and
     a running environment and gets back a trajectory; grading happens elsewhere.
 
-    ``config.modules`` names extra blueprints the environment launches for this
-    agent; empty means only what the environment already provides.
+    ``launch_modules`` names extra blueprints the environment launches for this
+    agent, ``config.modules`` by default; empty means only what the environment
+    already provides.
     """
 
     config: AgentConfig
@@ -115,6 +116,10 @@ class EvalSubject(Configurable, ABC):
     def preflight(self, environment: Environment) -> None:
         """Raise if this agent cannot use the environment, before it starts."""
         return None
+
+    def launch_modules(self, environment: Environment) -> tuple[str, ...]:
+        """Blueprints the environment adds for this agent."""
+        return self.config.modules
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """Tools available to this agent; direct model calls have none."""

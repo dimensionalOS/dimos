@@ -94,8 +94,9 @@ class DimosAgentAdapter(PiAdapter):
 
     The gateway keeps its config, state, cache and socket in per-case directories, sends
     model requests to the trace proxy through models.json, and links only to the case's
-    McpServer. The agent keeps its own system prompt, tools and skills; the shared case
-    guidance accompanies the user instruction.
+    McpServer, which it adds itself to a suite that leaves it out for Pi. The agent keeps
+    its own system prompt, tools and skills; the shared case guidance accompanies the user
+    instruction.
     """
 
     config: DimosAgentAdapterConfig
@@ -129,6 +130,13 @@ class DimosAgentAdapter(PiAdapter):
                 f"{name} does not support max_tool_seconds: its bash has no per-call time limit"
             )
 
+    def launch_modules(self, environment: Environment) -> tuple[str, ...]:
+        modules = super().launch_modules(environment)
+        # A Python API suite leaves McpServer out for Pi; the gateway still links through one.
+        if environment.python_guide is not None and "mcp-server" not in modules:
+            return (*modules, "mcp-server")
+        return modules
+
     def preflight(self, environment: Environment) -> None:
         super().preflight(environment)
         # Checks Node and builds the agent when its inputs changed, before any case starts.
@@ -146,8 +154,7 @@ class DimosAgentAdapter(PiAdapter):
         return super()._prepare_case(replace(env, mcp_url=""), run_dir)
 
     def _configure(self, env: RunningEnvironment, paths: RunPaths, proxy_url: str) -> None:
-        # Without the case's McpServer, a port nothing serves keeps the gateway off any other
-        # DimOS on this host; on a robot the agent loads its own McpServer there.
+        # Without a robot, a port nothing serves keeps the gateway off any other DimOS on this host.
         mcp = urlsplit(env.mcp_url or f"http://127.0.0.1:{_unserved_port()}/mcp")
         self._mcp_env = {"MCPSERVER__HOST": str(mcp.hostname), "MCPSERVER__PORT": str(mcp.port)}
         provider: dict[str, JsonValue] = {"baseUrl": proxy_url, "apiKey": "$DIMOS_EVAL_API_KEY"}
