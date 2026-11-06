@@ -247,6 +247,9 @@ class PremapModule(Module):
                 resolve_named_path(self.config.map_file, Path(self.config.map_file).suffix)
             )
             self._locations = load_locations(source, self.config.locations_stream)
+            # A premap's locations are in its coordinates whatever frame its writer named
+            for pose in self._locations.values():
+                pose.frame_id = self.config.map_frame
             logger.info(
                 f"Loaded {len(self._locations)} named locations from {source}: {list(self._locations)}"
             )

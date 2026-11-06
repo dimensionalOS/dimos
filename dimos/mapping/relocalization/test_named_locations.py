@@ -227,6 +227,12 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
         == 0.5
     )
 
+    relabelled, published = make(map_file=run1, map_frame="premap")
+    begin(relabelled)
+    asyncio.run(relabelled.handle_named_locations_request(String("")))
+    assert published[0].poses[0].header.frame_id == "premap"
+    assert positions(published[0]) == {"dock": (1, 2)}
+
 
 def test_a_missing_file_loads_nothing(tmp_path):
     assert load_locations(str(tmp_path / "absent.db"), "named_locations") == {}
