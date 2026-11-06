@@ -107,8 +107,9 @@ class MockConnectionRig:
 def _local_test_model(connection: type[DamiaoConnection], path: Path) -> RobotModel:
     root = ET.Element("robot", name="test")
     ET.SubElement(root, "link", name="base")
-    grippers = set(connection.robot.gripper_joint_names)
-    for index, name in enumerate([*connection.robot.arm_joint_names, *grippers]):
+    gripper_names = connection.robot.gripper_joint_names
+    grippers = set(gripper_names)
+    for index, name in enumerate([*connection.robot.arm_joint_names, *gripper_names]):
         child = f"link{index}"
         ET.SubElement(root, "link", name=child)
         joint = ET.SubElement(root, "joint", name=name, type="revolute")
