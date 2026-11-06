@@ -457,9 +457,6 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
         )
 
 
-# --- mounts and the USD scene ---------------------------------------------------
-
-
 class _FakeArm(Module):
     """Stands in for a module bolted to the robot: all a mounted module owes is get_usd."""
 
