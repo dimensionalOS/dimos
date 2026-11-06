@@ -53,7 +53,7 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
     `dimos/hardware/whole_body/<yourarm>/_registry.py` and add its name to the `"whole_body"` set in
     `dimos/hardware/test_adapter_registries.py`.
 
-    Everything is matched by position, not by name. The adapter's joint order is every arm group in declaration
+    Joint states, commands, gains and motors are matched by position, not by name. The adapter's joint order is every arm group in declaration
     order, then the grippers; `HardwareComponent.joints` and the `kp`/`kd` tuples must use the same order. List
     each group's motors in its `arm_joints` order and give each `MotorSpec` its joint's name, as the examples do.
     Name the arm joints after the URDF joints and set `kinematic_joint_names` to every arm joint in declaration
@@ -499,8 +499,9 @@ Usage:
     dimos run yourarm-planner              # Start planner (optional, for motion planning)
 
     # Or programmatically:
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.robot.manipulators.yourarm.blueprints import coordinator_yourarm
-    coordinator = coordinator_yourarm.build()
+    coordinator = ModuleCoordinator.build(coordinator_yourarm)
     coordinator.loop()
 """
 
