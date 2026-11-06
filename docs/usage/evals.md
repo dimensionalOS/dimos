@@ -403,7 +403,7 @@ robot. `Sim` is its simulator branch: use `DimSimEnvironment` for DimSim,
 
 Agents with dimOS drive a live robot through the Python API. A blueprint without
 `mcp-server` gives them [the Python API guide](/docs/usage/python-api.md) as `DIMOS.md`,
-which links to the manipulation and navigation guides, and no MCP tool list. Agents that
+and no MCP tool list. Agents that
 need an McpServer (the dimOS agent, the MCP client) add `mcp-server` themselves.
 
 `DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run

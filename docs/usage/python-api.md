@@ -57,8 +57,17 @@ failure handling.
 
 ## Navigation
 
-See the [navigation Python guide](/docs/capabilities/navigation/python_api.md)
-for driving a mobile robot (Go2, Habitat) from scripts: goals, stopping, and sensors.
+Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
+arrives or gives up; `help(app.skills.move_to)` explains its world and relative
+coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
+and `stop_navigation()` cancels the goal:
+
+```python skip
+app.skills.go_to(x=4.0, y=1.5)
+pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
+```
+
+`app.list_streams()` lists each robot's pose and camera streams.
 
 ## Discovering modules and RPCs
 
