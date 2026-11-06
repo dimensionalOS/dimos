@@ -137,5 +137,3 @@ finds its prim.
 
 `usd-core` is in the `scene-cooking` extra and has no linux-aarch64 wheel, so `pxr`
 is imported lazily: importing this module costs nothing, only converting needs it.
-
-`dimos urdf-to-usd <source>` is the same conversion from the command line.

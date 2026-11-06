@@ -71,7 +71,6 @@ from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
-from dimos.cli.commands.urdf_to_usd import urdf_to_usd
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
@@ -136,7 +135,6 @@ main.command(
     }
 )(bake)
 main.command(name="list")(list_blueprints)
-main.command(name="urdf-to-usd")(urdf_to_usd)
 main.command()(graph)
 main.command()(docs)
 main.add_typer(imitation_app, name="imitation")
