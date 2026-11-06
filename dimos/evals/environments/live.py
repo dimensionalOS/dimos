@@ -177,13 +177,15 @@ class LiveEnvironment(Environment):
             proc.start()
             assert proc.process is not None
             pid = proc.process.pid
+            client_env = {k: v for k, v in proc.extra_env.items() if k == "DIMOS_TRANSPORT"}
             entry = launched_run(proc.process, deadline)
             if MCP_SERVER in (*self.config.blueprint, *modules) and entry.mcp_url is None:
                 raise RuntimeError(f"dimos run {entry.run_id} has no McpServer in its blueprint")
             mcp_url = entry.mcp_url or ""
             if not mcp_url:
-                wait_connectable(deadline, proc.process)
+                wait_connectable(deadline, proc.process, client_env)
         else:
+            client_env = {}
             mcp_url = attached_mcp_url()
             if (self.serves_mcp or requires_mcp) and not mcp_url:
                 raise RuntimeError("the attached dimos serves no McpServer")
@@ -204,6 +206,7 @@ class LiveEnvironment(Environment):
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
             raw_guide=self.config.raw_guide,
             python_guide=self.python_guide,
+            client_env=client_env,
         )
 
     def _wait_mcp(self, mcp_url: str, proc: DimosCliCall | None, deadline: float) -> None:

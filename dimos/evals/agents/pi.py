@@ -167,6 +167,10 @@ class PiAdapter(EvalSubject):
     tool_names: ClassVar[tuple[str, ...] | None] = (*default_tools, "grep", "find", "ls")
     robot_via_bash: ClassVar[bool] = True
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._client_env: dict[str, str] = {}
+
     @property
     def selected_tools(self) -> tuple[str, ...]:
         return (
@@ -225,6 +229,7 @@ class PiAdapter(EvalSubject):
             raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
         ) as proxy_url:
             try:
+                self._client_env = dict(env.client_env)
                 self._configure(env, paths, proxy_url)
                 system_prompt = self._prepare_case(env, run_dir)
                 command = self._build_pi_command(inputs, system_prompt, paths)
@@ -368,6 +373,8 @@ class PiAdapter(EvalSubject):
         }
         if self.config.no_dimos:
             env = strip_dimos(env)
+        else:
+            env.update(self._client_env)  # the scripts' Dimos.connect() must reach this dimos
         env["DIMOS_EVAL_RUN_ID"] = str(paths.workspace)
         return env
 
