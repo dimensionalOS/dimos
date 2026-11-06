@@ -35,6 +35,34 @@ Stop with `dimos-desktop dimos stop`. The camera module also stops its owned
 Unreal process. Initial office compilation can take tens of seconds; the
 blueprint gives startup 120 seconds.
 
+## Headset teleoperation
+
+The same blueprint starts the shared DimOS WebXR page. On a Quest on the same
+network, open `https://<laptop-wifi-ip>:8443/teleop`, accept the local server's
+certificate, and tap **Connect**. On macOS, `ipconfig getifaddr en0` reports the
+usual Wi-Fi interface's current address. The network must allow device-to-device
+connections. Only one headset control connection is accepted at a time.
+
+- Hold a controller's middle-finger **grip** to move its corresponding arm.
+  Movement is relative to the hand and arm poses captured when grip engages.
+  Release grip to hold the arm; reposition your hand and grip again to re-clutch.
+- **Left stick** drives forward/backward and strafes. **Right stick X** turns.
+  Headset speed is capped at 0.2 m/s translation and 0.3 rad/s yaw.
+- Releasing the sticks stops driving. Disconnect and stale input also stop the
+  base; arm tasks stop following stale poses after 0.3 seconds.
+- The headset displays the **Unreal head-left camera on a video panel**. It does
+  not load an immersive office model. Desktop continues showing robot + map.
+- Fingers remain fixed. Triggers do not actuate grippers in this simulation.
+
+This reuses OpenYAM's WebXR controller protocol, independent grip/clutch sessions,
+Pink IK tasks and control coordinator. It uses the standard **Connect** page,
+without the OpenYAM learning app's recording or policy controls. Arm targets flow
+from the coordinator's connection ports to the existing sim2 upper-body servo;
+thumbsticks feed its base velocity input. The torso holds its pose, and each IK
+task controls only its own seven arm joints in chassis coordinates. Planning
+uses a 2 rad/s² default acceleration limit, matching the existing R1 planning
+configuration, and teleop commands are capped at 0.5 rad/s. These are demo settings.
+
 ## Sensors and display
 
 | Streams | Source | Requested rate |
@@ -75,9 +103,10 @@ Wheel limits and servo gains are simulation assumptions, not hardware tuning.
 Known structural overlaps use the existing R1 Pro collision exclusions.
 
 Base driving uses motor commands and wheel contact, with no root-pose override.
-Upper-body joint control remains available through `R1ProSimControl.set_joint`
-and `upper_command`; Desktop's arm-planning/VR integration and gripper actuation
-are not implemented by this blueprint.
+Upper-body commands use `upper_command`. With the headset coordinator running,
+it owns and holds those targets; standalone `R1ProSimControl.set_joint` calls
+would be overwritten. Desktop's arm-planning panel and gripper actuation are
+not implemented by this blueprint.
 
 ## Validation
 
@@ -96,6 +125,16 @@ camera output, both IMUs, lidar and encoders. The current display uses the robot
 URDF and accumulated global map. Unit tests cover steering, command timeout,
 limits, collision exclusions and render requests. The blueprint registry, Ruff and targeted mypy
 checks are also run.
+
+The headset protocol smoke test exercised the live HTTPS/WebSocket endpoint:
+each arm moved independently (maximum joint changes 0.083 and 0.068 rad for
+4 cm hand motions), the base drove 0.133 m, and its speed fell below 0.001 m/s
+after disconnect. The headset socket delivered 128 decoded 640x480 JPEG frames.
+This tests the real WebXR-to-coordinator-to-sim path and camera transport; a
+physical headset session and tracking comfort still need an operator check.
+The local evidence includes `headset_test.json`, `headset_camera.jpg` and
+`demo_headset.py` in the validation directory above. Unit tests also cover
+stick release, per-hand input expiry, malformed input and reconnect reset.
 
 The controller can replay an action in response to a repeated lockstep
 observation. SimModule counts rejected duplicates; these are distinct from

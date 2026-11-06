@@ -342,6 +342,8 @@ all_modules = {
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-lio": "dimos.robot.galaxea.r1pro.lio.R1ProLio",
     "r1-pro-sim-control": "dimos.robot.galaxea.r1pro.sim.control.R1ProSimControl",
+    "r1-pro-teleop-coordinator": "dimos.robot.galaxea.r1pro.sim.teleop.R1ProTeleopCoordinator",
+    "r1-pro-web-xr": "dimos.robot.galaxea.r1pro.sim.teleop.R1ProWebXR",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",

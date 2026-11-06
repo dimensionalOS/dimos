@@ -24,6 +24,12 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, MODEL, SCENE as ROBOT_SCENE
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
+from dimos.robot.galaxea.r1pro.sim.teleop import (
+    TELEOP_MODEL,
+    R1ProTeleopCoordinator,
+    R1ProWebXR,
+    arm_tasks,
+)
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.module import SimModule
@@ -63,32 +69,51 @@ LIDAR = LidarConfig(
     response=Mid360Returns,
 )
 
-r1pro_sim2 = autoconnect(
-    UrdfManager.blueprint(models=MODELS),
-    SimModule.blueprint(
-        scene=SCENE,
-        backend=MujocoBackend,
-        dt_ns=5_000_000,
-        startup_timeout_s=120,
-        observation_hz=200,
-        controllers=(CONTROL,),
-        joint_ids=JOINTS,
-    ),
-    SimJointEncoderModule.blueprint(sensor=EncoderConfig(JOINTS, hz=50)),
-    SimImuModule.blueprint(
-        instance_name="chassis_imu",
-        sensor=ImuConfig("r1pro/imu_chassis_link", orientation="ideal"),
-    ).remappings([("chassis_imu", "imu", "imu_chassis")]),
-    SimImuModule.blueprint(
-        instance_name="torso_imu",
-        sensor=ImuConfig("r1pro/imu_torso_link", orientation="ideal"),
-    ).remappings([("torso_imu", "imu", "imu_torso")]),
-    SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=OFFICE_RENDERER),
-    SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
-        [(SimLidarModule, "lidar", "lidar_raw")]
-    ),
-    VoxelGridMapper.blueprint(
-        device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
-    ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
-    R1ProSimControl.blueprint(),
-).global_config(viewer="none", transport="zenoh", n_workers=9)
+r1pro_sim2 = (
+    autoconnect(
+        UrdfManager.blueprint(models=MODELS),
+        SimModule.blueprint(
+            scene=SCENE,
+            backend=MujocoBackend,
+            dt_ns=5_000_000,
+            startup_timeout_s=120,
+            observation_hz=200,
+            controllers=(CONTROL,),
+            joint_ids=JOINTS,
+        ),
+        SimJointEncoderModule.blueprint(sensor=EncoderConfig(JOINTS, hz=50)),
+        SimImuModule.blueprint(
+            instance_name="chassis_imu",
+            sensor=ImuConfig("r1pro/imu_chassis_link", orientation="ideal"),
+        ).remappings([("chassis_imu", "imu", "imu_chassis")]),
+        SimImuModule.blueprint(
+            instance_name="torso_imu",
+            sensor=ImuConfig("r1pro/imu_torso_link", orientation="ideal"),
+        ).remappings([("torso_imu", "imu", "imu_torso")]),
+        SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=OFFICE_RENDERER),
+        SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
+            [(SimLidarModule, "lidar", "lidar_raw")]
+        ),
+        VoxelGridMapper.blueprint(
+            device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
+        ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
+        R1ProSimControl.blueprint(),
+        R1ProWebXR.blueprint(),
+        R1ProTeleopCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=TELEOP_MODEL,
+            tasks=arm_tasks(),
+            tick_rate=50,
+            publish_joint_state=False,
+        ),
+    )
+    .remappings(
+        [
+            (R1ProWebXR, "left_controller_output", "left_cartesian_command"),
+            (R1ProWebXR, "right_controller_output", "right_cartesian_command"),
+            (R1ProTeleopCoordinator, "r1pro_joint_state", "joint_state"),
+            (R1ProTeleopCoordinator, "r1pro_position_command", "upper_command"),
+        ]
+    )
+    .global_config(viewer="none", transport="zenoh", n_workers=11)
+)
