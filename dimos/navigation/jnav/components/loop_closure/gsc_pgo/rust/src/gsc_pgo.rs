@@ -2123,6 +2123,10 @@ impl GscPgo {
         speeds.sort_by(f64::total_cmp);
         speeds[speeds.len() / 2]
     }
+    /// Whether a scan moved the keyframes (fast path, debounce or merge) since the last `update`.
+    pub fn adopted_since_update(&self) -> bool {
+        self.adopted_since_update
+    }
     /// The newest loop-overlap pressure and the scan count it was computed at (see `pressure_check_frequency`).
     pub fn pressure(&self) -> Option<(usize, crate::loop_overlap::LoopOverlap)> {
         self.pressure

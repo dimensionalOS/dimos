@@ -769,6 +769,11 @@ impl Worker {
                     );
                 }
             }
+            // a correction landing on a non-keyframe scan goes out with its graph before scans carry it
+            if !keyframe && pgo.adopted_since_update() && pgo.update() {
+                publisher.send(&pgo, true, cur_time);
+                self.log_solve(&pgo, cur_time);
+            }
             if !keyframe {
                 self.publish_corrected(
                     &pgo,
