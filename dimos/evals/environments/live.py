@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Given to agents with dimOS as DIMOS.md when the blueprint has no McpServer.
 PYTHON_API_GUIDE = DIMOS_PROJECT_ROOT / "docs" / "usage" / "python-api.md"
 
 
