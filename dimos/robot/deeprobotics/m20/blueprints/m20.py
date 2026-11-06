@@ -59,6 +59,8 @@ m20 = (
             republish_loaded_map=0.0,
             new_map=True,
             tf_interval=1.0,
+            # pre_trace_subsample=5 leaves a carved local map of ~12k points, under the 20k default
+            min_local_points=8_000,
         ),
     )
     .global_config(
