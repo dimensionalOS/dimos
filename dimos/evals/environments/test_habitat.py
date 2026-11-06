@@ -179,7 +179,6 @@ def test_a_python_api_launch_pings_and_hands_out_the_forced_transport(tmp_path, 
     mocker.patch.object(env, "wait_ready")
     try:
         result = env.start(())
-        # Habitat forces Zenoh; the ping and the agent's client must use it too.
         assert connectable.call_args.args[2] == {"DIMOS_TRANSPORT": "zenoh"}
         assert result.client_env == {"DIMOS_TRANSPORT": "zenoh"}
     finally:

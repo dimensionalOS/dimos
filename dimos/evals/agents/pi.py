@@ -376,7 +376,7 @@ class PiAdapter(EvalSubject):
         if self.config.no_dimos:
             env = strip_dimos(env)
         else:
-            env.update(self._client_env)  # the scripts' Dimos.connect() must reach this dimos
+            env.update(self._client_env)
         env["DIMOS_EVAL_RUN_ID"] = str(paths.workspace)
         return env
 
