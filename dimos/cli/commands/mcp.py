@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, List  # noqa: UP035 - Typer inspects callbacks as classes on Python 3.10.
 
 import requests
 import typer
@@ -57,7 +57,7 @@ def _parse_key_value_arg(value: str) -> tuple[str, Any]:
         return (key, val)
 
 
-def _validate_key_value_args(values: list[str]) -> list[str]:
+def _validate_key_value_args(values: List[str]) -> list[str]:  # noqa: UP006
     """Validate KEY=VALUE arguments during CLI parsing."""
     for value in values:
         if "=" not in value:
