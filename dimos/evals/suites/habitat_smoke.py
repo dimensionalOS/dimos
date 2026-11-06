@@ -43,7 +43,7 @@ SUITE: Suite = [
             "Briefly describe what you see."
         ),
         environment=HabitatEnvironment(
-            blueprint=["habitat-nav", "mcp-server", "observe-skill"],
+            blueprint=["habitat-nav", "observe-skill"],
         ),
         grade=sensor_score,
         timeout_s=300.0,
