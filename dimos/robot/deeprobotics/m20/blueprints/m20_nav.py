@@ -158,9 +158,7 @@ deeprobotics_m20_kronknav_control = (
     autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
         M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
-        M20Connection.blueprint(auto_stand=True).remappings(
-            [(M20Connection, "odometry", "slam_odom")]
-        ),
+        M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
         RayTracingVoxelMap.blueprint(
