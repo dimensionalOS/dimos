@@ -84,6 +84,10 @@ class M20CameraRelay(Module):
 
     @rpc
     def start(self) -> None:
+        # a second start (e.g. a second `dimos run` reaching this module's start RPC) would open every RTSP stream again
+        if any(thread.is_alive() for thread in self._threads):
+            logger.warning("M20 camera relay already running")
+            return
         super().start()
         self._stop_event.clear()
         streams = (
