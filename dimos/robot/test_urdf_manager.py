@@ -25,6 +25,7 @@ import pinocchio as pin
 import pytest
 import trimesh
 
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.files.File import File
@@ -44,7 +45,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.urdf_manager import PhysicalConnection, UrdfManager
 from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
@@ -56,6 +57,23 @@ _URDF = """<?xml version="1.0"?>
   </link>
   <joint name="shoulder" type="fixed">
     <parent link="base"/><child link="arm"/>
+  </joint>
+</robot>
+"""
+
+# The same cube on two symmetric mounts, for the two-of-the-same-arm cases.
+_TWO_ARM_URDF = """<?xml version="1.0"?>
+<robot name="box_robot">
+  <link name="base"/>
+  <link name="left_mount"/>
+  <link name="right_mount"/>
+  <joint name="left_shoulder" type="fixed">
+    <parent link="base"/><child link="left_mount"/>
+    <origin xyz="0 0.3 0"/>
+  </joint>
+  <joint name="right_shoulder" type="fixed">
+    <parent link="base"/><child link="right_mount"/>
+    <origin xyz="0 -0.3 0"/>
   </joint>
 </robot>
 """
@@ -456,16 +474,20 @@ class _NoUsd(Module):
     config: ModuleConfig
 
 
-_SUBTREE_USD = """#usda 1.0
+def _subtree_usd(prim: str, link: str) -> str:
+    return f"""#usda 1.0
 (
-    defaultPrim = "fake_arm"
+    defaultPrim = "{prim}"
 )
 
-def Xform "fake_arm"
-{
-    custom string dimos:link = "fake_arm_base"
-}
+def Xform "{prim}"
+{{
+    custom string dimos:link = "{link}"
+}}
 """
+
+
+_SUBTREE_USD = _subtree_usd("fake_arm", "fake_arm_base")
 
 
 class _FakeClient:
@@ -492,6 +514,7 @@ def make_manager(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
     modules: list[UrdfManager] = []
 
     def make(**overrides: Any) -> UrdfManager:
+        urdf.write_text(overrides.pop("urdf_xml", _URDF))
         settings: dict[str, Any] = {"model": RobotModel.from_file(urdf)}
         settings.update(overrides)
         module = UrdfManager(**settings)
@@ -551,7 +574,7 @@ def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
 ) -> None:
     pytest.importorskip("pxr")
     module = make_manager(physical_connections={"arm": _FakeArm})
-    module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(_SUBTREE_USD))
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
 
     stage = _usd_stage(_scene(module))
 
@@ -566,7 +589,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
         physical_connections={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01
     )
     client = _FakeClient(RuntimeError("no reply"), None, _SUBTREE_USD)
-    module._subtree_clients[_FakeArm] = cast("Any", client)
+    module._subtree_clients["_FakeArm"] = cast("Any", client)
 
     stage = _usd_stage(_scene(module))
 
@@ -582,7 +605,7 @@ def test_get_scene_times_out_naming_the_module_that_never_answered(
     module = make_manager(
         physical_connections={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01
     )
-    module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(RuntimeError("never")))
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(RuntimeError("never")))
 
     with pytest.raises(TimeoutError, match="_FakeArm did not answer get_usd"):
         _scene(module)
@@ -600,3 +623,121 @@ def test_physical_connections_to_a_module_that_cannot_be_asked_is_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="no @rpc get_usd"):
         make_manager(physical_connections={"arm": _NoUsd})
+
+
+# --- namespacing: two of the same arm, and prefixed frames -------------------------------------
+
+
+def test_a_module_class_names_the_only_instance_of_itself() -> None:
+    connection = PhysicalConnection.of(_FakeArm)
+
+    assert connection.module is _FakeArm
+    # RPCClient.remote's own default for a module with no instance_name.
+    assert connection.remote_name == "_FakeArm"
+
+
+def test_a_namespaced_blueprint_names_the_instance_it_deploys() -> None:
+    connection = PhysicalConnection.of(_FakeArm.blueprint().namespace("left"))
+
+    assert connection.module is _FakeArm
+    assert connection.remote_name == "left/_fakearm"
+
+
+def test_two_namespaced_copies_of_one_class_are_two_different_connections() -> None:
+    # The whole point: before this, both resolved to the class name and collided.
+    left = PhysicalConnection.of(_FakeArm.blueprint().namespace("left"))
+    right = PhysicalConnection.of(_FakeArm.blueprint().namespace("right"))
+
+    assert left.remote_name != right.remote_name
+
+
+def test_an_instance_name_on_its_own_is_accepted_with_no_class_to_check() -> None:
+    connection = PhysicalConnection.of("left/_fakearm")
+
+    assert connection.module is None
+    assert connection.remote_name == "left/_fakearm"
+
+
+def test_a_blueprint_with_nothing_to_ask_for_a_subtree_is_rejected() -> None:
+    with pytest.raises(ValueError, match="none of which has an @rpc get_usd"):
+        PhysicalConnection.of(_NoUsd.blueprint())
+
+
+def test_a_blueprint_with_two_modules_answering_get_usd_is_rejected() -> None:
+    blueprint = autoconnect(
+        _FakeArm.blueprint().namespace("left"), _FakeArm.blueprint().namespace("right")
+    )
+
+    with pytest.raises(ValueError, match="more than one module answering get_usd"):
+        PhysicalConnection.of(blueprint)
+
+
+def test_a_value_that_is_neither_a_module_a_blueprint_nor_a_name_is_rejected() -> None:
+    with pytest.raises(TypeError, match="a Module subclass, a Blueprint or an instance name"):
+        PhysicalConnection.of(42)
+
+
+def test_each_namespaced_arm_is_asked_under_its_own_name(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager(
+        urdf_xml=_TWO_ARM_URDF,
+        physical_connections={
+            "left_mount": _FakeArm.blueprint().namespace("left"),
+            "right_mount": _FakeArm.blueprint().namespace("right"),
+        },
+    )
+    clients = {
+        "left/_fakearm": _FakeClient(_SUBTREE_USD),
+        "right/_fakearm": _FakeClient(_subtree_usd("other_arm", "other_arm_base")),
+    }
+    module._subtree_clients.update(cast("dict[str, Any]", clients))
+
+    stage = _usd_stage(_scene(module))
+
+    assert clients["left/_fakearm"].asked == 1
+    assert clients["right/_fakearm"].asked == 1
+    assert stage.GetPrimAtPath("/box_robot/base/left_mount/fake_arm")
+    assert stage.GetPrimAtPath("/box_robot/base/right_mount/other_arm")
+
+
+def test_joint_tf_is_published_under_an_unprefixed_frame_by_default(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    module = make_manager()
+
+    (transform,) = module.joint_transforms(JointState())
+
+    assert (transform.frame_id, transform.child_frame_id) == ("base", "arm")
+
+
+def test_a_namespaced_manager_publishes_its_joint_tf_behind_its_prefix(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # Two of the same robot share a URDF and so share link names; unprefixed they collide on tf.
+    module = make_manager(frame_id_prefix="left")
+
+    (transform,) = module.joint_transforms(JointState())
+
+    assert (transform.frame_id, transform.child_frame_id) == ("left/base", "left/arm")
+
+
+def test_a_namespaced_point_clearing_filter_looks_up_its_prefixed_base(
+    make_filter: Callable[..., UrdfManagerPointClearing],
+) -> None:
+    module = make_filter(frame_id_prefix="left")
+    module.tfbuffer.receive_transform(
+        Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            frame_id="camera",
+            child_frame_id="left/base",
+            ts=1.0,
+        )
+    )
+
+    filtered = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], ts=1.0))
+
+    # The point at the origin is inside the cube on `left/arm`; the far one is not.
+    assert filtered is not None
+    assert filtered.points_f32().tolist() == [[5.0, 0.0, 0.0]]

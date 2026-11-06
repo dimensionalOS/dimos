@@ -61,7 +61,8 @@ class UrdfManagerPointClearing(UrdfManager):
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
             self._description, self.config.padding_m
         )
-        self._base_link = self._description.root_link
+        # Behind frame_id_prefix, matching what UrdfManager publishes for these links.
+        self._base_link = self.frame(self._description.root_link)
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
@@ -158,7 +159,9 @@ class UrdfManagerPointClearing(UrdfManager):
         motions = {}
         for joint in self._joints.values():
             if joint.type in MULTI_DOF_JOINT_TYPES:
-                parent_from_child = self._tf_at(joint.parent_link, joint.child_link, stamp)
+                parent_from_child = self._tf_at(
+                    self.frame(joint.parent_link), self.frame(joint.child_link), stamp
+                )
                 if parent_from_child is None:
                     return None
                 motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
