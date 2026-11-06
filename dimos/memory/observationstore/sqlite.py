@@ -20,6 +20,7 @@ import re
 import sqlite3
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
+import warnings
 
 from pydantic import Field, model_validator
 
@@ -395,6 +396,28 @@ class SqliteObservationStore(ObservationStore[T]):
         with self._lock:
             self._conn.rollback()
 
+    def has_poses(self) -> bool:
+        """Whether this stream has any attached poses in its spatial index."""
+        with self._lock:
+            return (
+                self._conn.execute(f'SELECT 1 FROM "{self._name}_rtree" LIMIT 1').fetchone()
+                is not None
+            )
+
+    def _warn_missing_poses(self, q: StreamQuery) -> None:
+        if not any(isinstance(f, NearFilter) for f in q.filters) or self.has_poses():
+            return
+        with self._lock:
+            populated = self._conn.execute(f'SELECT 1 FROM "{self._name}" LIMIT 1').fetchone()
+        if populated is not None:
+            warnings.warn(
+                f"Stream {self._name!r} has no attached poses; near() cannot return results. "
+                f"Run dimos map pose-fill <recording.db> --target {self._name} "
+                "with the appropriate --pose-source (default: odom); this writes a new posed DB.",
+                UserWarning,
+                stacklevel=3,
+            )
+
     @property
     def _pending_python_filters(self) -> list[Any]:
         return getattr(self._tls, "python_filters", [])
@@ -406,6 +429,8 @@ class SqliteObservationStore(ObservationStore[T]):
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
         if q.search_text is not None:
             raise NotImplementedError("search_text is not supported by SqliteObservationStore")
+
+        self._warn_missing_poses(q)
 
         join = self._join_blobs
         sql, params, python_filters = _compile_query(q, self._name, join_blob=join)
@@ -437,6 +462,7 @@ class SqliteObservationStore(ObservationStore[T]):
         if python_filters:
             return sum(1 for _ in self.query(q))
 
+        self._warn_missing_poses(q)
         with self._lock:
             row = self._conn.execute(sql, params).fetchone()
         return int(row[0]) if row else 0

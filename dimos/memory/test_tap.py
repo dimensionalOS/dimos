@@ -15,6 +15,7 @@
 from collections.abc import Callable
 from contextlib import ExitStack, closing
 from pathlib import Path
+import shlex
 from typing import Any
 
 import numpy as np
@@ -207,3 +208,31 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+def test_close_reports_shell_quoted_pose_fill_command(tmp_path, mocker):
+    path = tmp_path / "recording with spaces" / "memory.db"
+    info = mocker.patch.object(tap.logger, "info")
+    with SqliteStore(path=str(path)) as store:
+        with closing(TransportRecorder(store)) as recorder:
+            transport = _Transport()
+            recorder.tap("odom", PoseStamped, transport)
+            transport.publish(PoseStamped(ts=42.25, position=(1, 2, 3)))
+        assert store.stream("odom").count() == 1
+    message, *args = info.call_args.args
+    text = message % tuple(args)
+    assert f"Recording closed: {path}" in text
+    assert f"dimos map pose-fill {shlex.quote(str(path))}" in text
+    assert "No attached poses" in text
+    assert "--target lidar --pose-source odom" in text
+
+
+def test_mcap_close_explains_pose_fill_requires_sqlite(tmp_path, mocker):
+    info = mocker.patch.object(tap.logger, "info")
+    path = tmp_path / "memory.mcap"
+    tap.log_recording_closed(path)
+    message, *args = info.call_args.args
+    text = message % tuple(args)
+    assert str(path) in text
+    assert "No attached poses" in text
+    assert "pose-fill currently accepts SQLite recordings only" in text

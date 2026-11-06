@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from math import log
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
@@ -30,6 +30,8 @@ from dimos.utils.colors import HEAT_GRADIENT_ANSI256
 from dimos.utils.human import human_bytes
 
 if TYPE_CHECKING:
+    from dimos.memory.backend import Backend
+    from dimos.memory.observationstore.sqlite import SqliteObservationStore
     from dimos.memory.stream import Stream
 
 # Heavy dimos imports (memory store → codecs, msgs) and rich are deferred into
@@ -82,6 +84,7 @@ def main(
     from rich.table import Table
 
     rows: list[tuple[str, int, float | None, float | None, int, str]] = []
+    has_poses = False
     with store, Progress(transient=True) as prog:
         names = store.list_streams()
         task = prog.add_task("scanning", total=len(names))
@@ -91,6 +94,9 @@ def main(
             n = stream.count()
             t0, t1 = stream.get_time_range() if n else (None, None)
             rows.append((name, n, t0, t1, stream.size_bytes() or 0, _type_name(stream.data_type)))
+            backend = cast("Backend[Any]", stream._source)
+            metadata = cast("SqliteObservationStore[Any]", backend.metadata_store)
+            has_poses = has_poses or metadata.has_poses()
             prog.advance(task)
     rows.sort(key=lambda r: r[4], reverse=True)
 
@@ -139,6 +145,8 @@ def main(
     if not console.is_terminal:  # piped: don't squeeze the table into the 80-col default
         console = Console(width=250)
     console.print(table)
+    if any(row[1] for row in rows) and not has_poses:
+        console.print("Spatial queries: no attached poses (run pose-fill).", markup=False)
 
 
 if __name__ == "__main__":

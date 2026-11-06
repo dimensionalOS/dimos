@@ -32,7 +32,7 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.memory.tap import matching, recording_dir
+from dimos.memory.tap import log_recording_closed, matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 from dimos.utils.logging_config import setup_logger
@@ -301,4 +301,6 @@ class RustRecordingSession:
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if process.returncode not in (None, 0):
             logger.warning("Rust recorder stopped with an error", status=process.returncode)
+        if process.returncode == 0 and self._ready.is_set() and self._failure is None:
+            log_recording_closed(self.plan.path)
         self._process = None
