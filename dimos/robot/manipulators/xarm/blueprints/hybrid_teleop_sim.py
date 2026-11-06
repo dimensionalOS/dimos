@@ -48,7 +48,7 @@ from dimos.core.stream import Out
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
-from dimos.imitation.dataprep.schema import FeatureSpec
+from dimos.imitation.dataprep.schema import DEFAULT_FPS, FeatureSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -158,6 +158,10 @@ _xarm7_sim_hw = make_xarm7_sim_hardware()
 # The wrist camera's image size in pixels. The recording's profile states it,
 # so both take it from here.
 _CAMERA_WIDTH, _CAMERA_HEIGHT = 640, 480
+# The wrist camera's frame rate (frames per second). Dataset export resamples a
+# recording at DEFAULT_FPS and rejects an episode whose camera ran below 95% of
+# it, so the camera runs at that rate.
+_CAMERA_FPS = int(DEFAULT_FPS)
 _arm_state = FeatureSpec(
     stream="coordinator_joint_state",
     message_type=JointState,
@@ -207,6 +211,7 @@ hybrid_teleop_sim = autoconnect(
         **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
         width=_CAMERA_WIDTH,
         height=_CAMERA_HEIGHT,
+        fps=_CAMERA_FPS,
         enable_pointcloud=True,
         enable_mujoco_lidar=True,
         mujoco_lidar_raycast_width=80,

@@ -449,7 +449,11 @@ class MujocoEngine(SimulationEngine):
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
                 continue
-            state.last_render_time = now
+            # Move the schedule on by one interval rather than to now, so the
+            # sim step length does not pull the camera below its fps. When a
+            # whole interval behind, restart from now instead of catching up.
+            due = state.last_render_time + state.interval
+            state.last_render_time = due if now - due < state.interval else now
 
             state.rgb_renderer.update_scene(
                 self._data, camera=state.cam_id, scene_option=state.scene_option
