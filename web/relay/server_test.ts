@@ -57,7 +57,7 @@ function certOpts(hashB64: string | undefined): WebTransportOptions {
 }
 
 function within<T>(promise: Promise<T>, what: string, ms = 8000): Promise<T> {
-  let timer: number;
+  let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
   });
@@ -195,7 +195,10 @@ function robotCarrier(wt: WebTransport): {
 }
 
 async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload: Uint8Array) {
-  const stream = await robot.createBidirectionalStream();
+  const stream = await within(
+    robot.createBidirectionalStream({ waitUntilAvailable: true }),
+    "provider stream credit",
+  );
   const writer = stream.writable.getWriter();
   await writer.write(encodeDataFrame(header, payload));
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
@@ -283,6 +286,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     return channels[0]?.inflight ?? -1;
   };
   const clients: WebTransport[] = [];
+  const controlWriters: WritableStreamDefaultWriter<Uint8Array>[] = [];
   let tearingDown = false;
   try {
     const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
@@ -307,6 +311,10 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
       await within(wt.ready, `${name} connect`);
       const control = await wt.createBidirectionalStream();
       const writer = control.writable.getWriter();
+      // Keep this connection's control stream alive for the whole round.
+      // Deno 2.9 releases unowned streams during collection; losing this
+      // writer closes the viewer before backpressure can be exercised.
+      controlWriters.push(writer);
       const next = controlQueue(control.readable);
       await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
       await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
@@ -391,6 +399,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     throw e;
   } finally {
     tearingDown = true;
+    for (const writer of controlWriters) void writer.abort().catch(() => {});
     for (const wt of clients) {
       try {
         wt.close();
