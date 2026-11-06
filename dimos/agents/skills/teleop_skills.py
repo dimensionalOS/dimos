@@ -68,6 +68,3 @@ class TeleopSkills(Module):
             "Operator hold is on: the robot is stopped until a person releases it. "
             f"The operator sees: {status.reason}"
         )
-
-
-teleop_skills = TeleopSkills.blueprint
