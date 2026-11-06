@@ -6,7 +6,7 @@ When you are ready for more, the same install works with physics simulation, a r
 
 ## Before you begin
 
-You need a machine running **Ubuntu 22.04 or newer** or **macOS 14 or newer**, with about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
+You need a machine running **Ubuntu 22.04 or newer** or **macOS 15 or newer**, with about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
 
 The full hardware matrix, including tested configurations and Jetson boards, is on the [system requirements](/docs/requirements.md) page.
 
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 If you prefer to read the script before running it, it lives at [scripts/install.sh](https://github.com/dimensionalOS/dimos/blob/main/scripts/install.sh) in the repository.
 
-When the installer finishes, follow its activation command and continue to [Run your first replay](#run-your-first-replay). Python 3.12 is installed automatically if needed.
+When the installer finishes, follow its activation command and continue to [Run your first replay](#run-your-first-replay). Python is installed automatically if needed.
 
 See [installation](/docs/installation/index.md) for library/developer modes, platform support, and extras.
 

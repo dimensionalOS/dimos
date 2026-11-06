@@ -36,7 +36,8 @@ def load_class(reference: str) -> type[Any]:
     try:
         if not entry_point.module or not entry_point.attr:
             raise ValueError(f"Invalid import reference {reference!r}; use module:Class")
-    except AttributeError as error:
+    # TODO(PY313): Remove AttributeError
+    except (AttributeError, AssertionError) as error:
         raise ValueError(f"Invalid import reference {reference!r}; use module:Class") from error
 
     value = entry_point.load()

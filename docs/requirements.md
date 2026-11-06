@@ -10,7 +10,7 @@ Install dimOS with the [official installer](/docs/installation/index.md). It pro
 | CPU | 8-core Intel / AMD | 12+ cores |
 | RAM | 16 GB | 32 GB+ |
 | Disk | 10 GB SSD | 25 GB+ SSD |
-| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 24.04 |
+| OS | Ubuntu 22.04, macOS 15+ | Ubuntu 24.04 |
 
 > GPU is optional for basic robot control. Required for perception, VLMs, and AI features.
 
@@ -27,7 +27,7 @@ Install dimOS with the [official installer](/docs/installation/index.md). It pro
 
 ## Dependency Tiers
 
-The macOS 14 minimum follows the current developer dependencies, including ONNX Runtime and Drake. It does not mean that every older dimOS package requires macOS 14. See the [macOS installation guide](/docs/installation/osx.md).
+The macOS 15 minimum follows the current dependencies: Python 3.14 needs Drake 1.47 or newer, which only ships Apple Silicon wheels for macOS 15. See the [macOS installation guide](/docs/installation/osx.md).
 
 Choose extras with the installer's `--extras` option. The default is `all`, adjusted for the platform. For example:
 
