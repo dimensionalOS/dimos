@@ -20,6 +20,7 @@ placeholders, so a test over them would only restate the constant.
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 from typing import Any, cast
 
@@ -170,18 +171,34 @@ def test_the_baked_layer_authors_no_custom_attributes() -> None:
     assert "dimos:" not in usd
 
 
-def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
-    """The rpc itself, not just the function under it.
+def _answer(config: Mid360Config) -> list[str]:
+    """Mid360.get_usd without a Mid360.
 
     A sync @rpc is tagged in place rather than wrapped, so it can be called with anything
-    carrying a config, which keeps this off the NativeModule's rust build. Worth covering
-    because swapping the two frames would be silent: both are strings.
+    carrying a config, which keeps these tests off the NativeModule's rust build.
     """
     from types import SimpleNamespace
 
+    return cast("list[str]", Mid360.get_usd(cast("Any", SimpleNamespace(config=config))))
+
+
+def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
+    # Worth covering because swapping the two frames would be silent: both are strings.
     pytest.importorskip("pxr")
     config = Mid360Config(frame_id="chassis/lidar", imu_frame_id="chassis/imu")
 
-    usd = Mid360.get_usd(cast("Any", SimpleNamespace(config=config)))
+    usd = _answer(config)[1]
 
     assert _links(_stage(usd)) == {"chassis/lidar", "chassis/lidar_body", "chassis/imu"}
+
+
+def test_get_usd_roots_its_assets_at_this_module_rather_than_the_build_machine() -> None:
+    """The baked constant is written on a build machine, whose paths mean nothing on a robot.
+
+    So the root is resolved at call time from this module's own location, which is where
+    mid360.urdf and anything it might name live.
+    """
+    root = _answer(Mid360Config())[0]
+
+    assert Path(root) == Path(__file__).parent
+    assert (Path(root) / "mid360.urdf").exists()

@@ -33,6 +33,7 @@ this file, which carries the regeneration recipe.
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -244,13 +245,22 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
         super().stop()
 
     @rpc
-    def get_usd(self) -> str:
-        """This sensor as a USD layer, in the frames this instance is configured to stamp.
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: this sensor, in the frames this instance is configured to stamp.
 
         A UrdfManager asks for this when the MID-360 is one of its ``mounts``, and grafts the
         answer onto the frame the sensor is bolted to.
+
+        The root is this module's own directory, which is where mid360.urdf and anything it
+        might name live. Today the layer names no files at all, so the root buys nothing -- but
+        it is the honest answer, and it is the one that stays right if the description grows a
+        mesh. It is deliberately not baked into the constant: that is written on a build
+        machine, whose paths mean nothing on the robot.
         """
-        return mid360_usd(self.config.frame_id, self.config.imu_frame_id)
+        return [
+            str(Path(__file__).parent),
+            mid360_usd(self.config.frame_id, self.config.imu_frame_id),
+        ]
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
