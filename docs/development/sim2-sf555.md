@@ -190,8 +190,15 @@ source of the generated `office.urdf`.
   both contention and changing geometry/camera updates; it does not isolate
   either contribution or establish a pure GPU execution time. The second walking check
   covered 0.59m and passed, as did native calibration and the 39 renderer tests.
-- Camera, lidar, and physics reported no runtime errors; all workers and the
-  owned Unreal process stopped cleanly. The existing control gate rejected
+- A later normal live launch measured only 8.2fps over five seconds. Its CPU
+  sample exposed UE's hidden-window `tick.MinimizedSyncDrawToGPU` path: 833/1410
+  render-thread samples waited for the entire GPU. Disabling that synchronization
+  with a 240Hz engine cap measured 11.5fps; an uncapped experiment exited during
+  startup. Neither experimental override is retained. The controlled 13–14fps
+  results therefore must not be treated as a guaranteed live rate or as proof
+  that simply hiding the window solves all headless scheduling issues.
+- Successful calibration/walking runs reported no camera, lidar, or physics
+  runtime errors; their workers and owned Unreal processes stopped cleanly. The existing control gate rejected
   duplicate/out-of-order commands. The camera reported no input drops or gaps;
   lidar input drops and initial gaps are recorded in the saved report.
 - 85 sim2 tests passed with native integration tests excluded from that suite;
