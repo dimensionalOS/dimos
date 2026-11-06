@@ -44,7 +44,7 @@ def test_dual_openyam_connection_declares_both_arms_and_grippers() -> None:
     connection = DualOpenYamConnection(left_can_port="left", right_can_port="right")
     try:
         assert connection.config.source == "dual_openyam"
-        assert connection._can_devices() == {"left": "left", "right": "right"}
+        assert connection.can_ports() == ["left", "right"]
         assert connection.joint_names == [
             *DUAL_OPENYAM_ARM_JOINTS,
             "left_gripper",
@@ -57,8 +57,8 @@ def test_dual_openyam_connection_declares_both_arms_and_grippers() -> None:
 def test_dual_openyam_connection_uses_both_explicit_can_ports() -> None:
     connection = DualOpenYamConnection(left_can_port="can8", right_can_port="can9")
     try:
-        assert connection._can_devices() == {"left": "can8", "right": "can9"}
-        assert connection.gravity_comp is True
+        assert connection.can_ports() == ["can8", "can9"]
+        assert connection.robot.gravity is True
     finally:
         connection.stop()
 

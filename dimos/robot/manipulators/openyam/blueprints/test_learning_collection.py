@@ -14,9 +14,6 @@
 
 """OpenYAM hand-guided teaching over the direct connection."""
 
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
 
 from dimos.control.coordinator import ControlCoordinator
@@ -24,6 +21,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionModule
+from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
 from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
     OPENYAM_TEACH_JOINTS,
     openyam_teach_collection,
@@ -31,11 +29,8 @@ from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
 from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import (
     openyam_quest_collection,
 )
-from dimos.robot.manipulators.openyam.connection import (
-    OPENYAM_TEACH_DAMPING,
-    OpenYamConnection,
-    OpenYamTeachConnection,
-)
+from dimos.robot.manipulators.openyam.config import OPENYAM, OPENYAM_TEACH_DAMPING
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 from dimos.robot.manipulators.openyam.joints import OPENYAM_ARM_JOINTS
 
@@ -67,22 +62,21 @@ def test_teach_collection_is_a_minimal_native_stack():
     assert modules[1:] == [
         EpisodeMonitorModule,
         OpenYamCoordinator,
-        OpenYamTeachConnection,
+        OpenYamConnection,
         WebcamModule,
     ]
 
 
-def test_teach_connection_is_zero_stiffness_gravity_compensated_and_passive():
-    assert OpenYamTeachConnection.kp == {"arm": [0.0] * len(OPENYAM_ARM_JOINTS)}
-    assert OpenYamTeachConnection.kd == {"arm": list(OPENYAM_TEACH_DAMPING)}
-    assert OpenYamTeachConnection.gravity_comp is True
-    assert OpenYamTeachConnection.passive_grippers == frozenset({"gripper"})
-    assert OpenYamTeachConnection.zero_stiffness_joint_names() == [
-        *OPENYAM_ARM_JOINTS,
-        "gripper",
+def test_teach_robot_data_is_zero_stiffness_gravity_compensated_and_passive():
+    assert OPENYAM.teach_kd == list(OPENYAM_TEACH_DAMPING)
+    assert OPENYAM.gravity is True
+    assert OPENYAM.passive_grippers == frozenset({"gripper"})
+    assert zero_stiffness_joints(OPENYAM, teach=True) == [
+        *[f"arm/{name}" for name in OPENYAM_ARM_JOINTS],
+        "arm/gripper",
     ]
-    # The position-holding connection is unchanged and declares nothing.
-    assert OpenYamConnection.zero_stiffness_joint_names() == []
+    # A position-holding deployment declares nothing.
+    assert zero_stiffness_joints(OPENYAM, teach=False) == []
 
 
 def test_teach_connection_declares_zero_stiffness_to_the_coordinator():
@@ -112,9 +106,10 @@ def test_teach_connection_is_selected_with_the_deployed_joint_names():
     atom = next(
         atom
         for atom in openyam_teach_collection.active_blueprints
-        if atom.module is OpenYamTeachConnection
+        if atom.module is OpenYamConnection
     )
     assert atom.kwargs["source"] == "arm"
+    assert atom.kwargs["teach"] is True
     assert OPENYAM_TEACH_JOINTS == [f"arm/{name}" for name in OPENYAM_ARM_JOINTS] + ["arm/gripper"]
 
 
@@ -137,51 +132,6 @@ def test_teach_recording_profile_keeps_seven_joint_state_and_action():
     assert (action.stream, action.names) == ("coordinator_joint_state", OPENYAM_TEACH_JOINTS)
 
 
-def test_teach_connection_commands_zero_stiffness_on_every_target(mocker):
-    gripper = mocker.Mock()
-    gripper.motor = SimpleNamespace(position=0.42)
-    connection = OpenYamTeachConnection(can_port="can0")
-    arm = mocker.Mock()
-    arm.positions.return_value = np.zeros(len(OPENYAM_ARM_JOINTS))
-    connection._arms = {"arm": arm}
-    connection._grippers = {"gripper": gripper}
-    connection._physical = SimpleNamespace(gravity=lambda q: np.zeros(len(q)))
-    connection._robot = mocker.Mock()
-    connection._active = True
-    connection._targets = {
-        **{f"yam_joint{i}": 0.1 * i for i in range(1, 7)},
-        "gripper": 0.9,
-    }
-    try:
-        connection._send_targets()
-    finally:
-        connection.stop()
-
-    rows = arm.mit_control.call_args.args[0]
-    np.testing.assert_allclose(rows[:, 0], [0.0] * 6)
-    np.testing.assert_allclose(rows[:, 1], OPENYAM_TEACH_DAMPING)
-    np.testing.assert_allclose(rows[:, 2], [0.1 * i for i in range(1, 7)])
-    np.testing.assert_allclose(rows[:, 3:], 0.0)
-    gripper.mit_control.assert_called_once_with(0.0, 0.0, 0.42, 0.0, 0.0)
-    gripper.set_opening.assert_not_called()
-
-
-def test_teach_connection_enables_a_passive_gripper_at_zero_impedance(mocker):
-    gripper = mocker.Mock()
-    gripper.motor = SimpleNamespace(position=0.42)
-    connection = OpenYamTeachConnection(can_port="can0")
-    connection._grippers = {"gripper": gripper}
-    connection._robot = mocker.Mock()
-    try:
-        connection._enable_passive_grippers()
-        gripper.set_mode.assert_called_once_with("mit")
-        gripper.enable.assert_called_once_with()
-        gripper.mit_control.assert_called_once_with(0.0, 0.0, 0.42, 0.0, 0.0)
-        connection._robot.tick.assert_called_once_with(1_000)
-    finally:
-        connection.stop()
-
-
 def test_teach_collection_can_selector_reaches_the_connection(tmp_path):
     parsed = BlueprintConfigParser(openyam_teach_collection).parse(
         [
@@ -194,7 +144,7 @@ def test_teach_collection_can_selector_reaches_the_connection(tmp_path):
         ],
         environ={},
     )
-    assert parsed.module_kwargs("openyamteachconnection")["can_port"] == "/dev/ttyACM0"
+    assert parsed.module_kwargs("openyamconnection")["can_port"] == "/dev/ttyACM0"
     coordinator = next(
         atom
         for atom in openyam_teach_collection.active_blueprints

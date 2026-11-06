@@ -21,11 +21,12 @@ from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 
 def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
-    deployed = DualOpenYamConnection.planning_model("arm")
+    deployed = dual_openyam_model_config(robot="arm")
     names = deployed.joint_names
     bounds = {name: (-float(i + 1), float(i + 2)) for i, name in enumerate(names)}
     xml = (
@@ -40,7 +41,9 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
             f'<link name="{name}_link"/><joint name="{name}" type="revolute">'
             f'<parent link="base"/><child link="{name}_link"/>'
             '<limit lower="0" upper="1"/></joint>'
-            for name in [f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()]
+            for name in [
+                f"arm/{name}" for name in DualOpenYamConnection.robot.gripper_joints.values()
+            ]
         )
         + "</robot>"
     )
@@ -55,13 +58,16 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
         JointState(
             name=[
                 *deployed.joint_names,
-                *[f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()],
+                *[f"arm/{name}" for name in DualOpenYamConnection.robot.gripper_joints.values()],
             ],
             position=[0.0]
             * len(
                 [
                     *deployed.joint_names,
-                    *[f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()],
+                    *[
+                        f"arm/{name}"
+                        for name in DualOpenYamConnection.robot.gripper_joints.values()
+                    ],
                 ]
             ),
         ),

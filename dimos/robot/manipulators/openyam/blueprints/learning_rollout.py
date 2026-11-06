@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
@@ -25,21 +26,43 @@ from dimos.imitation.policy.lerobot.module import (
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
     DamiaoTeleopCoordinator,
-    connect_damiao,
+    arm_connection,
+    arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     OPENYAM_QUEST_KINEMATICS,
     OPENYAM_QUEST_MODEL,
     openyam_quest_tasks,
 )
+from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 _WRIST_WIDTH = 640
 _WRIST_HEIGHT = 480
 _WRIST_FPS = 30.0
-OPENYAM_ROLLOUT_JOINTS = [*OpenYamConnection.planning_model("arm").joint_names, "arm/gripper"]
+OPENYAM_ROLLOUT_JOINTS = [
+    *make_openyam_model_config(robot="arm").joint_names,
+    "arm/gripper",
+]
+
+
+def _rollout_control(
+    tasks: list[TaskConfig],
+    coordinator: type[DamiaoCoordinator] = DamiaoCoordinator,
+) -> Blueprint:
+    """A trajectory coordinator named ControlCoordinator over the connection."""
+    return autoconnect(
+        coordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=OpenYamConnection.control_model("arm"),
+            tasks=list(tasks),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenYamConnection),
+    ).remappings(arm_remaps(OpenYamConnection, coordinator))
 
 
 def build_openyam_rollout(
@@ -78,11 +101,7 @@ def build_openyam_rollout(
         blueprint = autoconnect(
             policy,
             ArmTeleopModule.blueprint(),
-            connect_damiao(
-                OpenYamConnection,
-                coordinator=DamiaoTeleopCoordinator,
-                tasks=openyam_quest_tasks(),
-            ),
+            _rollout_control(openyam_quest_tasks(), DamiaoTeleopCoordinator),
             camera,
             ManipulationModule.blueprint(
                 gripper_tasks={"manipulator": "arm_gripper"},
@@ -99,10 +118,7 @@ def build_openyam_rollout(
     else:
         blueprint = autoconnect(
             policy,
-            connect_damiao(
-                OpenYamConnection,
-                tasks=[joint_trajectory_task(OPENYAM_ROLLOUT_JOINTS)],
-            ),
+            _rollout_control([joint_trajectory_task(OPENYAM_ROLLOUT_JOINTS)]),
             camera,
         )
 

@@ -24,17 +24,20 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
-from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
-from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.damiao.connection import (
+    DamiaoConnection,
+    zero_stiffness_joints,
+)
 from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
     dual_makermods_metal_planner_coordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     coordinator_dual_openyam,
+    dual_openyam_control,
     dual_openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
-from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 from dimos.robot.manipulators.makermods_metal.blueprints.basic import coordinator_makermods_metal
 from dimos.robot.manipulators.makermods_metal.blueprints.connection import (
     makermods_metal_connection_control,
@@ -51,14 +54,21 @@ from dimos.robot.manipulators.openarm.blueprints.connection import openarm_conne
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_webxr_openarm
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
+    openyam_control,
     openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.openyam.blueprints.connection import openyam_connection_control
+from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
+    OPENYAM_TEACH_JOINTS,
+    openyam_teach_collection,
+)
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
     teleop_webxr_openyam,
 )
+from dimos.robot.manipulators.openyam.config import OPENYAM
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 CASES = [
     ("coordinator-makermods-metal", coordinator_makermods_metal),
@@ -98,10 +108,7 @@ def test_retained_entry_routes_every_task_through_its_connection(name, blueprint
     assert connection.module.deployment == "python"
     assert connection.kwargs["source"] == "arm"
     assert coordinator.kwargs.get("hardware", []) == []
-    model = connection.module.planning_model("arm")
-    joints = set(model.joint_names) | {
-        f"arm/{name}" for name in connection.module.gripper_joints.values()
-    }
+    joints = {f"arm/{name}" for name in connection.module.robot.joint_names}
     for task in coordinator.kwargs["tasks"]:
         assert set(task.joint_names) <= joints
     load.assert_not_called()
@@ -138,7 +145,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
 
 def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     mocker.patch.object(global_config, "simulation", "mujoco")
-    blueprint = damiao_connection_control(DualOpenYamConnection)
+    blueprint = dual_openyam_control()
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
     assert mock.kwargs["source"] == "arm"
@@ -150,4 +157,39 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     ]
     assert mock.kwargs["initial_positions"]["left_gripper"] == 0.0
     assert mock.kwargs["initial_positions"]["right_gripper"] == 0.0
+    assert mock.kwargs["initial_positions"]["left_joint1"] == pytest.approx(0.0)
     assert blueprint.remapping_map[(mock.name, "position_command")] == "arm_position_command"
+
+
+def test_blueprint_composition_is_coordinator_connection_and_remaps():
+    blueprint = openyam_control()
+    [connection] = [
+        atom for atom in blueprint.blueprints if issubclass(atom.module, DamiaoConnection)
+    ]
+    [coordinator] = [
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    ]
+    assert connection.module is OpenYamConnection
+    assert connection.kwargs == {"source": "arm", "teach": False}
+    assert coordinator.kwargs["model"] == OpenYamConnection.control_model("arm")
+    assert coordinator.kwargs["zero_stiffness_joints"] == []
+    assert blueprint.remapping_map == {
+        (connection.name, "position_command"): "arm_position_command",
+        ("ControlCoordinator", "arm_joint_state"): "joint_state",
+    }
+
+
+def test_teaching_blueprint_declares_zero_stiffness_only_when_teaching():
+    blueprint = openyam_teach_collection
+    [coordinator] = [
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    ]
+    [connection] = [
+        atom for atom in blueprint.blueprints if issubclass(atom.module, DamiaoConnection)
+    ]
+    assert connection.kwargs["teach"] is True
+    assert coordinator.kwargs["zero_stiffness_joints"] == OPENYAM_TEACH_JOINTS
+    assert zero_stiffness_joints(OPENYAM, teach=False) == []
+    assert zero_stiffness_joints(DUAL_OPENYAM, teach=True) == [
+        *[f"arm/{name}" for name in DUAL_OPENYAM.arm_joint_names],
+    ]

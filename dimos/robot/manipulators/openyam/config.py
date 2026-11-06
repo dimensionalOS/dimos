@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM canonical planning model configuration."""
+"""OpenYAM canonical planning model configuration and robot data."""
 
 from __future__ import annotations
 
@@ -23,6 +23,13 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     joint_names,
+    named_for_robot,
+)
+from dimos.robot.manipulators.damiao.robot import (
+    DamiaoBus,
+    DamiaoGripper,
+    DamiaoMotor,
+    DamiaoRobot,
 )
 from dimos.robot.manipulators.openyam.joints import (
     OPENYAM_ARM_JOINTS as OPENYAM_ARM_JOINTS,
@@ -36,13 +43,23 @@ OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 OPENYAM_PACKAGE = LfsPath("yam_description")
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
+#: Joint damping while an operator guides the arm by hand. Stiffness is zero
+#: and gravity is compensated, so the arm floats instead of holding a pose.
+OPENYAM_TEACH_DAMPING = [2.0, 2.0, 2.0, 0.5, 0.5, 0.5]
+OPENYAM_GRIPPER_NAME = "gripper"
 
 
 def make_openyam_model_config(
     *,
     home_joints: list[float] | None = None,
+    robot: str | None = None,
 ) -> RobotModelConfig:
-    """Build the canonical visualization and planning config for OpenYAM."""
+    """Build the canonical visualization and planning config for OpenYAM.
+
+    Args:
+        home_joints: The arm's home posture; defaults to ``OPENYAM_HOME_JOINTS``.
+        robot: Name the moving joints under this robot, e.g. "arm".
+    """
     model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     model = (
         RobotModel.from_file(
@@ -52,19 +69,59 @@ def make_openyam_model_config(
         .with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
         .with_fixed_joints("joint7", "joint8")
     )
-    return RobotModelConfig(
-        model=model.with_default_joint_acceleration_limit(2.0),
-        joint_names=model_joint_names,
-        base_link="base",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="manipulator",
-                joint_names=tuple(model_joint_names),
-                base_link="base",
-                tip_link="gripper_tip",
-            )
-        ],
-        auto_convert_meshes=True,
-        collision_exclusion_pairs=[],
-        home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
+    return named_for_robot(
+        RobotModelConfig(
+            model=model.with_default_joint_acceleration_limit(2.0),
+            joint_names=model_joint_names,
+            base_link="base",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="manipulator",
+                    joint_names=tuple(model_joint_names),
+                    base_link="base",
+                    tip_link="gripper_tip",
+                )
+            ],
+            auto_convert_meshes=True,
+            collision_exclusion_pairs=[],
+            home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
+        ),
+        robot,
     )
+
+
+def _arm_motors() -> list[DamiaoMotor]:
+    types = ["DM4340"] * 3 + ["DM4310"] * 3
+    return [
+        DamiaoMotor(f"yam_joint{index}", motor_type, index, index + 0x10)
+        for index, motor_type in enumerate(types, start=1)
+    ]
+
+
+#: One OpenYAM arm and its gripper on a single Damiao bus.
+OPENYAM = DamiaoRobot(
+    buses=[
+        DamiaoBus(
+            arm=_arm_motors(),
+            kp=[80.0, 80.0, 80.0, 10.0, 10.0, 10.0],
+            kd=[5.0, 5.0, 5.0, 1.5, 1.5, 1.5],
+            gripper=DamiaoGripper(
+                name=OPENYAM_GRIPPER_NAME,
+                motor=DamiaoMotor("yam_gripper", "DM4310", 0x08, 0x18),
+                opening="decreasing_position",
+                current=0.15,
+            ),
+            name="arm",
+        )
+    ],
+    model=make_openyam_model_config().model,
+    gravity_model=RobotModel.from_file(
+        LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
+    ),
+    base_link="base",
+    joint_names=[*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_NAME],
+    gravity=True,
+    teach_kd=list(OPENYAM_TEACH_DAMPING),
+    passive_grippers=frozenset({OPENYAM_GRIPPER_NAME}),
+    home_joints=list(OPENYAM_HOME_JOINTS),
+)

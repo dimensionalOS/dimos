@@ -16,13 +16,12 @@ import pytest
 
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
-from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
 
 @pytest.mark.parametrize("deployed", [False, True])
 def test_openarm_dual_model_contains_every_canonical_joint_and_group_frame(deployed: bool) -> None:
     config = (
-        OpenArmConnection.planning_model("arm") if deployed else openarm_bimanual_model_config()
+        openarm_bimanual_model_config(robot="arm") if deployed else openarm_bimanual_model_config()
     )
 
     description = prepare_robot_model(config).description

@@ -12,23 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compose direct Damiao connections with stream-only control coordinators."""
+"""Coordinator types and explicit composition helpers for Damiao deployments.
 
-from collections.abc import Sequence
+Blueprints wire a coordinator and a connection themselves with ``autoconnect``,
+exactly like the xArm ones. The only shared helpers are the two declarations
+that must agree with the connection: the simulation swap and the stream remaps.
+"""
 
-from dimos.control.connection.connection_module import ConnectionModule
+from __future__ import annotations
+
 from dimos.control.connection.mock_joint_connection import MockJointConnection
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
-from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.manipulators.damiao.connection import DamiaoConnection
+from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 
 
 class DamiaoCoordinator(ControlCoordinator):
@@ -56,71 +60,45 @@ class DamiaoTeleopCoordinator(TeleopControlCoordinator):
     arm_joint_state: In[JointState]
 
 
-def connect_damiao(
-    connection: type[DamiaoConnection],
-    *,
-    coordinator: type[ControlCoordinator] = DamiaoCoordinator,
-    tasks: Sequence[TaskConfig],
-) -> Blueprint:
-    """Wire one connection and coordinator using the same deployed model."""
-    connection_module: type[ConnectionModule] = connection
-    connection_blueprint = connection.blueprint(source="arm")
+def mock_initial_positions(robot: DamiaoRobot) -> dict[str, float]:
+    """The simulated start: the robot's home posture with its jaws closed."""
+    home = robot.home_joints or [0.0] * len(robot.arm_joint_names)
+    return dict(
+        zip(
+            robot.joint_names,
+            [*home, *([0.0] * len(robot.gripper_joint_names))],
+            strict=True,
+        )
+    )
+
+
+def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -> Blueprint:
+    """The deployed connection, or an independent mock when ``--simulation`` is on.
+
+    Blueprints call this at the point they compose their modules, so the
+    simulation swap is visible next to the coordinator it feeds instead of
+    hiding inside a general-purpose composer.
+    """
     if global_config.simulation:
-        connection_module = MockJointConnection
-        positions = [
-            *(connection.planning.home_joints or [0.0] * len(connection.planning.joint_names)),
-            *([0.0] * len(connection.gripper_joints)),
-        ]
-        connection_blueprint = MockJointConnection.blueprint(
+        return MockJointConnection.blueprint(
             source="arm",
             model=connection.control_model(),
-            initial_positions=dict(
-                zip(
-                    [*connection.planning.joint_names, *connection.gripper_joints.values()],
-                    positions,
-                    strict=True,
-                )
-            ),
+            initial_positions=mock_initial_positions(connection.robot),
         )
-    return autoconnect(
-        coordinator.blueprint(
-            instance_name="ControlCoordinator",
-            model=connection.control_model("arm"),
-            tasks=list(tasks),
-            # The connection's own gains decide this; tasks that require zero
-            # stiffness read the declaration rather than trusting the gains.
-            zero_stiffness_joints=[
-                f"arm/{name}" for name in connection.zero_stiffness_joint_names()
-            ],
-        ),
-        connection_blueprint,
-    ).remappings(
-        [
-            (connection_module, "position_command", "arm_position_command"),
-            (coordinator, "arm_joint_state", "joint_state"),
-        ]
-    )
+    return connection.blueprint(source="arm", teach=teach)
 
 
-def damiao_connection_control(connection: type[DamiaoConnection]) -> Blueprint:
-    """Trajectories and normalized grippers with the robot model served to clients."""
-    model = connection.planning_model("arm")
-    gripper_joints = [f"arm/{name}" for name in connection.gripper_joints.values()]
-    sides = ("left", "right") if len(gripper_joints) == 2 else ("right",)
-    tasks = [
-        joint_trajectory_task([*model.joint_names, *gripper_joints]),
-        *[
-            TaskConfig(
-                name=f"arm_{joint.rsplit('/', 1)[1]}",
-                type="gripper",
-                joint_names=[joint],
-                priority=20,
-                stream_bind={"gripper_command": f"{side}_gripper_command"},
-            )
-            for joint, side in zip(gripper_joints, sides, strict=True)
-        ],
+def arm_remaps(
+    connection: type[DamiaoConnection],
+    coordinator: type[ControlCoordinator],
+) -> list[tuple[type[ModuleBase], str, str]]:
+    """Wire the connection's command stream and the coordinator's joint state.
+
+    While simulating, the command stream belongs to the mock connection that
+    ``arm_connection`` substituted, so the remap names it instead.
+    """
+    module: type[ModuleBase] = MockJointConnection if global_config.simulation else connection
+    return [
+        (module, "position_command", "arm_position_command"),
+        (coordinator, "arm_joint_state", "joint_state"),
     ]
-    return autoconnect(
-        connect_damiao(connection, tasks=tasks),
-        UrdfManager.blueprint(model=connection.control_model("arm")),
-    )

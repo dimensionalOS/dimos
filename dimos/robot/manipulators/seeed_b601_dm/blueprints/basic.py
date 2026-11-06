@@ -25,13 +25,19 @@ from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.damiao.damiao_blueprint import connect_damiao
-from dimos.robot.manipulators.seeed_b601_dm.config import b601_dm_gripper_task
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    arm_connection,
+    arm_remaps,
+)
+from dimos.robot.manipulators.seeed_b601_dm.config import (
+    b601_dm_gripper_task,
+    b601_dm_model_config,
+)
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 from dimos.robot.manipulators.seeed_b601_dm.coordinator import SeeedB601DMCoordinator
 from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
 
-B601_DM_PLANNING_MODEL = B601DMConnection.planning_model("arm")
+B601_DM_PLANNING_MODEL = b601_dm_model_config(robot="arm")
 
 
 def _tasks() -> list[TaskConfig]:
@@ -41,13 +47,22 @@ def _tasks() -> list[TaskConfig]:
     ]
 
 
+def seeed_b601_dm_control_blueprint() -> Blueprint:
+    """Trajectories and normalized gripper control over the direct connection."""
+    return autoconnect(
+        SeeedB601DMCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=B601DMConnection.control_model("arm"),
+            tasks=_tasks(),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(B601DMConnection),
+    ).remappings(arm_remaps(B601DMConnection, SeeedB601DMCoordinator))
+
+
 def seeed_b601_dm_control() -> Blueprint:
     """Trajectories and normalized gripper control over the direct connection."""
-    return connect_damiao(
-        B601DMConnection,
-        coordinator=SeeedB601DMCoordinator,
-        tasks=_tasks(),
-    ).remappings([])
+    return seeed_b601_dm_control_blueprint().remappings([])
 
 
 seeed_b601_dm_planner_coordinator = autoconnect(
@@ -59,15 +74,7 @@ seeed_b601_dm_planner_coordinator = autoconnect(
             "backend": "simple_trapezoid",
         },
     ),
-    connect_damiao(
-        B601DMConnection,
-        coordinator=SeeedB601DMCoordinator,
-        tasks=_tasks(),
-    ),
+    seeed_b601_dm_control_blueprint(),
 )
 
-coordinator_seeed_b601_dm = connect_damiao(
-    B601DMConnection,
-    coordinator=SeeedB601DMCoordinator,
-    tasks=_tasks(),
-).remappings([])
+coordinator_seeed_b601_dm = seeed_b601_dm_control_blueprint().remappings([])

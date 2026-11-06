@@ -16,12 +16,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import can_motor_control
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao import arm as common
+from dimos.robot.manipulators.damiao.arm import DamiaoArm
+from dimos.robot.manipulators.damiao.conftest import TEST_ROBOT
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -72,7 +76,7 @@ def test_gross_feedback_fault_disables_even_if_disable_fails(make_rig, boundary)
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].groups["left_arm"].q[0] = 4
     wait_until(lambda: module._fault is not None, timeout=2)
-    assert not module._active
+    assert not module._arm.active
     boundary[0].disable_error = None
 
 
@@ -90,7 +94,7 @@ def test_arm_modes_and_preflight_precede_enable(make_rig, boundary, mocker):
 def test_gravity_is_added_from_measured_q(make_rig, boundary, mocker):
     module, commands, _ = make_rig()
     gravity = mocker.patch.object(
-        module._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0])
+        module._arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0])
     )
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
     np.testing.assert_equal(gravity.call_args.args[0], [0.2, 0.2, 0.2])
@@ -98,35 +102,31 @@ def test_gravity_is_added_from_measured_q(make_rig, boundary, mocker):
     assert boundary[0].groups["right_arm"].commands[-1][0, 4] == 3.0
 
 
-def test_platform_bus_selectors_preserve_logical_mapping(
-    connection_class, boundary, monkeypatch, mocker
-):
-    module = connection_class()
-    module._bus_devices = {"left": "SERIAL", "right": "can0"}
+def test_platform_bus_selectors_preserve_logical_mapping(monkeypatch, mocker):
+    arm = DamiaoArm(TEST_ROBOT, ["SERIAL", "can0"])
     monkeypatch.setattr(common.sys, "platform", "darwin")
     usb = mocker.patch.object(can_motor_control, "GsUsbBus", create=True)
-    module._make_can_bus("left")
+    arm._make_can_bus("SERIAL")
     usb.assert_called_once_with(vendor_id=0x1D50, product_id=0x606F, serial_number="SERIAL")
     monkeypatch.setattr(common.sys, "platform", "linux")
     socket = mocker.patch.object(can_motor_control, "SocketCanBus", create=True)
-    module._make_can_bus("right")
+    arm._make_can_bus("can0")
     socket.assert_called_once_with("can0")
     monkeypatch.setattr(common.sys, "platform", "unsupported")
     with pytest.raises(RuntimeError, match="unsupported"):
-        module._make_can_bus("left")
-    module.stop()
+        arm._make_can_bus("SERIAL")
 
 
 def test_native_builder_preserves_bus_and_gripper_specs(make_rig, boundary):
     make_rig()
     native = boundary[0]
     assert [(name, bus) for name, bus, _ in native.arm_specs] == [
-        ("left_arm", "left"),
-        ("right_arm", "right"),
+        ("left_arm", "left_arm"),
+        ("right_arm", "right_arm"),
     ]
     assert [(name, transport) for name, transport, _ in native.bus_specs] == [
-        ("right", ("socket", "can0")),
-        ("left", ("socket", "can1")),
+        ("left_arm", ("socket", "can1")),
+        ("right_arm", ("socket", "can0")),
     ]
     assert native.gripper_specs[0][1]["opening_direction"] == "decreasing_position"
     assert native.gripper_specs[0][1]["default_current"] == 0.15
@@ -171,44 +171,64 @@ def test_gravity_preflight_fails_before_enable(connection_class, boundary, mocke
     with pytest.raises(ValueError, match="invalid gravity"):
         module.start()
     assert "enable" not in boundary[0].events
-    assert module._robot is None
+    assert module._arm is None
 
 
-def test_normalize_keeps_velocity_and_effort(make_rig, boundary):
-    module, _, readings = make_rig()
-    upper = float(module._physical._upper[0])
-    boundary[0].groups["left_arm"].q[0] = upper + 0.04
-    wait_until(lambda: readings.sent[-1].position[0] == upper, timeout=2)
-    assert readings.sent[-1].velocity[0] == 0.3
-    assert readings.sent[-1].effort[0] == 0.4
-    assert module._fault is None
+def test_out_of_limits_feedback_latches_and_disables(make_rig, boundary):
+    module, _, _ = make_rig()
+    upper = float(module._arm._physical._upper[0])
+    boundary[0].groups["left_arm"].q[0] = upper + 0.001
+    wait_until(lambda: module._fault is not None, timeout=2)
+    assert "outside" in module._fault
+    assert "disable" in boundary[0].events
+    boundary[0].groups["left_arm"].q[0] = 0.2
 
 
 def test_inactive_feedback_uses_gripper_placeholders(connection_class, boundary):
     module = connection_class()
     try:
         module.connect()
-        assert module._read_state() == (
-            [0.2, 0.2, 0.2, 0.0, 0.0],
-            [0.3, 0.3, 0.3, 0.0, 0.0],
-            [0.4, 0.4, 0.4, 0.0, 0.0],
-        )
+        reading = module._read_state()
+        assert reading.position == [0.2, 0.2, 0.2, 0.0, 0.0]
+        assert reading.velocity == [0.3, 0.3, 0.3, 0.0, 0.0]
+        assert reading.effort == [0.4, 0.4, 0.4, 0.0, 0.0]
     finally:
         module.stop()
 
 
 @pytest.mark.parametrize("gain", ["kp", "kd"])
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
-def test_invalid_second_arm_gain_prevents_all_native_sends(
-    make_rig, boundary, monkeypatch, gain, bad
-):
+def test_invalid_second_arm_gain_prevents_all_native_sends(make_rig, boundary, gain, bad):
     module, commands, _ = make_rig()
-    gains = {name: list(values) for name, values in getattr(module, gain).items()}
-    gains["right_arm"][0] = bad
-    monkeypatch.setattr(type(module), gain, gains)
+    robot = module._arm._robot
+    buses = list(robot.buses)
+    values = list(getattr(buses[1], gain))
+    values[0] = bad
+    buses[1] = replace(buses[1], **{gain: values})
+    module._arm._robot = replace(robot, buses=buses)
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
     assert "non-finite" in module.status().last_error
     assert boundary[0].groups["left_arm"].commands == []
     assert boundary[0].groups["right_arm"].commands == []
     assert boundary[0].groups["left_gripper"].commands == []
     assert boundary[0].groups["right_gripper"].commands == []
+
+
+def test_teach_mode_sends_zero_stiffness_teaching_damping_and_gravity(make_rig, boundary):
+    module, commands, _ = make_rig()
+    robot = module._arm._robot
+    module._arm._robot = replace(robot, teach_kd=[2.0, 2.0, 0.5])
+    module._arm._teach = True
+    gravity = np.array([1.0, 2.0, 3.0])
+    import unittest.mock
+
+    with unittest.mock.patch.object(module._arm._physical, "gravity", return_value=gravity):
+        commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    left = boundary[0].groups["left_arm"].commands[-1]
+    right = boundary[0].groups["right_arm"].commands[-1]
+    np.testing.assert_equal(left[:, 0], [0.0, 0.0])
+    np.testing.assert_equal(left[:, 1], [2.0, 2.0])
+    np.testing.assert_equal(right[:, 0], [0.0])
+    np.testing.assert_equal(right[:, 1], [0.5])
+    np.testing.assert_equal(left[:, 4], [1.0, 2.0])
+    assert right[0, 4] == 3.0

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Canonical geometry, deployment coordinates and physical computations."""
+"""Canonical control model, strict physical limits and gravity."""
 
 from __future__ import annotations
 
@@ -23,39 +23,57 @@ import numpy as np
 import pinocchio
 import pytest
 
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao import connection as connection_module
+from dimos.robot.manipulators.damiao.arm import PhysicalModel
+from dimos.robot.manipulators.makermods_metal.config import METAL
 
 
-def test_control_and_planning_namespace_are_lazy_consistent_and_portable(connection_class, mocker):
+def test_control_model_is_lazy(connection_class, mocker):
     load = mocker.patch.object(
-        common.RobotModel, "load", side_effect=AssertionError("must stay lazy")
+        connection_module.RobotModel, "load", side_effect=AssertionError("must stay lazy")
     )
-    planning = connection_class.planning_model("other")
+    connection_class.control_model("other")
+    load.assert_not_called()
+
+
+def test_control_model_is_namespaced_and_portable(connection_class):
     control = connection_class.control_model("other")
-    assert planning.joint_names == ["other/joint1", "other/joint2", "other/joint3"]
-    assert planning.planning_groups[0].joint_names == tuple(planning.joint_names)
-    assert planning.planning_groups[0].base_link == "link0"
-    mocker.stop(load)
-    assert [joint.name for joint in planning.model.load().joints] == planning.joint_names
-    loaded = control.load()
-    assert [joint.name for joint in loaded.joints] == [
-        *planning.joint_names,
+    assert [joint.name for joint in control.load().joints] == [
+        "other/joint1",
+        "other/joint2",
+        "other/joint3",
         "other/left_gripper",
         "other/right_gripper",
     ]
-    assert [(j.lower, j.upper) for j in loaded.joints[-2:]] == [(0.0, 1.0), (0.0, 1.0)]
-    assert decode(encode(control)).load().xml == loaded.xml
+    assert [(joint.lower, joint.upper) for joint in control.load().joints[-2:]] == [
+        (0.0, 1.0),
+        (0.0, 1.0),
+    ]
+    assert decode(encode(control)).load().xml == control.load().xml
 
 
-def test_physical_limits_clamp_margin_and_reject_gross_error(make_physical):
+def test_control_model_without_source_keeps_vendor_names(connection_class):
+    control = connection_class.control_model()
+    assert [joint.name for joint in control.load().joints] == [
+        *connection_class.robot.joint_names,
+    ]
+
+
+def test_physical_limits_are_strict(make_physical):
     physical = make_physical()
     upper = float(physical._upper[0])
-    assert physical.normalize([upper + 0.05, 0.2, 0.2]) == [upper, 0.2, 0.2]
+    assert physical.validate([upper - 0.01, 0.2, 0.2]) == [upper - 0.01, 0.2, 0.2]
+    assert physical.validate([upper, 0.2, 0.2]) == [upper, 0.2, 0.2]
     with pytest.raises(RuntimeError, match="outside"):
-        physical.normalize([upper + 0.051, 0.2, 0.2])
-    metal = make_physical(feedback_margin_rad=0.06)
-    assert metal.normalize([upper + 0.05050, 0.2, 0.2])[0] == upper
+        physical.validate([upper + 0.0001, 0.2, 0.2])
+
+
+def test_metal_joint3_limit_is_widened_for_the_measured_stop():
+    physical = PhysicalModel(METAL.gravity_model, METAL.arm_joint_names, gravity_comp=False)
+    stop = -0.05050
+    assert physical.validate([0.0, 0.0, stop, 0.0, 0.0, 0.0])[2] == pytest.approx(stop)
+    with pytest.raises(RuntimeError, match="joint3"):
+        physical.validate([0.0, 0.0, -0.0601, 0.0, 0.0, 0.0])
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
@@ -64,17 +82,27 @@ def test_gravity_rejects_invalid_positions(make_physical, bad):
         make_physical().gravity(np.array([bad, 0.2, 0.2]))
 
 
-def test_physical_model_order_must_match_even_without_gravity(
-    connection_class, make_physical, monkeypatch
-):
-    monkeypatch.setattr(connection_class, "kinematic_joint_names", ["joint2", "joint1", "joint3"])
+def test_physical_model_order_must_match_even_without_gravity():
     with pytest.raises(ValueError, match="order"):
-        make_physical()
+        PhysicalModel(_robot_model(), ["joint2", "joint1", "joint3"], gravity_comp=False)
+
+
+def _robot_model():
+    from dimos.control._control_test_helpers import fake_arm_model
+
+    return fake_arm_model(("joint1", "joint2", "joint3"))
+
+
+def test_physical_model_reduces_joints_outside_the_arm():
+    from dimos.control._control_test_helpers import fake_arm_model
+
+    model = fake_arm_model(("joint1", "joint2", "joint3", "extra"))
+    physical = PhysicalModel(model, ["joint1", "joint2", "joint3"], gravity_comp=False)
+    assert float(physical._upper[0]) == pytest.approx(np.pi)
 
 
 @pytest.mark.parametrize("invalid", ["dimensions", "lower", "upper", "inverted"])
 def test_physical_model_rejects_invalid_ranges_and_dimensions(make_physical, mocker, invalid):
-    pin = pinocchio
     model = SimpleNamespace(
         nq=3,
         nv=3,
@@ -90,7 +118,7 @@ def test_physical_model_rejects_invalid_ranges_and_dimensions(make_physical, moc
         model.upperPositionLimit = np.array([1.0, 1.0])
     else:
         model.lowerPositionLimit[0] = 2.0
-    mocker.patch.object(pin, "buildModelFromXML", return_value=model)
+    mocker.patch.object(pinocchio, "buildModelFromXML", return_value=model)
     with pytest.raises(ValueError, match="dimensions|position limits"):
         make_physical()
 
@@ -108,33 +136,4 @@ def test_gravity_rejects_nonfinite_calculation(make_physical, mocker):
 
 def test_model_views_preserve_the_framework_deployment(connection_class):
     assert connection_class.deployment == "python"
-    assert connection_class.planning_model("robot2").joint_names == [
-        "robot2/joint1",
-        "robot2/joint2",
-        "robot2/joint3",
-    ]
-
-
-def test_model_views_compose_an_existing_canonical_joint_rename(connection_class, monkeypatch):
-    renamed = connection_class.planning.model.with_renamed_joints({"joint1": "yam_joint1"})
-    planning = connection_class.planning.model_copy(
-        update={
-            "model": renamed,
-            "joint_names": ["yam_joint1", "joint2", "joint3"],
-            "planning_groups": [
-                PlanningGroupDefinition("both", ("yam_joint1", "joint2", "joint3"), "link0")
-            ],
-        }
-    )
-    monkeypatch.setattr(connection_class, "planning", planning)
-    deployed = connection_class.planning_model("arm")
-    control = connection_class.control_model("arm")
-    expected = ["arm/yam_joint1", "arm/joint2", "arm/joint3"]
-    assert [joint.name for joint in deployed.model.load().joints] == expected
-    assert [joint.name for joint in control.load().joints] == [
-        *expected,
-        "arm/left_gripper",
-        "arm/right_gripper",
-    ]
-    assert deployed.planning_groups[0].joint_names == tuple(expected)
-    assert decode(encode(deployed.model)).load().xml == deployed.model.load().xml
+    assert connection_class.control_model("robot2").load().joints[0].name == "robot2/joint1"

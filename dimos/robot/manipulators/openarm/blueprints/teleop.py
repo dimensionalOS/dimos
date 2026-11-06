@@ -18,19 +18,21 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
-    connect_damiao,
+    arm_connection,
+    arm_remaps,
 )
+from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 OPENARM_WEBXR_TASK_NAME = "teleop_openarm"
-_MODEL = OpenArmConnection.planning_model("arm")
+_MODEL = openarm_bimanual_model_config(robot="arm")
 
 _OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
 _OPENARM_JOINT_VELOCITY_LIMITS_RAD_S = {
@@ -49,7 +51,7 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
         type="trajectory",
         joint_names=[
             *_MODEL.joint_names,
-            *[f"arm/{name}" for name in OpenArmConnection.gripper_joints.values()],
+            *[f"arm/{name}" for name in OpenArmConnection.robot.gripper_joint_names],
         ],
         priority=priority,
         params={"start_position_tolerance": 0.05},
@@ -92,31 +94,41 @@ _openarm_webxr_task = TaskConfig(
     },
 )
 
+
+def openarm_teleop_control() -> Blueprint:
+    """The WebXR task set over the OpenArm connection."""
+    return autoconnect(
+        DamiaoTeleopCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=OpenArmConnection.control_model("arm"),
+            tasks=[
+                _openarm_webxr_task,
+                TaskConfig(
+                    name="left_arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/left_gripper"],
+                    priority=20,
+                    stream_bind={"gripper_command": "left_gripper_command"},
+                ),
+                TaskConfig(
+                    name="right_arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/right_gripper"],
+                    priority=20,
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                _trajectory_task(priority=10),
+            ],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenArmConnection),
+    ).remappings(arm_remaps(OpenArmConnection, DamiaoTeleopCoordinator))
+
+
 # Both controller grips engage one fourteen-joint task.
 teleop_webxr_openarm = autoconnect(
     ArmTeleopModule.blueprint(),
-    connect_damiao(
-        OpenArmConnection,
-        coordinator=DamiaoTeleopCoordinator,
-        tasks=[
-            _openarm_webxr_task,
-            TaskConfig(
-                name="left_arm_gripper",
-                type="gripper",
-                joint_names=["arm/left_gripper"],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            TaskConfig(
-                name="right_arm_gripper",
-                type="gripper",
-                joint_names=["arm/right_gripper"],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            _trajectory_task(priority=10),
-        ],
-    ),
+    openarm_teleop_control(),
     ManipulationModule.blueprint(
         gripper_tasks={
             "left_arm": "left_arm_gripper",

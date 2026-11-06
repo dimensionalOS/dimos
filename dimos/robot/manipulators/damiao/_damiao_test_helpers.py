@@ -29,7 +29,7 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import Stream, Transport
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.utils.testing.waiting import wait_until
 
 T = TypeVar("T")
@@ -107,10 +107,8 @@ class MockConnectionRig:
 def _local_test_model(connection: type[DamiaoConnection], path: Path) -> RobotModel:
     root = ET.Element("robot", name="test")
     ET.SubElement(root, "link", name="base")
-    grippers = set(connection.gripper_joints.values())
-    for index, name in enumerate(
-        [*connection.kinematic_joint_names, *connection.gripper_joints.values()]
-    ):
+    grippers = set(connection.robot.gripper_joint_names)
+    for index, name in enumerate([*connection.robot.arm_joint_names, *grippers]):
         child = f"link{index}"
         ET.SubElement(root, "link", name=child)
         joint = ET.SubElement(root, "joint", name=name, type="revolute")
@@ -145,36 +143,18 @@ def mock_connection_rig(
         connection = None
         try:
             model = _local_test_model(connection_type, tmp_path / "control.urdf")
-            positions = [
-                *(
-                    connection_type.planning.home_joints
-                    or [0.0] * len(connection_type.planning.joint_names)
-                ),
-                *([0.0] * len(connection_type.gripper_joints)),
-            ]
+            robot = connection_type.robot
+            home = robot.home_joints or [0.0] * len(robot.arm_joint_names)
+            names = [*robot.arm_joint_names, *robot.gripper_joint_names]
+            positions = [*home, *([0.0] * len(robot.gripper_joint_names))]
             connection = MockJointConnection(
                 model=model,
                 source="arm",
                 deadman_timeout_s=10,
-                initial_positions=dict(
-                    zip(
-                        [
-                            *connection_type.planning.joint_names,
-                            *connection_type.gripper_joints.values(),
-                        ],
-                        positions,
-                        strict=True,
-                    )
-                ),
+                initial_positions=dict(zip(names, positions, strict=True)),
             )
             coordinator.config.model = model.with_renamed_joints(
-                {
-                    name: f"arm/{name}"
-                    for name in [
-                        *connection_type.kinematic_joint_names,
-                        *connection_type.gripper_joints.values(),
-                    ]
-                }
+                {name: f"arm/{name}" for name in names}
             )
             inputs = {name: LocalTransport[Any]() for name in coordinator.inputs}
             for name, transport in inputs.items():

@@ -12,16 +12,71 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native Robot test boundary and synchronous local ports."""
+"""Native Robot test boundary, a small robot's data and synchronous local ports."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+
+from dimos.control._control_test_helpers import fake_arm_model
+from dimos.robot.manipulators.damiao.robot import (
+    DamiaoBus,
+    DamiaoGripper,
+    DamiaoMotor,
+    DamiaoRobot,
+)
+
+
+def make_test_robot(**overrides: object) -> DamiaoRobot:
+    """Three arm joints on two buses, plus one gripper on each bus."""
+    model = fake_arm_model(("joint1", "joint2", "joint3"))
+    robot = DamiaoRobot(
+        buses=[
+            DamiaoBus(
+                name="left_arm",
+                arm=[
+                    DamiaoMotor("joint1", "DM4340", 1, 17),
+                    DamiaoMotor("joint2", "DM4310", 2, 18),
+                ],
+                kp=[80.0, 10.0],
+                kd=[5.0, 1.5],
+                gripper=DamiaoGripper(
+                    name="left_gripper",
+                    motor=DamiaoMotor("left_gripper", "DM4310", 8, 24),
+                    opening="decreasing_position",
+                    current=0.15,
+                ),
+            ),
+            DamiaoBus(
+                name="right_arm",
+                arm=[DamiaoMotor("joint3", "DM4310", 1, 17)],
+                kp=[20.0],
+                kd=[0.6],
+                gripper=DamiaoGripper(
+                    name="right_gripper",
+                    motor=DamiaoMotor("right_gripper", "DM4310", 8, 24),
+                    opening="increasing_position",
+                    current=0.1,
+                ),
+            ),
+        ],
+        model=model,
+        gravity_model=model,
+        base_link="link0",
+        joint_names=["joint1", "joint2", "joint3", "left_gripper", "right_gripper"],
+        gravity=False,
+    )
+    return replace(robot, **overrides)
+
+
+#: The shared robot the Damiao fixtures deploy; tests clone it with overrides.
+TEST_ROBOT = make_test_robot()
 
 
 class LocalTransport:
@@ -51,8 +106,8 @@ class LocalTransport:
 
 
 class FakeArm:
-    def __init__(self, count: int) -> None:
-        self.q = np.full(count, 0.2)
+    def __init__(self, count: int, initial: float = 0.2) -> None:
+        self.q = np.full(count, initial)
         self.dq = np.full(count, 0.3)
         self.tau = np.full(count, 0.4)
         self.commands: list[NDArray[np.float64]] = []
@@ -106,6 +161,7 @@ class FakeGripper:
 
 class FakeRobot:
     def __init__(self) -> None:
+        self.default_position = 0.2
         self.groups: dict[str, FakeArm | FakeGripper] = {}
         self.events: list[str] = []
         self.connected = False
@@ -156,7 +212,7 @@ class Builder:
 
     def add_arm(self, name: str, *, bus: str, motors: list[Any]) -> Builder:
         self.robot.arm_specs.append((name, bus, motors))
-        self.robot.groups[name] = FakeArm(len(motors))
+        self.robot.groups[name] = FakeArm(len(motors), self.robot.default_position)
         return self
 
     def add_gripper(self, name: str, **kwargs: Any) -> Builder:

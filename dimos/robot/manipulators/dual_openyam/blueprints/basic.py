@@ -12,17 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 """Dual OpenYAM coordinator and planner through one connection."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.damiao.damiao_blueprint import connect_damiao
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
-_dual_openyam = DualOpenYamConnection.planning_model("arm")
+_dual_openyam = dual_openyam_model_config(robot="arm")
 
 
 def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
@@ -47,9 +51,20 @@ def _gripper_tasks() -> list[TaskConfig]:
     ]
 
 
-coordinator_dual_openyam = connect_damiao(
-    DualOpenYamConnection, tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()]
-).remappings([])
+def dual_openyam_control() -> Blueprint:
+    """Trajectories and both jaws over the two-bus connection."""
+    return autoconnect(
+        DamiaoCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=DualOpenYamConnection.control_model("arm"),
+            tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(DualOpenYamConnection),
+    ).remappings(arm_remaps(DualOpenYamConnection, DamiaoCoordinator))
+
+
+coordinator_dual_openyam = dual_openyam_control().remappings([])
 dual_openyam_planner_coordinator = autoconnect(
     planner(
         model=_dual_openyam,
@@ -58,5 +73,5 @@ dual_openyam_planner_coordinator = autoconnect(
             "right_manipulator": "right_arm_gripper",
         },
     ),
-    coordinator_dual_openyam,
+    dual_openyam_control(),
 )

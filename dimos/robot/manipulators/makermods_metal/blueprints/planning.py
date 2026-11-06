@@ -16,13 +16,15 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.makermods_metal.blueprints.basic import coordinator_makermods_metal
-from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
+from dimos.robot.manipulators.makermods_metal.blueprints.basic import (
+    coordinator_makermods_metal,
+)
+from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
 
 makermods_metal_planner_coordinator = autoconnect(
     coordinator_makermods_metal,
     ManipulationModule.blueprint(
-        model=MetalConnection.planning_model("arm"),
+        model=make_metal_model_config(robot="arm"),
         gripper_tasks={"arm": "metal_gripper"},
         visualization={"backend": "viser"},
         default_speed_scale=0.2,

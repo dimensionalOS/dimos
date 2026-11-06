@@ -14,7 +14,41 @@
 
 """Metal trajectory and normalized gripper control over connection streams."""
 
-from dimos.robot.manipulators.damiao.damiao_blueprint import damiao_connection_control
+from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
+from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
+from dimos.robot.urdf_manager import UrdfManager
 
-makermods_metal_connection_control = damiao_connection_control(MetalConnection).remappings([])
+_MODEL = make_metal_model_config(robot="arm")
+
+
+def makermods_metal_connection_control_blueprint() -> Blueprint:
+    """Trajectories and normalized grippers with the robot model served to clients."""
+    return autoconnect(
+        DamiaoCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=MetalConnection.control_model("arm"),
+            tasks=[
+                joint_trajectory_task([*_MODEL.joint_names, "arm/gripper"]),
+                TaskConfig(
+                    name="arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                ),
+            ],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(MetalConnection),
+        UrdfManager.blueprint(model=MetalConnection.control_model("arm")),
+    ).remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
+
+
+makermods_metal_connection_control = makermods_metal_connection_control_blueprint().remappings([])

@@ -23,13 +23,12 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
-from dimos.robot.manipulators.dual_makermods_metal import model as model_module
 from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
     DualMetalManipulationConfig,
     dual_makermods_metal_planner_coordinator,
 )
+from dimos.robot.manipulators.dual_makermods_metal.config import dual_metal_model_config
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
-from dimos.robot.manipulators.dual_makermods_metal.model import dual_metal_model_config
 
 
 def test_blueprint_parses_main_mount_options_and_required_can_ports():
@@ -85,9 +84,8 @@ def test_main_attachment_geometry_is_retained(tmp_path: Path, mocker):
         '<child link="tip"/><limit lower="-1" upper="1" effort="1" velocity="1"/>'
         "</joint></robot>"
     )
-    mocker.patch.object(
-        model_module,
-        "make_metal_model_config",
+    mocker.patch(
+        "dimos.robot.manipulators.dual_makermods_metal.config.make_metal_model_config",
         return_value=SimpleNamespace(model=RobotModel.from_file(path)),
     )
     loaded = dual_metal_model_config(

@@ -26,44 +26,42 @@ from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection impor
     openyam_quest_collection,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import build_openyam_rollout
-from dimos.robot.manipulators.openyam.connection import (
-    OpenYamConnection,
-    OpenYamTeachConnection,
-)
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 ROLLOUT = build_openyam_rollout()
 QUEST_ROLLOUT = build_openyam_rollout(quest_control=True)
 
 
 @pytest.mark.parametrize(
-    ("blueprint", "module_name", "connection"),
+    ("blueprint", "teach"),
     [
-        (openyam_teach_collection, "openyamteachconnection", OpenYamTeachConnection),
-        (openyam_quest_collection, "openyamconnection", OpenYamConnection),
-        (ROLLOUT, "openyamconnection", OpenYamConnection),
-        (QUEST_ROLLOUT, "openyamconnection", OpenYamConnection),
+        (openyam_teach_collection, True),
+        (openyam_quest_collection, False),
+        (ROLLOUT, False),
+        (QUEST_ROLLOUT, False),
     ],
     ids=["teach", "quest", "rollout", "quest-rollout"],
 )
-def test_can_selector_belongs_to_the_connection(blueprint, module_name, connection, tmp_path):
-    flags = [f"--{module_name}.can-port", "/dev/ttyACM0"]
+def test_can_selector_belongs_to_the_connection(blueprint, teach, tmp_path):
+    flags = ["--openyamconnection.can-port", "/dev/ttyACM0"]
     if blueprint in (openyam_teach_collection, openyam_quest_collection):
         flags.extend(["--recorder.recording", str(tmp_path / "session"), "--episodes.task", "pick"])
     else:
         flags.extend(["--policy.policy-path", "checkpoint", "--policy.task", "pick"])
     parsed = BlueprintConfigParser(blueprint).parse(flags, environ={})
 
-    assert parsed.module_kwargs(module_name)["can_port"] == "/dev/ttyACM0"
+    assert parsed.module_kwargs("openyamconnection")["can_port"] == "/dev/ttyACM0"
     atom = next(
         atom for atom in blueprint.active_blueprints if issubclass(atom.module, OpenYamConnection)
     )
-    assert atom.module is connection
+    assert atom.module is OpenYamConnection
     assert atom.kwargs["source"] == "arm"
+    assert atom.kwargs["teach"] is teach
     coordinator = next(
         atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
     )
     assert not coordinator.kwargs.get("hardware")
-    if connection is OpenYamTeachConnection:
+    if teach:
         assert coordinator.kwargs["zero_stiffness_joints"] == OPENYAM_TEACH_JOINTS
     else:
         assert coordinator.kwargs["zero_stiffness_joints"] == []

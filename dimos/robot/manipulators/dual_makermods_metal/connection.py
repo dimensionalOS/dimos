@@ -14,17 +14,16 @@
 
 """Two Metal arms on distinct CAN buses with the single-arm firmware settings."""
 
-import can_motor_control
+from __future__ import annotations
+
 from pydantic import model_validator
 from typing_extensions import Self
 
-from dimos.robot.manipulators.damiao.damiao_connection import (
+from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
 )
-from dimos.robot.manipulators.dual_makermods_metal.config import ALL_ARM_JOINTS, ARM_JOINTS
-from dimos.robot.manipulators.dual_makermods_metal.model import dual_metal_model_config
-from dimos.robot.manipulators.makermods_metal.connection import MetalConnection, build_metal_robot
+from dimos.robot.manipulators.dual_makermods_metal.config import DUAL_METAL
 
 
 class DualMetalConnectionConfig(DamiaoConnectionConfig):
@@ -44,20 +43,10 @@ class DualMetalConnectionConfig(DamiaoConnectionConfig):
 
 
 class DualMetalConnection(DamiaoConnection):
+    """Two independent Metal arms and jaws on two explicitly chosen buses."""
+
     config: DualMetalConnectionConfig
-    bus_names = ["left", "right"]
-    arm_joints = {f"{side}_arm": list(joints) for side, joints in ARM_JOINTS.items()}
-    gripper_joints = {"left_gripper": "left_gripper", "right_gripper": "right_gripper"}
-    kinematic_joint_names = list(ALL_ARM_JOINTS)
-    kp = {side: list(MetalConnection.kp["arm"]) for side in arm_joints}
-    kd = {side: list(MetalConnection.kd["arm"]) for side in arm_joints}
-    planning = dual_metal_model_config()
-    kinematic_model = planning.model
-    gravity_comp = False
-    feedback_clamp_margin_rad = MetalConnection.feedback_clamp_margin_rad
+    robot = DUAL_METAL
 
-    def _can_devices(self) -> dict[str, str]:
-        return {"left": self.config.left_can_port, "right": self.config.right_can_port}
-
-    def _build_robot(self) -> can_motor_control.Robot:
-        return build_metal_robot(self)
+    def can_ports(self) -> list[str]:
+        return [self.config.left_can_port, self.config.right_can_port]

@@ -48,7 +48,7 @@ from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolv
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
-_MODEL = OpenArmConnection.planning_model("arm")
+_MODEL = openarm_bimanual_model_config(robot="arm")
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -100,7 +100,7 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
         "openarm_right_grasp_frame",
     }
     assert {joint for gripper in grippers for joint in gripper.joint_names} == set(
-        [f"arm/{name}" for name in OpenArmConnection.gripper_joints.values()]
+        [f"arm/{name}" for name in OpenArmConnection.robot.gripper_joints.values()]
     )
     assert {gripper.stream_bind["gripper_command"] for gripper in grippers} == {
         "left_gripper_command",
@@ -135,7 +135,7 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
     assert task.priority == 20
     assert trajectory.joint_names == [
         *_MODEL.joint_names,
-        *[f"arm/{name}" for name in OpenArmConnection.gripper_joints.values()],
+        *[f"arm/{name}" for name in OpenArmConnection.robot.gripper_joints.values()],
     ]
     assert trajectory.priority < task.priority
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
@@ -223,7 +223,7 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
 
         assert list(rig.commands.name) == [
             *_MODEL.joint_names,
-            *[f"arm/{name}" for name in OpenArmConnection.gripper_joints.values()],
+            *[f"arm/{name}" for name in OpenArmConnection.robot.gripper_joints.values()],
         ]
         assert list(rig.commands.position) == [0.01] * 14 + [0.75, 0.25]
         assert rig.positions == {

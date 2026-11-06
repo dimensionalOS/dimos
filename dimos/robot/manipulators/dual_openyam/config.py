@@ -12,10 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Arm-only Dual OpenYAM canonical planning model configuration."""
+"""Arm-only Dual OpenYAM canonical planning model configuration and robot data."""
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.manipulators._modeling import named_for_robot
+from dimos.robot.manipulators.damiao.robot import (
+    DamiaoBus,
+    DamiaoGripper,
+    DamiaoMotor,
+    DamiaoRobot,
+)
 from dimos.robot.manipulators.dual_openyam.joints import (
     DUAL_OPENYAM_ARM_JOINTS,
 )
@@ -27,6 +34,8 @@ from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 DUAL_OPENYAM_SIDES = ("left", "right")
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
+DUAL_OPENYAM_KP = [80.0, 80.0, 80.0, 10.0, 10.0, 10.0]
+DUAL_OPENYAM_KD = [5.0, 5.0, 5.0, 1.5, 1.5, 1.5]
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -35,27 +44,62 @@ def dual_openyam_arm_joints(side: str) -> list[str]:
     return [f"{side}_joint{index}" for index in range(1, 7)]
 
 
-def dual_openyam_model_config() -> RobotModelConfig:
+def dual_openyam_model_config(*, robot: str | None = None) -> RobotModelConfig:
     """Build the combined arm-only planning model."""
-    return RobotModelConfig(
-        model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
-        joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
-        base_link="dual_openyam_base",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="left_manipulator",
-                joint_names=tuple(dual_openyam_arm_joints("left")),
-                base_link="dual_openyam_base",
-                tip_link="left_grasp_frame",
-            ),
-            PlanningGroupDefinition(
-                name="right_manipulator",
-                joint_names=tuple(dual_openyam_arm_joints("right")),
-                base_link="dual_openyam_base",
-                tip_link="right_grasp_frame",
-            ),
-        ],
-        auto_convert_meshes=True,
-        home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
-        tf_extra_links=[],
+    return named_for_robot(
+        RobotModelConfig(
+            model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
+            joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
+            base_link="dual_openyam_base",
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="left_manipulator",
+                    joint_names=tuple(dual_openyam_arm_joints("left")),
+                    base_link="dual_openyam_base",
+                    tip_link="left_grasp_frame",
+                ),
+                PlanningGroupDefinition(
+                    name="right_manipulator",
+                    joint_names=tuple(dual_openyam_arm_joints("right")),
+                    base_link="dual_openyam_base",
+                    tip_link="right_grasp_frame",
+                ),
+            ],
+            auto_convert_meshes=True,
+            home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
+            tf_extra_links=[],
+        ),
+        robot,
     )
+
+
+def _bus(side: str) -> DamiaoBus:
+    joints = dual_openyam_arm_joints(side)
+    types = ["DM4340"] * 3 + ["DM4310"] * 3
+    return DamiaoBus(
+        arm=[
+            DamiaoMotor(name, motor_type, index, index + 0x10)
+            for index, (name, motor_type) in enumerate(zip(joints, types, strict=True), start=1)
+        ],
+        kp=list(DUAL_OPENYAM_KP),
+        kd=list(DUAL_OPENYAM_KD),
+        gripper=DamiaoGripper(
+            name=f"{side}_gripper",
+            motor=DamiaoMotor(f"{side}_gripper", "DM4310", 0x08, 0x18),
+            opening="decreasing_position",
+            current=0.15,
+        ),
+        name=f"{side}_arm",
+    )
+
+
+#: Two OpenYAM arms, each with its own jaw, on two Damiao buses.
+DUAL_OPENYAM = DamiaoRobot(
+    buses=[_bus(side) for side in DUAL_OPENYAM_SIDES],
+    model=dual_openyam_model_config().model,
+    gravity_model=DUAL_OPENYAM_MODEL,
+    base_link="dual_openyam_base",
+    joint_names=[*DUAL_OPENYAM_ARM_JOINTS, "left_gripper", "right_gripper"],
+    gravity=True,
+    home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
+)

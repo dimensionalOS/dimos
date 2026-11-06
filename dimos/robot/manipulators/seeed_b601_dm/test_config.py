@@ -34,23 +34,23 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
-from dimos.robot.manipulators.damiao.damiao_connection import DamiaoConnection
+from dimos.robot.manipulators.damiao.arm import DamiaoArm
+from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
     B601_DM_PLANNING_MODEL,
     seeed_b601_dm_control,
     seeed_b601_dm_planner_coordinator,
 )
 from dimos.robot.manipulators.seeed_b601_dm.config import (
+    B601_DM,
     B601_DM_JOINT2_LIMITS,
     B601_DM_MODEL,
+    GRIPPER_CALIBRATION_TRAVEL_RAD,
+    GRIPPER_CURRENT,
     b601_dm_gripper_task,
     b601_dm_model_config,
 )
-from dimos.robot.manipulators.seeed_b601_dm.connection import (
-    GRIPPER_CALIBRATION_TRAVEL_RAD,
-    GRIPPER_CURRENT,
-    B601DMConnection,
-)
+from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 from dimos.robot.manipulators.seeed_b601_dm.coordinator import SeeedB601DMCoordinator
 from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
 
@@ -66,20 +66,20 @@ def test_connection_requires_an_explicit_selector() -> None:
 def test_connection_uses_its_explicit_selector(can_port: str) -> None:
     connection = B601DMConnection(can_port=can_port)
     try:
-        assert connection._can_devices() == {"b601_dm": can_port}
+        assert connection.can_ports() == [can_port]
         assert connection.config.source == "b601_dm"
     finally:
         connection.stop()
 
 
 def test_connection_declares_seeed_gains_and_topology() -> None:
-    assert B601DMConnection.arm_joints == {"arm": list(B601_DM_ARM_JOINTS)}
-    assert B601DMConnection.gripper_joints == {"gripper": "gripper"}
-    assert B601DMConnection.kp == {"arm": [120.0, 120.0, 120.0, 18.0, 18.0, 18.0]}
-    assert B601DMConnection.kd == {"arm": [5.0, 5.0, 5.0, 2.0, 2.0, 2.0]}
-    assert B601DMConnection.gravity_comp is True
-    assert B601DMConnection.feedback_clamp_margin_rad == 0.05
-    assert B601DMConnection.zero_stiffness_joint_names() == []
+    assert B601_DM.arm_joints == {"arm": list(B601_DM_ARM_JOINTS)}
+    assert B601_DM.gripper_joints == {"gripper": "gripper"}
+    assert B601_DM.buses[0].kp == [120.0, 120.0, 120.0, 18.0, 18.0, 18.0]
+    assert B601_DM.buses[0].kd == [5.0, 5.0, 5.0, 2.0, 2.0, 2.0]
+    assert B601_DM.gravity is True
+    assert B601_DM.teach_kd is None
+    assert B601DMConnection.robot is B601_DM
 
 
 def test_connection_builds_seeed_motor_table(mocker) -> None:
@@ -106,23 +106,17 @@ def test_connection_builds_seeed_motor_table(mocker) -> None:
     mocker.patch.object(can_motor_control, "MotorSpec", side_effect=lambda *args: args)
     # The bus object is transport-specific (SocketCAN, gs_usb, serial); the
     # motor table is what this asserts, so resolve the selector without one.
-    mocker.patch.object(
-        B601DMConnection, "_make_can_bus", lambda self, name: self._bus_devices[name]
-    )
+    mocker.patch.object(DamiaoArm, "_make_can_bus", lambda self, port: port)
     mocker.patch.object(
         can_motor_control, "Robot", SimpleNamespace(builder=lambda: builder), create=True
     )
-    connection = B601DMConnection(can_port="can0")
-    connection._bus_devices = {"b601_dm": "can0"}
-    try:
-        calls = connection._build_robot()
-    finally:
-        connection.stop()
+    arm = DamiaoArm(B601_DM, ["can0"])
+    calls = arm._build()
 
-    bus, arm, gripper = calls
-    assert bus == ("bus", "b601_dm", "can0", ANY)
-    assert arm[1] == "arm"
-    assert [spec[:4] for spec in arm[2]["motors"]] == [
+    bus, arm_call, gripper = calls
+    assert bus == ("bus", "arm", "can0", ANY)
+    assert arm_call[1] == "arm"
+    assert [spec[:4] for spec in arm_call[2]["motors"]] == [
         ("joint1", damiao.MotorType.DM4340, 0x01, 0x11),
         ("joint2", damiao.MotorType.DM4340, 0x02, 0x12),
         ("joint3", damiao.MotorType.DM4340, 0x03, 0x13),

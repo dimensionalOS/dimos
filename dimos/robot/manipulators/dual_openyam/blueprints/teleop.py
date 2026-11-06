@@ -22,7 +22,8 @@ from dimos.manipulation.visualization.config import ManipulationVisualizationCon
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
-    connect_damiao,
+    arm_connection,
+    arm_remaps,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     dual_openyam_trajectory_task,
@@ -30,6 +31,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
+    dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
@@ -48,7 +50,7 @@ _dual_openyam_webxr_pink = PinkKinematicsConfig(
     lm_damping=0.01,
     gain=1.0,
 )
-_dual_openyam_webxr_model = DualOpenYamConnection.planning_model("arm")
+_dual_openyam_webxr_model = dual_openyam_model_config(robot="arm")
 _dual_openyam_webxr_tasks = {
     side: TaskConfig(
         type="teleop_ik",
@@ -76,28 +78,32 @@ def build_dual_openyam_webxr(
     """Compose dual-arm teleop with deployment-specific visualization."""
     return autoconnect(
         ArmTeleopModule.blueprint(zero_button="B"),
-        connect_damiao(
-            DualOpenYamConnection,
-            coordinator=DamiaoTeleopCoordinator,
-            tasks=[
-                *_dual_openyam_webxr_tasks.values(),
-                TaskConfig(
-                    name="left_arm_gripper",
-                    type="gripper",
-                    joint_names=["arm/left_gripper"],
-                    priority=20,
-                    stream_bind={"gripper_command": "left_gripper_command"},
-                ),
-                TaskConfig(
-                    name="right_arm_gripper",
-                    type="gripper",
-                    joint_names=["arm/right_gripper"],
-                    priority=20,
-                    stream_bind={"gripper_command": "right_gripper_command"},
-                ),
-                dual_openyam_trajectory_task(priority=10),
-            ],
-        ),
+        autoconnect(
+            DamiaoTeleopCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                model=DualOpenYamConnection.control_model("arm"),
+                tasks=[
+                    *_dual_openyam_webxr_tasks.values(),
+                    TaskConfig(
+                        name="left_arm_gripper",
+                        type="gripper",
+                        joint_names=["arm/left_gripper"],
+                        priority=20,
+                        stream_bind={"gripper_command": "left_gripper_command"},
+                    ),
+                    TaskConfig(
+                        name="right_arm_gripper",
+                        type="gripper",
+                        joint_names=["arm/right_gripper"],
+                        priority=20,
+                        stream_bind={"gripper_command": "right_gripper_command"},
+                    ),
+                    dual_openyam_trajectory_task(priority=10),
+                ],
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(DualOpenYamConnection),
+        ).remappings(arm_remaps(DualOpenYamConnection, DamiaoTeleopCoordinator)),
         ManipulationModule.blueprint(
             gripper_tasks={
                 "left_manipulator": "left_arm_gripper",

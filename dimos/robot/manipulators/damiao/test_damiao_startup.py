@@ -16,7 +16,7 @@
 
 import pytest
 
-from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao import connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
@@ -45,7 +45,7 @@ def test_failed_stream_setup_never_reports_ready(connection_class, boundary, moc
         assert observed == [False]
         assert readings.sent == []
         assert not module.status().connected
-        assert module._robot is None
+        assert module._arm is None
         assert "disable" in boundary[0].events
     finally:
         module.stop()

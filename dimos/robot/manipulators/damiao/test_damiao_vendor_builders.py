@@ -18,23 +18,24 @@ from can_motor_control import damiao
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao import arm as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
+from dimos.robot.manipulators.damiao.arm import DamiaoArm
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.makermods_metal.config import METAL
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 
 @pytest.mark.parametrize(
-    "connection_type,ports,buses,groups,prefixes,motors,kp,kd,direction,current",
+    "connection_type,ports,groups,prefixes,motors,kp,kd,direction,current",
     [
         (
             OpenYamConnection,
             {"can_port": "can0"},
-            ["openyam"],
             ["arm"],
             ["yam_joint"],
             [damiao.MotorType.DM4340] * 3 + [damiao.MotorType.DM4310] * 3,
@@ -46,7 +47,6 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
         (
             DualOpenYamConnection,
             {"left_can_port": "can0", "right_can_port": "can1"},
-            ["left", "right"],
             ["left_arm", "right_arm"],
             ["left_joint", "right_joint"],
             [damiao.MotorType.DM4340] * 3 + [damiao.MotorType.DM4310] * 3,
@@ -58,7 +58,6 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
         (
             OpenArmConnection,
             {"left_can_port": "can0", "right_can_port": "can1"},
-            ["left", "right"],
             ["left_arm", "right_arm"],
             ["openarm_left_joint", "openarm_right_joint"],
             [damiao.MotorType.DM8009] * 2
@@ -72,7 +71,6 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
         (
             MetalConnection,
             {"can_port": "can0"},
-            ["metal"],
             ["arm"],
             ["joint"],
             ["low", "shoulder", "low", "low", "high", "high"],
@@ -84,7 +82,6 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
         (
             DualMetalConnection,
             {"left_can_port": "can0", "right_can_port": "can1"},
-            ["left", "right"],
             ["left_arm", "right_arm"],
             ["left_joint", "right_joint"],
             ["low", "shoulder", "low", "low", "high", "high"],
@@ -98,7 +95,6 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 def test_native_wiring_and_commands(
     connection_type,
     ports,
-    buses,
     groups,
     prefixes,
     motors,
@@ -117,7 +113,7 @@ def test_native_wiring_and_commands(
         )
         codec = mocker.patch.object(damiao, "DamiaoCodec")
     physics = mocker.patch.object(common, "PhysicalModel").return_value
-    physics.normalize.side_effect = list
+    physics.validate.side_effect = list
     physics.gravity.return_value = np.zeros(len(groups) * len(motors))
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
@@ -133,11 +129,11 @@ def test_native_wiring_and_commands(
     try:
         module.start()
         module.command({f"arm/{prefix}1/position": 0.7 for prefix in prefixes})
-        assert [name for name, _, _ in native.bus_specs] == buses
-        for (name, bus, actual_motors), group, prefix, expected_bus in zip(
-            native.arm_specs, groups, prefixes, buses, strict=True
+        assert [name for name, _, _ in native.bus_specs] == groups
+        for (name, bus, actual_motors), group, prefix in zip(
+            native.arm_specs, groups, prefixes, strict=True
         ):
-            assert (name, bus) == (group, expected_bus)
+            assert (name, bus) == (group, group)
             assert actual_motors == [
                 (f"{prefix}{index}", motor, index, index + 0x10)
                 for index, motor in enumerate(motors, 1)
@@ -161,19 +157,14 @@ def test_native_wiring_and_commands(
             ]
             assert codec.call_args_list == [
                 mocker.call(profiles=["low", "shoulder", "high"])
-            ] * len(buses)
+            ] * len(groups)
     finally:
         module.stop()
 
 
 def test_missing_metal_profiles_fail_before_opening_a_bus(boundary, monkeypatch):
     monkeypatch.delattr(damiao, "MotorProfile", raising=False)
-    module = MetalConnection(can_port="can0")
-    try:
-        with pytest.raises(
-            RuntimeError, match="MetalConnection requires can-motor-control>=0.0.11"
-        ):
-            module._build_robot()
-        boundary[1].assert_not_called()
-    finally:
-        module.stop()
+    arm = DamiaoArm(METAL, ["can0"])
+    with pytest.raises(RuntimeError, match="MetalConnection requires can-motor-control>=0.0.11"):
+        arm._build()
+    boundary[1].assert_not_called()

@@ -16,18 +16,37 @@
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.robot.manipulators.damiao.damiao_blueprint import connect_damiao
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
+from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
 
-coordinator_makermods_metal = connect_damiao(
-    MetalConnection,
-    tasks=[
-        joint_trajectory_task([f"arm/{name}" for name in MetalConnection.planning.joint_names]),
-        TaskConfig(
-            name="metal_gripper",
-            type="gripper",
-            joint_names=["arm/gripper"],
-            priority=20,
+_MODEL = make_metal_model_config(robot="arm")
+
+
+def metal_control() -> Blueprint:
+    """Trajectories and the Metal jaw over the connection."""
+    return autoconnect(
+        DamiaoCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=MetalConnection.control_model("arm"),
+            tasks=[
+                joint_trajectory_task(list(_MODEL.joint_names)),
+                TaskConfig(
+                    name="metal_gripper",
+                    type="gripper",
+                    joint_names=["arm/gripper"],
+                    priority=20,
+                ),
+            ],
+            zero_stiffness_joints=[],
         ),
-    ],
-).remappings([])
+        arm_connection(MetalConnection),
+    ).remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
+
+
+coordinator_makermods_metal = metal_control().remappings([])

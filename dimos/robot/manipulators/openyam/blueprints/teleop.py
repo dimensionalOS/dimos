@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 """OpenYAM keyboard and WebXR teleoperation over its connection."""
 
 from copy import deepcopy
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import planner
@@ -26,15 +25,17 @@ from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoTeleopCoordinator,
     DamiaoTwistCoordinator,
-    connect_damiao,
+    arm_connection,
+    arm_remaps,
 )
 from dimos.robot.manipulators.openyam.blueprints.basic import _gripper_task, _trajectory_task
+from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
-_openyam_model = OpenYamConnection.planning_model("arm")
+_openyam_model = make_openyam_model_config(robot="arm")
 
 
 def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
@@ -47,13 +48,35 @@ def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
     )
 
 
+def _twist_control(tasks: list[TaskConfig]) -> Blueprint:
+    """Twist-driven coordinator named ControlCoordinator over the connection."""
+    return autoconnect(
+        DamiaoTwistCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=OpenYamConnection.control_model("arm"),
+            tasks=list(tasks),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenYamConnection),
+    ).remappings(arm_remaps(OpenYamConnection, DamiaoTwistCoordinator))
+
+
+def _teleop_control(tasks: list[TaskConfig]) -> Blueprint:
+    """WebXR coordinator named ControlCoordinator over the connection."""
+    return autoconnect(
+        DamiaoTeleopCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=OpenYamConnection.control_model("arm"),
+            tasks=list(tasks),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenYamConnection),
+    ).remappings(arm_remaps(OpenYamConnection, DamiaoTeleopCoordinator))
+
+
 keyboard_teleop_openyam = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    connect_damiao(
-        OpenYamConnection,
-        coordinator=DamiaoTwistCoordinator,
-        tasks=[_eef_twist_task(), _gripper_task()],
-    ),
+    _twist_control([_eef_twist_task(), _gripper_task()]),
     ManipulationModule.blueprint(
         model=_openyam_model,
         gripper_tasks={"manipulator": "arm_gripper"},
@@ -108,11 +131,7 @@ def openyam_quest_tasks() -> list[TaskConfig]:
 
 teleop_webxr_openyam = autoconnect(
     ArmTeleopModule.blueprint(zero_button="B"),
-    connect_damiao(
-        OpenYamConnection,
-        coordinator=DamiaoTeleopCoordinator,
-        tasks=openyam_quest_tasks(),
-    ),
+    _teleop_control(openyam_quest_tasks()),
     ManipulationModule.blueprint(
         model=_openyam_model,
         gripper_tasks={"manipulator": "arm_gripper"},
@@ -124,9 +143,5 @@ teleop_webxr_openyam = autoconnect(
 keyboard_teleop_openyam_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
     planner(model=_openyam_model, gripper_tasks={"manipulator": "arm_gripper"}),
-    connect_damiao(
-        OpenYamConnection,
-        coordinator=DamiaoTwistCoordinator,
-        tasks=[_eef_twist_task(priority=20), _gripper_task(), _trajectory_task(priority=10)],
-    ),
+    _twist_control([_eef_twist_task(priority=20), _gripper_task(), _trajectory_task(priority=10)]),
 )

@@ -322,7 +322,6 @@ all_modules = {
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "open-arm-teleop-coordinator": "dimos.robot.manipulators.openarm.blueprints.teleop.OpenArmTeleopCoordinator",
     "open-yam-coordinator": "dimos.robot.manipulators.openyam.coordinator.OpenYamCoordinator",
-    "open-yam-teach-connection": "dimos.robot.manipulators.openyam.connection.OpenYamTeachConnection",
     "open-yam-teleop-coordinator": "dimos.robot.manipulators.openyam.coordinator.OpenYamTeleopCoordinator",
     "operator-hold-coordinator": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim.OperatorHoldCoordinator",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",

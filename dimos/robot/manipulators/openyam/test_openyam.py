@@ -39,10 +39,10 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 
-_MODEL = OpenYamConnection.planning_model("arm")
+_MODEL = make_openyam_model_config(robot="arm")
 _JOINTS = [
     *_MODEL.joint_names,
-    *[f"arm/{name}" for name in OpenYamConnection.gripper_joints.values()],
+    *[f"arm/{name}" for name in OpenYamConnection.robot.gripper_joints.values()],
 ]
 _ARM_JOINTS = list(_MODEL.joint_names)
 _GRIPPER_JOINT = "arm/gripper"
@@ -114,7 +114,7 @@ def test_openyam_connection_requires_an_explicit_selector() -> None:
     physical = OpenYamConnection(can_port="can1")
     try:
         assert physical.config.source == "yam"
-        assert physical._can_devices() == {"openyam": "can1"}
+        assert physical.can_ports() == ["can1"]
     finally:
         physical.stop()
 

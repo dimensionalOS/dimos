@@ -16,6 +16,7 @@
 
 import pytest
 
+from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
 from dimos.robot.manipulators.makermods_metal.connection import (
     MetalConnection,
     MetalConnectionConfig,
@@ -32,10 +33,10 @@ def test_metal_model_schema_is_lazy_and_namespaces_both_planner_and_gripper(mock
     load = mocker.patch(
         "dimos.robot.assets.model.RobotModel.load", side_effect=AssertionError("must stay lazy")
     )
-    deployed = MetalConnection.planning_model("arm")
+    deployed = make_metal_model_config(robot="arm")
     assert [
         *deployed.joint_names,
-        *[f"arm/{name}" for name in MetalConnection.gripper_joints.values()],
+        *[f"arm/{name}" for name in MetalConnection.robot.gripper_joints.values()],
     ] == [
         "arm/joint1",
         "arm/joint2",

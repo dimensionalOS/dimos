@@ -16,15 +16,32 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import threading
 
 import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.damiao import damiao_connection as common
+from dimos.robot.manipulators.damiao import arm as arm_module, connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.testing.waiting import wait_until
+
+
+def _teaching_connection(connection_class, **overrides: object):
+    robot = replace(
+        connection_class.robot,
+        teach_kd=[2.0, 2.0, 0.5],
+        passive_grippers=frozenset({"left_gripper"}),
+        **overrides,
+    )
+
+    class Teaching(connection_class):
+        pass
+
+    Teaching.robot = robot
+    return Teaching
 
 
 @pytest.mark.parametrize("bad", [4, float("nan"), float("inf")])
@@ -61,8 +78,7 @@ def test_stop_disables_releases_views_and_is_idempotent(make_rig, boundary):
     module.stop()
     module.stop()
     assert boundary[0].events.count("disable") == 1
-    assert module._arms == module._grippers == {}
-    assert module._robot is None
+    assert module._arm is None
     assert not module._reader.is_alive()
     assert not module.status().connected
 
@@ -101,7 +117,7 @@ def test_failed_enable_rolls_back_and_preserves_error(connection_class, boundary
     module = connection_class()
     with pytest.raises(RuntimeError, match="calibration failed"):
         module.start()
-    assert module._robot is None
+    assert module._arm is None
     assert module._reader is None
     module.command({"arm/joint1/position": 0.7})
     assert native.groups["left_arm"].commands == []
@@ -113,13 +129,13 @@ def test_failed_enable_rolls_back_and_preserves_error(connection_class, boundary
 
 def test_initial_bad_feedback_never_enables(connection_class, boundary, mocker):
     mocker.patch.object(
-        common.PhysicalModel, "normalize", side_effect=RuntimeError("invalid initial feedback")
+        arm_module.DamiaoArm, "read", side_effect=RuntimeError("invalid initial feedback")
     )
     module = connection_class()
     with pytest.raises(RuntimeError, match="invalid initial feedback"):
         module.start()
     assert "enable" not in boundary[0].events
-    assert module._robot is None
+    assert module._arm is None
 
 
 def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
@@ -134,7 +150,7 @@ def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
 
 
 def test_topology_mismatch_fails_before_bus(connection_class, boundary):
-    module = connection_class(model=connection_class.planning.model)
+    module = connection_class(model=connection_class.robot.model)
     with pytest.raises(ValueError, match="topology"):
         module.start()
     boundary[1].assert_not_called()
@@ -145,8 +161,7 @@ def test_disable_failure_still_releases_all_session_handles(make_rig, boundary):
     boundary[0].disable_error = RuntimeError("disable failed")
     with pytest.raises(RuntimeError, match="disable failed"):
         module.stop()
-    assert module._arms == module._grippers == {}
-    assert module._robot is None
+    assert module._arm is None
     assert not module.status().connected
     module.stop()
 
@@ -204,7 +219,7 @@ def test_reader_timeout_is_visible_after_native_cleanup(make_rig, boundary, monk
     try:
         with pytest.raises(RuntimeError, match="reader did not stop"):
             module.stop()
-        assert module._robot is None
+        assert module._arm is None
         assert "disable" in boundary[0].events
         assert not module.status().connected
         assert "shutdown timeout" in module.status().last_error
@@ -235,28 +250,19 @@ def test_reader_callback_can_stop_without_joining_itself(make_rig):
     module._reader.join(timeout=2)
     assert failures == []
     assert not module._reader.is_alive()
-    assert module._robot is None
+    assert module._arm is None
 
 
-def test_connect_rejects_unknown_passive_gripper(connection_class):
-    class UnknownPassive(connection_class):
-        passive_grippers = frozenset({"missing"})
-
-    module = UnknownPassive()
-    try:
-        with pytest.raises(ValueError, match="unknown passive grippers"):
-            module.connect()
-    finally:
-        module.stop()
+def test_robot_data_rejects_unknown_passive_gripper(connection_class):
+    with pytest.raises(ValueError, match="unknown passive grippers"):
+        replace(connection_class.robot, passive_grippers=frozenset({"missing"}))
 
 
 def test_passive_gripper_is_enabled_in_mit_and_never_positioned(connection_class, boundary, mocker):
-    class Teaching(connection_class):
-        passive_grippers = frozenset({"left_gripper"})
-
+    teaching = _teaching_connection(connection_class)
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
-    module = Teaching(deadman_timeout_s=10)
+    module = teaching(deadman_timeout_s=10, teach=True)
     commands, readings = LocalTransport(), LocalTransport()
     module.set_transport("position_command", commands)
     module.set_transport("joint_state", readings)
@@ -266,7 +272,7 @@ def test_passive_gripper_is_enabled_in_mit_and_never_positioned(connection_class
         right = boundary[0].groups["right_gripper"]
         assert gripper.modes == ["mit"]
         assert gripper.enable_count == 1
-        assert gripper.mit_commands == [(0.0, 0.0, 0.4, 0.0, 0.0)]
+        assert set(gripper.mit_commands) == {(0.0, 0.0, 0.4, 0.0, 0.0)}
         assert right.modes == right.mit_commands == []
 
         module.command({"arm/left_gripper/position": 0.9})
@@ -292,6 +298,80 @@ def test_active_gripper_still_takes_normalized_openings(connection_class, bounda
     try:
         module.start()
         module.command({"arm/right_gripper/position": 0.75})
-        assert module._grippers["right_gripper"].commands[-1] == 0.75
+        assert module._arm._grippers["right_gripper"].commands[-1] == 0.75
     finally:
         module.stop()
+
+
+def test_teaching_requires_teach_damping(connection_class):
+    module = connection_class(teach=True)
+    try:
+        with pytest.raises(ValueError, match="teach_kd"):
+            module.start()
+    finally:
+        module.stop()
+
+
+def test_robot_class_attribute_is_the_connection_topology(connection_class):
+    robot: DamiaoRobot = connection_class.robot
+    module = connection_class()
+    try:
+        assert module.joint_names == robot.joint_names
+        assert module.arm_joints == robot.arm_joints
+        assert module.gripper_joints == robot.gripper_joints
+    finally:
+        module.stop()
+
+
+def test_connection_config_accepts_position_commands_only():
+    from dimos.control.contract.keys import Interface
+
+    with pytest.raises(ValueError, match="position commands only"):
+        common.DamiaoConnectionConfig(
+            source="arm", joint_commands=(Interface.POSITION, Interface.VELOCITY)
+        )
+    with pytest.raises(ValueError, match="position commands only"):
+        common.DamiaoConnectionConfig(source="arm", pd=True)
+
+
+def test_can_selectors_must_match_the_robot_buses(connection_class):
+    class Missing(connection_class):
+        def can_ports(self):
+            return ["can0"]
+
+    class Duplicate(connection_class):
+        def can_ports(self):
+            return ["can0", "can0"]
+
+    for candidate, message in (
+        (Missing, "cover exactly"),
+        (Duplicate, "must be distinct"),
+    ):
+        module = candidate()
+        try:
+            with pytest.raises(ValueError, match=message):
+                module.connect()
+        finally:
+            module.stop()
+
+
+def test_write_and_read_before_connect_are_refused(connection_class):
+    module = connection_class()
+    try:
+        with pytest.raises(RuntimeError, match="inactive"):
+            module.write({"arm/joint1/position": 0.1})
+        module.halt()
+        with pytest.raises(RuntimeError, match="disconnected"):
+            module._read_state()
+    finally:
+        module.stop()
+
+
+def test_feedback_fault_reports_a_failing_disable(make_rig, boundary):
+    module, _, _ = make_rig()
+    boundary[0].disable_error = RuntimeError("unplugged")
+    boundary[0].refresh_error = RuntimeError("lost feedback")
+    wait_until(lambda: module._fault is not None, timeout=2)
+    assert "disable failed" in module.status().last_error
+    boundary[0].disable_error = None
+    boundary[0].refresh_error = None
