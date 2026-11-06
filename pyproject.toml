@@ -226,7 +226,7 @@ agents = [
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
     "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
-    "langgraph>=1.0",  # agents/mcp/mcp_client.py
+    "langgraph>=1.0",  # agents/agent.py
     "httpx>=0.28",  # LLM trace (agents/llm_trace.py)
 
     # Audio
