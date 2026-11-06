@@ -43,10 +43,13 @@ def _stage(usd: str) -> Any:
 
 
 def _links(stage: Any) -> set[str]:
+    """Every link by the name it travels under: a link prim is one with RigidBodyAPI."""
+    from pxr import UsdPhysics
+
     return {
-        str(prim.GetAttribute("dimos:link").Get())
+        prim.GetDisplayName() or prim.GetName()
         for prim in stage.Traverse()
-        if prim.GetAttribute("dimos:link") and prim.GetAttribute("dimos:link").HasAuthoredValue()
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI)
     }
 
 
@@ -63,7 +66,7 @@ def test_the_configured_frames_are_the_names_the_layer_carries() -> None:
 
     stage = _stage(mid360_usd("front/lidar", "front/imu"))
 
-    # dimos:link is what a UsdManager matches a mount frame on, so these are the names that
+    # displayName is what a UsdManager matches a mount frame on, so these are the names that
     # have to follow the config rather than the canonical ones baked into the prim names.
     assert _links(stage) == {"front/lidar", "front/lidar_body", "front/imu"}
 
@@ -95,13 +98,16 @@ def test_the_sensor_grafts_onto_the_frame_it_is_bolted_to() -> None:
     defaultPrim = "robot"
 )
 
-def Xform "robot"
+def Xform "robot" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    displayName = "base"
+)
 {
-    custom string dimos:link = "base"
-
-    def Xform "sensor_mount"
+    def Xform "sensor_mount" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "sensor_mount"
+    )
     {
-        custom string dimos:link = "sensor_mount"
     }
 }
 """
@@ -153,3 +159,12 @@ def test_the_sensor_satisfies_the_usd_manager_mount_contract() -> None:
     assert mount.module is Mid360
     assert mount.remote_name == "front/mid360"
     assert mount.frame_prefix == "front"
+
+
+def test_the_baked_layer_authors_no_custom_attributes() -> None:
+    # Standard schemas only, same as everything urdf_to_usd emits: a consumer should need
+    # nothing of ours to read this.
+    usd = mid360_usd("lidar_link", "imu_link")
+
+    assert "custom " not in usd
+    assert "dimos:" not in usd

@@ -120,10 +120,9 @@ class Mid360Config(NativeModuleConfig):
 # a hand-written URDF by dimos.robot.assets.usd.urdf_to_usd -- see the module docstring for
 # how to regenerate it.
 #
-# @LIDAR@ / @IMU@ stand in for the configured frame names. They appear only in the
-# dimos:link / dimos:joint attributes, which are the names that travel (graft_usd matches a
-# mount frame on dimos:link); prim names stay fixed USD identifiers, so no sanitising is
-# needed here and none of this depends on pxr.
+# @LIDAR@ / @IMU@ stand in for the configured frame names. They appear only in displayName,
+# which is the name that travels (graft_usd matches a mount frame on it); prim names stay
+# fixed USD identifiers, so no sanitising is needed here and none of this depends on pxr.
 _LIDAR_TOKEN = "@LIDAR@"
 _IMU_TOKEN = "@IMU@"
 
@@ -139,15 +138,14 @@ def Xform "mid360"
 {
     def Xform "lidar_link" (
         prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "@LIDAR@"
     )
     {
-        custom string dimos:link = "@LIDAR@"
-
         def Xform "lidar_link_body" (
             prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            displayName = "@LIDAR@_body"
         )
         {
-            custom string dimos:link = "@LIDAR@_body"
             matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, -0.02, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
 
@@ -174,9 +172,9 @@ def Xform "mid360"
 
         def Xform "imu_link" (
             prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            displayName = "@IMU@"
         )
         {
-            custom string dimos:link = "@IMU@"
             matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.011, 0.02329, -0.04412, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
         }
@@ -184,9 +182,10 @@ def Xform "mid360"
 
     def Scope "joints"
     {
-        def PhysicsFixedJoint "lidar_link_to_body"
+        def PhysicsFixedJoint "lidar_link_to_body" (
+            displayName = "@LIDAR@_to_body"
+        )
         {
-            custom string dimos:joint = "@LIDAR@_to_body"
             rel physics:body0 = </mid360/lidar_link>
             rel physics:body1 = </mid360/lidar_link/lidar_link_body>
             point3f physics:localPos0 = (0, 0, -0.02)
@@ -195,9 +194,10 @@ def Xform "mid360"
             quatf physics:localRot1 = (1, 0, 0, 0)
         }
 
-        def PhysicsFixedJoint "lidar_link_to_imu_link"
+        def PhysicsFixedJoint "lidar_link_to_imu_link" (
+            displayName = "@LIDAR@_to_@IMU@"
+        )
         {
-            custom string dimos:joint = "@LIDAR@_to_@IMU@"
             rel physics:body0 = </mid360/lidar_link>
             rel physics:body1 = </mid360/lidar_link/imu_link>
             point3f physics:localPos0 = (0.011, 0.02329, -0.04412)

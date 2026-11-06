@@ -472,14 +472,17 @@ class _NoUsd(Module):
 
 
 def _subtree_usd(prim: str, link: str) -> str:
+    """A stand-in subtree in the dialect urdf_to_usd emits: displayName plus RigidBodyAPI."""
     return f"""#usda 1.0
 (
     defaultPrim = "{prim}"
 )
 
-def Xform "{prim}"
+def Xform "{prim}" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    displayName = "{link}"
+)
 {{
-    custom string dimos:link = "{link}"
 }}
 """
 
@@ -532,10 +535,10 @@ def _usd_stage(usd: str) -> Any:
 
 
 def _link_of(stage: Any, path: str) -> str:
-    """The dimos:link a prim carries: its frame_id, under whatever name it ended up with."""
+    """The frame_id a prim travels under: its displayName, or its prim name without one."""
     prim = stage.GetPrimAtPath(path)
     assert prim, f"no prim at {path}"
-    return str(prim.GetAttribute("dimos:link").Get())
+    return prim.GetDisplayName() or prim.GetName()
 
 
 def _scene(module: UsdManager) -> str:
