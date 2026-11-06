@@ -111,3 +111,31 @@ Keep consumer-specific processing outside this module. For example, Drake-specif
 cleanup and optional mesh conversion still belong in
 `dimos/manipulation/planning/utils/mesh_utils.py`. Only converted meshes are
 cached because backends require them as filesystem artifacts.
+
+## URDF to USD
+
+`dimos.robot.assets.usd` converts a loaded model into a single self-contained USD
+layer, and grafts other models' layers onto it:
+
+```python
+from dimos.robot.assets.usd import graft_usd, urdf_to_usd
+
+root = urdf_to_usd(model.load())
+scene = graft_usd(root, {"arm_mount": arm_usd})
+```
+
+A converted layer is a string, not a file: a description already travels as one
+string (`UrdfManager.file_info`), and a stage naming external layers would need a
+second resolution contract on the consumer side. `mesh_mode="inline"` therefore
+bakes mesh triangles into the layer; `"reference"` leaves the path the URDF named.
+
+Links nest down the kinematic tree at the URDF zero pose, so a viewer with no
+physics engine still shows the robot assembled; the joints are also written as
+`UsdPhysics` prims. Prim names are USD identifiers, so `dimos:link` and
+`dimos:joint` carry the original URDF spelling — that attribute is how a frame_id
+finds its prim.
+
+`usd-core` is in the `scene-cooking` extra and has no linux-aarch64 wheel, so `pxr`
+is imported lazily: importing this module costs nothing, only converting needs it.
+
+`dimos urdf-to-usd <source>` is the same conversion from the command line.
