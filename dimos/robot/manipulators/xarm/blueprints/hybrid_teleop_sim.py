@@ -14,15 +14,17 @@
 
 """Simulated xArm7 pick and place that an operator can hold and e-stop.
 
-The same modules as xarm-perception-sim, plus the operator hold task, an
-end-effector jog on ``ee_twist_command``, on/off streams for the hold and the
-e-stop, a point cloud of the scene on ``scene_pointcloud`` and the arm's URDF,
-so a Desktop page can show the arm and the scene, stop or hold it, and drive it
-by hand after taking over.
+The same modules as xarm-perception-sim, plus the operator hold task, the
+request_operator skill an agent calls to ask for the hold, an end-effector jog
+on ``ee_twist_command``, on/off streams for the hold and the e-stop, a point
+cloud of the scene on ``scene_pointcloud`` and the arm's URDF, so a Desktop page
+can show the arm and the scene, stop or hold it, and drive it by hand after
+taking over.
 """
 
 from __future__ import annotations
 
+from dimos.agents.skills.teleop_skills import TeleopSkills
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import ControlTask
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
@@ -138,6 +140,7 @@ hybrid_teleop_sim = autoconnect(
         visualization={"backend": "viser"},
     ),
     ManipulationSkills.blueprint(),
+    TeleopSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
     # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
