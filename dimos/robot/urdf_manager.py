@@ -382,8 +382,14 @@ class UrdfManager(Module):
                 f"removing one of those mounts."
             )
         subtrees = await self._subtrees([*chain, self._scene_identity])
-        root = self.get_usd()
-        scene = self._graft_in_waves(root[USD], subtrees) if subtrees else root[USD]
+        # Off the loop thread: building the layer imports usd-core and converts the whole
+        # URDF, which is a tenth of a second on a real robot and would stall tf meanwhile.
+        root = await asyncio.to_thread(self.get_usd)
+        scene = (
+            await asyncio.to_thread(self._graft_in_waves, root[USD], subtrees)
+            if subtrees
+            else root[USD]
+        )
         # Grafting works in absolute paths, which say nothing to whoever ends up asking for the
         # file. So the scene leaves under names this manager answers for instead.
         published, assets = await asyncio.to_thread(publish_usd_assets, scene)
@@ -546,7 +552,11 @@ class UrdfManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(USD_SUFFIXES):
-            usd = self._scene if self._scene is not None else self.get_usd()[USD]
+            # Off the loop thread: the first request is the one that pays for the import
+            # and the conversion, and it arrives while tf is flowing.
+            usd = self._scene
+            if usd is None:
+                usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
         # Only files this manager has published: a request is never an arbitrary path into the
