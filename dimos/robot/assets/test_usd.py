@@ -26,9 +26,12 @@ from dimos.robot.assets.usd import (
     SOURCE_KEY,
     asset_hash,
     graft_usd,
+    prefix_usd_frames,
+    rename_usd_frames,
     require_asset_hashes,
     unhashed_assets,
     urdf_to_usd,
+    usd_frame_names,
 )
 
 # usd-core is an optional extra with no linux-aarch64 wheel (see dimos.robot.assets.usd).
@@ -71,6 +74,12 @@ def toy(tmp_path: Path) -> Any:
     urdf = tmp_path / "toy.urdf"
     urdf.write_text(_URDF)
     return RobotModel.from_file(urdf).load()
+
+
+def _link_of(stage: Any, path: str) -> str:
+    prim = stage.GetPrimAtPath(path)
+    assert prim, f"no prim at {path}"
+    return prim.GetDisplayName() or prim.GetName()
 
 
 def _stage(usd: str) -> Any:
@@ -275,6 +284,135 @@ def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
     root = urdf_to_usd(toy)
 
     assert graft_usd(root, {}) == root
+
+
+def _names(stage: Any, kind: str) -> set[str]:
+    """Every link, or every joint, by the name it travels under."""
+    from pxr import UsdPhysics
+
+    out = set()
+    for prim in stage.Traverse():
+        is_joint = prim.IsA(UsdPhysics.Joint)
+        if (kind == "joint") is not is_joint:
+            continue
+        if kind == "link" and not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            continue
+        out.add(prim.GetDisplayName() or prim.GetName())
+    return out
+
+
+def test_every_link_name_moves_under_the_prefix(toy: Any) -> None:
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
+
+    assert _names(stage, "link") == {
+        "left/base_link",
+        "left/mount",
+        "left/arm-1",
+        "left/spin",
+    }
+
+
+def test_joint_names_move_with_the_links(toy: Any) -> None:
+    # A joint name is what a JointState keys on: two arms answering to one name is the same
+    # collision the link names have, one layer down.
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
+
+    assert _names(stage, "joint") == {
+        "left/base_to_mount",
+        "left/mount_to_arm",
+        "left/arm_to_spin",
+    }
+
+
+def test_the_original_urdf_spelling_survives_the_move(toy: Any) -> None:
+    # "arm-1" is not a USD identifier, so the prim is "arm_1"; the attribute keeps the real name.
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
+
+    assert stage.GetPrimAtPath("/toy/base_link/mount/arm_1")
+    assert _link_of(stage, "/toy/base_link/mount/arm_1") == "left/arm-1"
+
+
+def test_a_nested_namespace_prefixes_whole(toy: Any) -> None:
+    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "fleet/robot0"))
+
+    assert "fleet/robot0/base_link" in _names(stage, "link")
+
+
+def test_prim_paths_and_joint_bodies_are_untouched_by_the_move(toy: Any) -> None:
+    # Prim names cannot hold a "/", and prim paths are already unique by nesting.
+    prefixed = prefix_usd_frames(urdf_to_usd(toy), "left")
+
+    stage = _stage(prefixed)
+    joint = stage.GetPrimAtPath("/toy/joints/base_to_mount")
+
+    assert joint
+    targets = joint.GetRelationship("physics:body0").GetTargets()
+    assert str(targets[0]) == "/toy/base_link"
+
+
+def test_an_empty_prefix_leaves_the_layer_byte_identical(toy: Any) -> None:
+    # An un-namespaced module must not even be re-exported: nothing about it is ambiguous.
+    usd = urdf_to_usd(toy)
+
+    assert prefix_usd_frames(usd, "") is usd
+
+
+def test_a_prefixed_subtree_grafts_at_the_roots_own_unprefixed_frame(toy: Any) -> None:
+    # The key is a link of the root, which is never renamed; only the subtree moves.
+    root = urdf_to_usd(toy)
+    subtree = prefix_usd_frames(urdf_to_usd(toy, name="arm_sub"), "left")
+
+    stage = _stage(graft_usd(root, {"mount": subtree}))
+
+    assert _link_of(stage, "/toy/base_link/mount") == "mount"
+    assert _link_of(stage, "/toy/base_link/mount/arm_sub/base_link") == "left/base_link"
+
+
+def test_a_rename_moves_a_link_and_leaves_the_rest(toy: Any) -> None:
+    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"arm-1": "elbow"}))
+
+    assert "elbow" in _names(stage, "link")
+    assert "arm-1" not in _names(stage, "link")
+    assert "base_link" in _names(stage, "link")
+
+
+def test_a_rename_reaches_joints_too(toy: Any) -> None:
+    # A joint name is a JointState key, so it needs renaming for the same reasons a link does.
+    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"base_to_mount": "shoulder"}))
+
+    assert "shoulder" in _names(stage, "joint")
+
+
+def test_a_pair_of_renames_swaps_rather_than_collapsing(toy: Any) -> None:
+    # Every name is read before any is written, so a -> b with b -> a is a swap.
+    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"mount": "spin", "spin": "mount"}))
+
+    assert {"mount", "spin"} <= _names(stage, "link")
+
+
+def test_renaming_a_frame_the_layer_does_not_have_is_skipped(toy: Any) -> None:
+    """One mapping is applied to every subtree of a scene, so most keys miss most layers.
+
+    Whether a key matched *anywhere* is the caller's to check, which UsdManager does across
+    all of its mounts at once.
+    """
+    usd = urdf_to_usd(toy)
+
+    assert rename_usd_frames(usd, {"elbow": "wrist"}) is usd
+
+
+def test_the_frame_names_a_layer_carries_are_its_links_and_joints(toy: Any) -> None:
+    # What a caller checks a rename against.
+    names = usd_frame_names(urdf_to_usd(toy))
+
+    assert {"base_link", "mount", "arm-1", "spin"} <= names
+    assert {"base_to_mount", "mount_to_arm", "arm_to_spin"} <= names
+
+
+def test_renaming_nothing_leaves_the_layer_alone(toy: Any) -> None:
+    usd = urdf_to_usd(toy)
+
+    assert rename_usd_frames(usd, {}) is usd
 
 
 _EXTRAS_URDF = """<?xml version="1.0"?>

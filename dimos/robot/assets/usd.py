@@ -198,6 +198,115 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
     return str(root_layer.ExportToString())
 
 
+def prefix_usd_frames(usd: str, prefix: str) -> str:
+    """``usd`` with every link and joint name it carries moved under ``prefix``.
+
+    A description's link names are its tf frame_ids, and they come from the URDF, so every copy
+    of one arm names the same frames. Two of that arm on one robot therefore need one of them
+    renamed, and the namespace it is deployed under ("left" out of "left/xarm") is the name that
+    is already unique. Joint names move with the links: they are what a JointState keys on, and
+    two arms answering to one joint name is the same collision one layer down.
+
+    Only ``displayName`` changes. Prim names cannot hold a "/" and prim paths are already unique
+    by nesting, so neither needs to move. A prim with no displayName of its own is given one
+    from its prim name, because the prefixed name is exactly the case the prim name cannot hold.
+    """
+    if not prefix:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    stage = pxr.Usd.Stage.Open(layer)
+    for prim in stage.Traverse():
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+            prim.SetDisplayName(f"{prefix}/{prim.GetDisplayName() or prim.GetName()}")
+    return str(layer.ExportToString())
+
+
+def usd_frame_names(usd: str) -> set[str]:
+    """Every link and joint name ``usd`` carries, under the names they travel as."""
+    pxr = _pxr()
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
+    return {
+        prim.GetDisplayName() or prim.GetName()
+        for prim in stage.Traverse()
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+    }
+
+
+def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
+    """``usd`` with the named links and joints renamed; names it does not carry are ignored.
+
+    A vendor description names its frames whatever it names them, which is rarely what the robot
+    they are bolted to calls them. This is the hook for saying so.
+
+    Renames are applied simultaneously, so swapping a pair of names does what it looks like
+    rather than collapsing both onto one. A name this layer does not have is skipped rather
+    than refused, because one mapping is applied to every subtree of a scene and most keys are
+    meant for exactly one of them; whether a key matched *anywhere* is the caller's to check
+    (see usd_frame_names).
+    """
+    if not renames:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    stage = pxr.Usd.Stage.Open(layer)
+    frames = [
+        prim
+        for prim in stage.Traverse()
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+    ]
+    # Read every name before writing any, so a -> b alongside b -> a is a swap.
+    named = [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]
+    changed = False
+    for prim, name in named:
+        if name in renames:
+            prim.SetDisplayName(renames[name])
+            changed = True
+    return str(layer.ExportToString()) if changed else usd
+
+
+def resolve_usd_assets(usd: str, root: str) -> str:
+    """``usd`` with every relative asset path rewritten to sit under ``root``.
+
+    A layer only says where its meshes are relative to something; the module that answered for
+    it is the only thing that knows what. So a subtree is rebased as it arrives, before it joins
+    a scene whose other subtrees were rooted somewhere else entirely.
+
+    An absolute path is left alone, and so is everything when ``root`` is empty.
+    """
+    if not root:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    base = Path(root)
+    changed = False
+    stack = [layer.pseudoRoot]
+    while stack:
+        spec = stack.pop()
+        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+        rebased = []
+        for ref in items:
+            asset = ref.assetPath
+            if asset and not Path(asset).is_absolute():
+                rebased.append(pxr.Sdf.Reference(str(base / asset), ref.primPath))
+                changed = True
+            else:
+                rebased.append(ref)
+        if rebased and changed:
+            if spec.referenceList.explicitItems:
+                spec.referenceList.explicitItems = rebased
+            else:
+                spec.referenceList.prependedItems = rebased
+        # assetInfo names the same file, so it moves with it or the two disagree.
+        identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+        if identifier is not None and not Path(str(identifier.path)).is_absolute():
+            # assetInfo is a proxy, not a dict: set the key on it rather than assigning a copy.
+            spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
+            changed = True
+        stack.extend(spec.nameChildren)
+    return str(layer.ExportToString()) if changed else usd
+
+
 def _layer_from(pxr: Any, usd: str, what: str) -> Any:
     layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
     if not layer.ImportFromString(usd):
