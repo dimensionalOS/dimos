@@ -176,6 +176,14 @@ class FakeMcp:
         return "http://lab/mcp"
 
 
+class FakeBoxFilter:
+    def set_box(self, name: str, pose: object, size: object, frame_id: str | None = None) -> bool:
+        return True
+
+    def clear_box(self, name: str) -> bool:
+        return True
+
+
 class FakeScene:
     def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
         detection = Detection3D()
@@ -222,6 +230,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     )
     module._sim = bench
     module._arm = FakeArm(bench)
+    module._box_filter = FakeBoxFilter()
     module._episodes = monitor
     module._scene = FakeScene()
     module._mcp_server = FakeMcp()

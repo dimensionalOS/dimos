@@ -42,6 +42,7 @@ class FakeBackend:
 
     def __init__(self) -> None:
         self.gripper = 0.0
+        self.cleared: tuple[str, float] | None = None
         self.home()
 
     def joints(self) -> list[float]:
@@ -89,6 +90,12 @@ class FakeBackend:
             )
             for index, word in enumerate(words)
         ]
+
+    def clear_object(self, object_id: str, margin: float) -> None:
+        self.cleared = (object_id, margin)
+
+    def restore(self) -> None:
+        self.cleared = None
 
     def capture(self, path: Path) -> None:
         path.write_bytes(_BLANK_PNG)

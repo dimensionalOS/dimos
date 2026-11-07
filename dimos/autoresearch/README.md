@@ -45,6 +45,7 @@ import math  # the only allowed import
 def run(robot, task):
     cube = robot.scene.objects(["cube"])[0]
     x, y, z = cube.position
+    robot.scene.clear(cube.id)
     robot.gripper.open()
     robot.arm.move_pose([x, y, z + 0.10], [math.pi, 0.0, 0.0])
     robot.arm.move_linear(dz=-0.08)
@@ -70,6 +71,8 @@ the program may catch it and try another way.
 | `gripper.open()` / `close()` | fully open or closed | `Arm.open_gripper` / `close_gripper` |
 | `gripper.set(x)` | the gripper joint at `x`, URDF units; `gripper.range()` gives (closed, open) | `Arm.set_gripper_position` |
 | `scene.objects(words)` | detected objects: id, name, position, size | the object-registration module's `scan_scene` |
+| `scene.clear(object_id, margin=0.03)` | leave that object, plus `margin` metres on every side, out of the obstacle map: the map treats every object as an obstacle, so clear it before touching it; one object at a time | the map's box filter `set_box` |
+| `scene.restore()` | put the cleared object back in the map | the box filter `clear_box` |
 | `observe()` | saves a keyframe, returns its path | an `Observer` |
 | `log(text)` | a line in the trace | the trace |
 
@@ -133,7 +136,8 @@ creates the session and homes the arm. The actor's tools are its skills,
 served over MCP: `task`, `scene`, `submit`, `run`, `stop_run`, `results`,
 `leaderboard`, `freeze` and `note`. `run` and `freeze` run the trials on a
 background thread and return at once; `results` is polled. The world is
-`MujocoWorld` (`world.py`): a seeded reset places the cube through
+`MujocoWorld` (`world.py`): a seeded reset puts back whatever the last
+program cleared from the obstacle map, places the cube through
 `SimSceneSpec`, re-homes the arm and waits for fresh poses; a snapshot stops
 the arm and waits for it to hold still. Programs run on `live.py:backend`,
 which attaches to the stack and takes keyframes from its `color_image`

@@ -47,6 +47,7 @@ from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.sdk import Arm
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
@@ -166,6 +167,7 @@ class AutoresearchModule(Module):
 
     _sim: SimSceneSpec
     _arm: ManipulationSpec
+    _box_filter: PointCloudBoxFilterSpec
     _episodes: EpisodeControlSpec
     _scene: ObjectSceneRegistrationSpec
     _mcp_server: McpServerSpec
@@ -199,6 +201,7 @@ class AutoresearchModule(Module):
         self._world = MujocoWorld(
             self._sim,
             _wait_for_arm(self._arm, PLANNER_TIMEOUT_S),
+            self._box_filter,
             self.config.judge_body,
             self.config.placement_bounds,
             self._stop,

@@ -27,8 +27,9 @@ import time
 from pydantic import BaseModel
 
 from dimos.autoresearch.judge import BodyPose, Snapshot
-from dimos.autoresearch.program import RunStoppedError
+from dimos.autoresearch.program import PROGRAM_BOX, RunStoppedError
 from dimos.manipulation.sdk import Arm
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement, SimSceneSpec
@@ -60,7 +61,8 @@ class PlacementBounds(BaseModel):
 
 
 class MujocoWorld:
-    """``reset(seed)`` homes the arm, puts ``body`` where ``bounds`` says for that
+    """``reset(seed)`` puts back any object the last program cleared from the
+    obstacle map, homes the arm, puts ``body`` where ``bounds`` says for that
     seed and waits for the arm to hold still and for poses taken after the reset;
     ``snapshot()`` stops the arm and, once it holds still, reports every tracked
     body's pose. Feed ``on_body_poses`` and ``on_joint_state`` from the simulator's
@@ -70,12 +72,14 @@ class MujocoWorld:
         self,
         sim: SimSceneSpec,
         arm: Arm,
+        box_filter: PointCloudBoxFilterSpec,
         body: str,
         bounds: PlacementBounds,
         stop: threading.Event,
     ) -> None:
         self._sim = sim
         self._arm = arm
+        self._box_filter = box_filter
         self._body = body
         self._bounds = bounds
         self._stop = stop
@@ -104,6 +108,7 @@ class MujocoWorld:
             self._changed.notify_all()
 
     def reset(self, seed: int) -> None:
+        self._box_filter.clear_box(PROGRAM_BOX)
         # Home first: the controller keeps holding its last target through the
         # reset, so the arm would drift back toward it after being put at home.
         self.home()

@@ -46,6 +46,8 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
 )
 from dimos.manipulation.sdk import Arm, MotionError
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
+from dimos.msgs.geometry_msgs.Pose import Pose as PoseMsg
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration_spec import (
@@ -59,6 +61,8 @@ ProgramStatus = Literal["completed", "raised", "timeout"]
 CallStatus = Literal["OK", "PLANNING_FAILED", "EXECUTION_FAILED", "TIMEOUT", "RAISED"]
 
 TRACE_NAME = "trace.jsonl"
+# The box filter's name for the one object a program may leave out of the obstacle map.
+PROGRAM_BOX = "autoresearch/target"
 # How often the runner checks whether the lab asked it to stop, seconds.
 _STOP_POLL_S = 0.2
 
@@ -140,6 +144,10 @@ class RobotBackend(Protocol):
     def gripper_range(self) -> tuple[float, float]: ...
 
     def objects(self, words: Sequence[str]) -> list[SceneObject]: ...
+
+    def clear_object(self, object_id: str, margin: float) -> None: ...
+
+    def restore(self) -> None: ...
 
     def capture(self, path: Path) -> None: ...
 
@@ -322,7 +330,7 @@ class GripperApi:
 
 
 class SceneApi:
-    """What the camera sees."""
+    """What the camera sees, and the one object the obstacle map may leave out."""
 
     def __init__(self, robot: Robot) -> None:
         self._robot = robot
@@ -336,6 +344,23 @@ class SceneApi:
             lambda: self._robot._backend.objects(names),
             motion=False,
         )
+
+    def clear(self, object_id: str, margin: float = 0.03) -> None:
+        """Leave the object out of the obstacle map so the arm may touch it. The map
+        treats every object as an obstacle, so a move onto one fails planning
+        until it is cleared. ``object_id`` is an id from ``objects()``; ``margin``
+        is the extra clearance on every side of its box, metres. One object at a
+        time: clearing another puts the first back."""
+        self._robot._traced(
+            "scene.clear",
+            {"object_id": object_id, "margin": margin},
+            lambda: self._robot._backend.clear_object(str(object_id), float(margin)),
+            motion=False,
+        )
+
+    def restore(self) -> None:
+        """Put the cleared object back in the obstacle map."""
+        self._robot._traced("scene.restore", {}, self._robot._backend.restore, motion=False)
 
 
 def _quaternion(values: Sequence[float]) -> tuple[float, float, float, float]:
@@ -369,18 +394,20 @@ class GripperRange:
 
 class DimosBackend:
     """``RobotBackend`` over a running DimOS stack: the ``Arm`` SDK for motion
-    and the gripper, the object-registration module for the scene, and an
-    ``Observer`` for camera frames."""
+    and the gripper, the object-registration module for the scene, the map's
+    box filter for clearing an object, and an ``Observer`` for camera frames."""
 
     def __init__(
         self,
         arm: Arm,
         scene: ObjectSceneRegistrationSpec,
+        box_filter: PointCloudBoxFilterSpec,
         observer: Observer,
         gripper: GripperRange,
     ) -> None:
         self._arm = arm
         self._scene = scene
+        self._box_filter = box_filter
         self._observer = observer
         self._gripper = gripper
 
@@ -400,7 +427,8 @@ class DimosBackend:
         app = Dimos.connect()
         arm = Arm.from_app(app, group=group, instance_name=instance_name)
         scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
-        return cls(arm, scene, observer, gripper)
+        box_filter = app.find_module_by_spec(PointCloudBoxFilterSpec)
+        return cls(arm, scene, box_filter, observer, gripper)
 
     def joints(self) -> list[float]:
         return [float(value) for value in self._arm.joints()]
@@ -464,6 +492,37 @@ class DimosBackend:
             for detection in detections.detections
             if detection.id and detection.results
         ]
+
+    def clear_object(self, object_id: str, margin: float) -> None:
+        detections = self._scene.scan_scene()
+        for detection in detections.detections:
+            if str(detection.id) == object_id:
+                box = detection.bbox
+                self._box_filter.set_box(
+                    PROGRAM_BOX,
+                    PoseMsg(
+                        position=Vector3(
+                            box.center.position.x, box.center.position.y, box.center.position.z
+                        ),
+                        orientation=Quaternion(
+                            box.center.orientation.x,
+                            box.center.orientation.y,
+                            box.center.orientation.z,
+                            box.center.orientation.w,
+                        ),
+                    ),
+                    Vector3(
+                        box.size.x + 2.0 * margin,
+                        box.size.y + 2.0 * margin,
+                        box.size.z + 2.0 * margin,
+                    ),
+                    detections.header.frame_id,
+                )
+                return
+        raise ValueError(f"no object with id {object_id!r} in the scene")
+
+    def restore(self) -> None:
+        self._box_filter.clear_box(PROGRAM_BOX)
 
     def capture(self, path: Path) -> None:
         self._observer.capture(path)

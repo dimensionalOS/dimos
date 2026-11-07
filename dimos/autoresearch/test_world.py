@@ -19,7 +19,7 @@ import time
 import pytest
 
 from dimos.autoresearch.judge import BodyPose
-from dimos.autoresearch.program import RunStoppedError
+from dimos.autoresearch.program import PROGRAM_BOX, RunStoppedError
 from dimos.autoresearch.world import MujocoWorld, PlacementBounds
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -52,6 +52,18 @@ class FakeArm:
         self.calls.append("cancel")
 
 
+class FakeBoxFilter:
+    def __init__(self) -> None:
+        self.cleared: list[str] = []
+
+    def set_box(self, name: str, pose: object, size: object, frame_id: str | None = None) -> bool:
+        return True
+
+    def clear_box(self, name: str) -> bool:
+        self.cleared.append(name)
+        return True
+
+
 class Feeder:
     """Publishes a still arm and two body poses at 50 Hz through the world's handlers."""
 
@@ -77,7 +89,7 @@ class Feeder:
 @pytest.fixture
 def world() -> Iterator[tuple[MujocoWorld, FakeSim, FakeArm, threading.Event]]:
     sim, arm, stop = FakeSim(), FakeArm(), threading.Event()
-    world = MujocoWorld(sim, arm, "cube", PlacementBounds(), stop)
+    world = MujocoWorld(sim, arm, FakeBoxFilter(), "cube", PlacementBounds(), stop)
     feeder = Feeder(world)
     feeder.thread.start()
     yield world, sim, arm, stop
@@ -99,6 +111,7 @@ def test_snapshot_holds_every_body_pose_from_the_tf_stream(
     scene.reset(seed=3)
     assert sim.placements == [{"cube": PlacementBounds().sample(3)}]
     assert arm.calls == ["cancel", "cancel", "home", "open"]
+    assert scene._box_filter.cleared == [PROGRAM_BOX]  # type: ignore[attr-defined]
 
 
 def test_a_stopped_world_gives_up_its_waits(

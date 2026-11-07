@@ -24,6 +24,7 @@ import threading
 from dimos.autoresearch.program import DimosBackend, GripperRange, RobotBackend
 from dimos.core.stream import RemoteOut
 from dimos.manipulation.sdk import Arm
+from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.experimental.object_scene_registration_spec import (
     ObjectSceneRegistrationSpec,
@@ -64,8 +65,8 @@ class StreamObserver:
 
 def backend(trial_dir: Path) -> RobotBackend:
     """Attach to the stack on this bus and return its ``DimosBackend``: the one
-    arm, the scene module and the camera's ``color_image`` stream for keyframes.
-    The connection closes when the process exits."""
+    arm, the scene module, the map's box filter and the camera's ``color_image``
+    stream for keyframes. The connection closes when the process exits."""
     app = Dimos.connect()
     atexit.register(app.stop)
     cameras = [
@@ -81,4 +82,5 @@ def backend(trial_dir: Path) -> RobotBackend:
     atexit.register(observer.close)
     arm = Arm.from_app(app)
     scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
-    return DimosBackend(arm, scene, observer, METAL_GRIPPER)
+    box_filter = app.find_module_by_spec(PointCloudBoxFilterSpec)
+    return DimosBackend(arm, scene, box_filter, observer, METAL_GRIPPER)

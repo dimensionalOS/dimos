@@ -27,6 +27,7 @@ import math
 def run(robot, task):
     cube = robot.scene.objects(["cube"])[0]
     x, y, z = cube.position
+    robot.scene.clear(cube.id)
     robot.gripper.open()
     robot.arm.move_pose([x, y, z + 0.1], [math.pi, 0.0, 0.0])
     robot.gripper.close()
@@ -35,6 +36,7 @@ def run(robot, task):
     except Exception as error:
         robot.log(f"could not go lower: {error}")
     robot.arm.move_linear(dz=0.1)
+    robot.scene.restore()
     robot.observe()
 """
 
@@ -51,21 +53,24 @@ def test_every_call_is_traced_with_keyframes_around_motion(tmp_path: Path) -> No
     trial, lines = run(tmp_path, LIFT)
     assert [(line.call, line.status) for line in lines] == [
         ("scene.objects", "OK"),
+        ("scene.clear", "OK"),
         ("gripper.open", "OK"),
         ("arm.move_pose", "OK"),
         ("gripper.close", "OK"),
         ("arm.move_pose", "PLANNING_FAILED"),
         ("log", "OK"),
         ("arm.move_linear", "OK"),
+        ("scene.restore", "OK"),
         ("observe", "OK"),
     ]
     assert lines[0].result == [
         {"id": "0", "name": "cube", "position": [0.4, 0.0, 0.02], "size": [0.04, 0.04, 0.04]}
     ]
-    assert lines[2].args["orientation"] == pytest.approx([1.0, 0.0, 0.0, 0.0])
-    assert lines[4].args == {"position": [0.4, 0.0, -0.2], "orientation": None}
-    assert "below the table" in lines[4].result
-    assert "below the table" in lines[5].args["text"]
+    assert lines[1].args == {"object_id": "0", "margin": 0.03}
+    assert lines[3].args["orientation"] == pytest.approx([1.0, 0.0, 0.0, 0.0])
+    assert lines[5].args == {"position": [0.4, 0.0, -0.2], "orientation": None}
+    assert "below the table" in lines[5].result
+    assert "below the table" in lines[6].args["text"]
     motion = [line for line in lines if line.before is not None]
     assert [line.call for line in motion] == [
         "gripper.open",
