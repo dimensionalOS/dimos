@@ -29,7 +29,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -59,18 +59,19 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        if isinstance(self._description, UsdModel):
-            # RoboPlan builds its collision model from the URDF; there is no equivalent read
-            # of a USD layer, so this subclass needs the description a filter can be built from.
+        model = self.config.model
+        if not isinstance(model, RobotModel):
+            # RoboPlan builds its collision model from the URDF, and there is no equivalent
+            # read of a USD layer. The manager itself works in USD; this subclass is the one
+            # part that still needs the description it was converted from.
             self.dispose()
             raise ValueError(
                 f"{type(self).__name__} needs a RobotModel: the body filter is built from the "
-                f"URDF's collision geometry, and a UsdModel carries none it can read. Use a "
+                f"URDF's collision geometry, and a USD layer carries none it can read. Use a "
                 f"plain UrdfManager for a USD scene."
             )
-        self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
-            self._description, self.config.padding_m
-        )
+        # Memoized on the RobotModel, so this costs nothing beyond the manager's own load.
+        self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(model.load(), self.config.padding_m)
         self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
