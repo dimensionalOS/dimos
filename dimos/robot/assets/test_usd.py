@@ -21,7 +21,12 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames, urdf_to_usd
+from dimos.robot.assets.usd import (
+    graft_usd,
+    prefix_usd_frames,
+    rename_usd_frames,
+    urdf_to_usd,
+)
 
 # usd-core is an optional extra with no linux-aarch64 wheel (see dimos.robot.assets.usd).
 pytest.importorskip("pxr")
@@ -355,3 +360,37 @@ def test_a_prefixed_subtree_grafts_at_the_roots_own_unprefixed_frame(toy: Any) -
 
     assert _link_of(stage, "/toy/base_link/mount") == "mount"
     assert _link_of(stage, "/toy/base_link/mount/arm_sub/base_link") == "left/base_link"
+
+
+def test_a_rename_moves_a_link_and_leaves_the_rest(toy: Any) -> None:
+    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"arm-1": "elbow"}))
+
+    assert "elbow" in _names(stage, "link")
+    assert "arm-1" not in _names(stage, "link")
+    assert "base_link" in _names(stage, "link")
+
+
+def test_a_rename_reaches_joints_too(toy: Any) -> None:
+    # A joint name is a JointState key, so it needs renaming for the same reasons a link does.
+    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"base_to_mount": "shoulder"}))
+
+    assert "shoulder" in _names(stage, "joint")
+
+
+def test_a_pair_of_renames_swaps_rather_than_collapsing(toy: Any) -> None:
+    # Every name is read before any is written, so a -> b with b -> a is a swap.
+    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"mount": "spin", "spin": "mount"}))
+
+    assert {"mount", "spin"} <= _names(stage, "link")
+
+
+def test_renaming_a_frame_the_subtree_does_not_have_is_an_error(toy: Any) -> None:
+    # A misspelt frame would otherwise be a silent no-op that only shows up as a broken scene.
+    with pytest.raises(ValueError, match="no such link or joint"):
+        rename_usd_frames(urdf_to_usd(toy), {"elbow": "wrist"})
+
+
+def test_renaming_nothing_leaves_the_layer_alone(toy: Any) -> None:
+    usd = urdf_to_usd(toy)
+
+    assert rename_usd_frames(usd, {}) is usd
