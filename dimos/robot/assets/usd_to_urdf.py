@@ -36,12 +36,13 @@ prototypes, nested scales) and is not what this is for.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+import warnings
 import xml.etree.ElementTree as ET
 
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.usd import PASSTHROUGH_KEY, _layer_from, _pxr
+from dimos.robot.assets.usd import FREE_JOINT_KEY, PASSTHROUGH_KEY, _layer_from, _pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -338,7 +339,13 @@ def _placement_of(prim: Any) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     # Gf matrices are row-vector convention, so the transpose is the usual 4x4.
     matrix = np.asarray(transform.Get(), dtype=np.float64).T
     rotation = Rotation.from_matrix(matrix[:3, :3])
-    return matrix[:3, 3], np.asarray(rotation.as_euler("xyz"), dtype=np.float64)
+    # A URDF states rotation as intrinsic rpy, which is not unique at gimbal lock: scipy warns
+    # and picks a representative. Any of them rebuild the same matrix, which is the thing that
+    # has to survive, so the warning is noise on every real robot with an axis-aligned joint.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Gimbal lock detected")
+        rpy = np.asarray(rotation.as_euler("xyz"), dtype=np.float64)
+    return matrix[:3, 3], rpy
 
 
 def _scale_of(prim: Any) -> NDArray[np.float64]:
@@ -388,7 +395,16 @@ def _append_fragment(parent: ET.Element, fragment: str) -> None:
 
 
 def _welds_of(pxr: Any, links: dict[str, Any], joints: list[_Joint]) -> list[_Joint]:
-    """A fixed joint for every nested link no joint already accounts for."""
+    """A joint for every nested link no joint prim already accounts for.
+
+    A floating or planar joint is written as no joint prim at all, so it arrives here looking
+    exactly like a welded body. The one that was left out is recorded on the child link, and
+    that record is what tells the two apart -- without it a floating base comes back fixed, at
+    whatever pose it happened to be authored at.
+
+    A layer this converter did not write has no such record, and standard USD cannot say which
+    was meant, so it is read as a weld and said out loud.
+    """
     claimed = {joint.child for joint in joints}
     welds = []
     for name, prim in links.items():
@@ -397,12 +413,24 @@ def _welds_of(pxr: Any, links: dict[str, Any], joints: list[_Joint]) -> list[_Jo
         ancestor = _link_ancestor(pxr, prim)
         if ancestor is None:
             continue
+        free = prim.GetCustomDataByKey(FREE_JOINT_KEY) or {}
         xyz, rpy = _placement_of(prim)
+        if free:
+            kind = str(free.get("type") or "floating")
+            joint_name = str(free.get("name") or f"{name}_{kind}")
+            parent = str(free.get("parent") or (ancestor.GetDisplayName() or ancestor.GetName()))
+            xyz = np.asarray(free.get("xyz") or xyz, dtype=np.float64)
+            rpy = np.asarray(free.get("rpy") or rpy, dtype=np.float64)
+        else:
+            kind = "fixed"
+            joint_name = f"{name}_weld"
+            parent = str(ancestor.GetDisplayName() or ancestor.GetName())
+            logger.debug(f"{name} is nested with no joint prim; reading it as welded to {parent}")
         welds.append(
             _Joint(
-                name=f"{name}_weld",
-                kind="fixed",
-                parent=str(ancestor.GetDisplayName() or ancestor.GetName()),
+                name=joint_name,
+                kind=kind,
+                parent=parent,
                 child=name,
                 origin_xyz=xyz,
                 origin_rpy=rpy,
