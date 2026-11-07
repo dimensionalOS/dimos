@@ -43,7 +43,7 @@ class B601DMConnectionConfig(DamiaoConnectionConfig):
         if not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
-            self.model = B601DMConnection.control_model()
+            self.model = B601_DM.model
         return self
 
 

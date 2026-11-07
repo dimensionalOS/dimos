@@ -65,15 +65,16 @@ def test_independent_grippers_through_the_coordinator(tmp_path):
         if issubclass(a.module, ControlCoordinator)
     ]
     coordinator = atom.module(**atom.kwargs)
+    # Each jaw's joint7 is closed at 0 m and fully open at -0.05 m.
     with mock_connection_rig(DualMetalConnection, coordinator, tmp_path=tmp_path) as rig:
         coordinator.task_invoke("left_arm_gripper", "set_normalized", {"values": [0.8]})
         rig.tick()
-        assert rig.positions["arm/left_gripper"] == 0.8
-        assert rig.positions["arm/right_gripper"] == 0.0
+        assert rig.positions["arm/left_joint7"] == pytest.approx(-0.04)
+        assert rig.positions["arm/right_joint7"] == 0.0
         coordinator.task_invoke("right_arm_gripper", "set_normalized", {"values": [0.3]})
         rig.tick()
-        assert rig.positions["arm/left_gripper"] == 0.8
-        assert rig.positions["arm/right_gripper"] == 0.3
+        assert rig.positions["arm/left_joint7"] == pytest.approx(-0.04)
+        assert rig.positions["arm/right_joint7"] == pytest.approx(-0.015)
 
 
 def test_main_attachment_geometry_is_retained(tmp_path: Path, mocker):

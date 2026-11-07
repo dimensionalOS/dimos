@@ -21,7 +21,10 @@ from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
-from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
+from dimos.robot.manipulators.dual_openyam.config import (
+    dual_openyam_control_model,
+    dual_openyam_model_config,
+)
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 
@@ -51,7 +54,7 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
         RobotModel, "load", return_value=LoadedRobotModel(xml, Path("model.urdf"), {})
     )
     source = ConnectionSource(
-        "arm", ["position_command"], ["joint_state"], DualOpenYamConnection.control_model("arm"), 1
+        "arm", ["position_command"], ["joint_state"], dual_openyam_control_model(robot="arm"), 1
     )
     source.on_message(
         "joint_state",

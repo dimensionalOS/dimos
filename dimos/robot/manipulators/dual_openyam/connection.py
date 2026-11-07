@@ -39,7 +39,7 @@ class DualOpenYamConnectionConfig(DamiaoConnectionConfig):
         if self.left_can_port == self.right_can_port:
             raise ValueError("Dual OpenYAM requires distinct CAN selectors")
         if self.model is None:
-            self.model = DualOpenYamConnection.control_model()
+            self.model = DUAL_OPENYAM.model
         return self
 
 

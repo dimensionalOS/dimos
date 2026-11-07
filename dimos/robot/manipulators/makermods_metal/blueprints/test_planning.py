@@ -35,5 +35,5 @@ def test_planner_joint_names_gripper_task_and_can_selection_match():
         parsed.module_kwargs(planner.name)
     ).gripper_tasks == {"arm": "metal_gripper"}
     assert tasks[1].name == "metal_gripper"
-    assert tasks[1].joint_names == ["arm/gripper"]
+    assert tasks[1].joint_names == ["arm/joint7"]
     assert parsed.module_kwargs("metalconnection")["can_port"] == "serial123"

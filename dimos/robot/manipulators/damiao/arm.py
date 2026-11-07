@@ -51,7 +51,7 @@ MOTOR_TYPES: dict[str, Any] = {
 
 
 class PhysicalModel:
-    """Numerical arm model: exact joint coordinates, strict limits and gravity."""
+    """Numerical arm model: exact joint coordinates and gravity."""
 
     def __init__(
         self,
@@ -75,15 +75,6 @@ class PhysicalModel:
             raise ValueError("physical model dimensions do not match angular joints")
         if tuple(str(name) for name in model.names[1:]) != self._names:
             raise ValueError("physical model joint order does not match angular joints")
-        self._lower = np.asarray(model.lowerPositionLimit, dtype=np.float64)
-        self._upper = np.asarray(model.upperPositionLimit, dtype=np.float64)
-        if (
-            self._lower.shape != (count,)
-            or self._upper.shape != (count,)
-            or not np.isfinite([self._lower, self._upper]).all()
-            or np.any(self._lower >= self._upper)
-        ):
-            raise ValueError("physical model contains invalid arm position limits")
         self._model = model
         self._data = model.createData()
 
@@ -103,18 +94,6 @@ class PhysicalModel:
             raise ValueError("gravity compensation produced invalid torques")
         return gravity
 
-    def validate(self, positions: list[float]) -> list[float]:
-        """Return the measured arm positions, or raise if any is past a limit."""
-        q = np.asarray(positions, dtype=np.float64)
-        if q.shape != self._lower.shape or not np.isfinite(q).all():
-            raise RuntimeError("arm feedback contains non-finite or invalid positions")
-        for index, name in enumerate(self._names):
-            lower, upper, value = self._lower[index], self._upper[index], q[index]
-            if lower <= value <= upper:
-                continue
-            raise RuntimeError(f"{name} reported {value} outside [{lower}, {upper}]")
-        return [float(value) for value in q]
-
 
 @dataclass(frozen=True, slots=True)
 class ArmReading:
@@ -127,6 +106,10 @@ class ArmReading:
 
 class DamiaoArm:
     """One Damiao robot on its buses: enable, command, read and disable it.
+
+    Each jaw is read and commanded as its URDF finger joint, in that joint's
+    unit (m or rad). The SDK's opening, 0 closed to 1 open, maps linearly
+    onto the joint's URDF range, with the gripper's ``open_at`` end as open.
 
     Args:
         robot: The motors, gains, gripper settings and models to use.
@@ -160,6 +143,8 @@ class DamiaoArm:
         self._arms: dict[str, can_motor_control.Arm] = {}
         self._grippers: dict[str, can_motor_control.Gripper] = {}
         self._physical: PhysicalModel | None = None
+        # Each gripper joint's (closed, open) positions.
+        self._travel: dict[str, tuple[float, float]] = {}
         self._targets: dict[str, float] = {}
         self._active = False
 
@@ -183,6 +168,7 @@ class DamiaoArm:
             self._robot.arm_joint_names,
             gravity_comp=self._robot.gravity,
         )
+        self._travel = self._robot.gripper_travel()
         native = self._build()
         self._native = native
         native.connect()
@@ -335,7 +321,7 @@ class DamiaoArm:
         return list(bus.kp), list(bus.kd)
 
     def _passive_gripper_names(self) -> list[str]:
-        return [name for name in self._robot.gripper_joint_names if name in self._passive]
+        return [gripper.name for gripper in self._robot.grippers if gripper.name in self._passive]
 
     def _enable_passive_grippers(self) -> None:
         """Enable passive jaws in MIT mode with zero stiffness and torque."""
@@ -361,12 +347,16 @@ class DamiaoArm:
         positions = [self._targets[name] for name in self.joint_names]
         if not np.isfinite(positions).all():
             raise ValueError("position command contains non-finite values")
-        arm_count = len(self._robot.arm_joint_names)
-        for index, name in enumerate(self._robot.gripper_joint_names):
-            if name in self._passive:
+        openings: dict[str, float] = {}
+        for gripper in self._robot.grippers:
+            if gripper.name in self._passive:
                 continue
-            if not 0 <= positions[arm_count + index] <= 1:
-                raise ValueError("gripper opening must be in [0, 1]")
+            closed, opened = self._travel[gripper.joint]
+            target = self._targets[gripper.joint]
+            opening = (target - closed) / (opened - closed)
+            if not 0 <= opening <= 1:
+                raise ValueError(f"{gripper.joint} target {target} is outside its URDF range")
+            openings[gripper.name] = opening
         assert self._physical is not None
         gravity = self._physical.gravity(self._arm_positions())
         offset = 0
@@ -392,13 +382,11 @@ class DamiaoArm:
             offset += len(bus.arm)
         for name, rows in arm_rows:
             self._arms[name].mit_control(rows)
-        for name in self._robot.gripper_joint_names:
+        for name, group in self._grippers.items():
             if name in self._passive:
-                gripper = self._grippers[name]
-                gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
+                group.mit_control(0.0, 0.0, float(group.motor.position), 0.0, 0.0)
             else:
-                self._grippers[name].set_opening(positions[offset])
-            offset += 1
+                group.set_opening(openings[name])
         native.tick(1_000)
 
     def _sample(self) -> ArmReading:
@@ -417,13 +405,12 @@ class DamiaoArm:
                 raise RuntimeError(f"native arm {bus.name!r} returned the wrong state length")
             for output, array in zip((q, dq, tau), arrays, strict=True):
                 output.extend(array.astype(np.float64).tolist())
-        assert self._physical is not None
-        q = self._physical.validate(q)
-        for name in self._robot.gripper_joint_names:
-            opening = float(self._grippers[name].opening) if self._active else 0.0
+        for gripper in self._robot.grippers:
+            opening = float(self._grippers[gripper.name].opening) if self._active else 0.0
             if not np.isfinite(opening) or not 0 <= opening <= 1:
-                raise RuntimeError(f"gripper {name!r} returned invalid opening {opening}")
-            q.append(opening)
+                raise RuntimeError(f"gripper {gripper.name!r} returned invalid opening {opening}")
+            closed, opened = self._travel[gripper.joint]
+            q.append(closed * (1.0 - opening) + opened * opening)
             dq.append(0.0)
             tau.append(0.0)
         if not np.isfinite([q, dq, tau]).all():

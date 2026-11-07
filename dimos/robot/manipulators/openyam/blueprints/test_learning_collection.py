@@ -73,7 +73,7 @@ def test_teach_robot_data_is_zero_stiffness_gravity_compensated_and_passive():
     assert OPENYAM.passive_grippers == frozenset({"gripper"})
     assert zero_stiffness_joints(OPENYAM, teach=True) == [
         *[f"arm/{name}" for name in OPENYAM_ARM_JOINTS],
-        "arm/gripper",
+        "arm/joint7",
     ]
     # A position-holding deployment declares nothing.
     assert zero_stiffness_joints(OPENYAM, teach=False) == []
@@ -110,7 +110,7 @@ def test_teach_connection_is_selected_with_the_deployed_joint_names():
     )
     assert atom.kwargs["source"] == "arm"
     assert atom.kwargs["teach"] is True
-    assert OPENYAM_TEACH_JOINTS == [f"arm/{name}" for name in OPENYAM_ARM_JOINTS] + ["arm/gripper"]
+    assert OPENYAM_TEACH_JOINTS == [f"arm/{name}" for name in OPENYAM_ARM_JOINTS] + ["arm/joint7"]
 
 
 def test_teach_recording_profile_keeps_seven_joint_state_and_action():

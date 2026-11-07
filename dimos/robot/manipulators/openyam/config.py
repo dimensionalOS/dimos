@@ -47,6 +47,9 @@ OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 #: and gravity is compensated, so the arm floats instead of holding a pose.
 OPENYAM_TEACH_DAMPING = [2.0, 2.0, 2.0, 0.5, 0.5, 0.5]
 OPENYAM_GRIPPER_NAME = "gripper"
+#: The jaw's finger joints, in m: joint7 is driven and joint8 copies it.
+#: Both are fully open at their lower end and closed at 0.
+OPENYAM_FINGER_JOINTS = ("joint7", "joint8")
 
 
 def make_openyam_model_config(
@@ -58,7 +61,8 @@ def make_openyam_model_config(
 
     Args:
         home_joints: The arm's home posture; defaults to ``OPENYAM_HOME_JOINTS``.
-        robot: Name the moving joints under this robot, e.g. "arm".
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/yam_joint1" and "arm/joint7".
     """
     model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     model = (
@@ -67,7 +71,7 @@ def make_openyam_model_config(
             package_paths=OPENYAM_PACKAGE_PATHS,
         )
         .with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
-        .with_fixed_joints("joint7", "joint8")
+        .with_mimic_joint("joint8", "joint7")
     )
     return named_for_robot(
         RobotModelConfig(
@@ -87,6 +91,7 @@ def make_openyam_model_config(
             home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
         ),
         robot,
+        fingers=OPENYAM_FINGER_JOINTS,
     )
 
 
@@ -107,6 +112,8 @@ OPENYAM = DamiaoRobot(
             kd=[5.0, 5.0, 5.0, 1.5, 1.5, 1.5],
             gripper=DamiaoGripper(
                 name=OPENYAM_GRIPPER_NAME,
+                joint=OPENYAM_FINGER_JOINTS[0],
+                open_at="lower",
                 motor=DamiaoMotor("yam_gripper", "DM4310", 0x08, 0x18),
                 opening="decreasing_position",
                 current=0.15,
@@ -119,7 +126,7 @@ OPENYAM = DamiaoRobot(
         LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf"
     ),
     base_link="base",
-    joint_names=[*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_NAME],
+    joint_names=[*OPENYAM_ARM_JOINTS, OPENYAM_FINGER_JOINTS[0]],
     gravity=True,
     teach_kd=list(OPENYAM_TEACH_DAMPING),
     passive_grippers=frozenset({OPENYAM_GRIPPER_NAME}),

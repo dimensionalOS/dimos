@@ -31,8 +31,18 @@ def test_openarm_dual_model_contains_every_canonical_joint_and_group_frame(deplo
         for side in ("left", "right")
         for index in range(1, 8)
     ]
+    fingers = [
+        f"{'arm/' if deployed else ''}openarm_{side}_finger_joint{index}"
+        for side in ("left", "right")
+        for index in (1, 2)
+    ]
     assert config.joint_names == names
-    assert [joint.name for joint in description.joints if joint.type != "fixed"] == names
+    assert [joint.name for joint in description.joints if joint.type != "fixed"] == [
+        *names[:7],
+        *fingers[:2],
+        *names[7:],
+        *fingers[2:],
+    ]
     assert [group.name for group in config.planning_groups] == [
         "left_arm",
         "right_arm",

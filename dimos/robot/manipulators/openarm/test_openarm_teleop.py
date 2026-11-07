@@ -225,12 +225,16 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
             *_MODEL.joint_names,
             *[f"arm/{name}" for name in OpenArmConnection.robot.gripper_joints.values()],
         ]
-        assert list(rig.commands.position) == [0.01] * 14 + [0.75, 0.25]
-        assert rig.positions == {
-            **dict.fromkeys(_MODEL.joint_names, 0.01),
-            "arm/left_gripper": 0.75,
-            "arm/right_gripper": 0.25,
-        }
+        # The left jaw opens toward +0.7854 rad, the right toward -0.7854 rad.
+        jaws = [0.75 * 0.7854, -0.25 * 0.7854]
+        assert list(rig.commands.position) == pytest.approx([0.01] * 14 + jaws)
+        assert rig.positions == pytest.approx(
+            {
+                **dict.fromkeys(_MODEL.joint_names, 0.01),
+                "arm/openarm_left_finger_joint1": jaws[0],
+                "arm/openarm_right_finger_joint1": jaws[1],
+            }
+        )
         frame_poses.assert_called_once()
         step.assert_called_once()
 

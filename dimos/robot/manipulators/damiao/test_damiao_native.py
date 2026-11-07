@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 
 import can_motor_control
 import numpy as np
@@ -32,21 +33,21 @@ from dimos.utils.testing.waiting import wait_until
 def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, boundary):
     module, commands, readings = make_rig()
     native = boundary[0]
-    commands.publish(JointState(name=["arm/joint2", "arm/left_gripper"], position=[-0.5, 0.8]))
+    commands.publish(JointState(name=["arm/joint2", "arm/left_finger"], position=[-0.5, 0.032]))
     np.testing.assert_equal(
         native.groups["left_arm"].commands[-1], [[80, 5, 0.2, 0, 0], [10, 1.5, -0.5, 0, 0]]
     )
     np.testing.assert_equal(native.groups["right_arm"].commands[-1], [[20, 0.6, 0.2, 0, 0]])
-    assert native.groups["left_gripper"].commands == [0.8]
-    assert native.groups["right_gripper"].commands == [0.4]
+    assert native.groups["left_gripper"].commands == [pytest.approx(0.8)]
+    assert native.groups["right_gripper"].commands == [pytest.approx(0.4)]
     commands.publish(JointState(name=["arm/joint1"], position=[0.6]))
     assert native.groups["left_arm"].commands[-1][1, 2] == -0.5
     assert readings.sent[-1].name == [
         "arm/joint1",
         "arm/joint2",
         "arm/joint3",
-        "arm/left_gripper",
-        "arm/right_gripper",
+        "arm/left_finger",
+        "arm/right_finger",
     ]
     assert readings.sent[-1].velocity == [0.3, 0.3, 0.3, 0, 0]
     assert readings.sent[-1].effort == [0.4, 0.4, 0.4, 0, 0]
@@ -74,7 +75,7 @@ def test_nonfinite_feedback_disables(make_rig, boundary, field):
 def test_gross_feedback_fault_disables_even_if_disable_fails(make_rig, boundary):
     module, _, _ = make_rig()
     boundary[0].disable_error = RuntimeError("unplugged")
-    boundary[0].groups["left_arm"].q[0] = 4
+    boundary[0].groups["left_arm"].q[0] = float("nan")
     wait_until(lambda: module._fault is not None, timeout=2)
     assert not module._arm.active
     boundary[0].disable_error = None
@@ -174,14 +175,13 @@ def test_gravity_preflight_fails_before_enable(connection_class, boundary, mocke
     assert module._arm is None
 
 
-def test_out_of_limits_feedback_latches_and_disables(make_rig, boundary):
-    module, _, _ = make_rig()
-    upper = float(module._arm._physical._upper[0])
-    boundary[0].groups["left_arm"].q[0] = upper + 0.001
-    wait_until(lambda: module._fault is not None, timeout=2)
-    assert "outside" in module._fault
-    assert "disable" in boundary[0].events
-    boundary[0].groups["left_arm"].q[0] = 0.2
+def test_a_reading_past_a_limit_is_published_as_measured(make_rig, boundary):
+    module, _, readings = make_rig()
+    past = math.pi + 0.001
+    boundary[0].groups["left_arm"].q[0] = past
+    wait_until(lambda: readings.sent[-1].position[0] == past, timeout=2)
+    assert module._fault is None
+    assert "disable" not in boundary[0].events
 
 
 def test_inactive_feedback_uses_gripper_placeholders(connection_class, boundary):

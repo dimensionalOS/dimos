@@ -72,7 +72,8 @@ def _physical(connection_type: type[DamiaoConnection]) -> PhysicalModel:
 
 
 def _middle(physical: PhysicalModel) -> np.ndarray:
-    return (physical._lower + physical._upper) / 2.0
+    model = physical._model
+    return (np.asarray(model.lowerPositionLimit) + np.asarray(model.upperPositionLimit)) / 2.0
 
 
 def _set_pose(native, connection_type: type[DamiaoConnection], pose: np.ndarray) -> None:
@@ -121,11 +122,12 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
         pose = _middle(physical)
         _set_pose(native, connection_type, pose)
         target = robot.arm_joint_names[0]
-        opening = 0.5
+        jaw = robot.grippers[0]
+        halfway = sum(robot.gripper_travel()[jaw.joint]) / 2.0
         commands.publish(
             JointState(
-                name=[f"arm/{target}", f"arm/{robot.gripper_joint_names[0]}"],
-                position=[float(pose[0]), opening],
+                name=[f"arm/{target}", f"arm/{jaw.joint}"],
+                position=[float(pose[0]), halfway],
             )
         )
         first_bus = robot.buses[0]
@@ -136,7 +138,7 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
             assert rows[0, 4] != 0.0
         else:
             assert rows[0, 4] == 0.0
-        assert native.groups[robot.gripper_joint_names[0]].commands[-1] == opening
+        assert native.groups[jaw.name].commands[-1] == pytest.approx(0.5)
 
         # The reader keeps publishing the fake feedback in declared order.
         wait_until(lambda: len(readings.sent) > 1, timeout=2)
@@ -177,24 +179,6 @@ def test_fake_feedback_fault_disables_each_arm(connection_type, ports, boundary,
         module.stop()
 
 
-@pytest.mark.parametrize("connection_type,ports", ARMS)
-def test_strict_out_of_limits_latches_each_arm(connection_type, ports, boundary, mocker, tmp_path):
-    physical = _physical(connection_type)
-    native = boundary[0]
-    module, _, _ = _rig(connection_type, ports, boundary, mocker, tmp_path)
-    try:
-        module.start()
-        pose = _middle(physical)
-        pose[0] = physical._upper[0] + 0.5
-        _set_pose(native, connection_type, pose)
-        wait_until(lambda: module._fault is not None, timeout=2)
-        assert "outside" in module._fault
-        assert "disable" in native.events
-    finally:
-        _set_pose(native, connection_type, _middle(physical))
-        module.stop()
-
-
 @pytest.mark.self_hosted
 def test_teach_mode_zero_stiffness_passive_jaw_and_live_gravity(boundary, mocker, tmp_path):
     native = boundary[0]
@@ -222,7 +206,8 @@ def test_teach_mode_zero_stiffness_passive_jaw_and_live_gravity(boundary, mocker
         # gravity torque follows the measured pose.
         np.testing.assert_allclose(rows[:, 2], 0.0)
         assert gripper.commands == []
-        assert readings.sent[-1].position[-1] == 0.4
+        closed, opened = OPENYAM.gripper_travel()["joint7"]
+        assert readings.sent[-1].position[-1] == pytest.approx(closed + 0.4 * (opened - closed))
         assert commands.sent == []
     finally:
         module.stop()

@@ -59,8 +59,9 @@ uv run dimos run dual-makermods-metal-planner-coordinator \
 XYZ values are meters; RPY values are radians. Both arm trees share one collision
 world, with the `left_arm` and `right_arm` planning groups. Deployed arm joints
 are `arm/left_joint1` through `arm/left_joint6`, and the corresponding right
-names. Logical gripper coordinates are `arm/left_gripper` and
-`arm/right_gripper`, each from 0 closed to 1 open.
+names. Each jaw is its URDF finger joint, `arm/left_joint7` and
+`arm/right_joint7`, in metres: 0 is closed and -0.05 fully open. `joint8` copies
+it.
 
 The coordinator retains the tasks `left_arm_gripper` and `right_arm_gripper`.
 The grippers can be commanded independently through those tasks or their

@@ -63,8 +63,9 @@ the planner.
   stops. The motors return to their stored mode on power-up.
 - **Control** sends MIT position targets with Seeed's SDK gains and gravity
   compensation from the vendor URDF.
-- **Feedback outside the URDF limits** by more than 0.05 rad latches a fault and
-  disables the motors. Smaller excursions are clamped.
+- **Feedback** is published as measured, even past a URDF limit; the
+  coordinator holds such a joint inside its limit. Feedback that is not a
+  finite number latches a fault and disables the motors.
 
 ## Units and model
 
@@ -72,7 +73,5 @@ the planner.
   Deployed commands and state name them `arm/joint1` to `arm/joint6`, because
   the connection's source is `arm`. joint2's upper limit is widened to 0.02
   rad, because the arm's folded rest reads just past the URDF's zero.
-- The gripper joint `arm/gripper` is the calibrated opening, 0.0 closed and
-  1.0 open.
-- The planning model fixes both fingers closed, so Viser does not animate the
-  gripper.
+- The gripper is the URDF finger joint `arm/finger_left`, in metres: 0 is
+  closed and 0.05 fully open. `finger_right` copies it.

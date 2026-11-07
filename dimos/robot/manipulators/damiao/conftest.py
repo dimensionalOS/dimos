@@ -46,7 +46,7 @@ def connection_class():
         @model_validator(mode="after")
         def _model(self) -> Self:
             if self.model is None:
-                self.model = Connection.control_model()
+                self.model = Connection.robot.model
             return self
 
     class Connection(DamiaoConnection):

@@ -27,6 +27,7 @@ from dimos.robot.manipulators.dual_makermods_metal.config import (
     ALL_ARM_JOINTS,
     DEFAULT_LEFT_XYZ,
     DEFAULT_RIGHT_XYZ,
+    FINGER_JOINTS,
     SIDES,
     ZERO_RPY,
     Vector3,
@@ -65,15 +66,17 @@ def dual_metal_control() -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=DualMetalConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=[
                 joint_trajectory_task([f"arm/{name}" for name in ALL_ARM_JOINTS]),
+                # Each side's joint7 is open at its lower end.
                 *[
                     TaskConfig(
                         name=f"{side}_arm_gripper",
                         type="gripper",
-                        joint_names=[f"arm/{side}_gripper"],
+                        joint_names=[f"arm/{FINGER_JOINTS[side][0]}"],
                         priority=20,
+                        params={"open_at": "lower"},
                         stream_bind={"gripper_command": f"{side}_gripper_command"},
                     )
                     for side in SIDES

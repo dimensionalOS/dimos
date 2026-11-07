@@ -33,7 +33,8 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 @pytest.mark.parametrize(
     "connection_type,ports,groups,prefixes,motors,kp,kd,direction,current",
     [
-        (
+        # The YAM models are LFS assets, only on the self-hosted runner.
+        pytest.param(
             OpenYamConnection,
             {"can_port": "can0"},
             ["arm"],
@@ -43,8 +44,9 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
             [5, 5, 5, 1.5, 1.5, 1.5],
             "decreasing_position",
             0.15,
+            marks=pytest.mark.self_hosted,
         ),
-        (
+        pytest.param(
             DualOpenYamConnection,
             {"left_can_port": "can0", "right_can_port": "can1"},
             ["left_arm", "right_arm"],
@@ -54,6 +56,7 @@ from dimos.robot.manipulators.openyam.connection import OpenYamConnection
             [5, 5, 5, 1.5, 1.5, 1.5],
             "decreasing_position",
             0.15,
+            marks=pytest.mark.self_hosted,
         ),
         (
             OpenArmConnection,
@@ -113,7 +116,6 @@ def test_native_wiring_and_commands(
         )
         codec = mocker.patch.object(damiao, "DamiaoCodec")
     physics = mocker.patch.object(common, "PhysicalModel").return_value
-    physics.validate.side_effect = list
     physics.gravity.return_value = np.zeros(len(groups) * len(motors))
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")

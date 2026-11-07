@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM trajectory and normalized-gripper connection control."""
+"""OpenYAM trajectory and gripper control through its connection."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -21,31 +21,34 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection, arm
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
+from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.robot.urdf_manager import UrdfManager
 
 _MODEL = make_openyam_model_config(robot="arm")
-_GRIPPER_JOINTS = ["arm/gripper"]
+_GRIPPER_JOINTS = [OPENYAM_GRIPPER_JOINT]
 
 
 def openyam_connection_control_blueprint() -> Blueprint:
-    """Trajectories and normalized grippers with the robot model served to clients."""
+    """Trajectories and the gripper, with the robot model served to clients."""
     return autoconnect(
         OpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenYamConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=[
                 joint_trajectory_task([*_MODEL.joint_names, *_GRIPPER_JOINTS]),
+                # joint7 is open at its lower end.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
                     joint_names=_GRIPPER_JOINTS,
                     priority=20,
+                    params={"open_at": "lower"},
                 ),
             ],
             zero_stiffness_joints=[],
         ),
         arm_connection(OpenYamConnection),
-        UrdfManager.blueprint(model=OpenYamConnection.control_model("arm")),
+        UrdfManager.blueprint(model=_MODEL.model),
     ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
 
 

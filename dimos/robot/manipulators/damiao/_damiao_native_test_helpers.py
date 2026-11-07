@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.control._control_test_helpers import fake_arm_model
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.robot import (
     DamiaoBus,
     DamiaoGripper,
@@ -32,9 +32,36 @@ from dimos.robot.manipulators.damiao.robot import (
 )
 
 
+def _test_model() -> RobotModel:
+    """Three turning joints in a chain, then two sliding fingers on the last link.
+
+    left_finger runs 0 to 0.04 m and right_finger -0.02 to 0 m.
+    """
+    limit = 'lower="-3.141592653589793" upper="3.141592653589793" velocity="2.0" effort="50.0"'
+    chain = "".join(
+        f'<joint name="joint{i}" type="revolute"><parent link="link{i - 1}"/>'
+        f'<child link="link{i}"/><limit {limit}/></joint>'
+        for i in range(1, 4)
+    )
+    fingers = "".join(
+        f'<joint name="{name}" type="prismatic"><parent link="link3"/><child link="{name}_link"/>'
+        f'<axis xyz="0 1 0"/><limit lower="{lower}" upper="{upper}" velocity="0.1" effort="10"/>'
+        "</joint>"
+        for name, lower, upper in (("left_finger", 0.0, 0.04), ("right_finger", -0.02, 0.0))
+    )
+    links = "".join(f'<link name="{name}"/>' for name in ("link0", "link1", "link2", "link3"))
+    finger_links = '<link name="left_finger_link"/><link name="right_finger_link"/>'
+    return RobotModel.from_urdf_string(
+        f'<robot name="test">{links}{finger_links}{chain}{fingers}</robot>'
+    )
+
+
 def make_test_robot() -> DamiaoRobot:
-    """Three arm joints on two buses, plus one gripper on each bus."""
-    model = fake_arm_model(("joint1", "joint2", "joint3"))
+    """Three arm joints on two buses, plus one gripper on each bus.
+
+    The left jaw is open at its finger's upper end, the right at its lower end.
+    """
+    model = _test_model()
     robot = DamiaoRobot(
         buses=[
             DamiaoBus(
@@ -47,6 +74,8 @@ def make_test_robot() -> DamiaoRobot:
                 kd=[5.0, 1.5],
                 gripper=DamiaoGripper(
                     name="left_gripper",
+                    joint="left_finger",
+                    open_at="upper",
                     motor=DamiaoMotor("left_gripper", "DM4310", 8, 24),
                     opening="decreasing_position",
                     current=0.15,
@@ -59,6 +88,8 @@ def make_test_robot() -> DamiaoRobot:
                 kd=[0.6],
                 gripper=DamiaoGripper(
                     name="right_gripper",
+                    joint="right_finger",
+                    open_at="lower",
                     motor=DamiaoMotor("right_gripper", "DM4310", 8, 24),
                     opening="increasing_position",
                     current=0.1,
@@ -68,7 +99,7 @@ def make_test_robot() -> DamiaoRobot:
         model=model,
         gravity_model=model,
         base_link="link0",
-        joint_names=["joint1", "joint2", "joint3", "left_gripper", "right_gripper"],
+        joint_names=["joint1", "joint2", "joint3", "left_finger", "right_finger"],
         gravity=False,
     )
     return robot
