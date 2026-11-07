@@ -22,6 +22,8 @@ import pytest
 
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd import (
+    PASSTHROUGH_KEY,
+    SOURCE_KEY,
     graft_usd,
     prefix_usd_frames,
     rename_usd_frames,
@@ -408,3 +410,100 @@ def test_renaming_nothing_leaves_the_layer_alone(toy: Any) -> None:
     usd = urdf_to_usd(toy)
 
     assert rename_usd_frames(usd, {}) is usd
+
+
+_EXTRAS_URDF = """<?xml version="1.0"?>
+<robot name="extra">
+  <link name="base_link">
+    <inertial><mass value="0.718"/></inertial>
+    <visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual>
+    <vendor:thing xmlns:vendor="http://example.com" note="keep me"/>
+  </link>
+  <link name="arm"/>
+  <joint name="shoulder" type="fixed">
+    <parent link="base_link"/><child link="arm"/>
+    <origin xyz="0 0 0.1"/>
+    <dynamics damping="0.7"/>
+  </joint>
+  <gazebo reference="base_link"><mu1>0.2</mu1></gazebo>
+</robot>
+"""
+
+
+@pytest.fixture
+def extra(tmp_path: Path) -> Any:
+    urdf = tmp_path / "extra.urdf"
+    urdf.write_text(_EXTRAS_URDF)
+    return RobotModel.from_file(urdf).load()
+
+
+def _passthrough(stage: Any, path: str) -> list[str]:
+    return list(stage.GetPrimAtPath(path).GetCustomDataByKey(PASSTHROUGH_KEY) or [])
+
+
+def test_a_links_unconverted_urdf_rides_along_on_its_prim(extra: Any) -> None:
+    """<inertial> means nothing to this converter, which is not a reason to lose it."""
+    stage = _stage(urdf_to_usd(extra))
+
+    kept = _passthrough(stage, "/extra/base_link")
+
+    assert any("inertial" in fragment and "0.718" in fragment for fragment in kept)
+
+
+def test_a_vendors_own_tag_rides_along_too(extra: Any) -> None:
+    # The whole point: a converter cannot know what a vendor put in there.
+    stage = _stage(urdf_to_usd(extra))
+
+    kept = _passthrough(stage, "/extra/base_link")
+
+    assert any("keep me" in fragment for fragment in kept)
+
+
+def test_what_the_converter_does_read_is_not_duplicated_into_the_passthrough(
+    extra: Any,
+) -> None:
+    # visual became a Cube prim, so keeping the XML too would be two sources of truth.
+    stage = _stage(urdf_to_usd(extra))
+
+    kept = _passthrough(stage, "/extra/base_link")
+
+    assert not any("<visual" in fragment for fragment in kept)
+
+
+def test_a_joints_unconverted_urdf_rides_along_on_its_joint_prim(extra: Any) -> None:
+    stage = _stage(urdf_to_usd(extra))
+
+    kept = _passthrough(stage, "/extra/joints/shoulder")
+
+    assert any("dynamics" in fragment and "0.7" in fragment for fragment in kept)
+    # origin is read into the joint frames, so it is not duplicated here either.
+    assert not any("<origin" in fragment for fragment in kept)
+
+
+def test_the_whole_urdf_is_kept_on_the_root_so_nothing_is_lost(extra: Any) -> None:
+    """Some of a URDF belongs to no link or joint at all, like a robot-level <gazebo>.
+
+    Keeping the source document means converting to USD is never also a way to lose half a
+    description, whatever the converter does or does not understand.
+    """
+    stage = _stage(urdf_to_usd(extra))
+
+    source = stage.GetDefaultPrim().GetCustomDataByKey(SOURCE_KEY)
+
+    assert "<gazebo" in source
+    assert "mu1" in source
+
+
+def test_a_link_with_nothing_unconverted_carries_no_passthrough(extra: Any) -> None:
+    # No empty dictionaries on every prim of every robot.
+    stage = _stage(urdf_to_usd(extra))
+
+    assert stage.GetPrimAtPath("/extra/base_link/arm").GetCustomDataByKey(PASSTHROUGH_KEY) is None
+
+
+def test_passthrough_is_customdata_not_an_attribute(extra: Any) -> None:
+    # customData is USD's own field for this, so the "no custom attributes" rule still holds.
+    usd = urdf_to_usd(extra)
+
+    assert "customData" in usd
+    assert "custom " not in usd
