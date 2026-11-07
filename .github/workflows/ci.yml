@@ -224,7 +224,7 @@ jobs:
     needs: cachix-build-check
     timeout-minutes: 300
     environment: cachix
-    runs-on: macos-14  # GitHub-hosted Apple silicon → runner.arch is ARM64
+    runs-on: macos-15  # GitHub-hosted Apple silicon → runner.arch is ARM64
     permissions:
       contents: read  # For checkout
 
