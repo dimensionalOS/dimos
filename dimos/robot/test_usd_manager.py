@@ -1334,13 +1334,24 @@ def test_a_rename_matching_neither_this_robot_nor_a_subtree_fails_at_constructio
         make_manager(tf_renames={"nothing": "here"})
 
 
-def test_point_clearing_looks_tf_up_under_the_renamed_root(
+def test_a_tf_lookup_takes_description_names_and_finds_the_published_ones(
     make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
-    """Rename the root and the filter has to follow, or every cloud is dropped for missing tf."""
-    module = make_filter(tf_renames={"base": "chassis"})
+    """The one crossing point: this module asks in its URDF's names, tf carries the renamed ones."""
+    module = make_filter(tf_renames={"base": "chassis", "arm": "forearm"})
+    module.tfbuffer.receive_transform(
+        Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="chassis",
+            child_frame_id="forearm",
+            ts=1.0,
+        )
+    )
 
-    assert module._base_link == "chassis"
+    found = module._tf_at("base", "arm", 1.0)
+
+    assert found is not None
+    np.testing.assert_allclose(found.translation.to_tuple(), [1.0, 0.0, 0.0], atol=1e-9)
 
 
 def test_a_circular_mount_is_recognised_across_a_process_boundary() -> None:

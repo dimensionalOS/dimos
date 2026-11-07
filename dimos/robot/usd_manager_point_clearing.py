@@ -61,8 +61,7 @@ class UsdManagerPointClearing(UsdManager):
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
             self._description, self.config.padding_m
         )
-        # The published name, not the description's: tf_renames may have renamed the root.
-        self._base_link = self.frame(self._description.root_link)
+        self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
@@ -159,18 +158,24 @@ class UsdManagerPointClearing(UsdManager):
         motions = {}
         for joint in self._joints.values():
             if joint.type in MULTI_DOF_JOINT_TYPES:
-                parent_from_child = self._tf_at(
-                    self.frame(joint.parent_link), self.frame(joint.child_link), stamp
-                )
+                parent_from_child = self._tf_at(joint.parent_link, joint.child_link, stamp)
                 if parent_from_child is None:
                     return None
                 motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
         return motions
 
     def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
+        """One tf lookup, in the description's names.
+
+        The renaming happens here rather than at the call sites: this module works in the
+        names its URDF uses, tf carries the names the manager publishes, and tf_renames is
+        the difference. One crossing point means a lookup added later cannot forget it and
+        quietly find nothing. A frame that is not this robot's own (a sensor's) is not a
+        rename key, so it passes through.
+        """
         return self.tfbuffer.get(
-            parent,
-            child,
+            self.frame(parent),
+            self.frame(child),
             time_point=stamp,
             time_tolerance=self.config.tf_tolerance_s,
             forward_tolerance=self.config.tf_forward_tolerance_s,
