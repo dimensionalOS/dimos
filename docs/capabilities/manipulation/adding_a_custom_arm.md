@@ -58,11 +58,12 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     lists every arm motor in bus order, then each gripper's finger joint. Commands and states are matched by joint
     name, but `kp` and `kd` (per bus), `teach_kd`, `home_joints` and the CAN selectors are matched by position, so
     keep them in motor order. Nothing checks the motor table against the arm: a wrong or swapped CAN ID is not
-    detected (only a reply ID used twice on one bus is rejected). A motor that never answers reads 0.0, and one that
-    stops answering keeps its last reading. Holds target the reading, so a joint with a wrong `reply_id` is driven
-    toward 0 rad at full gain as soon as the arm starts. Check the IDs with the vendor's tool, and start the first
-    time with the arm supported near its zero pose. Motor fault codes are not read either: a motor that trips its
-    own protection goes limp without an error in dimOS.
+    detected (only a reply ID used twice on one bus is rejected, and a gripper motor that doesn't answer on its IDs
+    makes start fail). A motor that never answers reads 0.0, and one that stops answering keeps its last reading.
+    Holds target the reading, so a joint with a wrong `reply_id` is driven toward 0 rad at full gain as soon as the
+    arm starts. Check the IDs with the vendor's tool, and start the first time with the arm supported near its zero
+    pose. Motor fault codes are not read either: a motor that trips its own protection goes limp without an error in
+    dimOS.
 
 3. **Motors.** `type` is `"DM4310"`, `"DM4340"` or `"DM8009"`. A wrong type scales velocity and torque incorrectly
     while positions still look right. Pass a `DamiaoProfile(code, p_max, v_max, t_max)` as
@@ -79,19 +80,21 @@ closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm
     `openyam/connection.py`). Don't implement Damiao framing or a serial protocol yourself. A selector that starts
     with `/dev/` uses the Damiao USB-CAN bridge on that serial port (`can_motor_control.DmSerialBus`); otherwise it
     is a SocketCAN interface such as `can0` on Linux, or a gs_usb adapter's serial number on macOS. There are no
-    default selectors, and dimOS doesn't configure interfaces: see `dimos hardware can list` and
-    `dimos hardware can setup`. On a two-bus arm the buses can share motor IDs, so swapped selectors drive the wrong
-    arm without any error. If a transport you need is missing, add it to the shared code, not to your arm.
+    default selectors, and the connection doesn't configure the interface: on Linux bring it up first with
+    `dimos hardware can setup can0` (1 Mbit/s by default); `dimos hardware can list` shows the selectable interfaces
+    (gs_usb serial numbers on macOS). On a two-bus arm the buses can share motor IDs, so swapped selectors drive the
+    wrong arm without any error. If a transport you need is missing, add it to the shared code, not to your arm.
 
 5. **Gains.** `kp` and `kd` on each `DamiaoBus` hold one value per arm motor; grippers have no gains. dimOS checks
     the count when the robot data is built and, when it sends, that every value is finite; only the codec checks
     ranges, at send time. For every motor type the codec accepts `kp` from 0 to 500 and `kd` from 0 to 5, and it
     checks each command's position, velocity and torque, including the gravity term, against the motor type's limits
     (DM4310: 10 N·m, 30 rad/s; DM4340: 28 N·m, 10 rad/s; DM8009: 54 N·m, 45 rad/s; positions ±12.5 rad). With a
-    value out of range the arm still starts and enables, then every command and hold raises `CodecError`: the motors
-    stay enabled without commands, and it shows up only as a repeated warning and in `status().last_error`. Check
-    gains copied from a vendor SDK against these ranges, and check the largest gravity torque over the joint range
-    (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
+    value out of range the arm still starts and enables, then every command and hold raises `CodecError` at the
+    first out-of-range row: that motor, the motors after it in bus order and the grippers stay enabled without
+    commands (motors before it are still commanded), and it shows up only as a repeated warning and in
+    `status().last_error`. Check gains copied from a vendor SDK against these ranges, and check the largest gravity
+    torque over the joint range (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
 
 6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
     URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
@@ -723,12 +726,16 @@ def _make_yourarm_config(y_offset: float = 0.0) -> RobotModelConfig:
 Add this to your `dimos/robot/manipulators/yourarm/blueprints.py` alongside the coordinator blueprint:
 
 ```python skip
+from dimos.core.coordination.blueprints import autoconnect
 
-yourarm_planner = planner(
-    model=_make_yourarm_config(),
-    planning_timeout=10.0,
-    visualization={"backend": "viser"},
-    trajectory_parametrization={"backend": "simple_trapezoid"},
+yourarm_planner = autoconnect(
+    planner(
+        model=_make_yourarm_config(),
+        planning_timeout=10.0,
+        visualization={"backend": "viser"},
+        trajectory_parametrization={"backend": "simple_trapezoid"},
+    ),
+    coordinator_yourarm,
 )
 # The planner's `coordinator_joint_state` input auto-connects to the
 # ControlCoordinator's output on the default `/coordinator_joint_state`
@@ -743,15 +750,18 @@ To configure TOPP-RA tuning explicitly, select RoboPlan for the world and
 parametrizer after adding the URDF limits described above:
 
 ```python skip
-yourarm_planner = planner(
-    model=_make_yourarm_config(),
-    world_backend="roboplan",
-    trajectory_parametrization={
-        "backend": "roboplan_toppra",
-        "velocity_scale": 0.8,
-        "acceleration_scale": 0.8,
-    },
-    visualization={"backend": "viser"},
+yourarm_planner = autoconnect(
+    planner(
+        model=_make_yourarm_config(),
+        world_backend="roboplan",
+        trajectory_parametrization={
+            "backend": "roboplan_toppra",
+            "velocity_scale": 0.8,
+            "acceleration_scale": 0.8,
+        },
+        visualization={"backend": "viser"},
+    ),
+    coordinator_yourarm,
 )
 ```
 
