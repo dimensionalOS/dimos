@@ -53,7 +53,8 @@ class SqliteBlobStore(BlobStore):
     - ``SqliteBlobStore(conn=conn)`` — borrows an externally-managed connection.
     - ``SqliteBlobStore(path="file.db")`` — opens and owns its own connection.
 
-    Does NOT commit; the caller (typically Backend) is responsible for commits.
+    Borrowed connections leave commits to the caller (typically Backend).
+    Owned connections autocommit each mutation, like a file-backed blob store.
     """
 
     config: SqliteBlobStoreConfig
@@ -82,6 +83,7 @@ class SqliteBlobStore(BlobStore):
             assert self._path is not None
             disposable, self._conn = open_disposable_sqlite_connection(self._path)
             self.register_disposable(disposable)
+            self._conn.isolation_level = None
             self._lock = conn_lock(self._conn)
 
     def put(self, stream_name: str, key: int, data: bytes) -> None:
