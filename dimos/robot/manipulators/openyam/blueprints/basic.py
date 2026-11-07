@@ -12,49 +12,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic OpenYAM coordinator blueprints."""
+"""OpenYAM coordinator and planning through its connection module."""
 
-from __future__ import annotations
-
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.common.blueprints import coordinator, planner
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
+from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection, arm_remaps
 from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_GRIPPER_JOINT,
-    OPENYAM_HARDWARE_ID,
-    OPENYAM_JOINTS,
+    OPENYAM,
     make_openyam_model_config,
-    openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
+from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
+
+_openyam = make_openyam_model_config(robot="arm")
 
 
-def _trajectory_task() -> TaskConfig:
-    return joint_trajectory_task(OPENYAM_JOINTS)
+def _trajectory_task(*, priority: int = 10) -> TaskConfig:
+    return joint_trajectory_task([*_openyam.joint_names, OPENYAM_GRIPPER_JOINT], priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
+    # joint7 is open at its lower end.
     return TaskConfig(
-        name=f"{OPENYAM_HARDWARE_ID}_gripper",
+        name="arm_gripper",
         type="gripper",
         joint_names=[OPENYAM_GRIPPER_JOINT],
         priority=20,
+        params={"open_at": "lower"},
     )
 
 
-_openyam_planner_hw = openyam_hardware()
+def openyam_control(*, teach: bool = False) -> Blueprint:
+    """Trajectories and the gripper, through the OpenYAM connection.
 
+    Args:
+        teach: Run with zero stiffness and teaching damping, gravity
+            compensated, and the jaw passive so an operator can guide it.
+    """
+    return autoconnect(
+        OpenYamCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=_openyam.model,
+            tasks=[_trajectory_task(), _gripper_task()],
+            zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=teach),
+        ),
+        arm_connection(OpenYamConnection, teach=teach),
+    ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
+
+
+coordinator_openyam = openyam_control().remappings([])
 openyam_planner_coordinator = autoconnect(
-    planner(model=make_openyam_model_config(), gripper_tasks={"manipulator": "openyam_gripper"}),
-    coordinator(
-        hardware=[_openyam_planner_hw],
-        tasks=[_trajectory_task(), _gripper_task()],
-    ),
-)
-
-_openyam_hw = openyam_hardware()
-
-coordinator_openyam = ControlCoordinator.blueprint(
-    hardware=[_openyam_hw],
-    tasks=[_trajectory_task(), _gripper_task()],
+    planner(model=_openyam, gripper_tasks={"manipulator": "arm_gripper"}),
+    openyam_control(),
 )
