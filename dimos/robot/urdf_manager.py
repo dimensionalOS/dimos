@@ -156,8 +156,10 @@ class UrdfManager(Module):
         a robot with no arm, so a mount that never answers hangs the caller instead.
         """
         subtrees = await self._subtrees()
-        root = self.get_usd()
-        self._scene = graft_usd(root, subtrees) if subtrees else root
+        # Off the loop thread: building the layer imports usd-core and converts the whole
+        # URDF, which is a tenth of a second on a real robot and would stall tf meanwhile.
+        root = await asyncio.to_thread(self.get_usd)
+        self._scene = await asyncio.to_thread(graft_usd, root, subtrees) if subtrees else root
         return self._scene
 
     async def _subtrees(self) -> dict[str, str]:
@@ -217,7 +219,11 @@ class UrdfManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(USD_SUFFIXES):
-            usd = self._scene if self._scene is not None else self.get_usd()
+            # to_thread for the same reason as get_scene: the first request is the one that
+            # pays for the import and the conversion, and it arrives while tf is flowing.
+            usd = self._scene
+            if usd is None:
+                usd = await asyncio.to_thread(self.get_usd)
             self.file_info.publish(File(name, usd.encode()))
             return
         # Only files the URDF names: a request is never an arbitrary path into the filesystem.
