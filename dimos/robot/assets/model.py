@@ -210,6 +210,14 @@ class UsdModel:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
 
+    def urdf(self) -> LoadedRobotModel | None:
+        """The description this was converted from, for the one consumer that needs URDF.
+
+        None for a layer read off disk: there was never a URDF behind it, so a caller that
+        needs one has to convert (see usd_to_urdf).
+        """
+        return self._urdf
+
     def frame_names(self) -> set[str]:
         """Every link and joint name, by the name it travels under.
 
