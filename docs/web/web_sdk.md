@@ -2,7 +2,7 @@
 
 Use the web SDK to build your own robot web page. It connects to a relay, watches a robot and hands you decoded channel data. It can also send input to the robot. The cockpit is built on the same SDK, and the robot side does not change: the same bridge and the same relay serve the cockpit and your page.
 
-You need no build step. The relay serves the SDK as an ES module at `/sdk.js`, so a plain HTML file can `import { connect } from "/sdk.js"`. Inside the dimos repository it is also the `@dimos/sdk` Deno workspace package with React bindings (it is not published to npm yet).
+You need no build step. The relay serves the SDK as an ES module at `/sdk.js`, so a plain HTML file can `import { connect } from "/sdk.js"`. The same SDK is available as the `@dimos/sdk` Deno workspace package and a buildable Node ESM package with TypeScript declarations and optional React bindings. It is not published to npm yet.
 
 This page starts with "show odom on my own page", then adds a channel of your own, a custom binary encoding, and input to the robot. The reference for every call is at the end.
 
@@ -110,7 +110,15 @@ function Pose({ session }) {
 }
 ```
 
-`@dimos/sdk` is not published to npm yet. Outside the repository, use `/sdk.js`.
+For a Node/Vite consumer outside this repository, build and pack a reviewed checkout:
+
+```bash
+cd web/sdk
+deno task build:package
+npm pack
+```
+
+Install the resulting `dimos-sdk-0.1.0.tgz` in your application and pin its checksum with the dependency. The package exports `@dimos/sdk` and `@dimos/sdk/react`, including declarations and bundled internal protocol dependencies; no Deno import map is needed by the consumer. Importing the root does not load React. This is a package build, not a Node WebTransport implementation: the application still needs a runtime that supplies WebTransport, normally a supported browser.
 
 ## Raw topics
 
