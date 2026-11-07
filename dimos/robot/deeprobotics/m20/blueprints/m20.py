@@ -27,13 +27,10 @@ Back on that map, relocalized against that recording's last global_map, with its
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import ZenohTransport
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.mapping.relocalization.lidar.relocalize import MID360_NAV
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
-from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
+from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
@@ -41,40 +38,25 @@ from dimos.robot.deeprobotics.m20.rerun import m20_rerun_config
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
-m20 = (
-    autoconnect(
-        vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
-        M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
-        M20Connection.blueprint(auto_stand=True).remappings(
-            [(M20Connection, "odometry", "slam_odom")]
-        ),
-        UrdfManager.blueprint(model=M20_MODEL),
-        M20StandingJointState.blueprint(),
-        m20_nav_stack(),
-        # loaded_map is a never-drop channel under zenoh, so no republish
-        LocalMapRelocalization.blueprint(
-            world_frame=WORLD_FRAME,
-            map_frame="premap",
-            relocalize=MID360_NAV,
-            republish_loaded_map=0.0,
-            new_map=True,
-            tf_interval=1.0,
-            # pre_trace_subsample=5 leaves a carved local map of ~12k points, under the 20k default
-            min_local_points=8_000,
-        ),
-    )
-    .global_config(
-        n_workers=5,
-        transport="zenoh",
-    )
-    .transports(
-        {
-            ("front_camera", CompressedVideo): ZenohTransport.spec(
-                ZenohTopic("dimos/front_camera", CompressedVideo, qos=QOS_LATEST_WINS)
-            ),
-            ("rear_camera", CompressedVideo): ZenohTransport.spec(
-                ZenohTopic("dimos/rear_camera", CompressedVideo, qos=QOS_LATEST_WINS)
-            ),
-        }
-    )
+m20 = autoconnect(
+    vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
+    M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
+    M20Connection.blueprint(auto_stand=True).remappings([(M20Connection, "odometry", "slam_odom")]),
+    UrdfManager.blueprint(model=M20_MODEL),
+    M20StandingJointState.blueprint(),
+    m20_nav_stack(),
+    # loaded_map is a never-drop channel under zenoh, so no republish
+    LocalMapRelocalization.blueprint(
+        world_frame=WORLD_FRAME,
+        map_frame="premap",
+        relocalize=MID360_NAV,
+        republish_loaded_map=0.0,
+        new_map=True,
+        tf_interval=1.0,
+        # pre_trace_subsample=5 leaves a carved local map of ~12k points, under the 20k default
+        min_local_points=8_000,
+    ),
+).global_config(
+    n_workers=5,
+    transport="zenoh",
 )

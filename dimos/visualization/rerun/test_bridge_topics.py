@@ -32,11 +32,13 @@ import rerun as rr
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,
     RerunEntry,
+    every_message,
     is_rerun_multi,
     keyed_by_seq,
     region_entity,
@@ -50,6 +52,7 @@ class FakeZenoh(Zenoh):
         self.keys: list[str] = []
         self.subscribed_all = False
         self.keyed: list[str] = []
+        self.keys_of: dict[str, Any] = {}
 
     def subscribe(self, topic: Any, callback: Any) -> Any:
         self.keys.append(topic.key_expr)
@@ -58,6 +61,7 @@ class FakeZenoh(Zenoh):
     def subscribe_all(self, callback: Any, keyed: Mapping[str, Any] | None = None) -> Any:
         self.subscribed_all = True
         self.keyed = list(keyed or {})
+        self.keys_of = dict(keyed or {})
         return lambda: None
 
 
@@ -132,6 +136,24 @@ def test_the_firehose_takes_keyed_renderers_per_seq(
         pubsub
     )
     assert pubsub.keyed == ["surface_map"]
+
+
+def test_the_firehose_delivers_every_message_of_an_in_order_renderer(
+    make_bridge: Callable[..., RerunBridgeModule],
+) -> None:
+    @every_message
+    def video(msg: CompressedVideo) -> None:
+        return None
+
+    pubsub = FakeZenoh()
+    make_bridge(
+        visual_override={"world/front_camera": video, "world/rear_camera": partial(video)},
+    )._subscribe(pubsub)
+    assert sorted(pubsub.keyed) == ["front_camera", "rear_camera"]
+    # One frame's key never repeats, even for an identical message, so none is coalesced away.
+    frame = CompressedVideo(b"\x00\x00\x00\x01\x02\x01", format="h265", ts=1.0)
+    key = pubsub.keys_of["front_camera"]
+    assert len({key(frame) for _ in range(5)}) == 5
 
 
 def test_a_leaf_stack_does_not_claim_the_coordinator_name() -> None:

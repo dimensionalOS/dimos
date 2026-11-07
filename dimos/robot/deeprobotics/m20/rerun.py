@@ -36,6 +36,7 @@ from dimos.robot.deeprobotics.m20.constants import (
     BODY_WIDTH_M,
     PLANNING_HEIGHT_M,
 )
+from dimos.visualization.rerun.bridge import every_message
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -80,10 +81,12 @@ def m20_nav_overrides() -> dict[str, VisualOverride]:
     }
 
 
-def _render_h265(msg: CompressedVideo) -> Any:
+# Every frame, in order: a P-frame decodes only after the frame before it.
+@every_message
+def _render_h264(msg: CompressedVideo) -> Any:
     import rerun as rr
 
-    return rr.VideoStream(codec=rr.VideoCodec.H265, sample=msg.data.tobytes())
+    return rr.VideoStream(codec=rr.VideoCodec.H264, sample=msg.data.tobytes())
 
 
 def _render_front_camera_info(msg: CameraInfo) -> Any:
@@ -138,8 +141,8 @@ def m20_rerun_config() -> dict[str, Any]:
         },
         "visual_override": {
             **m20_nav_overrides(),
-            "world/front_camera": _render_h265,
-            "world/rear_camera": _render_h265,
+            "world/front_camera": _render_h264,
+            "world/rear_camera": _render_h264,
             "world/front_camera_info": _render_front_camera_info,
             "world/rear_camera_info": _render_rear_camera_info,
         },
