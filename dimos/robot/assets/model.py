@@ -194,15 +194,29 @@ class UsdModel:
 
     @property
     def root_link(self) -> str:
-        """The frame everything hangs under: the URDF's root link, or the layer's defaultPrim."""
+        """The frame everything hangs under.
+
+        The URDF's own root where there was one. For a layer read off disk it has to be found
+        in the layer, because the defaultPrim is the robot rather than a link, and a tf lookup
+        against that name would find nothing.
+        """
         if self._urdf is not None:
             return self._urdf.root_link
-        match = re.search(r"""\bdefaultPrim\s*=\s*["']([^"']+)["']""", self.usd)
-        return match.group(1) if match else ""
+        from dimos.robot.assets.usd_to_urdf import usd_root_link
+
+        return usd_root_link(self.usd)
 
     def get_joint(self, name: str) -> JointDescription | None:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
+
+    def urdf(self) -> LoadedRobotModel | None:
+        """The description this was converted from, for the one consumer that needs URDF.
+
+        None for a layer read off disk: there was never a URDF behind it, so a caller that
+        needs one has to convert (see usd_to_urdf).
+        """
+        return self._urdf
 
     def frame_names(self) -> set[str]:
         """Every link and joint name, by the name it travels under.

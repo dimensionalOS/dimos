@@ -29,7 +29,8 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel
+from dimos.robot.assets.usd_to_urdf import usd_to_urdf
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -59,23 +60,29 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        model = self.config.model
-        if not isinstance(model, RobotModel):
-            # RoboPlan builds its collision model from the URDF, and there is no equivalent
-            # read of a USD layer. The manager itself works in USD; this subclass is the one
-            # part that still needs the description it was converted from.
-            self.dispose()
-            raise ValueError(
-                f"{type(self).__name__} needs a RobotModel: the body filter is built from the "
-                f"URDF's collision geometry, and a USD layer carries none it can read. Use a "
-                f"plain UrdfManager for a USD scene."
-            )
-        # Memoized on the RobotModel, so this costs nothing beyond the manager's own load.
-        self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(model.load(), self.config.padding_m)
+        self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
+            self._filter_description(), self.config.padding_m
+        )
         self._base_link = self._description.root_link
         self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
+
+    def _filter_description(self) -> LoadedRobotModel:
+        """The URDF RoboPlan builds its collision scene from.
+
+        It only reads URDF, so a robot described in USD is converted back. That conversion is
+        the inverse of the one the manager did on the way in, and for a model that came from a
+        URDF the original is still there to hand over -- no round trip, and no pxr needed.
+        """
+        kept = self._description.urdf()
+        if kept is not None:
+            return kept
+        # A layer read straight off disk. Converting it is what lets a USD-native robot
+        # filter itself; the package paths are empty because a USD names its assets outright.
+        return LoadedRobotModel(
+            usd_to_urdf(self._description.usd), self._description.source_path, {}
+        )
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
         """Filter the latest capture without starving TF transport callbacks."""
