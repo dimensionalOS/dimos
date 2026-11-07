@@ -27,6 +27,7 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
     R1PRO_MODEL,
+    make_r1pro_arm_models,
     make_r1pro_model_config,
 )
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
@@ -52,7 +53,7 @@ r1pro_spatial = (
         R1HardwareTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=R1PRO_MODEL,
-            tasks=arm_tasks(R1PRO_MODEL),
+            tasks=arm_tasks(make_r1pro_arm_models()),
             tick_rate=50,
             publish_joint_state=False,
         ),

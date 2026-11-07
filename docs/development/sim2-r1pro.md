@@ -353,15 +353,19 @@ On robot `r1-pro-0219` (Tailscale `100.68.53.40`):
 ```bash
 ssh nvidia@100.68.53.40
 cd ~/dimos-r1pro-spatial
-./bin/run-r1pro-spatial --check  # optional: feedback + competing-controller checks only
-./bin/run-r1pro-spatial
+source /opt/ros/humble/setup.bash
+source ~/galaxea-dimos/install/setup.bash
+source .venv/bin/activate
+export ROS_DOMAIN_ID=0 RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+dimos run r1pro-spatial
 ```
 
-The launcher uses ROS Humble, the installed Galaxea workspace, ROS domain **0**
+This environment uses ROS Humble, the installed Galaxea workspace, ROS domain **0**
 (the domain actually used by this robot's running drivers), FastDDS, and the
 checkout's system-Python-3.10 venv. It requires the vendor stack already running;
-it does not boot another vendor profile. Ctrl-C stops DimOS. The preflight refuses
-to start alongside another publisher on any arm, torso, gripper or chassis target.
+it does not boot another vendor profile. Ctrl-C stops DimOS. The optional read-only check
+`python -m dimos.robot.galaxea.r1pro.spatial_preflight` checks feedback freshness
+and reports other arm, torso, gripper or chassis command publishers before launch.
 
 Open `https://100.68.53.40:8443/spatial` over Tailscale, or
 `https://10.10.167.201:8443/spatial` on the robot's current Wi-Fi. WebXR requires

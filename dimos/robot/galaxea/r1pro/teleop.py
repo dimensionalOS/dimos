@@ -14,6 +14,8 @@
 
 """Shared R1 Pro arm IK tasks for hardware and simulation."""
 
+from collections.abc import Mapping
+
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In, Out
@@ -23,7 +25,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 
 
-def arm_tasks(model: RobotModel, frame_prefix: str = "") -> list[TaskConfig]:
+def arm_tasks(models: Mapping[str, RobotModel], frame_prefix: str = "") -> list[TaskConfig]:
     """Independent grip/clutch sessions, using the same tasks as dual OpenYAM."""
     return [
         TaskConfig(
@@ -33,9 +35,7 @@ def arm_tasks(model: RobotModel, frame_prefix: str = "") -> list[TaskConfig]:
             priority=20,
             params={
                 "robot_model": RobotModelConfig(
-                    model=model.with_subtree_rooted_at(
-                        f"{frame_prefix}{side}_arm_base_link"
-                    ).with_default_joint_acceleration_limit(2.0),
+                    model=models[side].with_default_joint_acceleration_limit(2.0),
                     joint_names=[f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)],
                     base_link=f"{frame_prefix}{side}_arm_base_link",
                 ),

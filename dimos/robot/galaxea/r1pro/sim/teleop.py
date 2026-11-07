@@ -35,7 +35,15 @@ TELEOP_MODEL = MODEL.with_fixed_joints(
 
 
 def arm_tasks() -> list[TaskConfig]:
-    return r1_arm_tasks(MODEL.with_fixed_joints(*FINGER_JOINTS), "r1pro/")
+    return r1_arm_tasks(
+        {
+            side: MODEL.with_subtree_rooted_at(f"r1pro/{side}_arm_base_link").with_fixed_joints(
+                *(f"r1pro/{side}_gripper_finger_joint{i}" for i in (1, 2))
+            )
+            for side in ("left", "right")
+        },
+        "r1pro/",
+    )
 
 
 class R1ProTeleopCoordinator(TeleopControlCoordinator):

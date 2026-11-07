@@ -151,3 +151,23 @@ def make_r1pro_planar_model_config() -> RobotModelConfig:
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
         home_joints=[0.0] * len(R1PRO_PLANNING_JOINTS),
     )
+
+
+def make_r1pro_arm_models() -> dict[str, RobotModel]:
+    """Select each raw arm before applying only that arm's joint edits.
+
+    RobotModel selects subtrees before fixing/renaming joints. Carrying the
+    whole-body edits into an arm would reference chassis and opposite-arm joints
+    that no longer exist.
+    """
+    return {
+        side: RobotModel.from_file(
+            R1PRO_MODEL_PATH, package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT}
+        )
+        .with_subtree_rooted_at(f"{side}_arm_base_link")
+        .with_fixed_joints(*(f"{side}_gripper_finger_joint{i}" for i in (1, 2)))
+        .with_renamed_joints(
+            {f"{side}_arm_joint{i}": f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)}
+        )
+        for side in ("left", "right")
+    }
