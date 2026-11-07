@@ -71,6 +71,7 @@ from dimos.web.relay_bridge.topic_protocol import (
     MAX_MID_LEN as MAX_MID_LEN,
     MAX_SDP_LEN as MAX_SDP_LEN,
     TopicCapabilities,
+    TopicCount,
     TopicMsg,
     TopicSource,
     TopicVersion,
@@ -246,6 +247,7 @@ class Pong(_WireModel):
     t: Literal["pong"] = "pong"
     n: int | float
     ts: int | float
+    aborted: Annotated[TopicCount | None, BeforeValidator(_optional_reject_wire_null)] = None
 
 
 class Error(_WireModel):

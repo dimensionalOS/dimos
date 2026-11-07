@@ -37,9 +37,10 @@ from dimos.web.relay_bridge.topic_catalog import TopicCatalog
 from dimos.web.relay_bridge.topic_mailbox import TopicIngressBudget, TopicSample
 from dimos.web.relay_bridge.topic_profiles import normalize_settings
 from dimos.web.relay_bridge.topic_protocol import TopicOpen
-from dimos.web.relay_bridge.topic_service import _Route
+from dimos.web.relay_bridge.topic_service import TopicServiceConfig, _Route, capabilities
 from dimos.web.relay_bridge.topic_transform import TopicTransforms
 from dimos.web.relay_bridge.topic_transport import LatestTopicWriter, TopicByteBudget
+from dimos.web.relay_bridge.topic_video import TopicVideo, resolve_encoder
 
 PROFILE = "image.jpeg.balanced.v1"
 VECTOR = next(
@@ -94,7 +95,7 @@ class Harness:
     client: FakeClient
     transforms: TopicTransforms
     frames: asyncio.Queue[DataFrame]
-    make: Callable[[dict[str, Any] | None, float], _Route]
+    make: Callable[..., _Route]
     routes: list[_Route] = field(default_factory=list)
 
     async def frame(self) -> DataFrame:
@@ -130,13 +131,18 @@ async def harness(mocker: MockerFixture) -> AsyncIterator[Harness]:
     transforms = TopicTransforms()
     routes: list[_Route] = []
 
-    def make(settings: dict[str, Any] | None, max_hz: float = 30) -> _Route:
+    def make(
+        settings: dict[str, Any] | None,
+        max_hz: float = 30,
+        profile: str = PROFILE,
+        video: TopicVideo | None = None,
+    ) -> _Route:
         spec = TopicOpen(
             route="@t:p1",
             gen=1,
             keyExpr="sensor/cam",
             delivery="latest",
-            profile=PROFILE,
+            profile=profile,
             maxHz=max_hz,
         )
         route = _Route(
@@ -149,6 +155,7 @@ async def harness(mocker: MockerFixture) -> AsyncIterator[Harness]:
             TopicCatalog(),
             transforms,
             lambda _: None,
+            video=video,
         )
         routes.append(route)
         return route
@@ -323,3 +330,26 @@ async def test_a_variant_retired_while_encoding_drops_its_frame_and_keeps_the_ro
     assert route._error is None
     assert harness.client.sent == []
     assert harness.frames.empty()
+
+
+def test_in_place_video_reconfiguration_is_advertised_with_the_video_profile():
+    config = TopicServiceConfig(source="workspace", relay_url="http://127.0.0.1:1")
+    assert capabilities(config, video=True).videoReconfigure
+    assert not capabilities(config, video=False).videoReconfigure
+
+
+async def test_video_variant_settings_change_in_place(harness, mocker):
+    video = TopicVideo(
+        resolve_encoder("software"), 2, 2, harness.client.send_control_frame, harness.transforms
+    )
+    profile = "video.h264.v1"
+    route = harness.make(normalize_settings(profile, {}), profile=profile, video=video)
+    assert route.video is not None
+    reconfigure = mocker.spy(route.video, "reconfigure")
+    applied = route.set_variant(
+        "v1", {"maxResolution": [1280, 720], "maxBitrate": 200_000, "maxHz": 15}
+    )
+    assert route.variants == {"v1": applied}
+    assert applied == {"maxResolution": [1280, 720], "maxBitrate": 200_000, "maxHz": 15}
+    reconfigure.assert_called_once_with("v1", applied)
+    assert harness.client.writers == []
