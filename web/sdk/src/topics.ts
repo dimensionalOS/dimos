@@ -8,7 +8,10 @@ import {
   MAX_TOPIC_PUBLISH_BYTES,
   MAX_TOPIC_PUBLISH_PENDING,
   type Msg,
+  normalizeTopicSettings,
   TOPIC_PUBLISH_CHANNEL,
+  TOPIC_SETTING_NAMES,
+  type TopicAppliedMsg,
   type TopicDescriptor,
   type TopicMsg,
   topicMsgFromUnknown,
@@ -16,6 +19,8 @@ import {
   topicPublishMeta,
   type TopicPubResultMsg,
   topicSampleMeta,
+  type TopicSettings,
+  type TopicSettingsUpdate,
   type TopicSourceInfo,
   type TopicSubMsg,
 } from "@dimos/shared";
@@ -24,6 +29,8 @@ import {
   type TopicPublisherOptions,
   TopicPublishers,
 } from "./topicPublishers.ts";
+
+export type { TopicSettings } from "@dimos/shared";
 
 export type TopicPhase = "connecting" | "ready" | "interrupted" | "rejected" | "closed";
 export class TopicError extends Error {
@@ -40,12 +47,24 @@ export interface TopicStatus {
   phase: TopicPhase;
   error?: TopicError;
 }
+/** Identity (source, delivery, profile) and settings. On update(), a changed
+ * identity reopens the subscription; settings change in place, and null
+ * resets one to the profile value. The profile is the ceiling: larger values
+ * come back clamped in the acknowledgement. */
 export interface TopicOptions {
   source?: string;
   delivery?: Delivery;
   profile?: string;
   /** Latest sampling rate. Reliable event streams preserve every sample. */
-  maxHz?: number;
+  maxHz?: number | null;
+  /** The box a JPEG picture is fitted into, never above the profile size. */
+  maxResolution?: [number, number] | null;
+  /** JPEG quality, 1..100. */
+  quality?: number | null;
+  /** One cloud point in N, after the finite filter. */
+  keepEvery?: number | null;
+  /** Optional cloud buffers to encode: "intensity", "color". */
+  fields?: string[] | null;
 }
 export interface TopicSample {
   /** Borrowed bytes: copy before mutating or transferring to a worker. */
@@ -64,7 +83,12 @@ export interface TopicSubscription {
   ready(): Promise<void>;
   status(): TopicStatus;
   onStatus(callback: (status: TopicStatus) => void): () => void;
-  update(options: TopicOptions): Promise<void>;
+  /** The settings in force: the profile values until the relay acknowledges. */
+  settings(): TopicSettings;
+  /** Resolves with the settings in force. A rejected change (unsupported
+   * option, value out of range, variant limit) leaves settings and status
+   * untouched; a changed source, delivery or profile reopens the handle. */
+  update(options: TopicOptions): Promise<TopicSettings>;
   close(): void;
 }
 export interface TopicListOptions {
@@ -129,12 +153,36 @@ function notify<T>(callbacks: Iterable<(value: T) => void>, value: T) {
     }
   }
 }
-type ResolvedOptions = Required<Omit<TopicOptions, "source">> & { source?: string };
+const IDENTITY_KEYS = ["source", "delivery", "profile"] as const;
+const OPTION_KEYS: readonly string[] = [...IDENTITY_KEYS, ...TOPIC_SETTING_NAMES];
+interface Identity {
+  source?: string;
+  delivery: Delivery;
+  profile: string;
+}
+/** A settings change of a handle alone on its group. Changes go to the
+ * relay one at a time, each merged into the acknowledged request. */
+interface PendingUpdate {
+  handle: Handle;
+  options: TopicSettingsUpdate;
+  resolve: (settings: TopicSettings) => void;
+  reject: (error: TopicError) => void;
+}
+interface InFlight {
+  revision: number;
+  /** The request in force once the relay acknowledges. */
+  requested: Record<string, unknown>;
+  resolve: (settings: TopicSettings) => void;
+  reject: (error: TopicError) => void;
+}
 interface Group {
   id: string;
   signature: string;
   keyExpr: string;
-  options: ResolvedOptions;
+  identity: Identity;
+  /** The acknowledged settings request, rate included; what topic_sub carries. */
+  requested: Record<string, unknown>;
+  settings: TopicSettings;
   handles: Set<Handle>;
   sent: boolean;
   source: string | null;
@@ -147,11 +195,42 @@ interface Group {
   bytes: number;
   retry: ReturnType<typeof setTimeout> | null;
   failures: number;
+  revision: number;
+  /** The change the relay has not answered yet. */
+  pending: InFlight | null;
+  queued: PendingUpdate[];
+}
+/** A handle moving to another group: it keeps its old one until the new one
+ * is ready, so a settings change on a shared subscription never gaps. */
+interface Move {
+  group: Group;
+  resolve: (settings: TopicSettings) => void;
+  reject: (error: TopicError) => void;
+}
+
+function settingsOf(options: TopicOptions): Record<string, unknown> {
+  const requested: Record<string, unknown> = {};
+  for (const name of TOPIC_SETTING_NAMES) {
+    const value = options[name];
+    if (value !== undefined && value !== null) requested[name] = value;
+  }
+  return requested;
+}
+function signatureOf(keyExpr: string, identity: Identity, requested: Record<string, unknown>) {
+  return JSON.stringify([
+    identity.source,
+    keyExpr,
+    identity.delivery,
+    identity.profile,
+    TOPIC_SETTING_NAMES.map((name) => requested[name] ?? null),
+  ]);
 }
 
 class Handle implements TopicSubscription {
   group: Group | null = null;
+  move: Move | null = null;
   #status: TopicStatus = { phase: "connecting" };
+  #settings: TopicSettings = { maxHz: 30 };
   #wait = deferred();
   #listeners = new Set<(status: TopicStatus) => void>();
   constructor(readonly owner: TopicClient, readonly callback: (sample: TopicSample) => void) {}
@@ -160,6 +239,10 @@ class Handle implements TopicSubscription {
   }
   status(): TopicStatus {
     return this.#status;
+  }
+  settings(): TopicSettings {
+    if (this.group !== null) this.#settings = this.group.settings;
+    return this.#settings;
   }
   transition(status: TopicStatus): void {
     if (this.#status.phase === "closed") return;
@@ -182,13 +265,28 @@ class Handle implements TopicSubscription {
     notify([callback], this.#status);
     return () => this.#listeners.delete(callback);
   }
-  update(options: TopicOptions): Promise<void> {
-    if (this.group === null) return Promise.reject(new TopicError("closed", "rejected"));
-    const old = this.group;
-    this.owner.release(this);
-    this.transition({ phase: "connecting" });
-    this.owner.acquire(this, old.keyExpr, { ...old.options, ...options });
-    return this.ready();
+  update(options: TopicOptions): Promise<TopicSettings> {
+    const group = this.group;
+    if (group === null) return Promise.reject(new TopicError("closed", "rejected"));
+    const unknown = Object.keys(options).find((key) => !OPTION_KEYS.includes(key));
+    if (unknown !== undefined) {
+      return Promise.reject(new TopicError("unsupported_option", "rejected"));
+    }
+    const identity = group.identity;
+    if (
+      IDENTITY_KEYS.some((key) => options[key] !== undefined && options[key] !== identity[key])
+    ) {
+      // A different source, delivery or profile is another subscription.
+      this.owner.release(this);
+      this.transition({ phase: "connecting" });
+      this.owner.acquire(this, group.keyExpr, {
+        ...identity,
+        ...(group.requested as TopicOptions),
+        ...options,
+      });
+      return this.ready().then(() => this.settings());
+    }
+    return this.owner.update(this, group, options);
   }
   close(): void {
     this.owner.release(this);
@@ -199,7 +297,10 @@ class Handle implements TopicSubscription {
 
 /** Per-message callbacks and routing live outside ChannelStore's UI tick. */
 export class TopicClient implements Topics {
+  /** The groups a new consumer may join, by signature. One with a change in
+   * flight is left out: a joiner could not tell which settings it would get. */
   #groups = new Map<string, Group>();
+  /** Every live group, by id. */
   #ids = new Map<string, Group>();
   #routes = new Map<string, Group>();
   #sources = new Map<string, TopicSourceInfo>();
@@ -277,55 +378,45 @@ export class TopicClient implements Topics {
     this.acquire(handle, keyExpr, options);
     return handle;
   }
-  acquire(handle: Handle, keyExpr: string, options: TopicOptions): void {
-    if (this.#closed || this.#handles >= MAX_TOPIC_HANDLES) {
-      handle.transition({
-        phase: "rejected",
-        error: new TopicError(this.#closed ? "closed" : "topic_limit", "rejected"),
-      });
-      return;
-    }
-    const resolved: ResolvedOptions = {
+  /** The group for keyExpr and options, created and requested when new. */
+  #obtain(keyExpr: string, options: TopicOptions): Group | TopicError {
+    if (this.#closed) return new TopicError("closed", "rejected");
+    const identity: Identity = {
       source: options.source ?? this.defaultSource,
       delivery: options.delivery ?? "latest",
       profile: options.profile ?? "raw",
-      maxHz: options.maxHz ?? (options.delivery === "reliable" ? 1000 : 30),
     };
+    const requested = {
+      maxHz: options.maxHz ?? (identity.delivery === "reliable" ? 1000 : 30),
+      ...settingsOf(options),
+    };
+    const { maxHz, ...settings } = requested;
     const candidate = {
       t: "topic_sub",
       id: "validate",
-      source: resolved.source ?? "auto",
+      source: identity.source ?? "auto",
       keyExpr,
-      delivery: resolved.delivery,
-      profile: resolved.profile,
-      maxHz: resolved.maxHz,
+      delivery: identity.delivery,
+      profile: identity.profile,
+      maxHz,
+      ...(Object.keys(settings).length ? { settings } : {}),
     };
     if (
-      Object.keys(options).some((key) =>
-        !["source", "delivery", "profile", "maxHz"].includes(key)
-      ) ||
+      Object.keys(options).some((key) => !OPTION_KEYS.includes(key)) ||
       topicMsgFromUnknown(candidate) === null
     ) {
-      handle.transition({
-        phase: "rejected",
-        error: new TopicError("invalid_topic_options", "rejected"),
-      });
-      return;
+      return new TopicError("invalid_topic_options", "rejected");
     }
-    const signature = JSON.stringify([
-      resolved.source,
-      keyExpr,
-      resolved.delivery,
-      resolved.profile,
-      resolved.maxHz,
-    ]);
+    const signature = signatureOf(keyExpr, identity, requested);
     let group = this.#groups.get(signature);
     if (group === undefined) {
       group = {
         id: this.#id(),
         signature,
         keyExpr,
-        options: resolved,
+        identity,
+        requested,
+        settings: { maxHz: requested.maxHz },
         handles: new Set(),
         sent: false,
         source: null,
@@ -338,40 +429,198 @@ export class TopicClient implements Topics {
         bytes: 0,
         retry: null,
         failures: 0,
+        revision: 0,
+        pending: null,
+        queued: [],
       };
       this.#groups.set(signature, group);
       this.#ids.set(group.id, group);
     }
-    group.handles.add(handle);
-    handle.group = group;
-    this.#handles++;
     // A new consumer or explicit update is a fresh attempt, including when
     // another handle still holds a previous rejection of this shared key.
     if (group.status.phase === "rejected") this.#restart(group);
+    return group;
+  }
+  acquire(handle: Handle, keyExpr: string, options: TopicOptions): void {
+    const group = this.#handles >= MAX_TOPIC_HANDLES
+      ? new TopicError("topic_limit", "rejected")
+      : this.#obtain(keyExpr, options);
+    if (group instanceof TopicError) {
+      handle.transition({ phase: "rejected", error: group });
+      return;
+    }
+    group.handles.add(handle);
+    handle.group = group;
+    this.#handles++;
     handle.transition(group.status);
     this.#subscribe(group);
   }
-  release(handle: Handle): void {
-    const group = handle.group;
-    if (group === null) return;
+  #leave(handle: Handle, group: Group): void {
     group.handles.delete(handle);
-    handle.group = null;
-    this.#handles--;
     if (group.handles.size > 0) return;
     if (group.retry !== null) clearTimeout(group.retry);
     if (group.sent) this.#send?.({ t: "topic_unsub", id: group.id });
     if (group.route !== null) this.#routes.delete(group.route);
     group.route = null;
     this.#credits.delete(group);
-    this.#groups.delete(group.signature);
+    if (this.#groups.get(group.signature) === group) this.#groups.delete(group.signature);
     this.#ids.delete(group.id);
+    this.#failUpdates(group, new TopicError("closed", "rejected"));
+  }
+  release(handle: Handle): void {
+    const move = handle.move;
+    if (move !== null) {
+      handle.move = null;
+      this.#leave(handle, move.group);
+      move.reject(new TopicError("closed", "rejected"));
+    }
+    const group = handle.group;
+    if (group === null) return;
+    handle.group = null;
+    this.#handles--;
+    this.#leave(handle, group);
+  }
+  /** Settings change: in place when the handle owns its group and the relay
+   * installed it, after any change still in flight; otherwise make before
+   * break through another group. */
+  update(handle: Handle, group: Group, options: TopicOptions): Promise<TopicSettings> {
+    const change: TopicSettingsUpdate = {};
+    for (const name of TOPIC_SETTING_NAMES) {
+      if (options[name] !== undefined) (change as Record<string, unknown>)[name] = options[name];
+    }
+    const candidate = { t: "topic_update", id: "validate", revision: 0, options: change };
+    if (topicMsgFromUnknown(candidate) === null) {
+      return Promise.reject(new TopicError("invalid_topic_options", "rejected"));
+    }
+    return new Promise((resolve, reject) => {
+      const update = { handle, options: change, resolve, reject };
+      if (group.pending === null) this.#change(group, update);
+      else group.queued.push(update);
+    });
+  }
+  /** The acknowledged request with `options` applied. */
+  #merge(group: Group, options: TopicSettingsUpdate): Record<string, unknown> {
+    const requested: Record<string, unknown> = { ...group.requested };
+    for (const [name, value] of Object.entries(options)) {
+      if (value === null) delete requested[name];
+      else requested[name] = value;
+    }
+    if (requested.maxHz === undefined) {
+      // The rate is always requested; null asks the relay for the profile value.
+      const range = this.#ranges(group)?.maxHz;
+      requested.maxHz = typeof range?.default === "number" ? range.default : 1000;
+    }
+    return requested;
+  }
+  #change(group: Group, update: PendingUpdate): void {
+    const { handle } = update;
+    const requested = this.#merge(group, update.options);
+    const ranges = this.#ranges(group);
+    if (ranges !== null) {
+      const result = normalizeTopicSettings(ranges, requested);
+      if (result.error !== undefined) {
+        update.reject(new TopicError(result.error, "rejected"));
+        return;
+      }
+    }
+    if (handle.move !== null) {
+      // A newer change supersedes a move still waiting for its group.
+      const previous = handle.move;
+      handle.move = null;
+      this.#leave(handle, previous.group);
+      previous.reject(new TopicError("superseded", "rejected"));
+    }
+    const existing = this.#groups.get(signatureOf(group.keyExpr, group.identity, requested));
+    const inPlace = group.handles.size === 1 && group.status.phase === "ready" && group.sent &&
+      this.#send !== null && (existing === undefined || existing === group);
+    if (inPlace) {
+      if (this.#groups.get(group.signature) === group) this.#groups.delete(group.signature);
+      const revision = ++group.revision;
+      group.pending = { revision, requested, resolve: update.resolve, reject: update.reject };
+      this.#send!({ t: "topic_update", id: group.id, revision, options: update.options });
+      return;
+    }
+    // A shared group, or settings another group already serves: move there.
+    const target = this.#obtain(group.keyExpr, {
+      ...group.identity,
+      ...(requested as TopicOptions),
+    });
+    if (target instanceof TopicError) {
+      update.reject(target);
+      return;
+    }
+    if (target === group) {
+      handle.ready().then(() => update.resolve(handle.settings()), update.reject);
+      return;
+    }
+    target.handles.add(handle);
+    handle.move = { group: target, resolve: update.resolve, reject: update.reject };
+    this.#subscribe(target);
+    this.#settle(target);
+  }
+  /** The relay answered: send the next change, or share the group again. */
+  #next(group: Group): void {
+    while (group.pending === null) {
+      const update = group.queued.shift();
+      if (update === undefined) {
+        this.#index(group);
+        return;
+      }
+      this.#change(group, update);
+    }
+  }
+  /** Offer a live group to new consumers under its acknowledged settings,
+   * unless a change is in flight or another group already serves them. */
+  #index(group: Group): void {
+    if (group.pending !== null || this.#ids.get(group.id) !== group) return;
+    if (!this.#groups.has(group.signature)) this.#groups.set(group.signature, group);
+  }
+  /** Handles waiting for `group` switch to it once ready; a rejection keeps
+   * them where they are. Frames and status never reach a waiting handle. */
+  #settle(group: Group): void {
+    for (const handle of [...group.handles]) {
+      const move = handle.move;
+      if (move === null || move.group !== group) continue;
+      if (group.status.phase === "ready") {
+        handle.move = null;
+        const previous = handle.group;
+        handle.group = group;
+        if (previous !== null) this.#leave(handle, previous);
+        // A handle whose old group never got ready is ready through this one.
+        if (handle.status().phase !== "ready") handle.transition(group.status);
+        move.resolve(group.settings);
+      } else if (group.status.phase === "rejected") {
+        handle.move = null;
+        this.#leave(handle, group);
+        move.reject(group.status.error ?? new TopicError("rejected", "rejected"));
+      }
+    }
+  }
+  #ranges(group: Group) {
+    const source = group.source ?? group.identity.source;
+    if (source === undefined) return null;
+    const info = this.#sources.get(source);
+    if (info === undefined) return null;
+    return group.identity.profile === "raw"
+      ? {}
+      : info.profileOptions?.[group.identity.profile] ?? {};
+  }
+  #failUpdates(group: Group, error: TopicError): void {
+    const pending = group.pending;
+    group.pending = null;
+    pending?.reject(error);
+    for (const update of group.queued.splice(0)) update.reject(error);
+    this.#index(group);
   }
   #transition(group: Group, status: TopicStatus): void {
     group.status = status;
-    for (const handle of [...group.handles]) handle.transition(status);
+    for (const handle of [...group.handles]) {
+      if (handle.group === group) handle.transition(status);
+    }
+    this.#settle(group);
   }
   #restart(group: Group): void {
-    if (this.#closed || this.#groups.get(group.signature) !== group) return;
+    if (this.#closed || this.#ids.get(group.id) !== group) return;
     if (group.retry !== null) clearTimeout(group.retry);
     group.retry = null;
     if (group.sent) this.#send?.({ t: "topic_unsub", id: group.id });
@@ -382,13 +631,12 @@ export class TopicClient implements Topics {
     this.#ids.set(group.id, group);
     group.route = null;
     group.sent = false;
+    this.#failUpdates(group, new TopicError("connection_lost", "interrupted"));
     this.#transition(group, { phase: "connecting" });
     this.#subscribe(group);
   }
   #retry(group: Group): void {
-    if (
-      group.retry !== null || this.#send === null || this.#groups.get(group.signature) !== group
-    ) return;
+    if (group.retry !== null || this.#send === null || this.#ids.get(group.id) !== group) return;
     const delay = Math.min(30_000, 1000 * 2 ** Math.min(group.failures++, 5));
     group.retry = setTimeout(() => this.#restart(group), delay);
   }
@@ -397,6 +645,7 @@ export class TopicClient implements Topics {
     group.route = null;
     this.#credits.delete(group);
     this.#recovering = this.#wasReady;
+    this.#failUpdates(group, new TopicError(error.code, "interrupted", error.message));
     this.#transition(group, { phase: "interrupted", error });
     // source_offline keeps the desired subscription on the relay. Every other
     // fault drops just this route; recover it with bounded backoff on this session.
@@ -410,7 +659,7 @@ export class TopicClient implements Topics {
     // A source emits one interruption per route before leaving the list. Do
     // not mistake the still-ready routes in that burst for a recovered app,
     // and never wait on routes whose source is not connected.
-    const groups = [...this.#groups.values()].filter((group) =>
+    const groups = [...this.#ids.values()].filter((group) =>
       group.source !== null && this.#sources.has(group.source)
     );
     const restored = groups.every((group) =>
@@ -445,7 +694,7 @@ export class TopicClient implements Topics {
     ) return;
     let source: string | undefined;
     try {
-      source = this.#source(group.options.source);
+      source = this.#source(group.identity.source);
     } catch (error) {
       this.#transition(group, { phase: "rejected", error: error as TopicError });
       return;
@@ -468,15 +717,31 @@ export class TopicClient implements Topics {
       return;
     }
     group.source = source;
+    // What the provider will apply, known from its advertised ranges; the
+    // relay's acknowledgement replaces this once the route is ready.
+    const ranges = this.#ranges(group);
+    if (ranges !== null) {
+      const result = normalizeTopicSettings(ranges, group.requested);
+      if (result.error !== undefined) {
+        this.#transition(group, {
+          phase: "rejected",
+          error: new TopicError(result.error, "rejected"),
+        });
+        return;
+      }
+      group.settings = result.settings;
+    }
     group.sent = true;
+    const { maxHz, ...settings } = group.requested;
     const message: TopicSubMsg = {
       t: "topic_sub",
       id: group.id,
       source,
       keyExpr: group.keyExpr,
-      delivery: group.options.delivery,
-      profile: group.options.profile,
-      maxHz: group.options.maxHz,
+      delivery: group.identity.delivery,
+      profile: group.identity.profile,
+      maxHz: maxHz as number,
+      ...(Object.keys(settings).length ? { settings: settings as Partial<TopicSettings> } : {}),
     };
     this.#send(message);
   }
@@ -504,12 +769,13 @@ export class TopicClient implements Topics {
     this.#routes.clear();
     this.#sources.clear();
     this.#recovering = this.#wasReady;
-    for (const group of this.#groups.values()) {
+    for (const group of this.#ids.values()) {
       if (group.retry !== null) clearTimeout(group.retry);
       group.retry = null;
       group.sent = false;
       group.route = null;
       group.keys.clear();
+      this.#failUpdates(group, new TopicError("connection_lost", "interrupted"));
       this.#transition(group, { phase: "interrupted" });
     }
     for (const id of [...this.#lists.keys()]) {
@@ -531,7 +797,7 @@ export class TopicClient implements Topics {
     if (this.#closed) return;
     this.#closed = true;
     this.#publishers.close();
-    for (const group of [...this.#groups.values()]) {
+    for (const group of [...this.#ids.values()]) {
       for (const handle of [...group.handles]) handle.close();
     }
     this.disconnected();
@@ -586,6 +852,17 @@ export class TopicClient implements Topics {
       this.#send!(message);
     });
   }
+  #applied(msg: TopicAppliedMsg): void {
+    const group = this.#ids.get(msg.id);
+    const pending = group?.pending ?? null;
+    if (group === undefined || pending === null || pending.revision !== msg.revision) return;
+    group.pending = null;
+    group.requested = pending.requested;
+    group.signature = signatureOf(group.keyExpr, group.identity, pending.requested);
+    group.settings = msg.settings;
+    pending.resolve(msg.settings);
+    this.#next(group);
+  }
   onMessage(msg: TopicMsg): void {
     if (this.#closed) return;
     if (this.#publishers.message(msg)) return;
@@ -606,7 +883,7 @@ export class TopicClient implements Topics {
         }
       }
       notify(this.#sourceListeners, this.sources());
-      for (const group of this.#groups.values()) this.#subscribe(group);
+      for (const group of this.#ids.values()) this.#subscribe(group);
       this.#restored();
     } else if (msg.t === "topic_ready") {
       const group = this.#ids.get(msg.id);
@@ -621,6 +898,7 @@ export class TopicClient implements Topics {
       group.keys.clear();
       group.frames = 0;
       group.bytes = 0;
+      if (msg.settings !== undefined) group.settings = msg.settings;
       if (group.retry !== null) clearTimeout(group.retry);
       group.retry = null;
       group.failures = 0;
@@ -630,17 +908,27 @@ export class TopicClient implements Topics {
       if (group.status.phase === "interrupted") this.#recovering = this.#wasReady;
       this.#transition(group, { phase: "ready" });
       this.#restored();
-    } else if (msg.t === "topic_error") {
+    } else if (msg.t === "topic_applied") this.#applied(msg);
+    else if (msg.t === "topic_error") {
       const error = new TopicError(msg.code, msg.outcome, msg.message);
       this.#rejectList(msg.id, error);
       const group = this.#ids.get(msg.id) ?? this.#routes.get(msg.id);
-      if (group !== undefined) {
+      if (group !== undefined && msg.revision !== undefined) {
+        // One rejected change; the subscription and its settings stand.
+        const pending = group.pending;
+        if (pending !== null && pending.revision === msg.revision) {
+          group.pending = null;
+          pending.reject(error);
+          this.#next(group);
+        }
+      } else if (group !== undefined) {
         if (msg.outcome === "interrupted") this.#interrupt(group, error);
         else {
           if (group.route !== null) this.#routes.delete(group.route);
           group.route = null;
           group.sent = false;
           this.#credits.delete(group);
+          this.#failUpdates(group, error);
           this.#transition(group, { phase: "rejected", error });
           if (["topic_ready_timeout", "topic_limit", "topic_route_limit"].includes(error.code)) {
             this.#retry(group);
@@ -747,7 +1035,7 @@ export class TopicClient implements Topics {
     if (
       group === undefined || group.status.phase !== "ready" || meta === null ||
       meta.gen !== group.gen ||
-      frame.header.delivery !== group.options.delivery ||
+      frame.header.delivery !== group.identity.delivery ||
       frame.payload.byteLength > MAX_TOPIC_PAYLOAD_BYTES
     ) return;
     const previous = group.keys.get(meta.key);
@@ -755,7 +1043,7 @@ export class TopicClient implements Topics {
     const keyLimit = !group.keys.has(meta.key) && group.keys.size >= MAX_TOPIC_KEYS;
     if (
       keyLimit ||
-      (group.options.delivery === "reliable" && group.seq !== null &&
+      (group.identity.delivery === "reliable" && group.seq !== null &&
         frame.header.seq !== group.seq + 1)
     ) {
       this.#interrupt(
@@ -781,7 +1069,7 @@ export class TopicClient implements Topics {
     for (const handle of [...group.handles]) {
       if (handle.group === group) notify([handle.callback], sample);
     }
-    if (group.options.delivery === "reliable" && group.route !== null) {
+    if (group.identity.delivery === "reliable" && group.route !== null) {
       group.frames++;
       // Re-serializing a parsed header changes valid wire spellings (30.0,
       // whitespace, escaped Unicode) and would invent incorrect byte credits.
@@ -814,7 +1102,7 @@ export class TopicClient implements Topics {
 
   streamClosed(route: string): void {
     const group = this.#routes.get(route);
-    if (group?.options.delivery !== "reliable" || group.status.phase !== "ready") return;
+    if (group?.identity.delivery !== "reliable" || group.status.phase !== "ready") return;
     this.#interrupt(group, new TopicError("topic_stream_closed", "interrupted"));
   }
 }
