@@ -26,6 +26,7 @@ from dimos.robot.assets.usd import (
     prefix_usd_frames,
     rename_usd_frames,
     urdf_to_usd,
+    usd_frame_names,
 )
 
 # usd-core is an optional extra with no linux-aarch64 wheel (see dimos.robot.assets.usd).
@@ -384,10 +385,23 @@ def test_a_pair_of_renames_swaps_rather_than_collapsing(toy: Any) -> None:
     assert {"mount", "spin"} <= _names(stage, "link")
 
 
-def test_renaming_a_frame_the_subtree_does_not_have_is_an_error(toy: Any) -> None:
-    # A misspelt frame would otherwise be a silent no-op that only shows up as a broken scene.
-    with pytest.raises(ValueError, match="no such link or joint"):
-        rename_usd_frames(urdf_to_usd(toy), {"elbow": "wrist"})
+def test_renaming_a_frame_the_layer_does_not_have_is_skipped(toy: Any) -> None:
+    """One mapping is applied to every subtree of a scene, so most keys miss most layers.
+
+    Whether a key matched *anywhere* is the caller's to check, which UsdManager does across
+    all of its mounts at once.
+    """
+    usd = urdf_to_usd(toy)
+
+    assert rename_usd_frames(usd, {"elbow": "wrist"}) is usd
+
+
+def test_the_frame_names_a_layer_carries_are_its_links_and_joints(toy: Any) -> None:
+    # What a caller checks a rename against.
+    names = usd_frame_names(urdf_to_usd(toy))
+
+    assert {"base_link", "mount", "arm-1", "spin"} <= names
+    assert {"base_to_mount", "mount_to_arm", "arm_to_spin"} <= names
 
 
 def test_renaming_nothing_leaves_the_layer_alone(toy: Any) -> None:

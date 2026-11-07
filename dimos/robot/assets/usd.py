@@ -191,17 +191,28 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
     return str(layer.ExportToString())
 
 
+def usd_frame_names(usd: str) -> set[str]:
+    """Every link and joint name ``usd`` carries, under the names they travel as."""
+    pxr = _pxr()
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
+    return {
+        prim.GetDisplayName() or prim.GetName()
+        for prim in stage.Traverse()
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+    }
+
+
 def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
-    """``usd`` with the named links and joints renamed.
+    """``usd`` with the named links and joints renamed; names it does not carry are ignored.
 
     A vendor description names its frames whatever it names them, which is rarely what the robot
-    they are bolted to calls them. This is the hook for saying so, on either side of the
-    namespace prefix: rename first to work in the subtree's own names, or rename after to work
-    in the prefixed ones.
+    they are bolted to calls them. This is the hook for saying so.
 
     Renames are applied simultaneously, so swapping a pair of names does what it looks like
-    rather than collapsing both onto one. A key that matches nothing is an error, because a
-    misspelt frame would otherwise be a silent no-op that only shows up as a broken scene.
+    rather than collapsing both onto one. A name this layer does not have is skipped rather
+    than refused, because one mapping is applied to every subtree of a scene and most keys are
+    meant for exactly one of them; whether a key matched *anywhere* is the caller's to check
+    (see usd_frame_names).
     """
     if not renames:
         return usd
@@ -213,18 +224,14 @@ def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
         for prim in stage.Traverse()
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
     ]
-    present = {prim.GetDisplayName() or prim.GetName() for prim in frames}
-    missing = sorted(set(renames) - present)
-    if missing:
-        raise ValueError(
-            f"cannot rename {missing}: this subtree has no such link or joint "
-            f"(it has {sorted(present)})"
-        )
     # Read every name before writing any, so a -> b alongside b -> a is a swap.
-    for prim, name in [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]:
+    named = [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]
+    changed = False
+    for prim, name in named:
         if name in renames:
             prim.SetDisplayName(renames[name])
-    return str(layer.ExportToString())
+            changed = True
+    return str(layer.ExportToString()) if changed else usd
 
 
 def resolve_usd_assets(usd: str, root: str) -> str:
