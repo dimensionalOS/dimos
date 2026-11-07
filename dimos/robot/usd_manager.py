@@ -22,7 +22,6 @@ from pathlib import Path
 from threading import RLock
 import time
 from typing import Any
-import xml.etree.ElementTree as ET
 
 import numpy as np
 from pydantic import Field, field_validator
@@ -36,7 +35,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
@@ -177,10 +176,12 @@ class Mount:
 
 
 class UsdManagerConfig(ModuleConfig):
-    # The robot this manager answers for. None gives a single link called "world" and nothing
-    # else, which is a scene with no robot of its own -- useful when all this manager does is
-    # hold mounts, so a tree of sensors and arms has somewhere to hang from.
-    model: RobotModel | None = None
+    # The robot this manager answers for: a URDF to convert, or a USD layer to serve as it is
+    # (a simulated world, say, which is already USD). None gives a single link called "world"
+    # and nothing else, which is a scene with no robot of its own -- useful when all this
+    # manager does is hold mounts, so a tree of sensors and arms has somewhere to hang from.
+    # A UsdModel has no joints, so nothing is posed on tf from one.
+    model: RobotModel | UsdModel | None = None
     # Keep the frames, drop the shapes: the links, joints and poses stay, the visuals and
     # collision meshes go. The same description then serves a real robot and a simulated one,
     # since only the sim needs the geometry, and the mount points stay identical either way.
@@ -235,7 +236,7 @@ class UsdManager(Module):
         super().__init__(**kwargs)
         self._lock = RLock()
         self._description = (self.config.model or _world_model()).load()
-        self._file_paths = _files_named_by(self._description.xml)
+        self._file_paths = self._description.referenced_files()
         self._joints = {joint.name: joint for joint in self._description.joints}
         # tf_renames reach this robot's own frames too, so every name it emits goes through here.
         self._frames = self._renamed_own_frames()
@@ -269,6 +270,9 @@ class UsdManager(Module):
 
     def _own_frame_names(self) -> set[str]:
         """Every link and joint name of this robot's own description, before any rename."""
+        if isinstance(self._description, UsdModel):
+            # No joints to walk: a USD layer's frames are the prims it declares.
+            return usd_frame_names(self._description.usd)
         names = {self._description.root_link}
         for joint in self._joints.values():
             names |= {joint.name, joint.parent_link, joint.child_link}
@@ -339,7 +343,11 @@ class UsdManager(Module):
         """
         with self._usd_lock:
             if self._usd is None:
-                usd = urdf_to_usd(self._description)
+                usd = (
+                    self._description.usd
+                    if isinstance(self._description, UsdModel)
+                    else urdf_to_usd(self._description)
+                )
                 if self.config.trivialize:
                     usd = trivialize_usd(usd)
                 # Renamed here as well as on tf, or the layer would name frames that no
@@ -556,8 +564,14 @@ class UsdManager(Module):
                 f"an asset the last scene published"
             )
             return
-        data = await asyncio.to_thread(Path(real).read_bytes)
+        data = await asyncio.to_thread(self._resolved(real).read_bytes)
         self.file_info.publish(File(name, data))
+
+    def _resolved(self, path: str) -> Path:
+        """An asset path as a file to open: a relative one is relative to the description."""
+        found = Path(path)
+        root = self._asset_root()
+        return found if found.is_absolute() or not root else Path(root) / found
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
@@ -630,12 +644,3 @@ def _is_circular_mount(exc: BaseException) -> bool:
         return True
     wanted = f"{CircularMountError.__module__}.{CircularMountError.__name__}"
     return getattr(exc, "remote_type", None) == wanted
-
-
-def _files_named_by(xml: str) -> set[str]:
-    """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
-    return {
-        element.attrib["filename"]
-        for element in ET.fromstring(xml).iter()
-        if "filename" in element.attrib
-    }

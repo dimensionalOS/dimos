@@ -29,6 +29,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.usd_manager import MULTI_DOF_JOINT_TYPES, UsdManager, UsdManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -58,6 +59,15 @@ class UsdManagerPointClearing(UsdManager):
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        if isinstance(self._description, UsdModel):
+            # RoboPlan builds its collision model from the URDF; there is no equivalent read
+            # of a USD layer, so this subclass needs the description a filter can be built from.
+            self.dispose()
+            raise ValueError(
+                f"{type(self).__name__} needs a RobotModel: the body filter is built from the "
+                f"URDF's collision geometry, and a UsdModel carries none it can read. Use a "
+                f"plain UsdManager for a USD scene."
+            )
         self._body_filter: RobotBodyFilter = RoboPlanBodyFilter(
             self._description, self.config.padding_m
         )
