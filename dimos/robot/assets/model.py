@@ -187,10 +187,34 @@ class UsdModel:
                 f"it as .usda"
             ) from error
 
+    @cached_property
+    def _poseable(self) -> LoadedRobotModel:
+        """The layer read back as a URDF, which is the only form a joint can be posed from.
+
+        A joint in USD is a UsdPhysics prim: it states an axis and a pair of bodies, not a
+        parent-to-child transform at an angle. Forward kinematics lives in RobotModel, so a
+        layer that was never a URDF is converted into one here rather than teaching a second
+        copy of the same maths to read prims.
+
+        Unlike everything else on this class, this needs usd-core even for tf. That is the
+        price of describing a robot in USD and nothing else: a URDF-described robot still
+        poses itself on a machine with no pxr, which is the line two tests hold.
+        """
+        from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+
+        source = self.source_path
+        return RobotModel.from_urdf_string(
+            usd_to_urdf(self.usd), asset_dir=None if source is None else source.parent
+        ).load()
+
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        """The joints to pose on tf, which only a URDF states in a form that can be posed."""
-        return () if self._urdf is None else self._urdf.joints
+        """The joints to pose on tf.
+
+        Off the URDF where there was one, so a URDF-described robot never reads a layer to
+        pose itself. A layer read off disk has to be converted back; see _poseable.
+        """
+        return self._urdf.joints if self._urdf is not None else self._poseable.joints
 
     @property
     def root_link(self) -> str:
