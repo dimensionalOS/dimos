@@ -17,7 +17,6 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
-from dimos.robot.deeprobotics.m20.camera.module import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
 from dimos.robot.deeprobotics.m20.rerun import m20_rerun_config
@@ -26,7 +25,6 @@ from dimos.visualization.vis_module import vis_module
 
 m20 = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
-    M20CameraRelay.blueprint(instance_name="M20CameraRelay"),
     M20Connection.blueprint(auto_stand=True).remappings([(M20Connection, "odometry", "slam_odom")]),
     UrdfManager.blueprint(model=M20_MODEL),
     M20StandingJointState.blueprint(),
