@@ -23,7 +23,7 @@ from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 
 VOXEL_SIZE_M = 0.08
