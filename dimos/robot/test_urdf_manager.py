@@ -367,7 +367,7 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_render_file_request_serves_the_urdf_and_only_files_it_names(
+def test_render_file_request_serves_the_usd_and_only_files_it_names(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
@@ -391,18 +391,20 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
     cube = str((package / "meshes" / "cube.stl").resolve())
     texture = str((package / "textures" / "skin.png").resolve())
 
-    # the URDF and the files by the full paths it names; anything else on disk gets nothing
+    # the scene and the files by the full paths it names; the URDF and anything else gets nothing
+    pytest.importorskip("pxr")
     for request in (
-        str(urdf),
+        "robot.usda",
         cube,
         texture,
+        str(urdf),
         str(package / "meshes"),
         "package://box/meshes/cube.stl",
     ):
         asyncio.run(module.handle_render_file_request(String(request)))
 
-    assert [file.uri for file in sent] == [str(urdf), cube, texture]
-    assert f'filename="{cube}"' in sent[0].data.decode()
+    assert [file.uri for file in sent] == ["robot.usda", cube, texture]
+    assert sent[0].data.decode().startswith("#usda")
     assert File.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
     assert sent[2].data == b"png bytes"
 
@@ -643,7 +645,8 @@ def test_get_scene_without_mounts_is_just_the_robot(
     pytest.importorskip("pxr")
     module = make_manager()
 
-    assert _scene_answer(module) == module.get_usd()
+    # Same layer; only the root differs, since a published scene resolves nothing off disk.
+    assert _scene(module) == module.get_usd()[USD]
 
 
 def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
@@ -1353,3 +1356,30 @@ def test_a_circular_mount_is_recognised_across_a_process_boundary() -> None:
 
 def test_an_ordinary_rpc_failure_is_not_mistaken_for_a_cycle() -> None:
     assert not _is_circular_mount(RuntimeError("circular mount is only a phrase in here"))
+
+
+def test_render_file_request_serves_the_whole_scene_once_one_is_assembled(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """A renderer wants the tree it is drawing, not just the robot at the root of it."""
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+    sent: list[File] = []
+    module.file_info.publish = sent.append  # type: ignore[method-assign]
+    _scene(module)
+
+    asyncio.run(module.handle_render_file_request(String("scene.usd")))
+
+    assert "fake_arm" in sent[0].data.decode()
+
+
+def test_the_published_scene_carries_no_asset_root_to_resolve_against(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """Every path in it is a name this manager answers for, not a path on anyone's disk."""
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    assert _scene_answer(module)[0] == ""

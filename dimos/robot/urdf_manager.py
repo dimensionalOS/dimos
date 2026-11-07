@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One URDF and the live joint state: every joint on tf, and the URDF and its files for renderers."""
+"""One URDF and the live joint state: every joint on tf, and the robot as USD for renderers."""
 
 from __future__ import annotations
 
@@ -86,6 +86,10 @@ def _world_model() -> RobotModel:
 # names no files.
 ASSET_ROOT, USD = 0, 1
 
+# What a renderer asks for to get the scene itself. The URDF is this module's input, not its
+# output: what it serves is USD.
+USD_SUFFIXES = (".usd", ".usda")
+
 # get_scene waits forever, so say so periodically rather than hang silently.
 _WAITING_LOG_EVERY = 20
 
@@ -96,8 +100,8 @@ class Mount:
 
     Both come apart from the class as soon as a robot has two of the same arm. The class is
     shared, so only the deployed instance name reaches the right one, and the description is
-    shared, so only its namespace tells their frames apart. Build one with
-    ``Mount.of(...)`` rather than by hand.
+    shared, so only its namespace tells their frames apart. The mounts config builds these;
+    nothing constructs one by hand.
     """
 
     # None when only the instance name was given: the class is not importable here, so the
@@ -209,15 +213,15 @@ class UrdfManagerConfig(ModuleConfig):
 
 
 class UrdfManager(Module):
-    """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
+    """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
     config: UrdfManagerConfig
 
     # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
-    # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
-    # gets that file. Either goes out on file_info named as requested.
+    # A request for a *.usd or *.usda gets the scene as a USD layer; one for a file that layer
+    # names (mesh, texture, splat, ...) gets that file. Either goes out on file_info as requested.
     render_file_request: In[String]
     file_info: Out[File]
 
@@ -235,6 +239,9 @@ class UrdfManager(Module):
         self._usd: str | None = None
         # Its own lock: baking meshes into a USD takes seconds, and self._lock is on the tf path.
         self._usd_lock = RLock()
+        # The last scene get_scene assembled. A renderer wants the whole tree, not just this
+        # robot, and only get_scene knows what is mounted.
+        self._scene: str | None = None
         # Keyed by remote name: two instances of one class are two different modules to ask.
         self._subtree_clients: dict[str, RPCClient] = {}
         # What the last scene promised to answer for: public asset path -> the real file.
@@ -369,7 +376,10 @@ class UrdfManager(Module):
         # file. So the scene leaves under names this manager answers for instead.
         published, assets = await asyncio.to_thread(publish_usd_assets, scene)
         self._published_assets = assets
-        return [root[ASSET_ROOT], published]
+        self._scene = published
+        # No asset root: every path in the published scene is a name this manager answers for
+        # over render_file_request, not a path that resolves against a directory on any disk.
+        return ["", published]
 
     @property
     def _scene_identity(self) -> str:
@@ -523,8 +533,9 @@ class UrdfManager(Module):
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
-        if name.endswith(".urdf"):
-            self.file_info.publish(File(name, self._description.xml.encode()))
+        if name.endswith(USD_SUFFIXES):
+            usd = self._scene if self._scene is not None else self.get_usd()[USD]
+            self.file_info.publish(File(name, usd.encode()))
             return
         # Only files this manager has published: a request is never an arbitrary path into the
         # filesystem. That is the URDF's own names, plus the public names the last scene handed
