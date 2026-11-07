@@ -59,6 +59,16 @@ SUBTREE_RPC = "get_usd"
 # has one; a plain sensor does not.
 SCENE_RPC = "get_scene"
 
+
+# The root link a manager given no model stands on.
+WORLD_LINK = "world"
+
+
+def _world_model() -> RobotModel:
+    """The stand-in description for a manager given no model: one link, called "world"."""
+    return RobotModel.from_root_link(WORLD_LINK, name=WORLD_LINK)
+
+
 # What get_usd and get_scene answer with: [asset_root, usd].
 #
 # A USD layer names its meshes relative to something, and only the module that answered for it
@@ -156,7 +166,10 @@ class Mount:
 
 
 class UrdfManagerConfig(ModuleConfig):
-    model: RobotModel
+    # The robot this manager answers for. None gives a single link called "world" and nothing
+    # else, which is a scene with no robot of its own -- useful when all this manager does is
+    # hold mounts, so a tree of sensors and arms has somewhere to hang from.
+    model: RobotModel | None = None
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -215,7 +228,7 @@ class UrdfManager(Module):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._description = self.config.model.load()
+        self._description = (self.config.model or _world_model()).load()
         self._file_paths = _files_named_by(self._description.xml)
         self._joints = {joint.name: joint for joint in self._description.joints}
         self._next_joint_tf_t = 0.0

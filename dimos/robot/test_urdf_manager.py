@@ -1159,3 +1159,54 @@ def test_the_mount_chain_travels_to_a_mounted_manager(
     _scene(module)
 
     assert client.chains == [["UrdfManager"]]
+
+
+def test_a_manager_with_no_model_stands_on_a_world_link() -> None:
+    """A manager whose only job is to hold mounts needs somewhere to hang them from.
+
+    So no model gives a single link called "world" rather than refusing to start.
+    """
+    pytest.importorskip("pxr")
+    module = UrdfManager()
+    try:
+        stage = _usd_stage(module.get_usd()[1])
+
+        assert module._description.root_link == "world"
+        assert stage.GetDefaultPrim().GetName() == "world"
+    finally:
+        module.dispose()
+
+
+def test_a_world_manager_has_no_asset_root_to_offer() -> None:
+    # There is no description file, so there is no directory its paths could resolve against.
+    module = UrdfManager()
+    try:
+        assert module.get_usd()[0] == ""
+    finally:
+        module.dispose()
+
+
+def test_a_world_manager_still_publishes_no_joint_tf() -> None:
+    # One link and no joints, so there is nothing to pose.
+    module = UrdfManager()
+    try:
+        assert module.joint_transforms(JointState()) == []
+    finally:
+        module.dispose()
+
+
+def test_mounts_hang_off_the_world_link_of_a_manager_with_no_model(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # The point of the world root: a tree of sensors and arms with no robot of its own.
+    pytest.importorskip("pxr")
+    module = UrdfManager(mounts={"world": _FakeG1, "g1/head_mount": _FakeArm})
+    try:
+        module._subtree_clients["_FakeG1"] = cast("Any", _FakeClient(_G1_WITH_HEAD_USD))
+        module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+        stage = _usd_stage(_scene(module))
+
+        assert stage.GetPrimAtPath("/world/world/g1/head_mount/fake_arm")
+    finally:
+        module.dispose()
