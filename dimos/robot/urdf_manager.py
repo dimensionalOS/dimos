@@ -41,6 +41,7 @@ from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
     rename_usd_frames,
+    require_asset_hashes,
     resolve_usd_assets,
     urdf_to_usd,
     usd_frame_names,
@@ -417,6 +418,14 @@ class UrdfManager(Module):
             answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id, mount, chain)
             if answer is not None:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
+                # Refused rather than retried: a subtree whose assets are not identified by
+                # content will not become identified by asking again, and the error carries
+                # the hashes it should have had.
+                await asyncio.to_thread(
+                    require_asset_hashes,
+                    answer[USD],
+                    what=f"the subtree {name} answered for frame {frame_id!r}",
+                )
                 return await asyncio.to_thread(self._adopt, answer, mount)
             if attempts % _WAITING_LOG_EVERY == 0:
                 logger.warning(

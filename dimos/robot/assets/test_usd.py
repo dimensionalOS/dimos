@@ -24,9 +24,12 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
     SOURCE_KEY,
+    asset_hash,
     graft_usd,
     prefix_usd_frames,
     rename_usd_frames,
+    require_asset_hashes,
+    unhashed_assets,
     urdf_to_usd,
     usd_frame_names,
 )
@@ -556,3 +559,85 @@ def test_a_floating_joint_gets_no_joint_prim(floater: Any) -> None:
     stage = _stage(urdf_to_usd(floater))
 
     assert not stage.GetPrimAtPath("/floater/joints/floating_base_joint")
+
+
+_HASHED_URDF = """<?xml version="1.0"?>
+<robot name="hashy">
+  <link name="base_link">
+    <visual><geometry><mesh filename="meshes/arm.stl"/></geometry></visual>
+  </link>
+</robot>
+"""
+
+
+@pytest.fixture
+def hashy(tmp_path: Path) -> Any:
+    (tmp_path / "meshes").mkdir()
+    (tmp_path / "meshes" / "arm.stl").write_bytes(b"solid arm\nendsolid arm\n")
+    urdf = tmp_path / "hashy.urdf"
+    urdf.write_text(_HASHED_URDF)
+    return RobotModel.from_file(urdf).load()
+
+
+def test_a_mesh_is_identified_by_the_hash_of_its_contents(hashy: Any) -> None:
+    """A path alone cannot say whether the file fetched is the file meant."""
+    stage = _stage(urdf_to_usd(hashy))
+    prim = stage.GetPrimAtPath("/hashy/base_link/visual_0")
+
+    expected = asset_hash(b"solid arm\nendsolid arm\n")
+    assert prim.GetAssetInfo()["version"] == expected
+
+
+def test_the_asset_identifier_is_the_path_it_references(hashy: Any) -> None:
+    stage = _stage(urdf_to_usd(hashy))
+    prim = stage.GetPrimAtPath("/hashy/base_link/visual_0")
+
+    assert prim.GetAssetInfo()["identifier"].path.endswith("meshes/arm.stl")
+
+
+def test_a_hashed_layer_passes_the_requirement(hashy: Any) -> None:
+    require_asset_hashes(urdf_to_usd(hashy), what="this layer")  # does not raise
+
+
+def test_a_layer_with_no_assets_at_all_passes(toy: Any) -> None:
+    # Nothing to identify, so nothing to refuse.
+    require_asset_hashes(urdf_to_usd(toy), what="this layer")
+
+
+def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: Any) -> None:
+    """The answer is the fix: the error carries the value to paste.
+
+    That matters most for a layer that is written by hand or baked into a constant, where
+    there is no converter to have done it for you.
+    """
+    usd = urdf_to_usd(hashy).replace("string version", "string notversion")
+
+    with pytest.raises(ValueError) as caught:
+        require_asset_hashes(usd, what="the subtree from SomeSensor")
+
+    message = str(caught.value)
+    assert "the subtree from SomeSensor" in message
+    assert "meshes/arm.stl" in message
+    assert asset_hash(b"solid arm\nendsolid arm\n") in message
+
+
+def test_an_unreadable_asset_is_refused_but_says_where_to_hash_it(toy: Any, tmp_path: Path) -> None:
+    # A consumer cannot hash a file it does not have; it can still say what is wrong.
+    urdf = tmp_path / "gone.urdf"
+    urdf.write_text(
+        '<?xml version="1.0"?><robot name="gone"><link name="base_link">'
+        '<visual><geometry><mesh filename="/nowhere/at/all.stl"/></geometry></visual>'
+        "</link></robot>"
+    )
+    usd = urdf_to_usd(RobotModel.from_file(urdf).load())
+
+    with pytest.raises(ValueError, match="hash it where the file lives"):
+        require_asset_hashes(usd, what="this layer")
+
+
+def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
+    usd = urdf_to_usd(hashy).replace("string version", "string notversion")
+
+    missing = unhashed_assets(usd)
+
+    assert list(missing.values()) == ["/hashy/base_link/visual_0"]

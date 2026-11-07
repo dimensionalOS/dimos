@@ -492,6 +492,10 @@ def _subtree_usd(prim: str, link: str, mesh: str | None = None) -> str:
         if mesh is None
         else f"""
     def Mesh "visual_0" (
+        assetInfo = {{
+            asset identifier = @{mesh}@
+            string version = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }}
         prepend references = @{mesh}@
     )
     {{

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
@@ -46,6 +47,11 @@ logger = setup_logger()
 # Their pose comes from odometry rather than the model, so they have no single position and
 # no UsdPhysics equivalent matching URDF's semantics. Kept in step with UsdManager's own set.
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
+
+# Assets are identified by content, so a consumer can tell whether what it fetched is what the
+# description meant. The algorithm is in the value, so this can change without the old values
+# becoming unreadable.
+HASH_ALGORITHM = "sha256"
 
 PASSTHROUGH_KEY = "urdf:unconverted"
 SOURCE_KEY = "urdf:source"
@@ -145,6 +151,7 @@ def urdf_to_usd(
         children=children,
         paths=paths,
         extras=link_extras,
+        base_dir=Path(model.source_path).parent if model.source_path else None,
     )
     _write_joints(
         pxr,
@@ -290,6 +297,12 @@ def resolve_usd_assets(usd: str, root: str) -> str:
                 spec.referenceList.explicitItems = rebased
             else:
                 spec.referenceList.prependedItems = rebased
+        # assetInfo names the same file, so it moves with it or the two disagree.
+        identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+        if identifier is not None and not Path(str(identifier.path)).is_absolute():
+            # assetInfo is a proxy, not a dict: set the key on it rather than assigning a copy.
+            spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
+            changed = True
         stack.extend(spec.nameChildren)
     return str(layer.ExportToString()) if changed else usd
 
@@ -354,6 +367,7 @@ def _write_link_tree(
     children: Mapping[str, Sequence[JointDescription]],
     paths: dict[str, str],
     extras: Mapping[str, Sequence[str]],
+    base_dir: Path | None,
     joint: JointDescription | None = None,
 ) -> None:
     """Define the prim for ``link`` under ``parent_path``, then recurse into its children."""
@@ -377,6 +391,7 @@ def _write_link_tree(
             stage,
             f"{prim_path}/{_geometry_name(geometry, index)}",
             geometry,
+            base_dir,
         )
 
     for child_joint in children.get(link, ()):
@@ -389,6 +404,7 @@ def _write_link_tree(
             children=children,
             paths=paths,
             extras=extras,
+            base_dir=base_dir,
             joint=child_joint,
         )
 
@@ -410,8 +426,10 @@ def _zero_pose(joint: JointDescription) -> NDArray[np.float64]:
     return joint.parent_from_child(0.0)
 
 
-def _write_geometry(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> None:
-    gprim = _define_gprim(pxr, stage, path, geometry)
+def _write_geometry(
+    pxr: Any, stage: Any, path: str, geometry: _Geometry, base_dir: Path | None
+) -> None:
+    gprim = _define_gprim(pxr, stage, path, geometry, base_dir)
     if gprim is None:
         return
     gprim.AddTransformOp().Set(_matrix(pxr, geometry.origin))
@@ -423,7 +441,9 @@ def _write_geometry(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Non
         pxr.UsdPhysics.CollisionAPI.Apply(gprim.GetPrim())
 
 
-def _define_gprim(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Any:
+def _define_gprim(
+    pxr: Any, stage: Any, path: str, geometry: _Geometry, base_dir: Path | None
+) -> Any:
     if geometry.kind == "box":
         cube = pxr.UsdGeom.Cube.Define(stage, path)
         # A Cube is a unit cube scaled to the box's extents: USD has no three-sided box.
@@ -441,12 +461,14 @@ def _define_gprim(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Any:
         sphere.CreateRadiusAttr(geometry.size[0])
         return sphere
     if geometry.kind == "mesh" and geometry.filename is not None:
-        return _define_mesh(pxr, stage, path, geometry)
+        return _define_mesh(pxr, stage, path, geometry, base_dir)
     logger.warning(f"skipping URDF geometry of unsupported kind {geometry.kind!r}")
     return None
 
 
-def _define_mesh(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Any:
+def _define_mesh(
+    pxr: Any, stage: Any, path: str, geometry: _Geometry, base_dir: Path | None
+) -> Any:
     """A reference to the file the URDF named. Nothing is read, parsed or converted here.
 
     A reference is USD's own way to say "this geometry lives over there", so the mesh needs no
@@ -458,7 +480,9 @@ def _define_mesh(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> Any:
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
     mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
     # The path the URDF named, kept verbatim: those are the names UsdManager answers for.
-    mesh.GetPrim().GetReferences().AddReference(geometry.filename)
+    prim = mesh.GetPrim()
+    prim.GetReferences().AddReference(geometry.filename)
+    _set_asset_info(pxr, prim, geometry.filename, base_dir)
     return mesh
 
 
@@ -621,6 +645,91 @@ def _urdf_extras(xml: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         and (extras := _passthrough_xml(joint, _UNDERSTOOD_JOINT_TAGS))
     }
     return links, joints
+
+
+def asset_hash(data: bytes) -> str:
+    """The hash an asset is identified by, in the form assetInfo["version"] carries."""
+    return f"{HASH_ALGORITHM}:{hashlib.new(HASH_ALGORITHM, data).hexdigest()}"
+
+
+def hash_of_file(path: str, base_dir: Path | None = None) -> str | None:
+    """``path``'s asset hash, or None when it cannot be read from here."""
+    resolved = Path(path)
+    if not resolved.is_absolute() and base_dir is not None:
+        resolved = base_dir / resolved
+    try:
+        return asset_hash(resolved.read_bytes())
+    except OSError:
+        return None
+
+
+def _set_asset_info(pxr: Any, prim: Any, filename: str, base_dir: Path | None) -> None:
+    """Identify the asset this prim references, and hash it if it can be read.
+
+    assetInfo is USD's own metadata for exactly this, and ``version`` is its own key for which
+    one of them this is, so a consumer can tell whether the file it fetched is the file the
+    description meant without knowing anything about us.
+    """
+    prim.SetAssetInfoByKey("identifier", pxr.Sdf.AssetPath(filename))
+    digest = hash_of_file(filename, base_dir)
+    if digest is None:
+        # The converter runs where the description lives, so this is worth saying out loud.
+        logger.warning(f"cannot hash {filename!r}: not readable from here, so it gets no hash")
+        return
+    prim.SetAssetInfoByKey("version", digest)
+
+
+def unhashed_assets(usd: str) -> dict[str, str]:
+    """Every asset ``usd`` references without a hash, mapped to the prim path carrying it."""
+    pxr = _pxr()
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
+    missing: dict[str, str] = {}
+    for prim in stage.Traverse():
+        info = prim.GetAssetInfo() or {}
+        for asset in _referenced_assets(pxr, prim):
+            if not info.get("version"):
+                missing[asset] = str(prim.GetPath())
+    return missing
+
+
+def _referenced_assets(pxr: Any, prim: Any) -> list[str]:
+    """The asset paths this prim references, as authored."""
+    assets = []
+    for spec in prim.GetPrimStack():
+        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+        assets += [ref.assetPath for ref in items if ref.assetPath]
+    assert pxr  # the pxr bundle is what opened the stage these specs came from
+    return assets
+
+
+def require_asset_hashes(usd: str, *, what: str) -> None:
+    """Refuse a layer whose assets are not identified by content.
+
+    An asset path only means something on the machine that wrote it, so a hash is the only way
+    a consumer can tell that what it fetched is what the description meant. Rather than just
+    say no, the error carries the hash each one should have been given, computed here wherever
+    the file can still be read -- so the answer is the fix, ready to paste.
+    """
+    missing = unhashed_assets(usd)
+    if not missing:
+        return
+    lines = []
+    for asset, prim_path in sorted(missing.items()):
+        digest = hash_of_file(asset)
+        lines.append(
+            f"  {asset}  (at {prim_path})\n"
+            + (
+                f"    assetInfo version: {digest}"
+                if digest
+                else "    unreadable from here, so hash it where the file lives"
+            )
+        )
+    listed = "\n".join(lines)
+    raise ValueError(
+        f"{what} references {len(missing)} asset(s) with no hash. Every asset needs one: a "
+        f"path alone cannot say whether the file fetched is the file meant. Set "
+        f'assetInfo["version"] on each prim below (urdf_to_usd does this for you):\n{listed}'
+    )
 
 
 def _set_passthrough(pxr: Any, prim: Any, xml: Sequence[str] | None) -> None:
