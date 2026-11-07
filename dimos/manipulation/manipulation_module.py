@@ -21,11 +21,12 @@ from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import replace
+from importlib import import_module
 import math
 import threading
 import time
 import traceback
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, get_type_hints
 
 import numpy as np
 from pydantic import Field, model_validator
@@ -213,6 +214,18 @@ class ManipulationModule(Module):
     voxel_map: In[PointCloud2]
     objects: In[list[DetObject]]
     tf: Out[TFMessage]
+
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        default_backend = get_type_hints(cls)["config"].model_fields["world_backend"].default
+        if kwargs.get("world_backend", default_backend) == "roboplan":
+            try:
+                import_module("roboplan.core")
+            except ImportError as exc:
+                raise ImportError(
+                    "RoboPlanWorld requires the optional roboplan dependency. "
+                    "Install the manipulation extra before selecting the roboplan backend."
+                ) from exc
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

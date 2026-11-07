@@ -207,6 +207,14 @@ class ModuleBase(Configurable, CompositeResource):
         Default is a no-op — override in subclasses that need a build step.
         """
 
+    @classmethod
+    def check_dependencies(cls, **kwargs: Any) -> None:
+        """Raise ImportError with an install hint before starting any workers.
+
+        Receives resolved module arguments without constructing the module.
+        Overrides must not create runtime resources.
+        """
+
     @rpc
     def start(self) -> None:
         self._start_main()

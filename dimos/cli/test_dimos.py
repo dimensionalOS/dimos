@@ -311,6 +311,52 @@ def stubbed_run(
         global_config.update(**original_global_config)
 
 
+@pytest.mark.parametrize("run_options", [[], ["--daemon"]])
+def test_run_reports_missing_dependency_before_starting(
+    stubbed_run: dict[str, Any],
+    mocker: MockerFixture,
+    run_options: list[str],
+) -> None:
+    hint = (
+        "RoboPlanWorld requires the optional roboplan dependency. "
+        "Install the manipulation extra before selecting the roboplan backend."
+    )
+    mocker.patch.object(RunModuleA, "check_dependencies", side_effect=ImportError(hint))
+    fork_daemon = mocker.patch.object(lifecycle, "fork_daemon")
+
+    result = CliRunner().invoke(main, ["run", "alpha", "beta", *run_options])
+
+    assert result.exit_code == 1
+    assert f"Error: {hint}" in result.output
+    assert result.output.count(hint) == 1
+    assert "Traceback" not in result.output
+    assert "health check" not in result.output.lower()
+    assert stubbed_run == {}
+    fork_daemon.assert_not_called()
+
+
+def test_run_leaves_hosted_dependency_checks_to_the_host(
+    stubbed_run: dict[str, Any],
+    mocker: MockerFixture,
+) -> None:
+    check_dependencies = mocker.patch.object(
+        RunModuleA, "check_dependencies", side_effect=ImportError("dependency missing locally")
+    )
+    mocker.patch.object(
+        get_all_blueprints,
+        "get_by_name_or_exit",
+        return_value=RunModuleA.blueprint().hosted(host="robot-host"),
+    )
+    run_hosted = mocker.patch.object(lifecycle, "_run_hosted")
+
+    result = CliRunner().invoke(main, ["run", "alpha"])
+
+    assert result.exit_code == 0, result.output
+    check_dependencies.assert_not_called()
+    run_hosted.assert_called_once()
+    assert "blueprint" not in stubbed_run
+
+
 @pytest.mark.parametrize(
     ("exec_handoff", "expected_run_id"),
     [(True, "launcher-run"), (False, "test-alpha")],
