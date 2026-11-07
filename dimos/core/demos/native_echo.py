@@ -21,6 +21,7 @@ args as JSON to the output file, then waits for SIGTERM.
 
 import argparse
 import json
+import os
 import signal
 import sys
 import time
@@ -36,8 +37,10 @@ parser.add_argument("--die_after", type=float, default=None)
 args, _ = parser.parse_known_args()
 
 if args.output_file:
-    with open(args.output_file, "w") as f:
+    # Rename into place: tests poll for the file and must never see it empty.
+    with open(args.output_file + ".tmp", "w") as f:
         json.dump(sys.argv[1:], f)
+    os.replace(args.output_file + ".tmp", args.output_file)
 
 print("my args:", json.dumps(sys.argv[1:]))
 
