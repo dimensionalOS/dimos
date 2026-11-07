@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import (
     MujocoSimModule,
@@ -463,5 +464,49 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         _run_publish_loop(module, frame_ts)
         elapsed = time.monotonic() - start
         assert elapsed >= (len(frame_ts) - 1) / fps
+    finally:
+        module.stop()
+
+
+class _FakeSceneCameraEngine(_FakeCameraEngine):
+    """``_FakeCameraEngine``'s wrist frames plus one colour-only frame from a fixed scene camera."""
+
+    def read_camera(self, camera_name: str) -> CameraFrame | None:
+        if camera_name != "scene_camera":
+            return super().read_camera(camera_name)
+        return CameraFrame(
+            rgb=np.zeros((1, 1, 3), dtype=np.uint8),
+            depth=None,
+            cam_pos=np.array([1.0, -0.5, 0.75]),
+            cam_mat=np.eye(3),
+            fovy=50.0,
+            timestamp=1_000_000.0,
+        )
+
+
+def test_scene_camera_publishes_its_image_and_world_tf_only_when_configured() -> None:
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(fps=1000)
+        scene: list[Any] = []
+        tf: list[Any] = []
+        module.scene_image.subscribe(scene.append)
+        module.tf.subscribe(tf.append)
+
+        _run_publish_loop(module, [1_000_000.0])
+        assert scene == []
+
+        module.config = MujocoSimModuleConfig(fps=1000, scene_camera="scene_camera")
+        module._stop_event.clear()
+        module._engine = _FakeSceneCameraEngine([1_000_000.0], module._stop_event)
+        module._publish_loop()
+
+        [image] = scene
+        assert image.frame_id == "scene_camera"
+        assert image.format is ImageFormat.RGB
+        scene_tf = [t for msg in tf for t in msg.transforms if t.child_frame_id == "scene_camera"]
+        assert len(scene_tf) == 1
+        assert scene_tf[0].frame_id == "world"
+        assert np.allclose(scene_tf[0].translation.to_numpy(), [1.0, -0.5, 0.75])
     finally:
         module.stop()

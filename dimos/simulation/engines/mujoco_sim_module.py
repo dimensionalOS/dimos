@@ -287,6 +287,10 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # A second, colour-only camera (an MJCF camera name, usually fixed in the
+    # scene) published on ``scene_image`` at ``scene_camera_fps``; None for none.
+    scene_camera: str | None = None
+    scene_camera_fps: int = 10
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -347,6 +351,9 @@ class MujocoSimModule(
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
+    # The scene camera's colour image, in the frame named after the camera, and its intrinsics.
+    scene_image: Out[Image]
+    scene_camera_info: Out[CameraInfo]
     imu: Out[Imu]
     # Floating-base pose for robots whose MJCF has a free joint at the
     # root. Published every step; consumers like the viser viewer use
@@ -367,6 +374,7 @@ class MujocoSimModule(
         self._publish_thread: threading.Thread | None = None
         self._state_lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
+        self._scene_camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
         self._latest_frame_ts: float | None = None
         self._missing_bodies: set[str] = set()
@@ -493,6 +501,14 @@ class MujocoSimModule(
         )
         if primary_needed:
             add_camera(self.config.camera_name)
+        if self.config.scene_camera:
+            cameras_by_name[self.config.scene_camera] = CameraConfig(
+                name=self.config.scene_camera,
+                width=self.config.width,
+                height=self.config.height,
+                fps=float(self.config.scene_camera_fps),
+                depth=False,
+            )
 
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():
@@ -634,6 +650,7 @@ class MujocoSimModule(
             scene_xml=self.config.scene_xml,
             dof=dof,
             camera=self.config.camera_name,
+            scene_camera=self.config.scene_camera,
             shm_key=shm_key,
         )
 
@@ -721,6 +738,7 @@ class MujocoSimModule(
         self._sim_hooks = None
         with self._state_lock:
             self._camera_info_base = None
+            self._scene_camera_info_base = None
             self._latest_frame_ts = None
         super().stop()
 
@@ -878,28 +896,34 @@ class MujocoSimModule(
             self._shm_ready_signaled = True
 
     def _build_camera_info(self) -> None:
+        camera_info = self._camera_info_for(self.config.camera_name, self._color_optical_frame)
+        scene_info = None
+        if self.config.scene_camera:
+            scene_info = self._camera_info_for(self.config.scene_camera, self.config.scene_camera)
+        with self._state_lock:
+            self._camera_info_base = camera_info
+            self._scene_camera_info_base = scene_info
+
+    def _camera_info_for(self, camera_name: str, frame_id: str) -> CameraInfo | None:
+        """Pinhole intrinsics of an MJCF camera at the configured image size; None if missing."""
         if self._engine is None:
-            return
-        fovy_deg = self._engine.get_camera_fovy(self.config.camera_name)
+            return None
+        fovy_deg = self._engine.get_camera_fovy(camera_name)
         if fovy_deg is None:
-            logger.error("Camera not found in MJCF", camera_name=self.config.camera_name)
-            return
+            logger.error("Camera not found in MJCF", camera_name=camera_name)
+            return None
         h = self.config.height
         w = self.config.width
-        fovy_rad = math.radians(fovy_deg)
-        fy = h / (2.0 * math.tan(fovy_rad / 2.0))
-        fx = fy  # square pixels
-        camera_info = CameraInfo.from_intrinsics(
-            fx=fx,
+        fy = h / (2.0 * math.tan(math.radians(fovy_deg) / 2.0))
+        return CameraInfo.from_intrinsics(
+            fx=fy,  # square pixels
             fy=fy,
             cx=w / 2.0,
             cy=h / 2.0,
             width=w,
             height=h,
-            frame_id=self._color_optical_frame,
+            frame_id=frame_id,
         )
-        with self._state_lock:
-            self._camera_info_base = camera_info
 
     def _publish_loop(self) -> None:
         """Poll engine for rendered frames and publish at configured FPS."""
@@ -909,6 +933,7 @@ class MujocoSimModule(
 
         interval = 1.0 / self.config.fps
         last_timestamp = 0.0
+        last_scene_timestamp = 0.0
         published_count = 0
 
         # Wait for engine to actually be connected (sim thread may take a tick).
@@ -926,6 +951,11 @@ class MujocoSimModule(
             loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
+                scene_frame = (
+                    engine.read_camera(self.config.scene_camera)
+                    if self.config.scene_camera
+                    else None
+                )
             except RuntimeError as exc:
                 logger.error(
                     "MuJoCo render failed; stopping publish loop",
@@ -934,6 +964,10 @@ class MujocoSimModule(
                     exc_info=True,
                 )
                 return
+
+            if scene_frame is not None and scene_frame.timestamp > last_scene_timestamp:
+                last_scene_timestamp = scene_frame.timestamp
+                self._publish_scene_frame(scene_frame)
 
             if frame is None or frame.timestamp <= last_timestamp:
                 self._stop_event.wait(timeout=interval * 0.5)
@@ -952,7 +986,7 @@ class MujocoSimModule(
                 )
                 self.color_image.publish(color_img)
 
-            if self.config.enable_depth:
+            if self.config.enable_depth and frame.depth is not None:
                 depth_img = Image(
                     data=frame.depth,
                     format=ImageFormat.DEPTH,
@@ -968,7 +1002,7 @@ class MujocoSimModule(
                 logger.info(
                     "MujocoSimModule first frame published",
                     rgb_shape=frame.rgb.shape,
-                    depth_shape=frame.depth.shape,
+                    depth_shape=None if frame.depth is None else frame.depth.shape,
                 )
 
             elapsed = time.monotonic() - loop_start
@@ -979,21 +1013,32 @@ class MujocoSimModule(
     def _publish_camera_info(self) -> None:
         with self._state_lock:
             base = self._camera_info_base
-        if base is None:
-            return
+            scene_base = self._scene_camera_info_base
         ts = self._camera_info_ts()
-        info = CameraInfo(
-            height=base.height,
-            width=base.width,
-            distortion_model=base.distortion_model,
-            D=base.D,
-            K=base.K,
-            P=base.P,
-            frame_id=base.frame_id,
-            ts=ts,
+        if base is not None:
+            info = base.with_ts(ts)
+            self.camera_info.publish(info)
+            self.depth_camera_info.publish(info)
+        if scene_base is not None:
+            self.scene_camera_info.publish(scene_base.with_ts(ts))
+
+    def _publish_scene_frame(self, frame: CameraFrame) -> None:
+        """The scene camera's colour image and its optical frame in the world, at frame time."""
+        frame_id = self.config.scene_camera or ""
+        self.scene_image.publish(
+            Image(data=frame.rgb, format=ImageFormat.RGB, frame_id=frame_id, ts=frame.timestamp)
         )
-        self.camera_info.publish(info)
-        self.depth_camera_info.publish(info)
+        optical_rot = R.from_matrix(frame.cam_mat.reshape(3, 3)) * _RX180
+        self.tf.publish(
+            TFMessage(
+                _transform_from_matrix(
+                    _pose_matrix(frame.cam_pos, optical_rot.as_matrix()),
+                    frame_id="world",
+                    child_frame_id=frame_id,
+                    ts=frame.timestamp,
+                )
+            )
+        )
 
     def _publish_tf(self, ts: float, frame: CameraFrame | None) -> None:
         if frame is None:
@@ -1074,7 +1119,7 @@ class MujocoSimModule(
         if camera_info is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
-        if frame is None:
+        if frame is None or frame.depth is None:
             return
         try:
             color_img = Image(
