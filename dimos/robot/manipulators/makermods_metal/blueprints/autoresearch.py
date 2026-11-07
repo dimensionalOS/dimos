@@ -16,9 +16,12 @@
 bench, judged from the simulator's true object poses, and the successful
 episodes are recorded as a Quest-profile dataset."""
 
+from datetime import datetime
+
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.autoresearch.module import AutoresearchModule
 from dimos.autoresearch.truth_scene import TruthObject, TruthSceneModule
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import collect
@@ -35,15 +38,21 @@ METAL_BENCH_TRUTH = {
     "bowl": TruthObject(size=(0.10, 0.10, 0.04), centre=(0.0, 0.0, 0.02)),
 }
 
+#: A plain launch gets a timestamped session under the recordings folder and this
+#: task; a launcher passes its own session folder, task and budget.
+DEFAULT_TASK = "lift the cube"
+_DEFAULT_SESSION = RECORDINGS_DIR / f"autoresearch_metal_{datetime.now():%Y%m%d_%H%M%S}"
+
 # The recorder comes first so it stops after the producers it records, and the
 # lab after the arm so its stop can still cancel motion. No ManipulationSkills
 # and no PickAndPlaceModule: McpServer lists every @skill, and the actor must
-# have no movement tool of its own. The recorder's wrist image is the sim camera.
+# have no movement tool of its own. The recorder's wrist image is the sim camera,
+# and it writes into the session folder itself.
 autoresearch_metal_sim = autoconnect(
-    collect(profile=METAL_QUEST_PROFILE),
-    EpisodeMonitorModule.blueprint(instance_name="episodes"),
+    collect(profile=METAL_QUEST_PROFILE, recording=_DEFAULT_SESSION),
+    EpisodeMonitorModule.blueprint(instance_name="episodes", task=DEFAULT_TASK),
     metal_sim,
     TruthSceneModule.blueprint(objects=METAL_BENCH_TRUTH),
-    AutoresearchModule.blueprint(),
+    AutoresearchModule.blueprint(session_dir=_DEFAULT_SESSION, task=DEFAULT_TASK),
     McpServer.blueprint(),
 ).remappings([("recorder", "wrist_image", "color_image")])
