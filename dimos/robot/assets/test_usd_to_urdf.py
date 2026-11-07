@@ -294,3 +294,68 @@ def test_a_nested_layer_names_its_root_link() -> None:
     from dimos.robot.assets.usd_to_urdf import usd_root_link
 
     assert usd_root_link(_NESTED_USDA) == "chassis"
+
+
+_FLOATING_URDF = """<?xml version="1.0"?>
+<robot name="walker">
+  <link name="world"/>
+  <link name="pelvis">
+    <collision><geometry><box size="0.2 0.2 0.2"/></geometry></collision>
+  </link>
+  <link name="thigh"/>
+  <joint name="floating_base" type="floating">
+    <parent link="world"/><child link="pelvis"/>
+    <origin xyz="0 0 0.8" rpy="0 0 0"/>
+  </joint>
+  <joint name="hip" type="revolute">
+    <parent link="pelvis"/><child link="thigh"/>
+    <axis xyz="0 1 0"/><limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+</robot>
+"""
+
+
+@pytest.fixture
+def walker(tmp_path: Path) -> Any:
+    source = tmp_path / "walker.urdf"
+    source.write_text(_FLOATING_URDF)
+    return RobotModel.from_file(source).load()
+
+
+def test_a_floating_base_does_not_come_back_welded(walker: Any, tmp_path: Path) -> None:
+    """A floating joint is written as no joint prim, since a USD body with no joint is free.
+
+    That makes it indistinguishable from a nested, welded body, so the joint left out is
+    recorded on the child. Without that a walking robot's base comes back fixed at whatever
+    pose it was authored at, and anything posing it from odometry would be ignored.
+    """
+    back = _round_trip(walker, tmp_path)
+
+    joint = back.get_joint("floating_base")
+    assert joint is not None, [j.name for j in back.joints]
+    assert joint.type == "floating"
+    assert (joint.parent_link, joint.child_link) == ("world", "pelvis")
+    np.testing.assert_allclose(joint.origin_xyz, [0, 0, 0.8], atol=1e-6)
+
+
+def test_a_planar_joint_round_trips_too(tmp_path: Path) -> None:
+    source = tmp_path / "slider.urdf"
+    source.write_text(
+        '<robot name="slider"><link name="world"/><link name="body"/>'
+        '<joint name="planar_base" type="planar"><parent link="world"/>'
+        '<child link="body"/><origin xyz="0 0 0.1"/></joint></robot>'
+    )
+    loaded = RobotModel.from_file(source).load()
+
+    back = _round_trip(loaded, tmp_path)
+
+    joint = back.get_joint("planar_base")
+    assert joint is not None
+    assert joint.type == "planar"
+
+
+def test_a_nested_link_with_no_record_is_still_read_as_welded() -> None:
+    """A layer this converter did not write carries no record, and USD cannot say which."""
+    root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
+
+    assert [joint.get("type") for joint in root.findall("joint")] == ["fixed"]

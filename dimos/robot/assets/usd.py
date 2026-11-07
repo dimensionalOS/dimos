@@ -48,6 +48,12 @@ HASH_ALGORITHM = "sha256"
 # customData holding the URDF this converter does not read. Standard field, not an attribute.
 PASSTHROUGH_KEY = "urdf:unconverted"
 
+# A floating or planar joint is written as no joint prim at all, because in USD a rigid body
+# with no joint is already free. That is right, but it is also indistinguishable from a body
+# simply nested inside another, so the joint this converter chose not to express is recorded
+# on the child link. Without it, reading the layer back turns a floating base into a weld.
+FREE_JOINT_KEY = "urdf:freeJoint"
+
 _NO_USD = (
     "Reading or writing USD needs usd-core (pxr), which is in the 'scene-cooking' extra: "
     "uv sync --extra scene-cooking. On linux-aarch64 a wheel exists only from usd-core 26.11 "
@@ -366,6 +372,9 @@ def _write_joints(
             continue
         prim = _define_joint(pxr, stage, f"{scope.GetPath()}/{_identifier(pxr, joint.name)}", joint)
         if prim is None:
+            # No joint prim for a floating or planar joint, so say on the child what was left
+            # out; otherwise reading this layer back cannot tell it from a welded body.
+            _set_free_joint(pxr, stage.GetPrimAtPath(child), joint)
             continue
         prim.CreateBody0Rel().SetTargets([pxr.Sdf.Path(parent)])
         prim.CreateBody1Rel().SetTargets([pxr.Sdf.Path(child)])
@@ -609,6 +618,22 @@ def require_asset_hashes(usd: str, *, what: str) -> None:
         f"{what} references {len(missing)} asset(s) with no hash. Every asset needs one: a "
         f"path alone cannot say whether the file fetched is the file meant. Set "
         f'assetInfo["version"] on each prim below (urdf_to_usd does this for you):\n{listed}'
+    )
+
+
+def _set_free_joint(pxr: Any, prim: Any, joint: JointDescription) -> None:
+    """Record the joint that was deliberately not written, on the link it moves."""
+    if not prim:
+        return
+    prim.SetCustomDataByKey(
+        FREE_JOINT_KEY,
+        {
+            "name": joint.name,
+            "type": joint.type,
+            "parent": joint.parent_link,
+            "xyz": pxr.Vt.DoubleArray([float(value) for value in joint.origin_xyz]),
+            "rpy": pxr.Vt.DoubleArray([float(value) for value in joint.origin_rpy]),
+        },
     )
 
 
