@@ -40,6 +40,12 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+# Where a prim keeps the URDF that urdf_to_usd itself has no use for, and where the root prim
+# keeps the whole original document. customData is USD's own field for exactly this: data a
+# schema has no place for, readable by anything, and not an attribute of our invention.
+PASSTHROUGH_KEY = "urdf:unconverted"
+SOURCE_KEY = "urdf:source"
+
 # A prim's displayName carries the original URDF spelling of the link or joint it stands for.
 # USD prim names are identifiers, so "base-link" and "base:link" would both come out
 # "base_link"; displayName is the standard field for a name that is not so restricted, and it
@@ -58,10 +64,10 @@ def _pxr() -> Any:
     UsdManager on a Jetson must not need it, only asking one for a USD scene does.
     """
     try:
-        from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics
+        from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, Vt
     except ImportError as exc:  # pragma: no cover - exercised only where the extra is absent
         raise ImportError(_NO_USD) from exc
-    return _Pxr(Gf=Gf, Sdf=Sdf, Tf=Tf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics)
+    return _Pxr(Gf=Gf, Sdf=Sdf, Tf=Tf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics, Vt=Vt)
 
 
 @dataclass(frozen=True)
@@ -72,6 +78,7 @@ class _Pxr:
     Usd: Any
     UsdGeom: Any
     UsdPhysics: Any
+    Vt: Any
 
 
 @dataclass(frozen=True)
@@ -119,6 +126,11 @@ def urdf_to_usd(
     root = pxr.UsdGeom.Xform.Define(stage, f"/{_identifier(pxr, name)}")
     stage.SetDefaultPrim(root.GetPrim())
 
+    link_extras, joint_extras = _urdf_extras(model.xml)
+    # The whole document on the root, so a round trip through USD loses nothing at all, even
+    # the parts that belong to no link or joint (<material>, <gazebo> at robot level, ...).
+    root.GetPrim().SetCustomDataByKey(SOURCE_KEY, model.xml)
+
     paths: dict[str, str] = {}
     _write_link_tree(
         pxr,
@@ -128,8 +140,16 @@ def urdf_to_usd(
         links=links,
         children=children,
         paths=paths,
+        extras=link_extras,
     )
-    _write_joints(pxr, stage, root_path=str(root.GetPath()), joints=model.joints, paths=paths)
+    _write_joints(
+        pxr,
+        stage,
+        root_path=str(root.GetPath()),
+        joints=model.joints,
+        paths=paths,
+        extras=joint_extras,
+    )
     return str(stage.GetRootLayer().ExportToString())
 
 
@@ -329,6 +349,7 @@ def _write_link_tree(
     links: Mapping[str, Sequence[_Geometry]],
     children: Mapping[str, Sequence[JointDescription]],
     paths: dict[str, str],
+    extras: Mapping[str, Sequence[str]],
     joint: JointDescription | None = None,
 ) -> None:
     """Define the prim for ``link`` under ``parent_path``, then recurse into its children."""
@@ -341,6 +362,7 @@ def _write_link_tree(
     prim = xform.GetPrim()
     paths[link] = prim_path
     prim.SetDisplayName(link)
+    _set_passthrough(pxr, prim, extras.get(link))
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
     if joint is not None:
         xform.AddTransformOp().Set(_matrix(pxr, joint.parent_from_child(0.0)))
@@ -362,6 +384,7 @@ def _write_link_tree(
             links=links,
             children=children,
             paths=paths,
+            extras=extras,
             joint=child_joint,
         )
 
@@ -429,6 +452,7 @@ def _write_joints(
     root_path: str,
     joints: Sequence[JointDescription],
     paths: Mapping[str, str],
+    extras: Mapping[str, Sequence[str]],
 ) -> None:
     scope = pxr.UsdGeom.Scope.Define(stage, f"{root_path}/joints")
     for joint in joints:
@@ -443,6 +467,7 @@ def _write_joints(
         prim.CreateBody0Rel().SetTargets([pxr.Sdf.Path(parent)])
         prim.CreateBody1Rel().SetTargets([pxr.Sdf.Path(child)])
         prim.GetPrim().SetDisplayName(joint.name)
+        _set_passthrough(pxr, prim.GetPrim(), extras.get(joint.name))
         _set_joint_frames(pxr, prim, joint)
         _set_joint_limits(prim, joint)
 
@@ -540,6 +565,57 @@ def _links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geometry]
             ]
         links[name] = [geometry for geometry in geometries if geometry is not None]
     return links
+
+
+# What urdf_to_usd reads for itself. Everything else a <link> or <joint> carries is passed
+# through untouched rather than dropped, which is what <inertial>, <gazebo>, <transmission>,
+# <sensor> and any vendor tag amount to.
+_UNDERSTOOD_LINK_TAGS = frozenset({"visual", "collision"})
+_UNDERSTOOD_JOINT_TAGS = frozenset({"origin", "parent", "child", "axis", "limit", "mimic"})
+
+
+def _passthrough_xml(element: ET.Element, understood: frozenset[str]) -> list[str]:
+    """The children of ``element`` this converter does not read, as XML text."""
+    return [
+        ET.tostring(child, encoding="unicode").strip()
+        for child in element
+        if child.tag not in understood
+    ]
+
+
+def _urdf_extras(xml: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Per-link and per-joint XML that urdf_to_usd does not itself understand.
+
+    A URDF carries more than a kinematic tree and some geometry: mass and inertia, gazebo
+    blocks, transmissions, sensors, and whatever else a vendor put there. None of it means
+    anything to this converter, which is not a reason to lose it.
+    """
+    root = ET.fromstring(xml)
+    links = {
+        name: extras
+        for link in root.iter("link")
+        if (name := link.get("name")) is not None
+        and (extras := _passthrough_xml(link, _UNDERSTOOD_LINK_TAGS))
+    }
+    joints = {
+        name: extras
+        for joint in root.iter("joint")
+        if (name := joint.get("name")) is not None
+        and (extras := _passthrough_xml(joint, _UNDERSTOOD_JOINT_TAGS))
+    }
+    return links, joints
+
+
+def _set_passthrough(pxr: Any, prim: Any, xml: Sequence[str] | None) -> None:
+    """Hang the URDF this converter did not read off the prim it belongs to.
+
+    customData is USD's own field for data a schema has no place for, so this costs a reader
+    nothing and invents no attribute of ours. Nothing here is interpreted; it is kept so that
+    converting to USD is not also a way to lose half a description.
+    """
+    if xml:
+        # A plain python list is not a value USD can hold; an array of strings is.
+        prim.SetCustomDataByKey(PASSTHROUGH_KEY, pxr.Vt.StringArray(list(xml)))
 
 
 def _geometry_of(element: ET.Element, *, collision: bool) -> _Geometry | None:
