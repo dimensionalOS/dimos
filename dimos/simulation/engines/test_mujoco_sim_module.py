@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 import threading
 import time
@@ -30,6 +31,7 @@ from dimos.simulation.engines.mujoco_sim_module import (
     MujocoSimModuleConfig,
     _WholeBodySimHooks,
 )
+from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 
 
 def _gripper_round_trip(
@@ -87,7 +89,9 @@ class _FakeRespawnEngine:
         self.reset_requested = False
         self.reset_to_kwargs: dict[str, Any] | None = None
 
-    def request_reset(self, *, wait: bool) -> bool:
+    def request_reset(
+        self, *, wait: bool, body_poses: Mapping[str, BodyPlacement] | None = None
+    ) -> bool:
         self.reset_requested = wait
         return True
 

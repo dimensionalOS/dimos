@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from pydantic import BaseModel
 
@@ -44,10 +43,3 @@ class AutoresearchStatus(BaseModel):
 
     def to_json(self) -> str:
         return json.dumps({"schema_version": 1, **self.model_dump(mode="json")}, allow_nan=False)
-
-    @classmethod
-    def from_json(cls, data: str) -> AutoresearchStatus:
-        payload: dict[str, Any] = json.loads(data)
-        if payload.pop("schema_version", None) != 1:
-            raise ValueError("AutoresearchStatus JSON requires schema_version 1")
-        return cls.model_validate(payload)

@@ -14,12 +14,12 @@
 
 import pytest
 
-from dimos.autoresearch._test_helpers import LocalTransport
 from dimos.autoresearch.truth_scene import TruthObject, TruthSceneModule
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
 
 
 def _transform(name: str, x: float, y: float, z: float) -> Transform:

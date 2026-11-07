@@ -20,6 +20,7 @@ of ``Session`` objects can look at the same session."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 from typing import Literal
@@ -154,7 +155,10 @@ class Session:
     def record_trial(self, candidate: int, record: TrialRecord) -> None:
         path = self.candidate_dir(candidate) / "results.json"
         records = [*self.results(candidate), record]
-        path.write_text(json.dumps([item.model_dump(mode="json") for item in records], indent=2))
+        # Written beside and renamed over, so a concurrent results() never reads a half file.
+        partial = path.with_name("results.json.part")
+        partial.write_text(json.dumps([item.model_dump(mode="json") for item in records], indent=2))
+        os.replace(partial, path)
 
     def results(self, candidate: int) -> list[TrialRecord]:
         path = self.candidate_dir(candidate) / "results.json"

@@ -21,8 +21,6 @@ import atexit
 from pathlib import Path
 import threading
 
-import cv2
-
 from dimos.autoresearch.program import DimosBackend, GripperRange, RobotBackend
 from dimos.core.stream import RemoteOut
 from dimos.manipulation.sdk import Arm
@@ -55,6 +53,8 @@ class StreamObserver:
             raise RuntimeError(f"no camera frame arrived within {FRAME_TIMEOUT_S} s")
         frame = self._frame
         assert frame is not None
+        import cv2
+
         if not cv2.imwrite(str(path), frame.to_opencv()):
             raise RuntimeError(f"could not write {path}")
 

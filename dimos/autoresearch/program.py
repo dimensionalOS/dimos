@@ -567,11 +567,10 @@ def run_program(
     stop: threading.Event | None = None,
 ) -> ProgramOutcome:
     """Run a candidate on one trial in a fresh ``python -I`` process, killed after
-    ``timeout_s`` seconds; ``env`` replaces the child's environment (bus settings)
-    and setting ``stop`` kills the child and raises ``RunStoppedError``.
-    The program's own errors come back as the outcome status. A child that dies
-    before writing an outcome, because its backend could not connect or it was
-    killed before the backend was up, raises ``RuntimeError`` instead."""
+    ``timeout_s`` seconds; ``env`` replaces the child's environment and setting
+    ``stop`` kills the child and raises ``RunStoppedError``. The program's own
+    errors come back as the outcome status; a child that dies before writing an
+    outcome (its backend could not connect, or it was killed first) raises ``RuntimeError``."""
     trial_dir.mkdir(parents=True, exist_ok=True)
     (trial_dir / TRACE_NAME).unlink(missing_ok=True)
     (trial_dir / "outcome.json").unlink(missing_ok=True)

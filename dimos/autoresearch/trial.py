@@ -77,9 +77,8 @@ def run_trial(
     """Run ``candidate`` on trial ``index`` of ``split`` and store the record.
     ``timeout_s`` (seconds), ``backend_factory``, ``env`` and ``stop`` go to
     ``run_program``; a stop discards the episode and writes no record, so the
-    trial can run again. The recorder episode is saved only when the judge says
-    success; the judge decides from the world even when the program raised or
-    timed out, and the record's note then says so."""
+    trial can run again. The episode is saved only when the judge says success;
+    the judge decides from the world even when the program raised or timed out."""
     trial_dir = session.trial_dir(candidate, split, index)
     world.reset(trial_seed(split, index))
     before = world.snapshot()

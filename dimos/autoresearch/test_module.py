@@ -30,7 +30,6 @@ import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.autoresearch._test_helpers import LocalTransport
 from dimos.autoresearch.module import AutoresearchModule
 from dimos.autoresearch.session import Budget, Session
 from dimos.autoresearch.status import AutoresearchStatus
@@ -60,6 +59,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.robot.manipulators.damiao._damiao_test_helpers import LocalTransport
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.utils.testing.waiting import wait_until
 
@@ -228,7 +228,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     module.color_image.transport = frames
     lab = Lab(module, bench, monitor, tmp_path / "lift")
     module.autoresearch_status.subscribe(
-        lambda msg: lab.statuses.append(AutoresearchStatus.from_json(msg.data))
+        lambda msg: lab.statuses.append(AutoresearchStatus.model_validate_json(msg.data))
     )
     stop = threading.Event()
 

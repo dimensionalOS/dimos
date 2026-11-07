@@ -23,12 +23,12 @@ import math
 import random
 import threading
 import time
-from typing import Protocol
 
 from pydantic import BaseModel
 
 from dimos.autoresearch.judge import BodyPose, Snapshot
 from dimos.autoresearch.program import RunStoppedError
+from dimos.manipulation.sdk import Arm
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement, SimSceneSpec
@@ -40,16 +40,6 @@ REST_TOLERANCE = 0.002
 # How long to wait for the first message after a reset, and for the arm to come to rest.
 MESSAGE_TIMEOUT_S = 10.0
 REST_TIMEOUT_S = 30.0
-
-
-class ArmControl(Protocol):
-    """What the world asks of the arm: blocking moves that raise on failure, and a stop."""
-
-    def home(self) -> object: ...
-
-    def open_gripper(self) -> object: ...
-
-    def cancel(self) -> object: ...
 
 
 class PlacementBounds(BaseModel):
@@ -70,17 +60,16 @@ class PlacementBounds(BaseModel):
 
 
 class MujocoWorld:
-    """``reset(seed)`` sends the arm home with the gripper open, then resets the
-    simulation with ``body`` where ``bounds`` says for that seed, and waits for
-    the arm to hold still and for poses taken after the reset; ``snapshot()``
-    stops the arm, waits for it to hold still and reports every tracked body's
-    pose. Feed ``on_body_poses`` and ``on_joint_state`` from the simulator's
+    """``reset(seed)`` homes the arm, puts ``body`` where ``bounds`` says for that
+    seed and waits for the arm to hold still and for poses taken after the reset;
+    ``snapshot()`` stops the arm and, once it holds still, reports every tracked
+    body's pose. Feed ``on_body_poses`` and ``on_joint_state`` from the simulator's
     streams. Every wait gives up with ``RunStoppedError`` once ``stop`` is set."""
 
     def __init__(
         self,
         sim: SimSceneSpec,
-        arm: ArmControl,
+        arm: Arm,
         body: str,
         bounds: PlacementBounds,
         stop: threading.Event,
@@ -122,7 +111,7 @@ class MujocoWorld:
             pose_counts = dict(self._pose_counts)
             joint_count = self._joint_count
         if not self._sim.reset(placements={self._body: self._bounds.sample(seed)}):
-            raise RuntimeError("the simulation is not running, so the scene cannot be reset")
+            raise RuntimeError("the simulation did not apply the reset")
         self._wait(
             lambda: self._joint_count > joint_count,
             "a joint state after the reset",
@@ -132,8 +121,9 @@ class MujocoWorld:
         self._wait_for_poses(pose_counts)
 
     def home(self) -> None:
-        """Send the arm home with the gripper open and wait until it holds still."""
+        """Stop any motion, send the arm home with the gripper open and wait until it holds still."""
         self._wait(lambda: self._joint_count > 0, "the first joint state", MESSAGE_TIMEOUT_S)
+        self._arm.cancel()
         self._arm.home()
         self._arm.open_gripper()
         self.wait_for_rest()

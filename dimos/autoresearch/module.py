@@ -26,7 +26,6 @@ import threading
 import time
 from typing import Any, Literal
 
-import cv2
 from pydantic import Field
 from reactivex.disposable import Disposable
 
@@ -103,21 +102,11 @@ def bus_env(g: GlobalConfig) -> dict[str, str]:
     return env
 
 
-def _split(value: str) -> Split:
-    if value == "dev":
-        return "dev"
-    if value == "heldout":
-        return "heldout"
-    raise ValueError(f"split must be 'dev' or 'heldout', not {value!r}")
-
-
 def _wait_for_arm(rpc: ManipulationSpec, timeout_s: float) -> Arm:
     """The one pose-capable planning group, once the planner lists it and knows its joints."""
     deadline = time.monotonic() + timeout_s
     while True:
         groups = [group for group in rpc.list_planning_groups() if group.tip_frame is not None]
-        if len(groups) > 1:
-            raise RuntimeError(f"expected one arm, found {[group.id for group in groups]}")
         if groups:
             state = rpc.get_state().groups.get(groups[0].id)
             if state is not None and state.joints is not None:
@@ -207,8 +196,10 @@ class AutoresearchModule(Module):
     @rpc
     def stop(self) -> None:
         self._stop.set()
-        self._halt()
-        super().stop()
+        try:
+            self._halt()
+        finally:
+            super().stop()
 
     @rpc
     def get_status(self) -> AutoresearchStatus:
@@ -281,7 +272,7 @@ class AutoresearchModule(Module):
         return self._session.submit(program, hypothesis)
 
     @skill(uses=[CAP_MOVEMENT], lifecycle="background")
-    def run(self, candidate: int, split: str = "dev") -> str:
+    def run(self, candidate: int, split: Split = "dev") -> str:
         """Run a candidate on its pending trials in the background and return at
         once; poll results(candidate) until every trial is in. One run at a
         time: stop_run() ends it early.
@@ -295,16 +286,15 @@ class AutoresearchModule(Module):
             if self._thread is not None:
                 return "a run is in progress; wait for its results or call stop_run first"
             try:
-                which = _split(split)
-                indexes = self._pending(candidate, which)
+                indexes = self._pending(candidate, split)
+                if not indexes:
+                    self.stop_tool(_TOOL)
+                    return f"candidate {candidate} has already run every {split} trial"
+                self._launch(candidate, split, indexes)
             except Exception:
                 self.stop_tool(_TOOL)
                 raise
-            if not indexes:
-                self.stop_tool(_TOOL)
-                return f"candidate {candidate} has already run every {which} trial"
-            self._launch(candidate, which, indexes)
-        return f"started candidate {candidate} on {len(indexes)} {which} trials; poll results({candidate})"
+        return f"started candidate {candidate} on {len(indexes)} {split} trials; poll results({candidate})"
 
     @skill
     def stop_run(self) -> str:
@@ -376,10 +366,10 @@ class AutoresearchModule(Module):
             try:
                 self._session.freeze(candidate)
                 indexes = self._pending(candidate, "heldout")
+                self._launch(candidate, "heldout", indexes)
             except Exception:
                 self.stop_tool(_TOOL)
                 raise
-            self._launch(candidate, "heldout", indexes)
         return f"frozen candidate {candidate}; running {len(indexes)} held-out trials; poll results({candidate})"
 
     @skill
@@ -463,10 +453,10 @@ class AutoresearchModule(Module):
                 logger.exception("autoresearch: trial failed", candidate=candidate, split=split)
                 error = f"{type(exc).__name__}: {exc}"
         finally:
-            state = self._finish(candidate, split)
             with self._run_lock:
                 self._thread = None
                 self.stop_tool(_TOOL)
+            state = self._finish(candidate, split)
             self._publish(
                 state=state,
                 busy=False,
@@ -521,6 +511,8 @@ class AutoresearchModule(Module):
             raise RuntimeError("no camera frame received yet")
         path = self.config.session_dir / "scene" / f"{number:03d}.png"
         path.parent.mkdir(exist_ok=True)
+        import cv2
+
         if not cv2.imwrite(str(path), frame.to_opencv()):
             raise RuntimeError(f"could not write {path}")
         return path

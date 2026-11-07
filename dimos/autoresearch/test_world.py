@@ -98,7 +98,7 @@ def test_snapshot_holds_every_body_pose_from_the_tf_stream(
 
     scene.reset(seed=3)
     assert sim.placements == [{"cube": PlacementBounds().sample(3)}]
-    assert arm.calls == ["cancel", "home", "open"]
+    assert arm.calls == ["cancel", "cancel", "home", "open"]
 
 
 def test_a_stopped_world_gives_up_its_waits(

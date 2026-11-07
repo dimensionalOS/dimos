@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A robot backend for tests, with no stack behind it, and an in-process transport.
+"""A robot backend for tests, with no stack behind it.
 
 Not named ``test_*`` so pytest does not collect it; the program subprocess
 imports ``fake_backend`` from here by its dotted path.
@@ -20,15 +20,10 @@ imports ``fake_backend`` from here by its dotted path.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-import threading
-from typing import Any, TypeVar
 
 from dimos.autoresearch.program import Pose, RobotBackend, RobotCallError, SceneObject
-from dimos.core.stream import Stream, Transport
-
-T = TypeVar("T")
 
 # A one-pixel PNG, written wherever a camera frame would go.
 _BLANK_PNG = bytes.fromhex(
@@ -102,36 +97,3 @@ class FakeBackend:
 def fake_backend(trial_dir: Path) -> RobotBackend:
     """The backend factory tests name in ``run_program``."""
     return FakeBackend()
-
-
-class LocalTransport(Transport[T]):
-    """Delivers each published message to the subscribers in this process."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._subscribers: list[Callable[[T], Any]] = []
-
-    def broadcast(self, selfstream: Stream[T] | None, value: T) -> None:
-        with self._lock:
-            callbacks = tuple(self._subscribers)
-        for callback in callbacks:
-            callback(value)
-
-    def subscribe(
-        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
-    ) -> Callable[[], None]:
-        with self._lock:
-            self._subscribers.append(callback)
-
-        def dispose() -> None:
-            with self._lock:
-                if callback in self._subscribers:
-                    self._subscribers.remove(callback)
-
-        return dispose
-
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
