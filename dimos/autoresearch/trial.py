@@ -12,19 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Running one candidate on one trial: reset the world, record an episode,
-run the program, judge the result, store the record."""
+"""Running one candidate on one trial: reset the world, start a recorder
+episode, run the program, judge the result, save or discard the episode,
+store the record."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from typing import Protocol
 
-from dimos.autoresearch.episodes import trial_episode
 from dimos.autoresearch.judge import Judge, Snapshot
-from dimos.autoresearch.program import run_program
+from dimos.autoresearch.program import TRACE_NAME, run_program
 from dimos.autoresearch.session import Session, Split, TrialRecord
-from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeControlSpec
 
 # Held-out seeds start here so no held-out scene repeats a dev scene.
 HELDOUT_SEED_BASE = 100_000
@@ -39,19 +40,19 @@ class World(Protocol):
     def snapshot(self) -> Snapshot: ...
 
 
-class FakeWorld:
-    """A scripted world for tests: ``reset`` records the seed, ``snapshot``
-    plays back the given snapshots in order."""
+class NoEpisodes:
+    """Stands in for the recorder on a stack without one: commands are
+    accepted, nothing is recorded and no trial gets an episode index."""
 
-    def __init__(self, snapshots: Sequence[Snapshot]) -> None:
-        self._snapshots = iter(snapshots)
-        self.seeds: list[int] = []
+    def get_status(self) -> EpisodeStatus:
+        return _nothing_recorded()
 
-    def reset(self, seed: int) -> None:
-        self.seeds.append(seed)
+    def command(self, event: EpisodeCommand) -> EpisodeStatus:
+        return _nothing_recorded()
 
-    def snapshot(self) -> Snapshot:
-        return next(self._snapshots)
+
+def _nothing_recorded() -> EpisodeStatus:
+    return EpisodeStatus(ts=0.0, state="idle", episodes_saved=0, episodes_discarded=0)
 
 
 def trial_seed(split: Split, index: int) -> int:
@@ -69,31 +70,39 @@ def run_trial(
     episodes: EpisodeControlSpec,
     backend_factory: str,
     timeout_s: float,
+    env: Mapping[str, str] | None = None,
 ) -> TrialRecord:
     """Run ``candidate`` on trial ``index`` of ``split`` and store the record.
-
-    ``backend_factory`` and ``timeout_s`` go to ``run_program``. The recorder
-    episode is saved only when the judge says success. The program's own
-    failure (raised, timeout) is noted on the record; the judge still decides
-    success from the world.
-    """
+    ``timeout_s`` (seconds), ``backend_factory`` and ``env`` go to ``run_program``.
+    The recorder episode is saved only when the judge says success; the judge
+    decides from the world even when the program raised or timed out, and the
+    record's note then says so."""
     trial_dir = session.trial_dir(candidate, split, index)
     world.reset(trial_seed(split, index))
     before = world.snapshot()
-    with trial_episode(episodes) as episode:
+    start = episodes.command("start")
+    try:
         outcome = run_program(
             session.program_path(candidate),
             trial_dir,
             session.info().task,
             timeout_s,
             backend_factory,
+            env,
         )
         verdict = judge.verdict(before, world.snapshot())
-        episode.success = verdict.success
+    except BaseException:
+        episodes.command("discard")
+        raise
+    episode: int | None = None
+    if verdict.success:
+        saved = episodes.command("save").episodes_saved
+        episode = saved - 1 if saved else None
+    else:
+        episodes.command("discard")
     note = verdict.note
     if outcome.status != "completed":
-        last_line = outcome.error.strip().splitlines()[-1]
-        note = f"{note}; program {outcome.status}: {last_line}"
+        note = f"{note}; program {outcome.status}: {outcome.error.strip().splitlines()[-1]}"
     record = TrialRecord(
         split=split,
         index=index,
@@ -102,8 +111,10 @@ def run_trial(
         note=note,
         status=outcome.status,
         duration_s=outcome.duration_s,
-        trace=outcome.trace,
-        episode=episode.index,
+        trace=trial_dir / TRACE_NAME,
+        start_ts=start.ts,
+        episode=episode,
+        backend=backend_factory,
     )
     session.record_trial(candidate, record)
     return record

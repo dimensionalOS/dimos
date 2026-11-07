@@ -18,7 +18,9 @@ candidates/NN/        one directory per submitted program, never changed
   program.py          the candidate
   hypothesis.md       what the agent expects it to fix and where it may fail
   results.json        one record per trial: split, index, success, stage,
-                      note, status, duration_s, trace path, episode index
+                      note, status, duration_s, trace path, start_ts (the
+                      recorder's time at start, which joins the trial to its
+                      exported episode), episode index, backend
   trials/<split>-<k>/ trace.jsonl, keyframes/*.png, program.log, outcome.json
 library/*.md          notes the agent keeps for later sessions
 frozen                the number of the final candidate
@@ -28,6 +30,9 @@ frozen                the number of the final candidate
 it. `submit(program, hypothesis)` validates and stores a candidate and returns
 its number; `record_trial`, `results` and `leaderboard` keep score;
 `freeze(NN)` names the final candidate, after which nothing can be submitted.
+A trial that errored before its record was written (a judge that could not
+answer, a backend that could not connect) can be run again; one on the record
+cannot.
 
 ## The program contract
 
@@ -46,8 +51,11 @@ def run(robot, task):
 ```
 
 `task.text` is the task in words. The program never sees the judge or any
-score. Motion calls block and raise `RobotCallError` (with a `status`) when
-planning or execution fails; the program may catch it and try another way.
+score. The import rule is checked on submit and enforced when the program
+runs: its builtins have no `open`, `exec`, `eval` or `compile`, and an
+import of anything but `math` raises `ImportError`. Motion calls block and
+raise `RobotCallError` (with a `status`) when planning or execution fails;
+the program may catch it and try another way.
 
 | `robot.` | Does | Backed by (live) |
 |---|---|---|
@@ -70,25 +78,29 @@ after.
 
 ## Running a program
 
-`run_program(program_path, trial_dir, task, timeout_s, backend_factory)` runs
-the candidate in a fresh `python -I` process (no `PYTHONPATH`, no current
+`run_program(program_path, trial_dir, task, timeout_s, backend_factory, env)`
+runs the candidate in a fresh `python -I` process (no `PYTHONPATH`, no current
 directory on the path; only the DimOS checkout is added) and kills it at the
-timeout. The child gets four arguments: the program path, the trial
-directory, the task text and `backend_factory`, a `"package.module:function"`
-string. It imports that function and calls it with the trial directory to get
-its `RobotBackend`:
+timeout. `env`, when given, is the child's whole environment, so the lab can
+hand it the bus settings `Dimos.connect()` needs. The child gets four
+arguments: the program path, the trial directory, the task text and
+`backend_factory`, a `"package.module:function"` string. It imports that
+function and calls it with the trial directory to get its `RobotBackend`:
 
-- `dimos.autoresearch.program:fake_backend` for tests: moves are bookkeeping,
-  every word finds one object, frames are blank PNGs.
+- `dimos.autoresearch._test_helpers:fake_backend` for tests: moves are
+  bookkeeping, every word finds one object, frames are blank PNGs.
 - a live stack: a function that returns `DimosBackend.connect(observer,
   GripperRange(closed, open))`, which attaches through `Dimos.connect()`,
-  `Arm.from_app` and the object-registration module. The observer writes the
-  camera frame as a PNG.
+  `Arm.from_app` and the object-registration module. That module must run
+  with `target_frame="world"`, the frame the arm plans in; `scene.objects()`
+  refuses any other frame. The observer writes the camera frame as a PNG.
 
 The child's prints go to `program.log`; `outcome.json` says whether `run`
-completed, raised (with the traceback) or was killed. A child that dies before
-writing an outcome, e.g. because the backend could not connect, raises in the
-parent instead of counting as a failed trial.
+completed, raised (with the traceback, also when the module body fails or
+the program calls `exit()`) or was killed. A child that dies before writing
+an outcome, because the backend could not connect or the kill came before
+the backend was up, raises in the parent instead of counting as a failed
+trial.
 
 ## One trial
 
@@ -101,11 +113,11 @@ backend_factory, timeout_s)`:
 3. `run_program` with the timeout.
 4. `world.snapshot()` after; `judge.verdict(before, after)`.
 5. `save` on success, `discard` otherwise; the saved episode's index goes on
-   the record.
+   the record, with the recorder's time at `start` as `start_ts`.
 6. `session.record_trial(NN, record)`.
 
 Judges are pure functions of the two snapshots (`LiftJudge`: the body rose at
 least 5 cm; `PlaceJudge`: the body ended inside a box), or `OperatorJudge`,
-which asks the person at the robot. A `Snapshot` is each tracked body's pose
-plus the gripper value, which is what the MuJoCo sim publishes for its tracked
-bodies. `NoEpisodes` stands in for the recorder on a stack without one.
+which asks the person at the robot. A `Snapshot` is each tracked body's pose,
+which is what the MuJoCo sim publishes for its tracked bodies. `NoEpisodes`
+stands in for the recorder on a stack without one.

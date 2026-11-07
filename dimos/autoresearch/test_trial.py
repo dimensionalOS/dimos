@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
-from dimos.autoresearch.episodes import NoEpisodes
 from dimos.autoresearch.judge import BodyPose, LiftJudge, Snapshot
 from dimos.autoresearch.session import Budget, Session
-from dimos.autoresearch.trial import HELDOUT_SEED_BASE, FakeWorld, run_trial
-from dimos.imitation.collection.episode import EpisodeEvent, EpisodeStatus
+from dimos.autoresearch.trial import HELDOUT_SEED_BASE, NoEpisodes, run_trial
+from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
 
-FAKE = "dimos.autoresearch.program:fake_backend"
+FAKE = "dimos.autoresearch._test_helpers:fake_backend"
 
 PROGRAM = """
 def run(robot, task):
@@ -36,41 +36,40 @@ def run(robot, task):
 
 def snapshot(cube_z: float) -> Snapshot:
     cube = BodyPose(position=(0.4, 0.0, cube_z), orientation=(0.0, 0.0, 0.0, 1.0))
-    return Snapshot(bodies={"cube": cube}, gripper=0.0)
+    return Snapshot(bodies={"cube": cube})
+
+
+class FakeWorld:
+    """``reset`` records the seed, ``snapshot`` plays back the given snapshots in order."""
+
+    def __init__(self, snapshots: Sequence[Snapshot]) -> None:
+        self._snapshots = iter(snapshots)
+        self.seeds: list[int] = []
+
+    def reset(self, seed: int) -> None:
+        self.seeds.append(seed)
+
+    def snapshot(self) -> Snapshot:
+        return next(self._snapshots)
 
 
 class FakeMonitor:
-    """Counts episodes the way EpisodeMonitorModule does, without a bus."""
+    """The recorder as the trial sees it: the commands it got and a saved count."""
 
     def __init__(self) -> None:
         self.events: list[EpisodeCommand] = []
-        self._recording = False
-        self._saved = 0
-        self._discarded = 0
+        self.saved = 0
 
     def get_status(self) -> EpisodeStatus:
-        return self._status("init")
+        return self._status()
 
     def command(self, event: EpisodeCommand) -> EpisodeStatus:
         self.events.append(event)
-        if event == "start":
-            self._recording = True
-        elif event == "save":
-            self._saved += self._recording
-            self._recording = False
-        elif event == "discard":
-            self._discarded += self._recording
-            self._recording = False
-        return self._status(event)
+        self.saved += event == "save"
+        return self._status()
 
-    def _status(self, event: EpisodeEvent) -> EpisodeStatus:
-        return EpisodeStatus(
-            ts=0.0,
-            state="recording" if self._recording else "idle",
-            episodes_saved=self._saved,
-            episodes_discarded=self._discarded,
-            last_event=event,
-        )
+    def _status(self) -> EpisodeStatus:
+        return EpisodeStatus(ts=0.0, state="idle", episodes_saved=self.saved, episodes_discarded=0)
 
 
 @pytest.fixture
@@ -85,15 +84,15 @@ def test_success_saves_the_episode_and_records_the_trial(session: Session) -> No
     candidate = session.submit(PROGRAM, "straight down, close, straight up")
     world = FakeWorld([snapshot(0.02), snapshot(0.12)])
     monitor = FakeMonitor()
-    monitor.command("start")
-    monitor.command("save")
+    monitor.saved = 1
 
     record = run_trial(session, candidate, "dev", 3, world, LiftJudge("cube"), monitor, FAKE, 60.0)
 
     assert (record.success, record.stage, record.status) == (True, "done", "completed")
     assert record.note == "cube rose 0.100 m"
     assert record.episode == 1
-    assert monitor.events[-2:] == ["start", "save"]
+    assert (record.start_ts, record.backend) == (0.0, FAKE)
+    assert monitor.events == ["start", "save"]
     assert world.seeds == [3]
     assert record.trace == session.candidate_dir(candidate) / "trials/dev-03/trace.jsonl"
     assert record.trace.is_file()

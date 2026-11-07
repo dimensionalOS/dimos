@@ -27,6 +27,8 @@ def session(tmp_path: Path) -> Session:
     budget = Budget(
         iterations=3, candidates_per_round=2, dev_trials=2, heldout_trials=4, threshold=0.8
     )
+    # The collection recorder makes the directory before the session exists.
+    (tmp_path / "lift" / "recording").mkdir(parents=True)
     return Session.create(tmp_path / "lift", task="lift the cube", budget=budget, model="test")
 
 
@@ -40,7 +42,9 @@ def record(split: Split, index: int, success: bool) -> TrialRecord:
         status="completed",
         duration_s=1.0,
         trace=Path("/nowhere/trace.jsonl"),
+        start_ts=0.0,
         episode=None,
+        backend="fake",
     )
 
 
@@ -55,9 +59,11 @@ def test_candidates_are_immutable_scored_and_frozen_once(session: Session) -> No
     session.record_trial(first, record("dev", 0, True))
     session.record_trial(first, record("dev", 1, False))
     session.record_trial(second, record("dev", 0, True))
-    session.trial_dir(first, "dev", 0)
-    with pytest.raises(FileExistsError):
+    with pytest.raises(RuntimeError, match="already ran"):
         session.trial_dir(first, "dev", 0)
+    assert session.trial_dir(first, "dev", 5) == session.trial_dir(first, "dev", 5)
+    with pytest.raises(FileExistsError):
+        Session.create(session.dir, task="again", budget=session.info().budget, model="test")
 
     other = Session(session.dir)
     board = [(score.candidate, score.dev_passed, score.dev_trials) for score in other.leaderboard()]

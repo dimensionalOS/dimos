@@ -12,28 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The program contract: what a candidate may import, the robot API it is
-handed, and the subprocess that runs it.
-
-A candidate is a Python file that defines ``run(robot, task)`` and imports
-only ``math``. ``run_program`` runs it in a fresh ``python -I`` process with a
-hard timeout. Every robot call the program makes is appended to
-``trace.jsonl`` in the trial directory, with a camera keyframe before and
-after each motion call.
-"""
+"""The program contract and its runner: a candidate defines ``run(robot, task)``
+and imports only ``math``; ``run_program`` runs it in a ``python -I`` subprocess
+with a hard timeout, and every robot call it makes is appended to the trial's
+``trace.jsonl``, with a camera keyframe before and after each motion call."""
 
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable, Sequence
+import builtins
+from collections.abc import Callable, Mapping, Sequence
 import dataclasses
 from dataclasses import dataclass
 import importlib
+import math
 from pathlib import Path
 import subprocess
 import sys
 import time
 import traceback
+from types import ModuleType
 from typing import Any, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel
@@ -60,12 +58,6 @@ ProgramStatus = Literal["completed", "raised", "timeout"]
 CallStatus = Literal["OK", "PLANNING_FAILED", "EXECUTION_FAILED", "TIMEOUT", "RAISED"]
 
 TRACE_NAME = "trace.jsonl"
-
-# A one-pixel PNG, written by the fake backend wherever a camera frame would go.
-_BLANK_PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
-    "0000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082"
-)
 
 
 @dataclass(frozen=True)
@@ -264,7 +256,9 @@ class ArmApi:
         """Move the end effector to ``position`` (xyz, metres). ``orientation`` is
         roll, pitch, yaw in radians or an xyzw quaternion; omitted keeps the
         current orientation. The path is planned, not necessarily straight."""
-        xyz = _xyz(position)
+        if len(position) != 3:
+            raise ValueError(f"expected x, y, z; got {len(position)} values")
+        xyz = (float(position[0]), float(position[1]), float(position[2]))
         quaternion = None if orientation is None else _quaternion(orientation)
         self._robot._traced(
             "arm.move_pose",
@@ -336,12 +330,6 @@ class SceneApi:
         )
 
 
-def _xyz(values: Sequence[float]) -> tuple[float, float, float]:
-    if len(values) != 3:
-        raise ValueError(f"expected x, y, z; got {len(values)} values")
-    return (float(values[0]), float(values[1]), float(values[2]))
-
-
 def _quaternion(values: Sequence[float]) -> tuple[float, float, float, float]:
     if len(values) == 3:
         return Quaternion.from_euler(Vector3(*(float(v) for v in values))).to_tuple()
@@ -397,11 +385,10 @@ class DimosBackend:
         group: str | None = None,
         instance_name: str | None = None,
     ) -> DimosBackend:
-        """Attach to the running stack on this machine's transport bus.
-
-        ``group`` and ``instance_name`` select the arm when the stack has more
-        than one, as in ``Arm.from_app``.
-        """
+        """Attach to the running stack on this machine's transport bus. ``group``
+        and ``instance_name`` select the arm when the stack has more than one, as
+        in ``Arm.from_app``. The scene module must run with ``target_frame="world"``,
+        the frame the arm plans in; ``objects()`` refuses any other frame."""
         app = Dimos.connect()
         arm = Arm.from_app(app, group=group, instance_name=instance_name)
         scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
@@ -446,6 +433,11 @@ class DimosBackend:
 
     def objects(self, words: Sequence[str]) -> list[SceneObject]:
         detections = self._scene.scan_scene(text=list(words))
+        if detections.header.frame_id != "world":
+            raise RuntimeError(
+                f"Objects are in frame {detections.header.frame_id!r}; the arm plans in "
+                "'world', so the scene module must run with target_frame=\"world\""
+            )
         return [
             SceneObject(
                 id=str(detection.id),
@@ -490,72 +482,6 @@ def _status_of(result: PlanResult | ExecutionResult | MoveResult | CommandResult
     return "EXECUTION_FAILED"
 
 
-class FakeBackend:
-    """A stand-in for tests: moves only update bookkeeping, every word finds one
-    object, and frames are blank PNGs. A ``move_pose`` below the table
-    (z < 0) fails planning, so a program's handling of a failed call can be
-    tested."""
-
-    def __init__(self) -> None:
-        self._joints = [0.0] * 6
-        self._pose = Pose((0.3, 0.0, 0.3), (0.0, 0.0, 0.0, 1.0))
-        self.gripper = 0.0
-
-    def joints(self) -> list[float]:
-        return list(self._joints)
-
-    def pose(self) -> Pose:
-        return self._pose
-
-    def move_joints(self, positions: Sequence[float]) -> None:
-        self._joints = [float(value) for value in positions]
-
-    def move_pose(
-        self,
-        position: tuple[float, float, float],
-        orientation: tuple[float, float, float, float] | None,
-    ) -> None:
-        if position[2] < 0.0:
-            raise RobotCallError("PLANNING_FAILED", f"no plan: {position} is below the table")
-        self._pose = Pose(position, self._pose.orientation if orientation is None else orientation)
-
-    def move_linear(self, dx: float, dy: float, dz: float) -> None:
-        x, y, z = self._pose.position
-        self._pose = Pose((x + dx, y + dy, z + dz), self._pose.orientation)
-
-    def home(self) -> None:
-        self._joints = [0.0] * 6
-        self._pose = Pose((0.3, 0.0, 0.3), (0.0, 0.0, 0.0, 1.0))
-
-    def open_gripper(self) -> None:
-        self.gripper = 0.0
-
-    def close_gripper(self) -> None:
-        self.gripper = -0.05
-
-    def set_gripper(self, joint_value: float) -> None:
-        self.gripper = joint_value
-
-    def gripper_range(self) -> tuple[float, float]:
-        return (-0.05, 0.0)
-
-    def objects(self, words: Sequence[str]) -> list[SceneObject]:
-        return [
-            SceneObject(
-                id=str(index), name=word, position=(0.4, 0.1 * index, 0.02), size=(0.04,) * 3
-            )
-            for index, word in enumerate(words)
-        ]
-
-    def capture(self, path: Path) -> None:
-        path.write_bytes(_BLANK_PNG)
-
-
-def fake_backend(trial_dir: Path) -> RobotBackend:
-    """The backend factory tests pass to ``run_program``."""
-    return FakeBackend()
-
-
 def validate_program(text: str) -> None:
     """Raise ``ValueError`` unless ``text`` parses, imports only ``math`` and
     defines a top-level ``run`` taking two arguments."""
@@ -578,12 +504,31 @@ def validate_program(text: str) -> None:
         raise ValueError("program must define run(robot, task) at the top level")
 
 
+def _import_math(name: str, *args: object, **kwargs: object) -> ModuleType:
+    if name != "math":
+        raise ImportError(f"program imports {name!r}; only math may be imported")
+    return math
+
+
+# What a program's code may use: the builtins minus file and code access, with
+# imports resolving math only. Import statements go through __import__.
+_PROGRAM_BUILTINS: dict[str, Any] = {
+    name: value
+    for name, value in vars(builtins).items()
+    if name not in ("open", "exec", "eval", "compile")
+}
+_PROGRAM_BUILTINS["__import__"] = _import_math
+
+
 def load_program(path: Path) -> Callable[[Robot, Task], None]:
-    """Validate the file at ``path`` and return its ``run`` function."""
-    text = path.read_text()
-    validate_program(text)
-    namespace: dict[str, Any] = {"__name__": "candidate", "__file__": str(path)}
-    exec(compile(text, str(path), "exec"), namespace)
+    """Run the module body of the program at ``path`` with the program builtins
+    and return its ``run`` function. The session validated the file on submit."""
+    namespace: dict[str, Any] = {
+        "__name__": "candidate",
+        "__file__": str(path),
+        "__builtins__": dict(_PROGRAM_BUILTINS),
+    }
+    exec(compile(path.read_text(), str(path), "exec"), namespace)
     run: Callable[[Robot, Task], None] = namespace["run"]
     return run
 
@@ -595,7 +540,6 @@ class ProgramOutcome(BaseModel):
 
     status: ProgramStatus
     error: str = ""
-    trace: Path
     duration_s: float
 
 
@@ -606,18 +550,21 @@ _BOOTSTRAP = (
 
 
 def run_program(
-    program_path: Path, trial_dir: Path, task: str, timeout_s: float, backend_factory: str
+    program_path: Path,
+    trial_dir: Path,
+    task: str,
+    timeout_s: float,
+    backend_factory: str,
+    env: Mapping[str, str] | None = None,
 ) -> ProgramOutcome:
-    """Run one candidate on one trial in a fresh ``python -I`` process, killed
-    after ``timeout_s`` seconds.
-
-    ``backend_factory`` is ``"package.module:function"``; the child imports it
-    and calls it with the trial directory to get its ``RobotBackend``. The
-    child's output goes to ``program.log`` in the trial directory. A child
-    that dies before writing its outcome (a backend that cannot connect, a
-    broken factory) raises ``RuntimeError``; the program's own errors do not.
-    """
+    """Run a candidate on one trial in a fresh ``python -I`` process, killed after
+    ``timeout_s`` seconds; ``env`` replaces the child's environment (bus settings).
+    The program's own errors come back as the outcome status. A child that dies
+    before writing an outcome, because its backend could not connect or it was
+    killed before the backend was up, raises ``RuntimeError`` instead."""
     trial_dir.mkdir(parents=True, exist_ok=True)
+    (trial_dir / TRACE_NAME).unlink(missing_ok=True)
+    (trial_dir / "outcome.json").unlink(missing_ok=True)
     command = [
         sys.executable,
         "-I",
@@ -628,24 +575,34 @@ def run_program(
         task,
         backend_factory,
     ]
+    log_path = trial_dir / "program.log"
     started = time.monotonic()
-    with (trial_dir / "program.log").open("wb") as log:
+    with log_path.open("wb") as log:
         try:
             completed = subprocess.run(
-                command, stdout=log, stderr=subprocess.STDOUT, timeout=timeout_s, check=False
+                command,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=timeout_s,
+                check=False,
+                env=env,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as error:
+            if not (trial_dir / TRACE_NAME).is_file():
+                raise RuntimeError(
+                    f"the program runner was killed after {timeout_s} s before its backend "
+                    f"was up; see {log_path}"
+                ) from error
             return ProgramOutcome(
                 status="timeout",
                 error=f"killed after {timeout_s} s",
-                trace=trial_dir / TRACE_NAME,
                 duration_s=time.monotonic() - started,
             )
     outcome = trial_dir / "outcome.json"
     if completed.returncode != 0 or not outcome.is_file():
         raise RuntimeError(
             f"the program runner exited with code {completed.returncode} before writing "
-            f"an outcome; see {trial_dir / 'program.log'}"
+            f"an outcome; see {log_path}"
         )
     return ProgramOutcome.model_validate_json(outcome.read_text())
 
@@ -658,19 +615,14 @@ def main(argv: Sequence[str]) -> None:
     module_name, function_name = factory.split(":")
     make_backend: BackendFactory = getattr(importlib.import_module(module_name), function_name)
     robot = Robot(make_backend(trial_dir), trial_dir)
-    run = load_program(Path(program))
     started = time.monotonic()
     try:
+        run = load_program(Path(program))
         run(robot, Task(task))
-    except Exception:
+    except (Exception, SystemExit):
         outcome = ProgramOutcome(
-            status="raised",
-            error=traceback.format_exc(),
-            trace=trial_dir / TRACE_NAME,
-            duration_s=time.monotonic() - started,
+            status="raised", error=traceback.format_exc(), duration_s=time.monotonic() - started
         )
     else:
-        outcome = ProgramOutcome(
-            status="completed", trace=trial_dir / TRACE_NAME, duration_s=time.monotonic() - started
-        )
+        outcome = ProgramOutcome(status="completed", duration_s=time.monotonic() - started)
     (trial_dir / "outcome.json").write_text(outcome.model_dump_json(indent=2))

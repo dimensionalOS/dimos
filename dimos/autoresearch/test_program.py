@@ -18,7 +18,7 @@ import pytest
 
 from dimos.autoresearch.program import TraceLine, run_program
 
-FAKE = "dimos.autoresearch.program:fake_backend"
+FAKE = "dimos.autoresearch._test_helpers:fake_backend"
 
 LIFT = """
 import math
@@ -42,9 +42,9 @@ def run(robot, task):
 def run(tmp_path: Path, program: str, timeout_s: float = 60.0) -> tuple[Path, list[TraceLine]]:
     path = tmp_path / "program.py"
     path.write_text(program)
-    outcome = run_program(path, tmp_path / "trial", "lift the cube", timeout_s, FAKE)
-    lines = [TraceLine.model_validate_json(line) for line in outcome.trace.read_text().splitlines()]
-    return tmp_path / "trial", lines
+    run_program(path, tmp_path / "trial", "lift the cube", timeout_s, FAKE)
+    trace = (tmp_path / "trial" / "trace.jsonl").read_text()
+    return tmp_path / "trial", [TraceLine.model_validate_json(line) for line in trace.splitlines()]
 
 
 def test_every_call_is_traced_with_keyframes_around_motion(tmp_path: Path) -> None:
@@ -82,13 +82,22 @@ def test_every_call_is_traced_with_keyframes_around_motion(tmp_path: Path) -> No
 
 def test_a_raising_program_reports_its_traceback(tmp_path: Path) -> None:
     path = tmp_path / "program.py"
+    trace = tmp_path / "trial" / "trace.jsonl"
     path.write_text(
         "def run(robot, task):\n    robot.arm.joints()\n    raise ValueError(task.text)\n"
     )
     outcome = run_program(path, tmp_path / "trial", "lift the cube", 60.0, FAKE)
     assert outcome.status == "raised"
     assert outcome.error.rstrip().endswith("ValueError: lift the cube")
-    assert len(outcome.trace.read_text().splitlines()) == 1
+    assert len(trace.read_text().splitlines()) == 1
+
+    path.write_text("os = __import__('os')\n\n\ndef run(robot, task):\n    pass\n")
+    outcome = run_program(path, tmp_path / "trial", "lift the cube", 60.0, FAKE)
+    assert outcome.status == "raised"
+    assert outcome.error.rstrip().endswith(
+        "ImportError: program imports 'os'; only math may be imported"
+    )
+    assert trace.read_text() == ""
 
 
 def test_a_program_is_killed_at_the_timeout(tmp_path: Path) -> None:

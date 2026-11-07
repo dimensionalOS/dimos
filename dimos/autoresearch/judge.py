@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deciding whether a trial succeeded from the world before and after it.
-
-A ``Snapshot`` is where each tracked body is plus the gripper value; a
-``Judge`` turns the before and after snapshots into a ``Verdict``. The sim
-judges are pure functions of the two snapshots. ``OperatorJudge`` asks a
-person instead, for the real arm."""
+"""Deciding whether a trial succeeded from the world before and after it: a
+``Snapshot`` holds the tracked bodies' poses and a ``Judge`` turns two of them
+into a ``Verdict``. The sim judges are pure functions of the snapshots;
+``OperatorJudge`` asks a person instead, for the real arm."""
 
 from __future__ import annotations
 
@@ -40,15 +38,9 @@ class BodyPose(BaseModel):
 
 
 class Snapshot(BaseModel):
-    """The world at one moment: every tracked body's pose and the gripper joint value."""
+    """The world at one moment: every tracked body's pose, by body name."""
 
     bodies: dict[str, BodyPose]
-    gripper: float
-
-    def body(self, name: str) -> BodyPose:
-        if name not in self.bodies:
-            raise KeyError(f"no tracked body {name!r}; tracked: {sorted(self.bodies)}")
-        return self.bodies[name]
 
 
 class Verdict(BaseModel):
@@ -90,7 +82,7 @@ class LiftJudge:
     min_rise_m: float = 0.05
 
     def verdict(self, before: Snapshot, after: Snapshot) -> Verdict:
-        start, end = before.body(self.body), after.body(self.body)
+        start, end = before.bodies[self.body], after.bodies[self.body]
         rise = end.position[2] - start.position[2]
         if rise >= self.min_rise_m:
             return Verdict(success=True, stage="done", note=f"{self.body} rose {rise:.3f} m")
@@ -111,7 +103,7 @@ class PlaceJudge:
     region: Region
 
     def verdict(self, before: Snapshot, after: Snapshot) -> Verdict:
-        start, end = before.body(self.body), after.body(self.body)
+        start, end = before.bodies[self.body], after.bodies[self.body]
         if self.region.contains(end.position):
             return Verdict(success=True, stage="done", note=f"{self.body} is in the region")
         if moved(start, end) < UNTOUCHED_M:

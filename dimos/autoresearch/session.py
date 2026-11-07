@@ -55,12 +55,11 @@ class SessionInfo(BaseModel):
 
 
 class TrialRecord(BaseModel):
-    """One trial of one candidate, as stored in its ``results.json``.
-
-    ``stage`` and ``note`` come from the judge, ``status`` from the program
-    run (completed, raised or timeout), ``trace`` is the absolute path of the
-    call log and ``episode`` the index of the saved recorder episode, if any.
-    """
+    """One trial of one candidate, as stored in ``results.json``: the judge's
+    ``stage`` and ``note``, the program's ``status`` (completed, raised or
+    timeout), the absolute ``trace`` path, ``start_ts`` (the recorder's time at
+    ``start``, 0.0 without one; exports are joined to trials by it), ``episode``
+    (the saved episode's index, if any) and ``backend`` (the factory used)."""
 
     split: Split
     index: int
@@ -70,7 +69,9 @@ class TrialRecord(BaseModel):
     status: ProgramStatus
     duration_s: float
     trace: Path
+    start_ts: float
     episode: int | None
+    backend: str
 
 
 class CandidateScore(BaseModel):
@@ -98,10 +99,10 @@ class Session:
 
     @classmethod
     def create(cls, directory: Path, task: str, budget: Budget, model: str) -> Session:
-        """Start a new session in ``directory``, which must not exist yet."""
-        if directory.exists():
-            raise FileExistsError(f"{directory} already exists")
-        directory.mkdir(parents=True)
+        """Start a session in ``directory``; refused if one is already there."""
+        if (directory / "session.json").exists():
+            raise FileExistsError(f"{directory} already holds a session")
+        directory.mkdir(parents=True, exist_ok=True)
         (directory / "candidates").mkdir()
         (directory / "library").mkdir()
         info = SessionInfo(task=task, budget=budget, model=model)
@@ -155,12 +156,12 @@ class Session:
         return [TrialRecord.model_validate(item) for item in json.loads(path.read_text())]
 
     def trial_dir(self, candidate: int, split: Split, index: int) -> Path:
-        """Make the directory for one trial's trace and keyframes. A trial
-        runs once per candidate, so an existing directory is refused."""
+        """Make the directory for one trial's trace and keyframes. A trial on
+        the candidate's record is refused; one that never got a record may run again."""
+        if any(r.split == split and r.index == index for r in self.results(candidate)):
+            raise RuntimeError(f"candidate {candidate} already ran trial {split}-{index}")
         path = self.candidate_dir(candidate) / "trials" / f"{split}-{index:02d}"
-        if path.exists():
-            raise FileExistsError(f"candidate {candidate} already ran trial {split}-{index}")
-        path.mkdir(parents=True)
+        path.mkdir(parents=True, exist_ok=True)
         return path
 
     def leaderboard(self) -> list[CandidateScore]:
