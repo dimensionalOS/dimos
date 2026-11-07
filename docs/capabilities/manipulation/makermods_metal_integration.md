@@ -93,6 +93,26 @@ dimos imitation control
 real device. There is no hand-guided teaching entry: the Metal runs without
 gravity compensation, so a zero-stiffness arm drops.
 
+## Bimanual Quest teleop and collection
+
+`teleop-webxr-dual-metal` drives both arms, the left controller on the left
+arm and the right on the right, each targeting its own `gripper_base`; grip,
+trigger and B work as on one Metal. It takes the dual planner's mount flags.
+`dual-metal-quest-collection` adds the episode monitor, two wrist webcams and
+the recorder. It records `observation.images.left_wrist` and
+`observation.images.right_wrist` (480x640 RGB), `observation.state` and
+`action` over `arm/left_joint1` to `arm/left_joint7`, then `arm/right_joint1`
+to `arm/right_joint7`.
+
+```bash
+dimos run teleop-webxr-dual-metal --left-can-port can0 --right-can-port can1
+dimos run dual-metal-quest-collection --left-can-port can0 --right-can-port can1 \
+  --left-wrist.hardware.camera-index 0 --right-wrist.hardware.camera-index 1 \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "hand over the cube"
+dimos imitation control
+```
+
 ## Validation scope
 
 Software tests cover required selectors, mounted models, independent gripper
