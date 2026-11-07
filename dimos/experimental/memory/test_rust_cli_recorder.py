@@ -359,3 +359,14 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
     assert popen.call_args.args[0] == "nix build -L path:."
+
+
+def test_successful_stop_reports_recording_pose_hint_once(tmp_path, monkeypatch, mocker):
+    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
+    session = _start_fake_session(tmp_path, monkeypatch, _FakeProcess())
+    try:
+        session.stop()
+        session.stop()
+        hint.assert_called_once_with(tmp_path / "memory.db")
+    finally:
+        session.stop()

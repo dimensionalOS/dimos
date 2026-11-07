@@ -18,7 +18,7 @@ Runs in the ``dimos run`` process. Each stream is tapped on its own transport (L
 Zenoh, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
 run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
 Poses are not resolved here; ``tf`` is recorded like any other stream and
-``dimos map pose-fill`` derives poses on read.
+``dimos map pose-fill`` writes a copy with attached poses.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ import fnmatch
 import os
 from pathlib import Path
 import queue
+import shlex
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -51,6 +52,24 @@ def recording_dir() -> Path:
     """``recordings/<run-id>`` for this ``dimos run``; a timestamp when run outside it."""
     run_id = os.environ.get("DIMOS_RUN_ID") or time.strftime("%Y%m%d-%H%M%S")
     return RECORDINGS_DIR / run_id
+
+
+def log_recording_closed(path: Path) -> None:
+    """Explain the missing pose metadata and the supported post-processing step."""
+    if path.suffix == ".mcap":
+        logger.info(
+            "Recording closed: %s. No attached poses; spatial queries need pose metadata. "
+            "dimos map pose-fill currently accepts SQLite recordings only (--record sqlite).",
+            path,
+        )
+        return
+    logger.info(
+        "Recording closed: %s. No attached poses; run: dimos map pose-fill %s "
+        "(writes a new *_posed.db; defaults to --target lidar --pose-source odom; "
+        "adjust these options for your streams).",
+        path,
+        shlex.quote(str(path)),
+    )
 
 
 def _globs(topics: str) -> list[str]:
@@ -109,6 +128,7 @@ class TransportRecorder:
         self._writer.join()
         if self.dropped:
             logger.warning("--record: dropped %d messages (writer queue full)", self.dropped)
+        log_recording_closed(Path(self.store.config.path))
 
     def tap(
         self, name: str, stream_type: type, transport: Transport[Any]
