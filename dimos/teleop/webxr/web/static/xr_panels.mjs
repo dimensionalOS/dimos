@@ -12,6 +12,22 @@ export class XRPanelLayout {
   add(id, mesh) { this.panels.set(id, {mesh, pinned: false}); }
   pinned(id) { return this.panels.get(id).pinned; }
 
+  // Reset in the viewer's frame, never at the robot world's origin. Mobile
+  // robots may spawn (or drive) many metres away from that origin.
+  recenter() {
+    this.cancel();
+    const cameras = [...this.panels.keys()].filter(id => id !== 'session');
+    for (const [id, panel] of this.panels) {
+      this.head.add(panel.mesh);
+      panel.mesh.position.set(id === 'session' ? 0 : (cameras.indexOf(id) - (cameras.length - 1) / 2) * 0.46,
+        id === 'session' ? 0.3 : -0.36, -1.1);
+      panel.mesh.quaternion.identity(); panel.mesh.scale.setScalar(1);
+      panel.pinned = id === 'session';
+      panel.mesh.updateMatrixWorld(true);
+      if (!panel.pinned) this.workspace.attach(panel.mesh);
+    }
+  }
+
   updateHead(position, orientation) {
     this.head.position.fromArray(position); this.head.quaternion.fromArray(orientation);
     this.head.updateMatrixWorld(true);

@@ -63,6 +63,7 @@ SCENE = SceneConfig(
 CAMERA_RENDERERS = {"mujoco": MujocoRenderer, "unreal": OFFICE_RENDERER}
 CAMERA_RENDERER = CAMERA_RENDERERS[os.environ.get("DIMOS_R1PRO_CAMERA_RENDERER", "mujoco")]
 CAMERA = head_camera()
+MAP_VOXEL_SIZE_M = 0.05
 LIDAR = LidarConfig(
     "r1pro/lidar_chassis_left_link",
     # Preserve rolling acquisition times with 1/50 of the hardware rays.
@@ -103,7 +104,11 @@ r1pro_sim2 = (
             [(SimLidarModule, "lidar", "lidar_raw")]
         ),
         VoxelGridMapper.blueprint(
-            device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
+            device="CPU:0",
+            voxel_size=MAP_VOXEL_SIZE_M,
+            carve_columns=False,
+            block_count=100_000,
+            emit_every=5,
         ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
         R1ProSimControl.blueprint(
             upper_command_joints=tuple(
@@ -136,6 +141,7 @@ r1pro_sim2 = (
             },
             camera_max_edge_m={side: 0.035 for side in ("left", "right")},
             base_drive=True,
+            map_voxel_size_m=MAP_VOXEL_SIZE_M,
             max_depth_m=12.0,
             max_edge_m=0.25,
         ),

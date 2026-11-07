@@ -12,6 +12,16 @@ const rotate = (p, yaw) => [
   -Math.sin(yaw) * p[0] + Math.cos(yaw) * p[2],
 ];
 
+// Classic hand pinches already own arm clutching. Controllers have separate
+// triggers for arrangement, available only with their arm grips released.
+export function workspaceHands(samples, mode) {
+  return Object.fromEntries(Object.entries(samples).map(([side, hand]) => [side, {
+    position: hand.position, distance: hand.distance,
+    available: hand.target === null && (mode === 'tools'
+      || (hand.kind === 'controller' && hand.clutchDistance > 0.035)),
+  }]));
+}
+
 // Viewer placement in XR coordinates. No robot state, scene truth or command transport.
 export class WorkspaceTransform {
   constructor({position = [0, 0.8, -0.15], yaw = 0, scale = 1, minScale = 0.25, maxScale = 2} = {}) {

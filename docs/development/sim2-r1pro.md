@@ -61,6 +61,16 @@ enter XR, release the grips, then grip again to engage.
   drives/strafes and right stick turns, capped at 0.2 m/s and 0.3 rad/s.
 - Hand tracking: pinch a tool handle to move that arm. Two free-space pinches
   reposition/scale the workspace; camera and control panels can be moved/pinned.
+- In Classic teleop with controllers, release both grips, point away from panels,
+  then hold both triggers together and spread/close your hands to resize the scene.
+  Arrangement holds the arms and sends zero base drive. Release before returning
+  to arm control. Classic hand tracking reserves pinches for arm clutching; use
+  the HUD's −/+ buttons or Tool handles mode for scene resizing.
+- The session HUD starts pinned in front of your view. **Bring here** also
+  restores the HUD and camera panels relative to the headset, independent of the
+  robot's world position. **UNPIN** parks the HUD in the scene; **HUD** pins it again.
+- The lidar global map is displayed as instanced 5 cm cubes matching the mapper's
+  voxel size. It remains a sensor-derived map, separate from the RGB-D surfaces.
 - Desktop joint jogs pause headset input and command the existing upper servo.
   Hold clears control; resume requires release and re-grip. Base buttons drive
   only while pressed. Lost input stops the base after 0.3 s.

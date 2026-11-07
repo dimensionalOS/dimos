@@ -138,6 +138,7 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     camera_depth_ranges: dict[str, tuple[float, float]] = Field(default_factory=dict)
     camera_max_edge_m: dict[str, float] = Field(default_factory=dict)
     base_drive: bool = False
+    map_voxel_size_m: float = Field(default=0.05, gt=0)
     input_timeout_s: float = 0.3
     joint_feedback_timeout_s: float = Field(default=0.5, gt=0)
     observation_timeout_s: float = Field(default=0.5, gt=0)
@@ -313,6 +314,7 @@ class SpatialTeleopModule(ArmTeleopModule):
                 "headset_hosts": [ip for ip, _ in get_local_ips()],
                 "cameras": self.config.cameras,
                 "base_drive": self.config.base_drive,
+                "map_voxel_size_m": self.config.map_voxel_size_m,
                 "headset_port": self.config.server_port,
                 "limits": {j.name: [j.lower, j.upper] for j in self._robot.description.joints},
             }

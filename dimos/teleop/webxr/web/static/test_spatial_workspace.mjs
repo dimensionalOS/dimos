@@ -1,7 +1,7 @@
 // Copyright 2026 Dimensional Inc. Licensed under the Apache License, Version 2.0.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {WorkspaceTransform} from './spatial_workspace.mjs';
+import {WorkspaceTransform, workspaceHands} from './spatial_workspace.mjs';
 
 const hand = (position, closed = true, available = true) => ({position, distance: closed ? .01 : .05, available});
 const pair = (left = [-.5, 1, -1], right = [.5, 1, -1], closed = true) => ({left: hand(left, closed), right: hand(right, closed)});
@@ -11,6 +11,31 @@ const grab = (w, pivot = [0, 0, -3]) => {
   feed(w, pair(undefined, undefined, false), 0, pivot);
   assert.equal(feed(w, pair(), 100, pivot), true);
 };
+
+test('classic controllers resize with triggers only after both arm grips are released', () => {
+  const w = new WorkspaceTransform();
+  const samples = closed => Object.fromEntries(Object.entries(pair(undefined, undefined, closed))
+    .map(([side, sample]) => [side, {...sample, target: null, kind: 'controller', clutchDistance: .05}]));
+  const held = samples(false); held.left.clutchDistance = .01;
+  feed(w, workspaceHands(held, 'clutch'), 0);
+  held.left.distance = held.right.distance = .01;
+  assert.equal(feed(w, workspaceHands(held, 'clutch'), 100), false);
+  // Releasing a grip with triggers still held cannot silently start arrangement.
+  assert.equal(feed(w, workspaceHands(samples(true), 'clutch'), 150), false);
+  feed(w, workspaceHands(samples(false), 'clutch'), 200);
+  assert.equal(feed(w, workspaceHands(samples(true), 'clutch'), 300), true);
+  const spread = samples(true); spread.left.position[0] = -1; spread.right.position[0] = 1;
+  feed(w, workspaceHands(spread, 'clutch'), 320);
+  assert.equal(w.scale, 2);
+});
+
+test('UI targets and classic hand clutches keep priority over scene arrangement', () => {
+  const samples = {left: {position: [0, 1, 0], distance: .01, target: 'ui:hold', kind: 'controller', clutchDistance: .05},
+    right: {position: [1, 1, 0], distance: .01, target: null, kind: 'hand', clutchDistance: .01}};
+  assert.equal(workspaceHands(samples, 'clutch').left.available, false);
+  assert.equal(workspaceHands(samples, 'clutch').right.available, false);
+  assert.equal(workspaceHands(samples, 'tools').right.available, true);
+});
 
 test('two fresh free-air pinches start anywhere; one alone leaves the workspace parked', () => {
   const w = new WorkspaceTransform({position: [0, 0, -3]});

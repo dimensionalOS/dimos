@@ -38,6 +38,8 @@ export class SpatialUI {
     this.navigationButtons=[];
     this.layout=new XRPanelLayout(parent,xrScene);
     this.hud=panel(parent,0.84,0.4725,[0.82,0,1.1],[1024,576]);
+    this.hud.mesh.material.depthTest=false; this.hud.mesh.material.depthWrite=false;
+    this.hud.mesh.renderOrder=10;
     this.hud.id='session'; this.layout.add(this.hud.id,this.hud.mesh);
     this.outline=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)),
       new THREE.LineBasicMaterial({color:0x76e2c1,transparent:true,opacity:0.8,depthTest:false,depthWrite:false}));
@@ -148,7 +150,7 @@ export class SpatialUI {
       this.onAction(action); this.hidePalm(); return;
     }
     if(![...this.buttons,...this.workspaceButtons,...this.navigationButtons].some(button=>button.action===action && button.enabled)) return;
-    if(['actual_size','exit_xr'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
+    if(['actual_size','scale_down','scale_up','exit_xr'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
     if(this.pending && action!=='hold') return;
     this.pending=action; const version=++this.version; this.error='';
     try {
@@ -172,8 +174,11 @@ export class SpatialUI {
   update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={}}) {
     this.control=control;
     this.outline.visible=workspaceActive;
-    this.workspaceButtons=[{action:'actual_size',label:'Actual size',x:780,y:424,w:220,h:48,
-      enabled:!preview&&!workspaceActive}];
+    this.workspaceButtons=[
+      {action:'scale_down',label:'−',x:550,w:96},
+      {action:'scale_up',label:'+',x:662,w:96},
+      {action:'actual_size',label:'Actual size',x:780,w:220},
+    ].map(button=>({...button,y:424,h:48,enabled:!preview&&!workspaceActive}));
     this.navigationButtons=[
       ['mode:tools','Tool handles'],['mode:clutch','Classic teleop'],['bring_here','Bring here'],['exit_xr','Exit XR'],
     ].map(([action,label],i)=>({action,label,x:24+i*250,y:512,w:232,h:48,enabled:!preview}));
@@ -225,7 +230,7 @@ export class SpatialUI {
     c.fillStyle='#b9cecf'; c.font='24px system-ui'; wrapped(c,hint,24,239,976,32);
     c.font='21px system-ui'; c.fillStyle='#76e2c1';
     c.fillText(`${mode==='clutch'?'Classic teleop':'Tool handles'} · Workspace ${Math.round(workspaceScale*100)}%`,24,440);
-    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Grip to move · trigger closes jaws · release grip to hold':'Pinch / trigger at a tool · two free pinches arrange workspace',24,480);
+    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Release grips · hold both triggers apart from UI to resize':'Pinch / trigger at a tool · two free pinches arrange workspace',24,480);
     for(const button of [...this.buttons,...this.workspaceButtons,...this.navigationButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);
@@ -279,6 +284,11 @@ export class SpatialUI {
   }
 
   hidePalm() { this.palm.mesh.visible=false; this.palmOwner=null; this.palmCandidate=null; }
+
+  recenter() {
+    this.layout.recenter(); this.drawn='';
+    for(const view of [this.hud,...this.cameras.values()]) this.drawPin(view);
+  }
 
   setImmersive(active) {
     for(const view of [this.hud,...this.cameras.values()]) view.mesh.visible=active;

@@ -4,7 +4,8 @@ import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 import {PinchGrab, ToolPinch} from './spatial_input.mjs';
 import {decodeSurface, SurfaceGrid} from './spatial_surface.mjs';
 import {SpatialUI} from './spatial_ui.mjs';
-import {WorkspaceTransform} from './spatial_workspace.mjs';
+import {WorkspaceTransform, workspaceHands} from './spatial_workspace.mjs';
+import {VoxelMap} from './spatial_voxels.mjs';
 import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs';
 import {SpatialOperator} from './spatial_operator.mjs';
 import {KeyboardClutch} from './spatial_keyboard.mjs';
@@ -74,7 +75,7 @@ for (const side of ['left', 'right']) {
   }
 }
 let showSurface=true;
-const mapCloud=new THREE.Points(new THREE.BufferGeometry(),new THREE.PointsMaterial({color:0x77939b,size:0.035,transparent:true,opacity:0.45}));stage.add(mapCloud);
+const mapCloud=new VoxelMap(); stage.add(mapCloud);
 const detections = new THREE.Group(); stage.add(detections);
 const focusMarker = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 8), new THREE.MeshBasicMaterial({color: 0xffffff, wireframe: true}));
 focusMarker.visible = false; stage.add(focusMarker);
@@ -90,6 +91,9 @@ const keyboard=new KeyboardClutch();
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
   if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
+  if(action==='scale_down'||action==='scale_up') {
+    workspace.resize(workspace.scale*(action==='scale_up'?1.25:0.8),workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement();
+  }
   if(action==='bring_here') placeAhead=true;
   if(action.startsWith('mode:')) setInteractionMode(action.slice(5));
   if(action==='exit_xr') renderer.xr.getSession()?.end().catch(error=>{entryError=error.message;});
@@ -241,7 +245,7 @@ async function pollSurface(slot, surface) {
 }
 for (const [slot, surface] of Object.entries(surfaces)) pollSurface(slot, surface);
 let mapStamp=0;
-poll(endpoint('map'),1000,async response=>{if(response.status===204)return;const stamp=Number(response.headers.get('X-Frame-Timestamp'));if(stamp===mapStamp)return;const points=new Float32Array(await response.arrayBuffer());mapCloud.geometry.dispose();mapCloud.geometry=new THREE.BufferGeometry();mapCloud.geometry.setAttribute('position',new THREE.BufferAttribute(points,3));mapCloud.geometry.computeBoundingSphere();mapStamp=stamp;});
+poll(endpoint('map'),1000,async response=>{if(response.status===204)return;const stamp=Number(response.headers.get('X-Frame-Timestamp'));if(stamp===mapStamp)return;mapCloud.update(new Float32Array(await response.arrayBuffer()),geometry.map_voxel_size_m??0.05);mapStamp=stamp;});
 function resetTools() {
   inputGeneration++;
   for (const state of [...Object.values(gestures),...Object.values(clutches)]) state.reset();
@@ -292,7 +296,7 @@ function place(viewer) {
   const offset=workspacePivot().applyMatrix4(new THREE.Matrix4().makeRotationY(yaw).multiply(basis)
     .scale(new THREE.Vector3().setScalar(workspace.scale)));
   workspace.place(target.sub(offset).toArray(),yaw);
-  applyPlacement(); resetHands(); send({}); placeAhead = false;
+  applyPlacement(); ui.recenter(); resetHands(); send({}); placeAhead = false;
 }
 document.querySelector('#place').onclick = () => { placeAhead=true; resetHands(); send({}); };
 enter.onclick = async () => {
@@ -396,11 +400,11 @@ function track(frame, reference, observationsFresh, viewer) {
     hand.tool=targets.sort((a,b)=>a.distance-b.distance)[0]??null;
     hand.target=hand.tool?.action || (hand.uiHit?`ui:${hand.uiHit.action}`:null);
   }
-  const arranging=activeMode==='tools' && workspace.update(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
-    side,{position:hand.position.toArray(),distance:hand.distance,available:hand.target===null},
-  ])),workspacePivot().applyMatrix4(stage.matrixWorld).toArray(),now,owned);
+  const arranging=workspace.update(workspaceHands(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
+    side,{...hand,position:hand.position.toArray()},
+  ])),activeMode),workspacePivot().applyMatrix4(stage.matrixWorld).toArray(),now,owned);
   if(arranging) {
-    applyPlacement(); resetTools(); send({}); return;
+    driveAxes=[0,0,0]; applyPlacement(); resetTools(); send({}); return;
   }
   const inputs = {}; let focus = null;
   const generation=inputGeneration;
@@ -508,7 +512,7 @@ renderer.setAnimationLoop((time, frame) => {
   renderer.render(scene, camera);
 });
 addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
-addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); ui.dispose(); operator?.dispose(); });
+addEventListener('pagehide', () => { stopped = true; resetHands(); send({}); socket?.close(); ui.dispose(); operator?.dispose(); mapCloud.dispose(); });
 
 function frameWorkspace(view) {
   stage.updateMatrixWorld(true);
