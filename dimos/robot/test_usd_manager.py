@@ -1632,7 +1632,7 @@ def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
 
 
 def test_the_usd_layer_is_built_off_the_event_loop_thread(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """Building it imports usd-core and converts the URDF: ~150 ms on a real robot.
 
@@ -1643,9 +1643,9 @@ def test_the_usd_layer_is_built_off_the_event_loop_thread(
     module = make_manager()
     loop_thread: list[int] = []
     built_on: list[int] = []
-    real = UrdfManager.get_usd
+    real = UsdManager.get_usd
 
-    def record(self: UrdfManager) -> str:
+    def record(self: UsdManager) -> str:
         built_on.append(threading.get_ident())
         return real(self)
 
@@ -1654,7 +1654,7 @@ def test_the_usd_layer_is_built_off_the_event_loop_thread(
         await module.handle_render_file_request(String("scene.usda"))
 
     module.file_info.publish = lambda *_: None  # type: ignore[method-assign]
-    with patch.object(UrdfManager, "get_usd", record):
+    with patch.object(UsdManager, "get_usd", record):
         asyncio.run(ask())
 
     assert built_on, "get_usd was never called"
