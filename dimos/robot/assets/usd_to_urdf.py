@@ -1,0 +1,362 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""A USD layer back as URDF, for the things that only read URDF.
+
+RoboPlan builds its collision scene from URDF XML and a list of package paths, and there is
+no USD equivalent, so a robot described in USD cannot filter itself out of its own point
+cloud without this. That is the only reason it exists.
+
+It is the inverse of ``urdf_to_usd`` and shares its conventions: a link is a prim carrying
+``PhysicsRigidBodyAPI``, a frame's name is its ``displayName``, a joint is authored about z
+with the URDF axis folded into the local rotations, and a revolute limit is degrees in USD
+and radians in URDF. Whatever the conversion to USD could not express is in
+``customData["urdf"]["unconverted"]`` and comes back out verbatim.
+
+A joint's placement goes through single precision, because UsdPhysics declares localPos as
+point3f and localRot as quatf. The loss is around 2e-8 on a metre, which matters to nothing
+that reads this.
+
+What it does not do is read arbitrary USD. A layer from elsewhere -- a vendor's, a DCC
+tool's -- states its physics differently (articulation roots, drive APIs, instanced
+prototypes, nested scales) and is not what this is for.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+import xml.etree.ElementTree as ET
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+from dimos.robot.assets.usd import PASSTHROUGH_KEY, _layer_from, _pxr
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+logger = setup_logger()
+
+# A revolute limit is degrees in USD and radians in URDF (see _set_joint_limits).
+_DEGREES = 180.0 / np.pi
+
+# UsdPhysics joint prim type -> URDF joint type. A revolute joint with no limit authored is
+# continuous, which is decided per joint below rather than by type.
+_JOINT_TYPES = {
+    "PhysicsRevoluteJoint": "revolute",
+    "PhysicsPrismaticJoint": "prismatic",
+    "PhysicsFixedJoint": "fixed",
+}
+
+
+def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
+    """``usd`` as URDF XML, for a consumer that only reads URDF.
+
+    ``name`` overrides the robot name, which otherwise comes from the layer's default prim.
+    """
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a layer")
+    stage = pxr.Usd.Stage.Open(layer)
+
+    links = _links_of(pxr, stage)
+    joints = [
+        joint
+        for joint in (_joint_of(pxr, prim) for prim in _joint_prims(pxr, stage))
+        if joint is not None
+    ]
+
+    default_prim = stage.GetDefaultPrim()
+    robot_name = name or (default_prim.GetName() if default_prim else "robot")
+    root = ET.Element("robot", name=robot_name)
+
+    for link_name, prim in links.items():
+        _write_link(pxr, root, link_name, prim)
+    for joint in joints:
+        _write_joint(root, joint)
+
+    _warn_about_orphans(links, joints)
+    return ET.tostring(root, encoding="unicode")
+
+
+def _links_of(pxr: Any, stage: Any) -> dict[str, Any]:
+    """Every link prim, by the name it travels under.
+
+    A link is a prim with ``PhysicsRigidBodyAPI``, the same test graft_usd and the renamers
+    use, so the names here are the frame_ids the rest of the system sees.
+    """
+    links: dict[str, Any] = {}
+    for prim in stage.Traverse():
+        if not prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            continue
+        link_name = prim.GetDisplayName() or prim.GetName()
+        if link_name in links:
+            logger.warning(f"two prims claim the link name {link_name!r}; keeping the first")
+            continue
+        links[link_name] = prim
+    return links
+
+
+def _joint_prims(pxr: Any, stage: Any) -> list[Any]:
+    return [prim for prim in stage.Traverse() if prim.IsA(pxr.UsdPhysics.Joint)]
+
+
+class _Joint:
+    """One joint's URDF shape, recovered from its USD prim."""
+
+    def __init__(
+        self,
+        name: str,
+        kind: str,
+        parent: str,
+        child: str,
+        origin_xyz: NDArray[np.float64],
+        origin_rpy: NDArray[np.float64],
+        axis: NDArray[np.float64],
+        lower: float | None,
+        upper: float | None,
+        extras: list[str],
+    ) -> None:
+        self.name = name
+        self.kind = kind
+        self.parent = parent
+        self.child = child
+        self.origin_xyz = origin_xyz
+        self.origin_rpy = origin_rpy
+        self.axis = axis
+        self.lower = lower
+        self.upper = upper
+        self.extras = extras
+
+
+def _joint_of(pxr: Any, prim: Any) -> _Joint | None:
+    """Undo _set_joint_frames and _set_joint_limits for one joint prim."""
+    joint = pxr.UsdPhysics.Joint(prim)
+    parent = _body_name(prim, "physics:body0")
+    child = _body_name(prim, "physics:body1")
+    if parent is None or child is None:
+        logger.warning(f"skipping joint {prim.GetPath()}: it does not name both bodies")
+        return None
+
+    kind = _JOINT_TYPES.get(str(prim.GetTypeName()), "fixed")
+    lower, upper = _limits_of(prim, kind)
+    # A revolute joint carrying no limit at all is what a continuous joint was written as.
+    if kind == "revolute" and lower is None and upper is None:
+        kind = "continuous"
+
+    # localRot1 is the rotation that took +z onto the URDF axis, and localRot0 is that with
+    # the joint's own origin rotation in front of it.
+    rot0 = _quat_rotation(joint.GetLocalRot0Attr().Get())
+    rot1 = _quat_rotation(joint.GetLocalRot1Attr().Get())
+    axis = rot1.apply(np.array([0.0, 0.0, 1.0]))
+    origin_rotation = rot0 * rot1.inv()
+
+    position = joint.GetLocalPos0Attr().Get()
+    return _Joint(
+        name=prim.GetDisplayName() or prim.GetName(),
+        kind=kind,
+        parent=parent,
+        child=child,
+        origin_xyz=np.asarray([position[0], position[1], position[2]], dtype=np.float64),
+        origin_rpy=np.asarray(origin_rotation.as_euler("xyz"), dtype=np.float64),
+        axis=axis,
+        lower=lower,
+        upper=upper,
+        extras=_passthrough_of(prim),
+    )
+
+
+def _body_name(prim: Any, relationship: str) -> str | None:
+    """The link name a joint's body relationship points at."""
+    targets = prim.GetRelationship(relationship).GetTargets()
+    if not targets:
+        return None
+    body = prim.GetStage().GetPrimAtPath(targets[0])
+    if not body:
+        logger.warning(f"{prim.GetPath()} {relationship} points at {targets[0]}, which is absent")
+        return None
+    return str(body.GetDisplayName() or body.GetName())
+
+
+def _limits_of(prim: Any, kind: str) -> tuple[float | None, float | None]:
+    """The limits in URDF units, or (None, None) when the joint carries none."""
+    lower_attr = prim.GetAttribute("physics:lowerLimit")
+    upper_attr = prim.GetAttribute("physics:upperLimit")
+    # HasAuthoredValue, not truthiness: the UsdPhysics joint schemas define these attributes
+    # whether or not a layer wrote them, and ask for the fallback they were declared with. A
+    # continuous joint is a revolute one with nothing authored, so the difference is the point.
+    if not lower_attr or not upper_attr:
+        return None, None
+    if not lower_attr.HasAuthoredValue() or not upper_attr.HasAuthoredValue():
+        return None, None
+    lower, upper = lower_attr.Get(), upper_attr.Get()
+    if lower is None or upper is None:
+        return None, None
+    scale = 1.0 / _DEGREES if kind in {"revolute", "continuous"} else 1.0
+    return float(lower) * scale, float(upper) * scale
+
+
+def _quat_rotation(quat: Any) -> Rotation:
+    """A Gf.Quat as a scipy Rotation. Gf is (real, imaginary); scipy is (x, y, z, w)."""
+    if quat is None:
+        return Rotation.identity()
+    imaginary = quat.GetImaginary()
+    return Rotation.from_quat([imaginary[0], imaginary[1], imaginary[2], quat.GetReal()])
+
+
+def _passthrough_of(prim: Any) -> list[str]:
+    """The XML fragments the conversion to USD could not express, verbatim."""
+    data = prim.GetCustomData() or {}
+    urdf = data.get("urdf") or {}
+    return [str(fragment) for fragment in urdf.get(PASSTHROUGH_KEY.split(":", 1)[1], ())]
+
+
+def _write_link(pxr: Any, root: ET.Element, link_name: str, prim: Any) -> None:
+    element = ET.SubElement(root, "link", name=link_name)
+    for child in prim.GetChildren():
+        if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
+            continue  # a nested link or a joint, not this link's own geometry
+        _write_geometry(pxr, element, child)
+    for fragment in _passthrough_of(prim):
+        _append_fragment(element, fragment)
+
+
+def _write_geometry(pxr: Any, link: ET.Element, prim: Any) -> None:
+    """One geometry prim as a <visual> or a <collision>."""
+    shape = _shape_of(pxr, prim)
+    if shape is None:
+        return
+    # Collision geometry is the half RoboPlan needs; it is marked by CollisionAPI on the way out.
+    tag = "collision" if prim.HasAPI(pxr.UsdPhysics.CollisionAPI) else "visual"
+    element = ET.SubElement(link, tag)
+    xyz, rpy = _placement_of(prim)
+    if np.any(xyz) or np.any(rpy):
+        ET.SubElement(element, "origin", xyz=_triple(xyz), rpy=_triple(rpy))
+    geometry = ET.SubElement(element, "geometry")
+    geometry.append(shape)
+
+
+def _shape_of(pxr: Any, prim: Any) -> ET.Element | None:
+    """The <box>/<cylinder>/<sphere>/<mesh> element for a geometry prim, or None."""
+    type_name = str(prim.GetTypeName())
+    scale = _scale_of(prim)
+    if type_name == "Cube":
+        size = prim.GetAttribute("size").Get() if prim.GetAttribute("size") else 1.0
+        extents = scale * float(size if size is not None else 1.0)
+        return ET.Element("box", size=_triple(extents))
+    if type_name == "Sphere":
+        radius = _float_attr(prim, "radius", 1.0)
+        return ET.Element("sphere", radius=_number(radius * float(scale[0])))
+    if type_name == "Cylinder":
+        radius = _float_attr(prim, "radius", 1.0)
+        height = _float_attr(prim, "height", 1.0)
+        return ET.Element(
+            "cylinder",
+            radius=_number(radius * float(scale[0])),
+            length=_number(height * float(scale[2])),
+        )
+    if type_name == "Mesh":
+        filename = _referenced_path(prim)
+        if filename is None:
+            logger.warning(f"skipping mesh {prim.GetPath()}: it references no file")
+            return None
+        return ET.Element("mesh", filename=filename, scale=_triple(scale))
+    logger.warning(f"skipping geometry {prim.GetPath()} of type {type_name!r}")
+    return None
+
+
+def _referenced_path(prim: Any) -> str | None:
+    """The asset path a mesh prim references, which is the filename the URDF named."""
+    for spec in prim.GetPrimStack():
+        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+        for reference in items:
+            path = str(reference.assetPath)
+            if path:
+                return path
+    return None
+
+
+def _placement_of(prim: Any) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """A geometry prim's <origin>, out of the transform op urdf_to_usd wrote."""
+    transform = prim.GetAttribute("xformOp:transform")
+    if not transform or transform.Get() is None:
+        return np.zeros(3), np.zeros(3)
+    # Gf matrices are row-vector convention, so the transpose is the usual 4x4.
+    matrix = np.asarray(transform.Get(), dtype=np.float64).T
+    rotation = Rotation.from_matrix(matrix[:3, :3])
+    return matrix[:3, 3], np.asarray(rotation.as_euler("xyz"), dtype=np.float64)
+
+
+def _scale_of(prim: Any) -> NDArray[np.float64]:
+    attribute = prim.GetAttribute("xformOp:scale")
+    if not attribute or attribute.Get() is None:
+        return np.ones(3)
+    value = attribute.Get()
+    return np.asarray([value[0], value[1], value[2]], dtype=np.float64)
+
+
+def _float_attr(prim: Any, name: str, default: float) -> float:
+    attribute = prim.GetAttribute(name)
+    if not attribute or attribute.Get() is None:
+        return default
+    return float(attribute.Get())
+
+
+def _write_joint(root: ET.Element, joint: _Joint) -> None:
+    element = ET.SubElement(root, "joint", name=joint.name, type=joint.kind)
+    ET.SubElement(element, "parent", link=joint.parent)
+    ET.SubElement(element, "child", link=joint.child)
+    ET.SubElement(element, "origin", xyz=_triple(joint.origin_xyz), rpy=_triple(joint.origin_rpy))
+    if joint.kind != "fixed":
+        ET.SubElement(element, "axis", xyz=_triple(joint.axis))
+    if joint.kind not in {"fixed", "continuous"} and joint.lower is not None:
+        assert joint.upper is not None
+        # effort and velocity are required by the URDF schema but say nothing about
+        # collision, which is all this URDF is read for.
+        ET.SubElement(
+            element,
+            "limit",
+            lower=_number(joint.lower),
+            upper=_number(joint.upper),
+            effort="0",
+            velocity="0",
+        )
+    for fragment in joint.extras:
+        _append_fragment(element, fragment)
+
+
+def _append_fragment(parent: ET.Element, fragment: str) -> None:
+    """Put a preserved XML fragment back where it came from."""
+    try:
+        parent.append(ET.fromstring(fragment))
+    except ET.ParseError:
+        logger.warning(f"dropping an unconverted fragment that will not parse: {fragment[:60]}")
+
+
+def _warn_about_orphans(links: dict[str, Any], joints: list[_Joint]) -> None:
+    """A joint naming a link the layer does not carry would make an unloadable URDF."""
+    named = {joint.parent for joint in joints} | {joint.child for joint in joints}
+    missing = sorted(named - set(links))
+    if missing:
+        logger.warning(f"joints name links this layer has no prim for: {missing}")
+
+
+def _triple(values: NDArray[np.float64] | Any) -> str:
+    return " ".join(_number(float(value)) for value in values)
+
+
+def _number(value: float) -> str:
+    """Short enough to read, exact enough that a round trip does not drift."""
+    text = f"{value:.12g}"
+    return "0" if text in {"-0", "-0.0"} else text
