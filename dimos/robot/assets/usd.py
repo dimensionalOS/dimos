@@ -774,6 +774,19 @@ def _set_asset_info(pxr: Any, prim: Any, filename: str, base_dir: Path | None) -
     prim.SetAssetInfoByKey("version", digest)
 
 
+def referenced_asset_paths(usd: str) -> set[str]:
+    """Every asset path ``usd`` names, as authored. What a renderer may ask to be served."""
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a layer")
+    found: set[str] = set()
+    stack = [layer.pseudoRoot]
+    while stack:
+        spec = stack.pop()
+        found.update(_asset_paths_of(spec))
+        stack.extend(spec.nameChildren)
+    return found
+
+
 def unhashed_assets(usd: str) -> dict[str, str]:
     """Every asset ``usd`` references without a hash, mapped to the prim path carrying it."""
     pxr = _pxr()

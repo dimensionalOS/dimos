@@ -107,6 +107,86 @@ class LoadedRobotModel:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
 
+    def referenced_files(self) -> set[str]:
+        """The full path of every file the URDF names (mesh, texture, splat, ...)."""
+        return {
+            element.attrib["filename"]
+            for element in ET.fromstring(self.xml).iter()
+            if "filename" in element.attrib
+        }
+
+
+@dataclass(frozen=True)
+class UsdModel:
+    """A USD file as a root description: lazy, pickle-safe, and served as it is.
+
+    For a scene that is already USD -- a simulated world, say -- rather than a robot in URDF
+    that has to be converted. One class, unlike RobotModel: there is no expansion step to
+    materialize, so a UsdModel is its own loaded form.
+
+    It has no joints. A USD layer states them as UsdPhysics prims, and reading those back into
+    forward kinematics is not something anything does yet, so a robot that poses itself still
+    wants a URDF. A world does not pose itself.
+    """
+
+    _source_path: Path | str | os.PathLike[str]
+
+    @classmethod
+    def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
+        """A model from a .usd/.usda file, read when it is used rather than now."""
+        if Path(source_path).suffix not in _USD_SUFFIXES:
+            raise ValueError(
+                f"UsdModel.from_file wants a USD file, got {str(source_path)!r}; "
+                f"a URDF or Xacro source is RobotModel.from_file"
+            )
+        return cls(source_path)
+
+    @property
+    def source_path(self) -> Path:
+        return Path(self._source_path).expanduser()
+
+    @cached_property
+    def usd(self) -> str:
+        """The layer's text. No pxr: a USD file is text, and nothing here parses it."""
+        path = self.source_path
+        if not path.is_file():
+            raise FileNotFoundError(f"no USD file at {path}")
+        try:
+            return path.read_text()
+        except UnicodeDecodeError as error:
+            # A scene is handed to renderers as one string, so a crate layer cannot travel.
+            raise ValueError(
+                f"{path} is a binary (crate) USD layer; a scene travels as text, so export "
+                f"it as .usda"
+            ) from error
+
+    @property
+    def joints(self) -> tuple[JointDescription, ...]:
+        return ()
+
+    @property
+    def root_link(self) -> str:
+        """The layer's defaultPrim, which is the frame everything else hangs under."""
+        match = re.search(r"""\bdefaultPrim\s*=\s*["']([^"']+)["']""", self.usd)
+        return match.group(1) if match else ""
+
+    def get_joint(self, name: str) -> JointDescription | None:
+        return None
+
+    def referenced_files(self) -> set[str]:
+        """Every asset path the layer names, which is what a renderer may ask to be served."""
+        from dimos.robot.assets.usd import referenced_asset_paths
+
+        return referenced_asset_paths(self.usd)
+
+    def load(self) -> UsdModel:
+        """Itself: there is nothing to expand, so it is already its own loaded form."""
+        return self
+
+
+# Text layers only: see UsdModel.usd.
+_USD_SUFFIXES = frozenset({".usd", ".usda"})
+
 
 @dataclass(frozen=True)
 class _FixedFrame:
