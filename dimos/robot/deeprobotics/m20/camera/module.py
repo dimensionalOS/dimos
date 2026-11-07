@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's two vendor RTSP cameras relayed as H.265, every frame, by the native ``m20_camera`` module.
+"""The M20's two cameras captured off V4L2 (MJPEG) and hardware-encoded to H.264, every frame, by the native ``m20_camera`` module — the direct path that replaces the vendor RTSP server.
 
-Each ``CompressedVideo`` is one Annex-B access unit, so a stream holds P-frames and decodes only in
-order. Keyframes carry their VPS/SPS/PPS in band (the vendor sends them only in the SDP): a late
-subscriber starts decoding at the next keyframe, about a second away. A lost message corrupts the
-picture until the next keyframe, so these topics keep zenoh's reliable delivery rather than
-``QOS_LATEST_WINS``.
+Each ``CompressedVideo`` is one H.264 Annex-B access unit, so a stream holds P-frames and decodes only
+in order. ``h264parse config-interval=-1`` puts the SPS/PPS in front of every keyframe, so a late
+subscriber starts decoding at the next keyframe, about a GOP away. A lost message corrupts the picture
+until the next keyframe, so these topics keep zenoh's reliable delivery rather than ``QOS_LATEST_WINS``.
+
+The Desktop gateway passes an H.264 source straight through to the browser (no decode/re-encode), so
+encoding H.264 here frees the robot's big cores that the old H.265 transcode used.
 """
 
 from __future__ import annotations
@@ -33,10 +35,6 @@ from dimos.core.stream import Out
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.deeprobotics.m20.constants import (
-    FRONT_CAMERA_RTSP_URL,
-    REAR_CAMERA_RTSP_URL,
-)
 
 
 class M20CameraRelayConfig(NativeModuleConfig):
@@ -45,8 +43,15 @@ class M20CameraRelayConfig(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
 
-    front_rtsp_url: str = FRONT_CAMERA_RTSP_URL
-    rear_rtsp_url: str = REAR_CAMERA_RTSP_URL
+    # V4L2 device nodes of the two cameras on the vendor AOS board (MJPEG up to 1080p30)
+    front_device: str = "/dev/video0"
+    rear_device: str = "/dev/video2"
+    # capture + encode: the pipeline forces these caps and the Rockchip H.264 encoder's bitrate and GOP
+    width: int = Field(default=1280, ge=1)
+    height: int = Field(default=720, ge=1)
+    fps: int = Field(default=30, ge=1, le=120)
+    bitrate_bps: int = Field(default=4_000_000, ge=100_000, le=50_000_000)
+    gop: int = Field(default=30, ge=1, le=600)
     # Camera centers in base_link from the Deep Robotics docs, and their turn about z.
     front_camera_xyz: tuple[float, float, float] = (0.37646, 0.0, 0.03738)
     front_camera_yaw_rad: float = 0.0
@@ -66,7 +71,7 @@ class M20CameraRelayConfig(NativeModuleConfig):
 
 
 class M20CameraRelay(NativeModule):
-    """Relay both vendor RTSP cameras as H.265 ``CompressedVideo``, every frame."""
+    """Relay both M20 cameras as H.264 ``CompressedVideo`` (direct V4L2 capture), every frame."""
 
     config: M20CameraRelayConfig
 

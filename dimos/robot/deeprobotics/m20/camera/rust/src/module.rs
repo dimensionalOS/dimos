@@ -23,13 +23,25 @@ use lcm_msgs::sensor_msgs::CameraInfo;
 use tracing::warn;
 
 use crate::geometry::{camera_info, camera_transforms};
-use crate::relay::{relay, wall_s, Camera};
+use crate::relay::{relay, wall_s, Camera, Encode};
 
 #[native_config]
 #[derive(Clone)]
 pub struct Config {
-    front_rtsp_url: String,
-    rear_rtsp_url: String,
+    /// V4L2 device nodes of the two cameras (MJPEG off the vendor AOS board)
+    front_device: String,
+    rear_device: String,
+    /// capture + encode: the pipeline forces these caps and the Rockchip H.264 encoder's bitrate and GOP
+    #[validate(range(min = 1))]
+    width: i64,
+    #[validate(range(min = 1))]
+    height: i64,
+    #[validate(range(min = 1, max = 120))]
+    fps: i64,
+    #[validate(range(min = 100_000, max = 50_000_000))]
+    bitrate_bps: i64,
+    #[validate(range(min = 1, max = 600))]
+    gop: i64,
     /// Camera centers in base_link, and their turn about z.
     front_camera_xyz: [f64; 3],
     front_camera_yaw_rad: f64,
@@ -75,9 +87,16 @@ pub struct M20Camera {
 impl M20Camera {
     async fn start(&mut self) {
         let config = self.config.clone();
+        let encode = Encode {
+            width: config.width as u32,
+            height: config.height as u32,
+            fps: config.fps as u32,
+            bitrate_bps: config.bitrate_bps as u32,
+            gop: config.gop as u32,
+        };
         let front = Arc::new(Camera {
             name: "front_camera".into(),
-            url: config.front_rtsp_url.clone(),
+            device: config.front_device.clone(),
             frame_id: "front_camera_optical".into(),
             xyz: config.front_camera_xyz,
             yaw_rad: config.front_camera_yaw_rad,
@@ -87,7 +106,7 @@ impl M20Camera {
         });
         let rear = Arc::new(Camera {
             name: "rear_camera".into(),
-            url: config.rear_rtsp_url.clone(),
+            device: config.rear_device.clone(),
             frame_id: "rear_camera_optical".into(),
             xyz: config.rear_camera_xyz,
             yaw_rad: config.rear_camera_yaw_rad,
@@ -98,8 +117,8 @@ impl M20Camera {
         let retry = Duration::from_secs_f64(config.retry_s);
         let stall = Duration::from_secs_f64(config.stall_timeout_s);
         let stats = Duration::from_secs_f64(config.stats_period_s);
-        tokio::spawn(relay(front.clone(), retry, stall, stats));
-        tokio::spawn(relay(rear.clone(), retry, stall, stats));
+        tokio::spawn(relay(front.clone(), encode.clone(), retry, stall, stats));
+        tokio::spawn(relay(rear.clone(), encode.clone(), retry, stall, stats));
         tokio::spawn(publish_metadata(config, [front, rear], self.tf.clone()));
     }
 }

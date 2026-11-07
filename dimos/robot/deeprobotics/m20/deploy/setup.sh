@@ -7,6 +7,11 @@ set -euo pipefail
 deploy_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bridge_dir="$deploy_dir/../onboard/drdds-zenoh-bridge/cpp"
 navigation_host="${M20_NAVIGATION_HOST:-user@10.21.31.106}"
+camera_host="${M20_CAMERA_HOST:-user@10.21.31.103}"
+camera_rust_dir="$deploy_dir/../camera/rust"
+# The native camera relay is a cross-compiled aarch64 binary (AOS has no Rust toolchain). Point
+# M20_CAMERA_BINARY at it, or drop it at camera/rust/result/bin/m20_camera (e.g. a nix build on a dev box).
+camera_binary="${M20_CAMERA_BINARY:-$camera_rust_dir/result/bin/m20_camera}"
 
 if ! systemctl cat rsdriver.service >/dev/null 2>&1; then
   echo "Run this from the DimOS checkout on GOS (10.21.31.104)." >&2
@@ -93,6 +98,42 @@ tar -C "$stage_dir" -cf - . | ssh \
     test "$(systemctl is-enabled hsLidar.service)" = masked
     test "$(systemctl is-enabled multicast-relay.service)" = masked
     test "$(systemctl is-enabled planner.service)" = masked
+  '
+
+echo "Installing the direct camera relay on AOS (${camera_host})..."
+if [[ ! -x "$camera_binary" ]]; then
+  echo "Native camera relay binary not found at $camera_binary." >&2
+  echo "Build it for aarch64 (cargo zigbuild --target aarch64-unknown-linux-gnu.2.17 in $camera_rust_dir)" >&2
+  echo "and set M20_CAMERA_BINARY, or place it at camera/rust/result/bin/m20_camera." >&2
+  exit 1
+fi
+cam_stage="$(mktemp -d /tmp/dimos-m20-camera.XXXXXX)"
+trap 'rm -r "$stage_dir" "$cam_stage"' EXIT
+install -Dm755 "$camera_binary" "$cam_stage/m20_camera"
+install -Dm644 "$deploy_dir/m20-camera.service" "$cam_stage/m20-camera.service"
+install -Dm644 "$deploy_dir/m20-camera-config.json" "$cam_stage/config.json"
+tar -C "$cam_stage" -cf - . | ssh \
+  -o StrictHostKeyChecking=accept-new \
+  -o ConnectTimeout=10 \
+  "$camera_host" '
+    set -eu
+    setup_dir=$(mktemp -d /tmp/dimos-m20-camera-setup.XXXXXX)
+    trap '\''rm -r "$setup_dir"'\'' EXIT
+    tar -xf - -C "$setup_dir"
+
+    sudo install -Dm755 "$setup_dir/m20_camera" /usr/local/bin/m20_camera
+    sudo install -Dm644 "$setup_dir/config.json" /etc/dimos-m20-camera/config.json
+    sudo install -Dm644 "$setup_dir/m20-camera.service" /etc/systemd/system/m20-camera.service
+    sudo systemctl daemon-reload
+
+    # stop the vendor RTSP camera pipelines (they hold /dev/video0,2); the service also kills them on every start
+    sudo pkill -f gst-launch-1.0.*rtspclientsink || true
+
+    sudo systemctl enable m20-camera.service
+    sudo systemctl restart m20-camera.service
+    sleep 6
+    systemctl is-active --quiet m20-camera.service
+    systemctl is-enabled --quiet m20-camera.service
   '
 
 echo "M20 setup complete."
