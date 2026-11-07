@@ -885,3 +885,78 @@ def test_an_answer_that_is_not_a_root_and_a_usd_is_retried(
 
     assert client.asked == 2, "the malformed answer should have been asked past"
     assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
+
+
+def test_renaming_defaults_to_nothing() -> None:
+    mount = Mount.of(_FakeArm)
+
+    assert dict(mount.rename_pre) == {}
+    assert dict(mount.rename_post) == {}
+
+
+def test_renaming_merges_rather_than_replacing() -> None:
+    # Chainable like the rest of the description edits, so two callers can each add one.
+    mount = Mount.of(_FakeArm).renaming(pre={"a": "b"}).renaming(pre={"c": "d"}, post={"e": "f"})
+
+    assert dict(mount.rename_pre) == {"a": "b", "c": "d"}
+    assert dict(mount.rename_post) == {"e": "f"}
+
+
+def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # Written in the subtree's own names, which is what a vendor description gives you.
+    pytest.importorskip("pxr")
+    mount = Mount.of(_FakeArm.blueprint().namespace("left")).renaming(
+        pre={"fake_arm_base": "arm_base"}
+    )
+    module = make_manager(mounts={"arm": mount})
+    module._subtree_clients["left/_fakearm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert _link_of(stage, "/box_robot/base/arm/fake_arm") == "left/arm_base"
+
+
+def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # Written in the prefixed names, for when the prefix is not the shape you wanted.
+    pytest.importorskip("pxr")
+    mount = Mount.of(_FakeArm.blueprint().namespace("left")).renaming(
+        post={"left/fake_arm_base": "left_arm"}
+    )
+    module = make_manager(mounts={"arm": mount})
+    module._subtree_clients["left/_fakearm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert _link_of(stage, "/box_robot/base/arm/fake_arm") == "left_arm"
+
+
+def test_both_renames_apply_around_the_prefix(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    pytest.importorskip("pxr")
+    mount = Mount.of(_FakeArm.blueprint().namespace("left")).renaming(
+        pre={"fake_arm_base": "arm_base"}, post={"left/arm_base": "the_left_arm"}
+    )
+    module = make_manager(mounts={"arm": mount})
+    module._subtree_clients["left/_fakearm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert _link_of(stage, "/box_robot/base/arm/fake_arm") == "the_left_arm"
+
+
+def test_a_rename_naming_a_frame_the_subtree_does_not_have_fails_the_scene(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # Loudly, rather than handing back a scene whose frames are not the ones asked for.
+    pytest.importorskip("pxr")
+    mount = Mount.of(_FakeArm).renaming(pre={"elbow": "wrist"})
+    module = make_manager(mounts={"arm": mount})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    with pytest.raises(ValueError, match="no such link or joint"):
+        _scene(module)
