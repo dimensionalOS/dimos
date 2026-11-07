@@ -205,7 +205,7 @@ class Lab:
         return Session(self.dir)
 
     def done(self) -> bool:
-        return not self.module.get_status().busy
+        return not self.module.status().busy
 
 
 @pytest.fixture
@@ -334,7 +334,7 @@ def test_stopping_kills_the_program_cancels_the_arm_and_discards_the_trial(
     assert lab.monitor.events == ["start", "discard"]
     assert lab.session.info().status == "idle"
     assert lab.module.stop_tool.call_args_list[0] == call("run")  # type: ignore[attr-defined]
-    assert not lab.module.get_status().busy and lab.module.get_status().error is None
+    assert not lab.module.status().busy and lab.module.status().error is None
 
 
 def test_freeze_runs_the_heldout_trials_and_scores_the_session(lab: Lab) -> None:
@@ -374,13 +374,13 @@ def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
         return TrajectoryBuilder("go", name="t", model=model).build("answer")
 
     mocker.patch("dimos.autoresearch.module.run_actor", fake)
-    status = lab.module.start_actor()
+    status = AutoresearchStatus.model_validate_json(lab.module.start_actor())
     assert (status.actor, status.actor_model, status.actor_provider) == (
         "running",
         "claude-sonnet-4-5",
         "anthropic",
     )
-    wait_until(lambda: lab.module.get_status().actor == "done", timeout=5.0)
+    wait_until(lambda: lab.module.status().actor == "done", timeout=5.0)
     assert seen == {
         "mcp_url": "http://lab/mcp",
         "model": "claude-sonnet-4-5",
@@ -398,8 +398,8 @@ def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
         side_effect=RuntimeError("OPENAI_API_KEY is not set"),
     )
     lab.module.start_actor("gpt-5.6-luna", "openai")
-    wait_until(lambda: lab.module.get_status().actor == "failed", timeout=5.0)
-    status = lab.module.get_status()
+    wait_until(lambda: lab.module.status().actor == "failed", timeout=5.0)
+    status = lab.module.status()
     assert (status.actor_model, status.actor_provider, status.actor_error) == (
         "gpt-5.6-luna",
         "openai",
@@ -419,8 +419,8 @@ def test_stop_actor_ends_a_running_actor(lab: Lab, mocker: pytest_mock.MockerFix
     with pytest.raises(RuntimeError, match="running"):
         lab.module.start_actor()
 
-    status = lab.module.stop_actor()
+    status = AutoresearchStatus.model_validate_json(lab.module.stop_actor())
 
     assert (status.actor, status.actor_error) == ("idle", None)
     assert lab.module._actor_thread is None
-    assert lab.module.stop_actor().actor == "idle"
+    assert AutoresearchStatus.model_validate_json(lab.module.stop_actor()).actor == "idle"

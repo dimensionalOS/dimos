@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import re
-import tempfile
+import secrets
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -72,7 +72,7 @@ class AutoresearchEnvironment(MujocoEnvironment):
                 "AUTORESEARCHMODULE__SESSION_DIR": str(self._session_dir),
                 "AUTORESEARCHMODULE__TASK": self.config.task,
                 "AUTORESEARCHMODULE__BUDGET": self.config.budget.model_dump_json(),
-                "RECORDER__RECORDING": str(self._session_dir / "recording"),
+                "RECORDER__RECORDING": str(self._session_dir),
                 "EPISODES__TASK": self.config.task,
             }
         )
@@ -103,10 +103,10 @@ class AutoresearchEnvironment(MujocoEnvironment):
 
 
 def new_session_dir(root: Path, task: str) -> Path:
-    """Make an empty, uniquely named directory for one session under ``root``."""
+    """A unique path for one session under ``root``; the recorder creates it at launch."""
     root.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-") or "session"
-    return Path(tempfile.mkdtemp(prefix=f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}-", dir=root))
+    return root / f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
 
 
 def session_status(session_dir: Path) -> str:

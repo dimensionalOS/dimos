@@ -211,7 +211,7 @@ class AutoresearchModule(Module):
         # Home and one gripper target before the first episode: the dataset
         # export seeds only joints that were commanded.
         self._world.home()
-        self._emit(self.get_status())
+        self._emit(self.status())
 
     @rpc
     def stop(self) -> None:
@@ -222,16 +222,18 @@ class AutoresearchModule(Module):
         finally:
             super().stop()
 
-    @rpc
-    def get_status(self) -> AutoresearchStatus:
+    def status(self) -> AutoresearchStatus:
         """The lab's current status document."""
         with self._status_lock:
             return self._status
 
     @rpc
-    def start_actor(
-        self, model: str | None = None, provider: str | None = None
-    ) -> AutoresearchStatus:
+    def get_status(self) -> str:
+        """The lab's current status as JSON text, the document the status stream carries."""
+        return self.status().to_json()
+
+    @rpc
+    def start_actor(self, model: str | None = None, provider: str | None = None) -> str:
         """Start the coding agent that drives this lab over MCP, on a thread,
         and return the status at once; ``model`` and ``provider`` override the
         config. Refused while an actor runs or once the session is scored."""
@@ -254,7 +256,7 @@ class AutoresearchModule(Module):
         return self.get_status()
 
     @rpc
-    def stop_actor(self) -> AutoresearchStatus:
+    def stop_actor(self) -> str:
         """Stop the actor: its Pi process is killed and the status goes idle.
         The session stays as it is; a trial loop the actor started runs on."""
         self._stop_actor()
@@ -366,7 +368,7 @@ class AutoresearchModule(Module):
             candidate: The number submit returned.
         """
         records = self._session.results(candidate)
-        status = self.get_status()
+        status = self.status()
         return json.dumps(
             {
                 "candidate": candidate,

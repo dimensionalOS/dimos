@@ -110,10 +110,10 @@ def test_launch_writes_the_lab_settings_and_a_fresh_session_dir(
     proc = DimosCliCall()
     env.configure_launch(proc)
     session = Path(proc.extra_env["AUTORESEARCHMODULE__SESSION_DIR"])
-    assert session.parent == tmp_path and session.is_dir() and not list(session.iterdir())
+    assert session.parent == tmp_path and not session.exists()
     assert proc.extra_env["AUTORESEARCHMODULE__TASK"] == "lift the cube"
     assert Budget.model_validate_json(proc.extra_env["AUTORESEARCHMODULE__BUDGET"]) == BUDGET
-    assert proc.extra_env["RECORDER__RECORDING"] == str(session / "recording")
+    assert proc.extra_env["RECORDER__RECORDING"] == str(session)
     assert proc.extra_env["EPISODES__TASK"] == "lift the cube"
     assert proc.simulator == "mujoco"
     assert proc.global_args == ["--record-topics", "coordinator_joint_state,body_poses,tf"]
@@ -131,6 +131,7 @@ def test_settle_returns_once_scored_and_raises_when_the_budget_runs_out(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
     env, session = launched(tmp_path)
+    session.mkdir()
     info = session / "session.json"
     info.write_text(json.dumps({"status": "frozen"}))
     sleep = mocker.patch(
