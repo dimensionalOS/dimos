@@ -291,6 +291,7 @@ class AutoresearchModule(Module):
         return json.dumps(
             {
                 "task": info.task,
+                "success": self._success_rule(),
                 "api": API_REFERENCE,
                 "budget": {
                     **info.budget.model_dump(),
@@ -602,6 +603,15 @@ class AutoresearchModule(Module):
         thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
         self.stop_tool(_TOOL)
         return True
+
+    def _success_rule(self) -> str:
+        """How a trial is scored, in words, so the actor aims at what the judge checks."""
+        if self.config.judge == "lift":
+            return f"the {self.config.judge_body} ends at least 5 cm higher than it started"
+        return (
+            f"the {self.config.judge_body} ends within 5 cm, on every axis, "
+            f"of where the {self.config.place_body} stood"
+        )
 
     def _judge(self) -> Judge:
         if self.config.judge == "lift":
