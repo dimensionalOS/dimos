@@ -824,7 +824,7 @@ def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
 def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """usd-core has no linux-aarch64 wheel, so a robot that never needs a layer never builds one."""
+    """usd-core is not installable on a 3.10 arm robot, so a layer is built only when asked for."""
     import dimos.robot.assets.usd as usd_module
 
     convert = mocker.patch.object(usd_module, "urdf_to_usd", return_value="#usda 1.0\n")
