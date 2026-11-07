@@ -202,7 +202,7 @@ export class SpatialUI {
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING',home:'PLANNING HOME',hold:'HOLDING',resume:'RESUMING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.available===false?'NO RECORDER':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
     const hint=this.error || (paused&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · waiting for fresh sensor surfaces.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
-      || (torsoHeightControl?'Face forward when pressing Resume to calibrate arms. Right stick ↑/↓ raises/lowers torso.':'Point at a button and pinch. Tool handles move only their own arm.');
+      || (torsoHeightControl?'Face forward on XR entry. Hold → Resume recalibrates. Right stick ↑/↓ changes height.':'Point at a button and pinch. Tool handles move only their own arm.');
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;
       return `${side.toUpperCase()} ${owned?.move&&owned?.opening?'MOVING + JAWS':owned?.move?'MOVING':owned?.opening?'JAWS':'HELD'}`;

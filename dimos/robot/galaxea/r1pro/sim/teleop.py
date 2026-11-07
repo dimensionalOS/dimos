@@ -53,6 +53,9 @@ def arm_tasks() -> list[TaskConfig]:
                 ),
                 "bindings": [{"hand": side, "target_frame": f"r1pro/{side}_gripper_link"}],
                 "pink": PinkKinematicsConfig(
+                    # ProxQP falsely reports infeasibility for feasible R1
+                    # differential steps, including with preconditioning off.
+                    solver="quadprog",
                     dt=0.02,
                     position_cost=8.0,
                     orientation_cost=2.0,

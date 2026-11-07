@@ -63,7 +63,6 @@ def station(mocker):
         "arms": {"left": {"grasp": [0, 0, 1], "orientation": [0, 0, 0, 1], "opening": 0}},
     }
     module._feedback_received = 10.0
-    module._operator_paused = False
     try:
         yield module, clock
     finally:

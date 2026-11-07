@@ -1899,7 +1899,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyturbojpeg" },
     { name = "pyyaml" },
-    { name = "qpsolvers", extra = ["proxqp"] },
+    { name = "qpsolvers", extra = ["proxqp", "quadprog"] },
     { name = "reactivex" },
     { name = "requests" },
     { name = "rerun-sdk" },
@@ -2637,7 +2637,7 @@ requires-dist = [
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "pyyaml", marker = "extra == 'planning'", specifier = ">=6.0" },
-    { name = "qpsolvers", extras = ["proxqp"], specifier = ">=4.12.0" },
+    { name = "qpsolvers", extras = ["proxqp", "quadprog"], specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
     { name = "requests", specifier = ">=2.32" },
@@ -8921,6 +8921,87 @@ wheels = [
 [package.optional-dependencies]
 proxqp = [
     { name = "proxsuite" },
+]
+quadprog = [
+    { name = "quadprog", version = "0.1.13", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "quadprog", version = "0.1.14", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[[package]]
+name = "quadprog"
+version = "0.1.13"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'darwin'",
+    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'win32'",
+    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.11' and platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform != 'darwin' and sys_platform != 'win32'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version < '3.11' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/60/fb9b56d425c5b3495bb92683c28f954aedb609ae62f14c81a1b5621ad759/quadprog-0.1.13.tar.gz", hash = "sha256:9d6dd32f2762f29b840fb83741d11e527ddf48745f63b79caad0e530b4a6a0ff", size = 16883, upload-time = "2024-10-24T16:58:58.004Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/8d/42ac0251e022972b2febdd206afe4f3aa2fdd0e43611fc22441d18829628/quadprog-0.1.13-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:25fda45c9fbcfa832d30ff54fff5f499572aa9f258bcb33d0ddd767a84aa57c8", size = 102669, upload-time = "2024-10-24T16:58:28.617Z" },
+    { url = "https://files.pythonhosted.org/packages/98/65/ebe3cb51ad92d1c6a92705991394eee13a1362982dcd27f9ea8511ff75eb/quadprog-0.1.13-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e45501cf7765b47abb4cba100b695cae1a5f110df157209d0a123f17634225ed", size = 95081, upload-time = "2024-10-24T16:58:30.64Z" },
+    { url = "https://files.pythonhosted.org/packages/95/56/69b044ad6cd724331b4e0d56dab0408c2e8c2fdccdf9b720b7285c432713/quadprog-0.1.13-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a33d2171f3f7f608ae2cce3ff8a79aa906902f79d57c1fc9b68ce3d88ba0f410", size = 505911, upload-time = "2024-10-24T16:58:32.189Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/73/9957c397490a4088a8d21a8e1b1b7f23fcfd456fffb47c23610ff67fd358/quadprog-0.1.13-cp310-cp310-win_amd64.whl", hash = "sha256:bb10f5ce4f0c006a8b185f8b1b474175edcfd7005a7cefa5db2d9d19f08f6bed", size = 92425, upload-time = "2024-10-24T16:58:34.789Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/78/1b392db854d5367c14010c94ff2478f5292f80d0a66c658625e33932714c/quadprog-0.1.13-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:d310a08c9b119312bef2931bea452d9b7ad4430663d3a88a9bc642881f2cb8cf", size = 102596, upload-time = "2024-10-24T16:58:36.086Z" },
+    { url = "https://files.pythonhosted.org/packages/13/58/f925f6b8616f437714e8820d4d4739d11140361955dfcba5b8f4c9414db9/quadprog-0.1.13-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:415fa9e371ccdcf2142333f0991c0983aebf84ce8c8f584f822729394c31d399", size = 94982, upload-time = "2024-10-24T16:58:37.549Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/b1/b75dadb26dd2e4f315f8352e781156556227e3bb88534c2d2591b97bc8ed/quadprog-0.1.13-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:303e6c726a483db04d5d8a43d1294b095ff862e6a4eeccf1f7df2c27f7c489e5", size = 548387, upload-time = "2024-10-24T16:58:39.239Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/1b/1eb5e781dc0bba9e83041b9ee8d861ff164bb1a4dad3ac6762d23570fafc/quadprog-0.1.13-cp311-cp311-win_amd64.whl", hash = "sha256:34d5050a3de160a096d1b432a0c42f9dcce563ec5eb21841a883ecf67652f2dd", size = 92591, upload-time = "2024-10-24T16:58:40.956Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/70/d91d208ad6971c8831ec23b86dfc5c3ddd50a0d79c8da3156c5feaad4665/quadprog-0.1.13-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:cdae336347fc7488743739ad39943f60976ada74cacd0892f5d1503152359ced", size = 103941, upload-time = "2024-10-24T16:58:42.151Z" },
+    { url = "https://files.pythonhosted.org/packages/10/5e/de8d3911e44699abc4e3ce835e69c3db76525af8018026f9bce61be69a43/quadprog-0.1.13-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:8628ea1b1910c0fbfc828fca36ebc76a8c7352fdef782b5971aee1f4db08ba38", size = 95809, upload-time = "2024-10-24T16:58:43.729Z" },
+    { url = "https://files.pythonhosted.org/packages/20/64/72ae344963db87a15e8566b8c4f1408080ad5746c8e1c32f8d04911074bb/quadprog-0.1.13-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7e2cb007ecf649fb2a614a1954359d534682d7339c3834df30aee7321ae1f7bb", size = 534623, upload-time = "2024-10-24T16:58:44.787Z" },
+    { url = "https://files.pythonhosted.org/packages/47/11/4f8b99099215f6e7f2c8ca9756c590e561d1d3093fedb51a960dc609e347/quadprog-0.1.13-cp312-cp312-win_amd64.whl", hash = "sha256:d3d8d774d6436829ea4a11eeffe4a1a72375df17c9e9a7a48973372e64c826ad", size = 92523, upload-time = "2024-10-24T16:58:46.031Z" },
+]
+
+[[package]]
+name = "quadprog"
+version = "0.1.14"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "(python_full_version >= '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.12' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "(python_full_version == '3.11.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version == '3.11.*' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'darwin'",
+    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32'",
+]
+dependencies = [
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a0/ad/87bf3e68e741a33141b2c6029de14f43b7229dfa47d0ee5b2ed6e05e6536/quadprog-0.1.14.tar.gz", hash = "sha256:16a1ae6715793d82f016b7ad3502192bcd8db661c6368badc5bba8017382577b", size = 17052, upload-time = "2026-10-19T23:38:56.954Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/d4/4a529be12b1ac23a15ec747f8c1b5310917e34afa51d96562e2a15bbbfe2/quadprog-0.1.14-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:aee78b6221fe2f8921e09f42b7a6b5f0599bd32e795e48de592593dfae176ff0", size = 102664, upload-time = "2026-10-19T23:38:18.813Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/a8/5dded8d7f274af80dab6fe3482585060ca9f12920ebce0b04cafd33bb407/quadprog-0.1.14-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:b7a503d01af2eca59fd0bf595fe83aac9143b19c98f0bc698a67197109f224bd", size = 101783, upload-time = "2026-10-19T23:38:20.302Z" },
+    { url = "https://files.pythonhosted.org/packages/27/05/f032506d7c78fb31ff278e22e5f3f7fc911a0c878f330c407a9aa2652702/quadprog-0.1.14-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d232218a9eeb09b927c8c81ed4e3876ab6ea4f308dc6f9085c27e2458c7380c0", size = 594510, upload-time = "2026-10-19T23:38:21.468Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/fc/4d1515ce0281ee716b9f3cfde4b0e4b62f580f8fdb2a0fb86d95e4cd07e7/quadprog-0.1.14-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a09851852f4b820fa8bb973faf280aa013a01fc190bc8491584105bdeeb9eec8", size = 599980, upload-time = "2026-10-19T23:38:22.778Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/d0/c4a3d305255fbeefdefe75ecd07355b70f2bcbd3cb5e432fc66c299acde8/quadprog-0.1.14-cp311-cp311-win_amd64.whl", hash = "sha256:35b11ba94ce3d906d1c85fd0419f861a53fb6337b4f00c69b18d6c169e2ffae7", size = 88878, upload-time = "2026-10-19T23:38:24.08Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/3b/43176e3a2bdd1d7a3a15ba691ab97e61690a7273e04b9636dbe8076669d8/quadprog-0.1.14-cp311-cp311-win_arm64.whl", hash = "sha256:31ae068ecb2172691c2a424f46e8ae76ca9250df9cca50f3e5063a63d39277c4", size = 79750, upload-time = "2026-10-19T23:38:25.184Z" },
+    { url = "https://files.pythonhosted.org/packages/68/52/86b62d65ae285d08785a729e39b44502cd69c1714f8a3a853d8200a3f577/quadprog-0.1.14-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:6e93fc2fae410328455aa505938988ac7919736661c07d1f939e6443892393eb", size = 103113, upload-time = "2026-10-19T23:38:26.277Z" },
+    { url = "https://files.pythonhosted.org/packages/21/b6/0067969da7ec9c709891c93fff24931c2a785a0bfbf5b631517f7f52fbb4/quadprog-0.1.14-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:cba4439f1d5844b99c4c8243db987f5344dbdf841f1c1e2fee5a06704a779d57", size = 101420, upload-time = "2026-10-19T23:38:27.42Z" },
+    { url = "https://files.pythonhosted.org/packages/5e/90/f574d32b4f8b5a7028b5b84b6aef42c57445fae12db9976eda08d531f93f/quadprog-0.1.14-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:28b1840704e17f3c38d376e2eed3d1676ccccea415287a68f60047fd0ac3b257", size = 596647, upload-time = "2026-10-19T23:38:29.001Z" },
+    { url = "https://files.pythonhosted.org/packages/37/84/38f11bdb7b148eb31aecd1a0edb26c98562fa78c78be2a3360c57fd36cb0/quadprog-0.1.14-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:78a4a6497c969b6eb52bf83eb4b7891ddc76cee1d267ae984f5742768f7f8d42", size = 610007, upload-time = "2026-10-19T23:38:30.298Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/47/585b7642b7942f4e0b0cb696d93ed6cb456c67fbf458ec35c760fde111e4/quadprog-0.1.14-cp312-cp312-win_amd64.whl", hash = "sha256:92d9bfb0c7e8bfc8fc1e6b838937ba516c6faf1f6260799fb1dd35bbb35a08b0", size = 89212, upload-time = "2026-10-19T23:38:31.783Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/a8/c3b7675ad2c3544128bb2ba718d47c0496e3f8147a47deff493e6933b8be/quadprog-0.1.14-cp312-cp312-win_arm64.whl", hash = "sha256:a3715f630818464d3d4f3b185b5f64fa364495c048464361dc2a3f25055321b5", size = 78471, upload-time = "2026-10-19T23:38:33.036Z" },
 ]
 
 [[package]]

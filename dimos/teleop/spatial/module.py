@@ -144,6 +144,7 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     base_drive: bool = False
     body_relative_clutch: bool = False
     torso_height_control: bool = False
+    start_paused: bool = True
     map_voxel_size_m: float = Field(default=0.05, gt=0)
     input_timeout_s: float = 0.3
     joint_feedback_timeout_s: float = Field(default=0.5, gt=0)
@@ -233,7 +234,7 @@ class SpatialTeleopModule(ArmTeleopModule):
         self._sequence = -1
         self._control_epoch = 0
         self._operator_session = uuid4().hex
-        self._operator_paused = True
+        self._operator_paused = self.config.start_paused
         self._home_epoch: int | None = None
         self._input_mode: Literal["tools", "clutch"] = "tools"
         self._input_pose_frame: Literal["world", "body"] = "world"

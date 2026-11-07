@@ -18,11 +18,13 @@ from io import BytesIO
 
 import attrs
 import numpy as np
+from pink.exceptions import NoSolutionFound
 import pytest
 from yourdfpy import URDF
 
 from dimos.control.tasks.pose_target_ik import PinkJointLimitError, PinkPoseTargetSolver
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import create_task
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.sim.config import MODEL
 from dimos.robot.galaxea.r1pro.sim.teleop import arm_tasks
@@ -100,3 +102,66 @@ def test_torso_height_path_keeps_shoulders_upright_and_over_same_base_position()
         np.testing.assert_allclose(actual[:3, :3], initial[:3, :3], atol=1e-9)
         np.testing.assert_allclose(actual[:2, 3], initial[:2, 3], atol=1e-9)
         assert initial[2, 3] - actual[2, 3] == pytest.approx(0.7 * (1 - np.cos(fold)))
+
+
+def test_r1_feasible_step_does_not_freeze_on_proxqp_false_infeasibility():
+    solver = create_task(arm_tasks()[0], {})._solver
+    config = solver._control_config
+    # Reproduced from the stuck demo's measured posture and a deterministic
+    # controller-target sweep. The QP is feasible even with zero displacement.
+    measured = JointState(
+        name=list(config.joint_names),
+        position=[
+            -0.35129370285950956,
+            -0.05516460530984676,
+            -0.016090705160493858,
+            -0.041510832821439324,
+            -0.8124044389479712,
+            -0.9473571967605983,
+            1.0099650644674445,
+        ],
+    )
+    previous = JointState(
+        name=list(config.joint_names),
+        position=[
+            -0.40249909071863016,
+            -0.026276303666692313,
+            0.050654641813984554,
+            -0.021958604035001675,
+            -0.8645582835869707,
+            -0.8243250451556747,
+            0.9892983978007779,
+        ],
+    )
+    target = PoseStamped(
+        position=[-0.4107320555685976, -0.04406483810373035, -0.7854297536896317],
+        orientation=[
+            -0.28980548520668054,
+            -0.5986006491729794,
+            -0.7444727908057652,
+            0.058739316506777994,
+        ],
+        frame_id=config.robot_model.base_pose.frame_id,
+    )
+    args = dict(
+        robot_model=config.robot_model,
+        frame_targets={config.target_frames[0]: target},
+        controlled_joints=config.joint_names,
+        command_state=previous,
+        measured_state=measured,
+        max_command_tracking_error_rad=np.deg2rad(config.max_command_tracking_error_deg),
+        feedback_limit_tolerance=config.feedback_limit_tolerance,
+        command_limit_margin=config.command_limit_margin,
+        dt=0.02,
+        max_joint_velocity_rad_s=config.max_joint_velocity_rad_s,
+        joint_command_filter_cutoff_hz=config.joint_command_filter_cutoff_hz,
+    )
+    old = PinkPoseTargetSolver(
+        attrs.evolve(config, pink=config.pink.model_copy(update={"solver": "proxqp"}))
+    )
+    with pytest.raises(NoSolutionFound) as failure:
+        old._step_frame_targets(**args)
+    assert np.all(failure.value.problem.h >= 0)  # zero step satisfies every bound
+    result = solver._step_frame_targets(**args).command
+    assert np.isfinite(result.position).all()
+    assert np.max(np.abs(np.asarray(result.position) - previous.position)) <= 0.010001

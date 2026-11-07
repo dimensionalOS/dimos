@@ -54,14 +54,16 @@ source is `../dim-spatial-workspace`; install that repository's
 
 Use **Headset** for the current LAN URL, `https://<laptop-wifi-ip>:8443/spatial`.
 The headset needs a trusted HTTPS connection and a WebXR browser on the same
-reachable network. Opening the view only observes. Enable control explicitly,
-enter XR, release the grips, then grip again to engage.
+reachable network. Opening the view only observes. Enter XR facing your intended
+forward direction, release the grips, then grip again to engage. This simulation
+starts enabled; it does not require a separate Resume after every restart.
+An explicit Hold still latches until Resume. Other stations default to paused.
 
 - Controllers: grip clutches the corresponding arm; release holds it. Left stick
   drives/strafes and right stick horizontal turns, capped at 0.2 m/s and 0.3 rad/s.
   Right stick vertical raises/lowers the torso; release holds the reached height.
   It starts fully raised, with about 21 cm of commanded lowering available.
-- Face your intended forward direction when pressing **Resume**. Controller
+- Face your intended forward direction on XR entry or when pressing **Resume**. Controller
   motion maps to robot-body forward/left/up, at one physical metre per metre,
   independent of scene rotation/scale and robot world position/heading. Looking
   around does not recalibrate. Hold then Resume recalibrates; reconnecting or
@@ -213,6 +215,11 @@ The R1 simulation accepts up to 0.01 rad of soft-stop feedback overshoot, while
 commanding 0.03 rad inside the physical limits. Larger overshoot still rejects
 control. This addresses a captured limit-rejection freeze, not every possible
 singularity or collision.
+R1 uses the quadprog QP backend: a deterministic reproduction
+from a stuck measured posture produced a false primal-infeasibility result with
+ProxQP, despite zero displacement satisfying every inequality. Disabling its
+preconditioner fixes one case but not another. Both arms pass a 1,000-target
+deterministic sweep with quadprog; command velocity and tracking-error limits remain.
 
 ## JoyLo findings and interface direction
 

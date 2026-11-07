@@ -51,6 +51,9 @@ class Jog(BaseModel):
 
 
 class R1SpatialConfig(SpatialViewerConfig):
+    # This simulation is enabled by entering XR and gripping/moving a stick.
+    # Explicit Hold still latches until Resume; hardware stations keep their gate.
+    start_paused: bool = False
     body_relative_clutch: bool = True
     torso_height_control: bool = True
     linear_speed: float = Field(default=0.2, gt=0, le=0.4)
