@@ -224,8 +224,11 @@ class NativeHarness:
         )
 
     def run(self, agent: PiAdapter) -> Trajectory:
+        # A scripted dimcode run takes 6-9 s on the self-hosted macOS runner (gateway
+        # startup dominates), so a 10 s limit left no headroom for a cold start or a
+        # busy host. This bounds a hung run; it is not a performance assertion.
         result = agent.run(
-            "Inspect selected observations.", self.environment, self.root, timeout_s=10
+            "Inspect selected observations.", self.environment, self.root, timeout_s=30
         )
         if result.extra.ended_by == "timeout":
             stderr_path = self.root / "pi-stderr.txt"

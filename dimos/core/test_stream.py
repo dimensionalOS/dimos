@@ -183,14 +183,14 @@ def test_subscription(dimos, subscriber_class) -> None:
 
     robot.start()
     subscriber.sub1()
-    subscriber.wait_for_sub1_msg()
+    assert subscriber.wait_for_sub1_msg(), "no odometry reached sub1 within its wait"
 
     assert subscriber.sub1_msgs_len() > 0
     assert subscriber.sub2_msgs_len() == 0
     assert subscriber.active_subscribers() == 1
 
     subscriber.sub2()
-    subscriber.wait_for_sub2_msg()
+    assert subscriber.wait_for_sub2_msg(), "no odometry reached sub2 within its wait"
 
     subscriber.unsub_all()
 
