@@ -142,7 +142,9 @@ def make_metal_sim_module_kwargs() -> dict[str, Any]:
     The arm MJCF takes its meshes from the pinned description at run time, the
     bench is the scene, and the three bench objects are reported on
     ``body_poses``. The bench top is the world's z = 0 and the arm's base_link
-    sits on it at the origin, so the planner needs no base pose.
+    sits on it at the origin, so the planner needs no base pose. Rays from the
+    wrist camera (80 x 60, about 1 cm apart on the bench) give world-frame
+    points at 5 Hz on ``pointcloud``.
     """
     return {
         "robot_mjcf": METAL_MJCF_PATH,
@@ -155,6 +157,11 @@ def make_metal_sim_module_kwargs() -> dict[str, Any]:
         "base_frame_id": "world",
         "reset_joint_positions": list(METAL_SIM_HOME),
         "tracked_bodies": list(METAL_BENCH_OBJECTS),
+        "enable_pointcloud": True,
+        "enable_mujoco_lidar": True,
+        "mujoco_lidar_raycast_width": 80,
+        "mujoco_lidar_raycast_height": 60,
+        "mujoco_lidar_voxel_size": 0.01,
     }
 
 
