@@ -1427,7 +1427,7 @@ def test_a_trivialized_robot_names_no_assets_to_serve(
 
 
 def test_trivialize_leaves_a_mounted_subtree_alone(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """Only this robot's own layer is trivialized: what a mounted module answers is its own say."""
     pytest.importorskip("pxr")
