@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import numpy as np
+import pytest
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -43,3 +44,23 @@ def test_find_wide_path_with_start_inside_inflation() -> None:
 
     assert path is not None
     assert len(path.poses) > 0
+
+
+def test_stuck_time_window_defaults_to_eight_seconds() -> None:
+    planner = GlobalPlanner(robot_width=0.3, robot_rotation_diameter=0.6)
+    assert planner._stuck_time_window == 8.0
+    assert planner._position_tracker._time_window == 8.0
+
+
+def test_stuck_time_window_can_be_raised_for_slow_simulations() -> None:
+    planner = GlobalPlanner(
+        robot_width=0.3, robot_rotation_diameter=0.6, simulation=True, stuck_time_window=30.0
+    )
+    assert planner._stuck_time_window == 30.0
+    assert planner._position_tracker._time_window == 30.0
+
+
+@pytest.mark.parametrize("window", [0.0, -1.0])
+def test_stuck_time_window_rejects_non_positive_values(window: float) -> None:
+    with pytest.raises(ValueError):
+        GlobalPlanner(robot_width=0.3, robot_rotation_diameter=0.6, stuck_time_window=window)
