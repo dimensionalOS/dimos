@@ -54,16 +54,18 @@ ASSET_ROOT_PREFIX = "/dimos/assets/"
 PASSTHROUGH_KEY = "urdf:unconverted"
 
 _NO_USD = (
-    "URDF to USD needs usd-core (pxr), which is in the 'scene-cooking' extra and ships no "
-    "linux-aarch64 wheel. Install it with: uv sync --extra scene-cooking"
+    "Reading or writing USD needs usd-core (pxr), which is in the 'scene-cooking' extra: "
+    "uv sync --extra scene-cooking. On linux-aarch64 a wheel exists only from usd-core 26.11 "
+    "and only for Python 3.11 and up, so a 3.10 arm robot cannot serve USD at all."
 )
 
 
 def _pxr() -> Any:
     """The pxr modules, imported on first use.
 
-    Deferred because usd-core is an optional extra with no linux-aarch64 wheel: importing a
-    UrdfManager on a Jetson must not need it, only asking one for a USD scene does.
+    Deferred because usd-core is an optional extra, and on linux-aarch64 it is installable
+    only on Python 3.11 and up: a robot must come up and pose itself on tf without it, and
+    only asking for a USD layer needs it.
     """
     try:
         from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, Vt

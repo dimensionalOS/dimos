@@ -34,7 +34,7 @@ from dimos.robot.assets.usd import (
     usd_frame_names,
 )
 
-# usd-core is an optional extra with no linux-aarch64 wheel (see dimos.robot.assets.usd).
+# usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
 pytest.importorskip("pxr")
 
 # A base with a fixed mount, a revolute joint about a non-axis-aligned axis, and a link name
