@@ -184,6 +184,7 @@ class UrdfManagerConfig(ModuleConfig):
     # Keep the frames, drop the shapes: the links, joints and poses stay, the visuals and
     # collision meshes go. The same description then serves a real robot and a simulated one,
     # since only the sim needs the geometry, and the mount points stay identical either way.
+    # This robot's own layer only -- what a mounted module answers with is its own say.
     trivialize: bool = False
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
