@@ -162,3 +162,36 @@ async def test_grippers_move_opposite_fingers_independently_and_ignore_arm_holds
 async def test_invalid_gripper_command_is_rejected(controller, opening):
     with pytest.raises(ValueError, match="gripper opening"):
         await controller.handle_left_gripper_command(Float32(data=opening))
+
+
+async def test_torso_folds_together_and_release_or_timeout_holds(controller, mocker):
+    clock = mocker.patch("dimos.robot.galaxea.r1pro.sim.control.time.monotonic", return_value=0)
+    await controller.handle_torso_height_command(Float32(data=-1))
+
+    def tick(i):
+        return (
+            controller.compute(
+                JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+            )
+            .joint_commands[0]
+            .values[:4]
+        )
+
+    for i in range(250):
+        q = tick(i)
+        assert q == pytest.approx([q[0], -2 * q[0], -q[0], 0])
+    assert q == pytest.approx([0.8, -1.6, -0.8, 0])
+    await controller.handle_torso_height_command(Float32(data=1))
+    raised = tick(250)
+    assert raised[0] < q[0]
+    await controller.handle_torso_height_command(Float32(data=0))
+    assert tick(251) == raised
+    await controller.handle_torso_height_command(Float32(data=1))
+    clock.return_value = 1
+    assert tick(252) == raised
+
+
+@pytest.mark.parametrize("axis", [float("nan"), -1.1, 1.1])
+async def test_invalid_torso_input_rejected(controller, axis):
+    with pytest.raises(ValueError, match="torso height"):
+        await controller.handle_torso_height_command(Float32(data=axis))

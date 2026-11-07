@@ -9,6 +9,7 @@ import {VoxelMap} from './spatial_voxels.mjs';
 import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs';
 import {SpatialOperator} from './spatial_operator.mjs';
 import {KeyboardClutch} from './spatial_keyboard.mjs';
+import {BodyClutchFrame} from './body_clutch.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
 const boundSession = new URLSearchParams(location.search).get('operator_session');
@@ -35,7 +36,7 @@ const orbit = new OrbitControls(camera, renderer.domElement);
 orbit.target.set(0, 1, -0.4); orbit.update();
 
 // World X forward / Y left / Z up -> XR X right / Y up / Z back.
-// This SAME matrix is inverted for every hand command and surface selection.
+// Scene selection uses this transform. Body-relative clutch input bypasses it.
 const basis = new THREE.Matrix4().set(0,-1,0,0, 0,0,1,0, -1,0,0,0, 0,0,0,1);
 const workspace = new WorkspaceTransform();
 const stage = new THREE.Group(); stage.matrixAutoUpdate = false;
@@ -84,11 +85,14 @@ let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
 let modePreference='auto', activeMode='tools';
+let driveAxes=[0,0,0], torsoAxis=0;
 let desktopFramed=false, selectedArm='left';
 let keyboardEnabled=false, keyboardSide='left', keyboardFrame='world', lastKeyboardSend=0;
 let objectsTS=0, selectedObject=null;
 const keyboard=new KeyboardClutch();
+const bodyClutch=new BodyClutchFrame();
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
+  if(action==='hold'||action==='resume') bodyClutch.reset();
   if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
   if(action==='scale_down'||action==='scale_up') {
@@ -126,6 +130,7 @@ const surfaces = Object.fromEntries(Object.keys(geometry.cameras).map(slot => {
 }));
 ui.configureCameras(geometry.cameras || {});
 document.querySelector('h1').textContent=geometry.title || 'Robot workspace';
+if(geometry.body_relative_clutch) document.querySelector('#place').textContent='Place workspace';
 for (const side of geometry.sides) {
   for (const geom of geometry.arms[side]) {
     const mesh = new THREE.Mesh(meshes[geom.mesh], new THREE.MeshStandardMaterial({color: new THREE.Color(...geom.rgba.slice(0,3)), roughness: 0.65}));
@@ -149,7 +154,7 @@ function connect() {
   const url=embedded?new URL(endpoint('ws')):new URL('/ws',location.href);
   url.protocol=url.protocol==='https:'?'wss:':'ws:';
   socket = new WebSocket(url.href);
-  socket.onopen = () => { sequence = 0; controlEpoch=null; entryError=''; resetHands(); };
+  socket.onopen = () => { sequence = 0; controlEpoch=null; entryError=''; bodyClutch.reset(); resetHands(); };
   socket.onclose = event => { resetHands(); if(event.code===1008) entryError='Another operator currently owns control.'; if (!stopped && controlRequested) setTimeout(connect, 1500); };
 }
 poll(endpoint('state'), 35, async response => {
@@ -167,6 +172,7 @@ poll(endpoint('state'), 35, async response => {
   }
   feedback = next; feedbackAt = performance.now(); paused=!!next.control.paused;
   if(controlEpoch!==feedback.control.epoch) {
+    bodyClutch.reset();
     resetTools(); keyboard.reset(); controlEpoch=feedback.control.epoch;
   }
   (feedback.body || []).forEach((matrix,i)=>body.children[i]?.matrix.fromArray(matrix));
@@ -252,6 +258,7 @@ function resetTools() {
   ui.layout.cancel();
 }
 function resetHands() {
+  torsoAxis=0;
   driveAxes=[0,0,0];
   resetTools(); workspace.cancel(); ui.hidePalm(); uiPointer.visible=false;
   for(const side of ['left','right']) {
@@ -333,19 +340,26 @@ document.querySelector('#entry-hint').textContent=supportedModes[1][1]
   ? 'Mixed reality shows passthrough. Exit XR to change VR / MR; HUD pins follow your view.'
   : 'This browser does not advertise mixed reality. Hand tracking is optional.';
 
-let driveAxes=[0,0,0];
 function send(hands, focus = null) {
   if (socket?.readyState !== WebSocket.OPEN || controlEpoch===null) return;
   if (socket.bufferedAmount > 16384) { socket.close(); resetHands(); return; }
-  socket.send(JSON.stringify({type: 'spatial_input', session: boundSession || feedback?.control?.session, mode: activeMode, sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus, drive: paused ? [0,0,0] : driveAxes}));
+  const bodyInput=renderer.xr.isPresenting && activeMode==='clutch' && geometry.body_relative_clutch;
+  socket.send(JSON.stringify({type: 'spatial_input', session: boundSession || feedback?.control?.session, mode: activeMode, sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus, drive: paused ? [0,0,0] : driveAxes,
+    pose_frame:bodyInput?'body':'world',torso_height:paused?0:torsoAxis}));
 }
 function track(frame, reference, observationsFresh, viewer) {
   const raw=sampleXRInputs(frame,reference), samples={};
   const axis=(side,index)=> {const value=raw[side]?.source?.gamepad?.axes?.[index]||0;return Math.abs(value)<0.15?0:Math.max(-1,Math.min(1,value));};
   driveAxes=geometry.base_drive?[-axis('left',3),-axis('left',2),-axis('right',2)]:[0,0,0];
+  torsoAxis=geometry.torso_height_control?-axis('right',3):0;
   const mode=Object.keys(raw).length?interactionMode(modePreference,raw):activeMode;
   if(mode!==activeMode) { activeMode=mode; resetHands(); send({}); }
   const robotReady=feedback?.control?.robot_ready && feedback.control.mode===activeMode;
+  const bodyInput=activeMode==='clutch' && geometry.body_relative_clutch;
+  if(bodyInput && !paused && robotReady && viewer) {
+    const p=viewer.transform.position,q=viewer.transform.orientation;
+    bodyClutch.calibrate([p.x,p.y,p.z],[q.x,q.y,q.z,q.w]);
+  }
   ui.hovered=null; uiPointer.visible=false;
   for(const side of ['left','right']) {
     const sample=raw[side];
@@ -404,7 +418,7 @@ function track(frame, reference, observationsFresh, viewer) {
     side,{...hand,position:hand.position.toArray()},
   ])),activeMode),workspacePivot().applyMatrix4(stage.matrixWorld).toArray(),now,owned);
   if(arranging) {
-    driveAxes=[0,0,0]; applyPlacement(); resetTools(); send({}); return;
+    driveAxes=[0,0,0]; torsoAxis=0; applyPlacement(); resetTools(); send({}); return;
   }
   const inputs = {}; let focus = null;
   const generation=inputGeneration;
@@ -419,10 +433,12 @@ function track(frame, reference, observationsFresh, viewer) {
     const orientation=rotation.clone().multiply(hand.orientation);
     if(activeMode==='clutch') {
       const clutch=clutches[side].update(hand.clutchDistance,
-        !paused && robotReady && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
+        !paused && robotReady && (!bodyInput || bodyClutch.rotation!==null) && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
       if(clutch.grab) {
         gestures[side].reset(); ui.layout.end(side);
-        inputs[side]={position:pinchPosition.toArray(),orientation:orientation.toArray(),
+        const pose=bodyInput?bodyClutch.pose(hand.position.toArray(),hand.orientation.toArray())
+          :{position:pinchPosition.toArray(),orientation:orientation.toArray()};
+        inputs[side]={...pose,
           pinched:true,arm:side,action:'move',trigger:hand.trigger};
         continue;
       }
@@ -485,7 +501,8 @@ renderer.setAnimationLoop((time, frame) => {
   status.textContent = entryError || `${viewStatus} · ${controlStatus}`;
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
     ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:Object.values(surfaces).some(surface=>surface.ts>0),connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
-    workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode});
+    workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode,
+    torsoHeightControl:geometry.torso_height_control});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
     const viewer = frame.getViewerPose(reference);

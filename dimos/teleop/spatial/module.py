@@ -97,6 +97,8 @@ class SpatialInput(BaseModel):
     focus: tuple[float, float, float] | None = None
     mode: Literal["tools", "clutch"] = "tools"
     drive: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    pose_frame: Literal["world", "body"] = "world"
+    torso_height: float = Field(default=0.0, ge=-1, le=1)
 
     @field_validator("drive")
     @classmethod
@@ -107,6 +109,8 @@ class SpatialInput(BaseModel):
 
     @model_validator(mode="after")
     def clutch_targets(self) -> SpatialInput:
+        if self.pose_frame == "body" and self.mode != "clutch":
+            raise ValueError("body-relative poses require clutch mode")
         if self.mode == "clutch":
             for side, sample in self.hands.items():
                 if sample.action not in (None, "move") or sample.arm not in (None, side):
@@ -138,6 +142,8 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     camera_depth_ranges: dict[str, tuple[float, float]] = Field(default_factory=dict)
     camera_max_edge_m: dict[str, float] = Field(default_factory=dict)
     base_drive: bool = False
+    body_relative_clutch: bool = False
+    torso_height_control: bool = False
     map_voxel_size_m: float = Field(default=0.05, gt=0)
     input_timeout_s: float = 0.3
     joint_feedback_timeout_s: float = Field(default=0.5, gt=0)
@@ -230,6 +236,7 @@ class SpatialTeleopModule(ArmTeleopModule):
         self._operator_paused = True
         self._home_epoch: int | None = None
         self._input_mode: Literal["tools", "clutch"] = "tools"
+        self._input_pose_frame: Literal["world", "body"] = "world"
         self._hold_reason: str | None = "Release and pinch a tool to take control"
         self._released = {hand: False for hand in Hand}
         self._claims: dict[Hand, tuple[Hand, str]] = {}
@@ -314,6 +321,8 @@ class SpatialTeleopModule(ArmTeleopModule):
                 "headset_hosts": [ip for ip, _ in get_local_ips()],
                 "cameras": self.config.cameras,
                 "base_drive": self.config.base_drive,
+                "body_relative_clutch": self.config.body_relative_clutch,
+                "torso_height_control": self.config.torso_height_control,
                 "map_voxel_size_m": self.config.map_voxel_size_m,
                 "headset_port": self.config.server_port,
                 "limits": {j.name: [j.lower, j.upper] for j in self._robot.description.joints},
@@ -641,8 +650,12 @@ class SpatialTeleopModule(ArmTeleopModule):
                 return False
             if self._operator_paused:
                 return False
-            if message.mode != self._input_mode:
+            if message.pose_frame == "body" and not self.config.body_relative_clutch:
+                self._hold_control("Body-relative input is not configured")
+                return False
+            if message.mode != self._input_mode or message.pose_frame != self._input_pose_frame:
                 self._input_mode = message.mode
+                self._input_pose_frame = message.pose_frame
                 self._hold_control("Control mode changed; release and grab again")
                 return False
             now = time.time()
@@ -757,7 +770,7 @@ class SpatialTeleopModule(ArmTeleopModule):
                 self._current_poses[arm] = PoseStamped(
                     position=pose.position if pose else measured["grasp"],
                     orientation=pose.orientation if pose else measured["orientation"],
-                    frame_id="world",
+                    frame_id=message.pose_frame,
                     ts=now,
                 )
                 self._controllers[arm] = WebXRControllerState(

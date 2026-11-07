@@ -76,6 +76,7 @@ class R1ProSimControl(SharedConfigModule):
     config: R1ProSimControlConfig
     joint_state: In[JointState]
     cmd_vel: In[Twist]
+    torso_height_command: In[Float32]
     upper_command: In[JointState]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
@@ -90,6 +91,10 @@ class R1ProSimControl(SharedConfigModule):
         self._velocity = np.zeros(3)
         self._ramped_velocity = np.zeros(3)
         self._until = 0.0
+        self._torso_axis = 0.0
+        self._torso_until = 0.0
+        self._torso_active = False
+        self._max_torso_fold = 0.8
         self._targets = np.array((*HOME, 0.0, 0.0, 0.0, 0.0))
         self._ramped_targets = self._targets.copy()
         self._target_rates = np.array((0.5,) * len(UPPER_JOINTS) + (FINGER_SPEED_M_S,) * 4)
@@ -119,6 +124,14 @@ class R1ProSimControl(SharedConfigModule):
             joint = joints[name]
             assert joint.lower is not None and joint.upper is not None
             self._steer_limits[name] = (joint.lower, joint.upper)
+        # Equal 0.35 m links: q=(a,-2a,-a,0) keeps the shoulders
+        # upright and at the same fore/aft position. a=0.8 lowers them 0.212 m.
+        self._max_torso_fold = min(
+            0.8,
+            self._limits[UPPER_JOINTS[0]][1],
+            -self._limits[UPPER_JOINTS[1]][0] / 2,
+            -self._limits[UPPER_JOINTS[2]][0],
+        )
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.3) -> None:
@@ -145,9 +158,21 @@ class R1ProSimControl(SharedConfigModule):
             self._targets[: len(UPPER_JOINTS)] = HOME
             self._velocity[:] = 0
             self._until = 0
+            self._torso_axis = 0
+            self._torso_until = 0
+            self._torso_active = False
 
     async def handle_cmd_vel(self, command: Twist) -> None:
         self.move(command)
+
+    async def handle_torso_height_command(self, command: Float32) -> None:
+        """Positive input raises the body; release/timeout holds the reached height."""
+        if not math.isfinite(command.data) or not -1 <= command.data <= 1:
+            raise ValueError("torso height input must be finite and in [-1, 1]")
+        with self._lock:
+            self._torso_axis = command.data
+            self._torso_until = time.monotonic() + 0.3
+            self._torso_active |= command.data != 0
 
     def _set_gripper(self, side: str, opening: float) -> None:
         if not math.isfinite(opening) or not 0 <= opening <= 1:
@@ -193,6 +218,15 @@ class R1ProSimControl(SharedConfigModule):
                 return self._last_action
             measured = dict(zip(sample.name, sample.position, strict=True))
             dt = period / 1e9
+            if self._torso_active:
+                axis = self._torso_axis if time.monotonic() < self._torso_until else 0.0
+                # Bound the folding rate to 0.2 rad/s (joint 2: 0.4 rad/s).
+                # Update all three together, including on release, so independent
+                # joint ramps cannot tilt the body or continue toward a stale target.
+                fold = float(
+                    np.clip(self._ramped_targets[0] - axis * 0.2 * dt, 0, self._max_torso_fold)
+                )
+                self._targets[:4] = self._ramped_targets[:4] = (fold, -2 * fold, -fold, 0)
             desired = self._velocity if time.monotonic() < self._until else np.zeros(3)
             self._ramped_velocity += np.clip(desired - self._ramped_velocity, -0.4 * dt, 0.4 * dt)
             self._ramped_targets += np.clip(

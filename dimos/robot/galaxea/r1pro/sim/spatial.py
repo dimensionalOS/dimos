@@ -27,6 +27,7 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.spec.utils import Spec
 from dimos.teleop.spatial.module import SpatialTeleopModule, SpatialViewerConfig
 from dimos.teleop.webxr.controller_types import Hand
@@ -50,6 +51,8 @@ class Jog(BaseModel):
 
 
 class R1SpatialConfig(SpatialViewerConfig):
+    body_relative_clutch: bool = True
+    torso_height_control: bool = True
     linear_speed: float = Field(default=0.2, gt=0, le=0.4)
     angular_speed: float = Field(default=0.3, gt=0, le=0.5)
 
@@ -58,6 +61,7 @@ class R1ProSpatialTeleop(SpatialTeleopModule):
     config: R1SpatialConfig
     dedicated_worker = True
     cmd_vel: Out[Twist]
+    torso_height_command: Out[Float32]
     _coordinator: CoordinatorStopSpec
     _servo: R1ServoSpec
 
@@ -67,6 +71,7 @@ class R1ProSpatialTeleop(SpatialTeleopModule):
 
     def _publish_safe_command(self) -> None:
         self.cmd_vel.publish(Twist.zero())
+        self.torso_height_command.publish(Float32(data=0.0))
 
     def _reset_controller_state(self) -> None:
         super()._reset_controller_state()
@@ -78,6 +83,7 @@ class R1ProSpatialTeleop(SpatialTeleopModule):
             self._publish_safe_command()
             return False
         data = json.loads(payload)
+        self.torso_height_command.publish(Float32(data=data.get("torso_height", 0.0)))
         drive = data.get("drive", [0, 0, 0])
         self.cmd_vel.publish(
             Twist(
@@ -94,16 +100,20 @@ class R1ProSpatialTeleop(SpatialTeleopModule):
         return True
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
-        # Capture the configured shoulder frame at clutch engagement. This
-        # matches the arm-subtree IK, including the actual torso posture. Base
-        # driving then carries the arms instead of moving the operator reference.
+        # Body input is calibrated operator FLU, independent of world heading
+        # and view placement. Express its deltas in the shoulder's IK frame.
+        # Tool/keyboard input retains the spatial world's coordinate contract.
         side = "left" if hand == Hand.LEFT else "right"
         group = self.config.groups.get(side)
         if group is None:
             return
         if hand not in self._clutch_frames:
             transform = self._transforms.get(
-                "world", group.base_frame, self._feedback.get("source_ts"), 0.1, warn=False
+                self.config.robot_model.base_link if output_msg.frame_id == "body" else "world",
+                group.base_frame,
+                self._feedback.get("source_ts"),
+                0.1,
+                warn=False,
             )
             if transform is None:
                 return

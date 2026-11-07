@@ -88,3 +88,15 @@ def test_arm_ik_uses_shoulder_frame_at_non_neutral_torso(index, side):
         JointState(name=list(config.joint_names), position=values), [frame]
     )[frame]
     np.testing.assert_allclose(actual.position.to_numpy(), expected[:3, 3], atol=1e-9)
+
+
+def test_torso_height_path_keeps_shoulders_upright_and_over_same_base_position():
+    robot = URDF.load(BytesIO(MODEL.load().xml.encode()), load_meshes=False)
+    initial = robot.get_transform("r1pro/torso_link4").copy()
+    for fold in np.linspace(0, 0.8, 30):
+        values = [fold, -2 * fold, -fold, 0.0]
+        robot.update_cfg({f"r1pro/torso_joint{i + 1}": q for i, q in enumerate(values)})
+        actual = robot.get_transform("r1pro/torso_link4")
+        np.testing.assert_allclose(actual[:3, :3], initial[:3, :3], atol=1e-9)
+        np.testing.assert_allclose(actual[:2, 3], initial[:2, 3], atol=1e-9)
+        assert initial[2, 3] - actual[2, 3] == pytest.approx(0.7 * (1 - np.cos(fold)))

@@ -15,9 +15,12 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.sim.spatial import R1ProSpatialTeleop
 from dimos.teleop.spatial.model import SpatialGroup
@@ -29,7 +32,9 @@ def station(mocker):
     # Geometry is not loaded when exercising the operator protocol.
     module = R1ProSpatialTeleop(
         robot_model=RobotModelConfig(
-            model=RobotModel.from_file(Path("/unused.urdf")), joint_names=["shoulder"]
+            model=RobotModel.from_file(Path("/unused.urdf")),
+            joint_names=["shoulder"],
+            base_link="chassis",
         ),
         groups={
             "left": SpatialGroup(
@@ -44,6 +49,7 @@ def station(mocker):
     )
     for port in (
         module.cmd_vel,
+        module.torso_height_command,
         module.teleop_buttons,
         module.button_pressed,
         module.button_released,
@@ -155,3 +161,44 @@ def test_clutched_trigger_publishes_normalized_gripper_opening_and_release_holds
     assert send(2)
     module._publish_button_state(module._controllers[Hand.LEFT], module._controllers[Hand.RIGHT])
     assert publish.call_count == 1
+
+
+def test_torso_input_stops_on_disconnect_and_rejects_invalid_axis(station):
+    module, _ = station
+    data = json.loads(packet(module))
+    data["torso_height"] = -1
+    assert module._dispatch_text_message(json.dumps(data))
+    assert module.torso_height_command.publish.call_args.args[0].data == -1
+    module._reset_controller_state()
+    assert module.torso_height_command.publish.call_args.args[0].data == 0
+    data.update(control_epoch=module._control_epoch, torso_height=float("nan"))
+    assert not module._dispatch_text_message(json.dumps(data))
+    assert module.torso_height_command.publish.call_args.args[0].data == 0
+
+
+def test_body_clutch_uses_chassis_axes_after_every_regrip(station, mocker):
+    module, _ = station
+    transform = np.eye(4)
+    transform[:3, :3] = Rotation.from_euler("z", 0.3).as_matrix()
+    lookup = mocker.patch.object(module._transforms, "get")
+    lookup.return_value.to_matrix.return_value = transform
+    publish = mocker.patch.object(module.left_controller_output, "publish")
+    # World pose/yaw must never enter this lookup, including after turning and regripping.
+    for _ in range(2):
+        module._reset_controller_state()
+        for x in (0, 0.1):
+            module._publish_msg(Hand.LEFT, PoseStamped(position=[x, 0, 0], frame_id="body"))
+        poses = [call.args[0] for call in publish.call_args_list[-2:]]
+        delta = poses[1].position.to_numpy() - poses[0].position.to_numpy()
+        np.testing.assert_allclose(transform[:3, :3] @ delta, [0.1, 0, 0], atol=1e-9)
+        assert lookup.call_args.args[:2] == ("chassis", "base")
+
+
+def test_changing_input_frame_releases_claim_before_accepting_new_coordinates(station):
+    module, _ = station
+    data = json.loads(packet(module))
+    data.update(mode="clutch", pose_frame="body")
+    epoch = module._control_epoch
+    assert not module._dispatch_text_message(json.dumps(data))
+    assert module._control_epoch > epoch
+    assert velocity(module) == (0, 0, 0)

@@ -58,7 +58,14 @@ reachable network. Opening the view only observes. Enable control explicitly,
 enter XR, release the grips, then grip again to engage.
 
 - Controllers: grip clutches the corresponding arm; release holds it. Left stick
-  drives/strafes and right stick turns, capped at 0.2 m/s and 0.3 rad/s.
+  drives/strafes and right stick horizontal turns, capped at 0.2 m/s and 0.3 rad/s.
+  Right stick vertical raises/lowers the torso; release holds the reached height.
+  It starts fully raised, with about 21 cm of commanded lowering available.
+- Face your intended forward direction when pressing **Resume**. Controller
+  motion maps to robot-body forward/left/up, at one physical metre per metre,
+  independent of scene rotation/scale and robot world position/heading. Looking
+  around does not recalibrate. Hold then Resume recalibrates; reconnecting or
+  changing input mode also requires a fresh calibration and release/re-grip.
 - Hand tracking: pinch a tool handle to move that arm. Two free-space pinches
   reposition/scale the workspace; camera and control panels can be moved/pinned.
 - Controller triggers never resize the scene. Use the HUD's −/+ and Actual size
@@ -87,8 +94,10 @@ one or two arms with arbitrary joint names; it is not yet an unlimited-group or
 arbitrary-camera-count UI. Real robot controllers still need their own bindings.
 
 Arm targets pass through Pink IK and the control coordinator to sim2's upper-body
-servo. Each measured shoulder transform is captured on grip engagement so driving carries
-held arms with the base. The torso holds its pose; each task owns seven arm joints.
+servo. Each measured body-to-shoulder transform is captured on grip engagement so
+driving carries held arms with the base. Each task owns seven arm joints. The
+torso servo owns a separate height input; the arm coordinator cannot overwrite it.
+Tool handles and desktop keyboard control retain their spatial-world semantics.
 The shared protocol validates sessions/epochs and requires a fresh release after
 input loss. Joint feedback freshness uses receipt time, so simulation timestamps
 are not compared against the wall clock.
@@ -223,12 +232,16 @@ old torso presets and joint limits must not be copied to the 2026 URDF.
 
 The current model's torso has two folding pitch joints, a third pitch joint and
 a yaw joint. Coordinating the folding joints changes shoulder height; it is not
-a vertical prismatic lift. Torso input remains unimplemented in this demo. A
-bounded next interface change is an explicit **Torso** mode with height, lean
-and yaw controls, leaving arm targets held while those controls own the sticks.
-Keep the existing base mappings in normal mode and scene controls on the HUD.
-Height commands need a model-specific coordinated joint trajectory and limits,
-not direct reuse of JoyLo's older stand/squat angles.
+a vertical prismatic lift. The right stick vertical axis now controls height.
+For this model's equal 0.35 m links and negative-Y third joint, targets
+`(a, -2a, -a, 0)` preserve upper-body orientation and fore/aft position while
+lowering it by `0.7 * (1 - cos(a))` metres. The demo bounds `a` to 0–0.8 rad
+(also clamped to model limits), with 0.2 rad/s folding speed. Release, Hold or
+input expiry stops target integration; no queued destination remains. The
+folding knee uses higher simulation stiffness to reduce static sag under load.
+Lean/yaw torso controls and whole-body human pose tracking remain unimplemented.
+This is a bounded simulation trajectory, not a hardware-calibrated controller
+or a collision-aware whole-body planner.
 
 ## Validation
 

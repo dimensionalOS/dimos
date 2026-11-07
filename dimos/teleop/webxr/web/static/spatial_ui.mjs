@@ -171,7 +171,7 @@ export class SpatialUI {
     finally { if(version===this.version) this.pending=null; }
   }
 
-  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={}}) {
+  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={},torsoHeightControl=false}) {
     this.control=control;
     this.outline.visible=workspaceActive;
     this.workspaceButtons=[
@@ -202,7 +202,7 @@ export class SpatialUI {
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING',home:'PLANNING HOME',hold:'HOLDING',resume:'RESUMING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.available===false?'NO RECORDER':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
     const hint=this.error || (paused&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · waiting for fresh sensor surfaces.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
-      || 'Point at a button and pinch. Tool handles move only their own arm.';
+      || (torsoHeightControl?'Face forward when pressing Resume to calibrate arms. Right stick ↑/↓ raises/lowers torso.':'Point at a button and pinch. Tool handles move only their own arm.');
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;
       return `${side.toUpperCase()} ${owned?.move&&owned?.opening?'MOVING + JAWS':owned?.move?'MOVING':owned?.opening?'JAWS':'HELD'}`;
@@ -230,7 +230,7 @@ export class SpatialUI {
     c.fillStyle='#b9cecf'; c.font='24px system-ui'; wrapped(c,hint,24,239,976,32);
     c.font='21px system-ui'; c.fillStyle='#76e2c1';
     c.fillText(`${mode==='clutch'?'Classic teleop':'Tool handles'} · Workspace ${Math.round(workspaceScale*100)}%`,24,440);
-    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Grip: move arm · trigger: jaws · use −/+ for scene scale':'Pinch / trigger at a tool · free hand pinches arrange workspace',24,480);
+    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Grip: move arm · trigger: jaws · −/+ changes view only':'Pinch / trigger at a tool · free hand pinches arrange workspace',24,480);
     for(const button of [...this.buttons,...this.workspaceButtons,...this.navigationButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);
