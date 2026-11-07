@@ -214,7 +214,9 @@ class _WholeBodySimHooks:
         if self._gripper_idx is not None:
             positions = engine.joint_positions
             if self._gripper_idx < len(positions):
-                shm.write_gripper_state(positions[self._gripper_idx])
+                shm.write_gripper_state(
+                    self._gripper_joint_to_command(positions[self._gripper_idx])
+                )
 
     def clear_latched_commands(self) -> None:
         self._latest_pd_pos_target = None
@@ -222,14 +224,29 @@ class _WholeBodySimHooks:
         self._latest_pd_kd = None
         self._latest_pd_tau = None
 
+    # A position actuator whose control range is the joint's range takes the
+    # joint target itself and reports the joint as is. A transmission with its
+    # own control units (the xArm's tendon, 0..255 against a 0..0.85 rad joint)
+    # runs the other way: commands and readings are reflected about the joint
+    # range.
     def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
+        """The actuator control for a gripper command."""
         jlo, jhi = self._gripper_joint_range
         clo, chi = self._gripper_ctrl_range
         clamped = max(jlo, min(jhi, joint_position))
+        if self._gripper_ctrl_range == self._gripper_joint_range:
+            return clamped
         if jhi == jlo:
             return clo
         t = (clamped - jlo) / (jhi - jlo)
         return chi - t * (chi - clo)
+
+    def _gripper_joint_to_command(self, joint_position: float) -> float:
+        """The gripper's MJCF joint value in the coordinate commands use."""
+        if self._gripper_ctrl_range == self._gripper_joint_range:
+            return joint_position
+        jlo, jhi = self._gripper_joint_range
+        return jlo + jhi - joint_position
 
 
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):

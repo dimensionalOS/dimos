@@ -25,7 +25,50 @@ import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
+
+
+def _gripper_round_trip(
+    command: float,
+    joint: float,
+    *,
+    ctrl_range: tuple[float, float],
+    joint_range: tuple[float, float],
+) -> tuple[float, float]:
+    """The control the hooks send for a gripper ``command``, and what they publish for a ``joint`` value."""
+    shm = MagicMock()
+    for reader in ("position", "velocity", "kp", "kd", "tau"):
+        getattr(shm, f"read_{reader}_command").return_value = None
+    shm.read_gripper_command.return_value = command
+    engine = MagicMock()
+    engine.joint_positions = [0.0] * 6 + [joint]
+    hooks = _WholeBodySimHooks(
+        shm, dof=6, gripper_idx=6, gripper_ctrl_range=ctrl_range, gripper_joint_range=joint_range
+    )
+    hooks.pre_step(engine)
+    hooks.post_step(engine)
+    engine.set_position_target.assert_called_once()
+    shm.write_gripper_state.assert_called_once()
+    return (
+        float(engine.set_position_target.call_args.args[1]),
+        float(shm.write_gripper_state.call_args.args[0]),
+    )
+
+
+def test_a_position_actuator_on_the_gripper_joint_commands_and_reports_it_as_is() -> None:
+    metal = {"ctrl_range": (-0.05, 0.0), "joint_range": (-0.05, 0.0)}
+    assert _gripper_round_trip(-0.05, -0.05, **metal) == (-0.05, -0.05)
+    assert _gripper_round_trip(0.0, 0.0, **metal) == (0.0, 0.0)
+
+
+def test_a_tendon_gripper_runs_the_other_way_in_both_directions() -> None:
+    xarm = {"ctrl_range": (0.0, 255.0), "joint_range": (0.0, 0.85)}
+    assert _gripper_round_trip(0.85, 0.0, **xarm) == (0.0, 0.85)
+    assert _gripper_round_trip(0.0, 0.85, **xarm) == (255.0, 0.0)
 
 
 class _FakeData:

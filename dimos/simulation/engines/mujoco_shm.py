@@ -70,9 +70,9 @@ _shm_sizes = {
     "eff": _joint_array_size,
     "pos_t": _joint_array_size,
     "vel_t": _joint_array_size,
-    # [gripper_qpos, gripper_target, range_lo, range_hi]. gripper_qpos is the
-    # raw MJCF joint value; gripper_target is in the command coordinate, which
-    # runs the other way (see ManipShmReader.read_gripper_position).
+    # [gripper_state, gripper_target, range_lo, range_hi]. State and target are
+    # both in the coordinate commands use; the sim module maps the MJCF joint
+    # to it (see MujocoSimModule._gripper_joint_to_command).
     "grp": _GRP_SLOTS * _FLOAT_BYTES,
     # Whole-body additions (unused by manipulator path).
     "imu": _IMU_FLOATS * _FLOAT_BYTES,  # [w,x,y,z, gx,gy,gz, ax,ay,az]
@@ -250,7 +250,7 @@ class ManipShmWriter:
         self._increment_seq(SEQ_EFFORTS)
 
     def write_gripper_state(self, position: float) -> None:
-        """Publish the gripper's raw MJCF joint value."""
+        """Publish the gripper's position in the coordinate commands use."""
         arr = self._array(self.shm.grp, _GRP_SLOTS, np.float64)
         arr[0] = position
         self._increment_seq(SEQ_GRIPPER_STATE)
@@ -438,18 +438,9 @@ class ManipShmReader:
         return [float(x) for x in arr[:num_joints]]
 
     def read_gripper_position(self) -> float:
-        """Measured gripper position in the coordinate commands are given in.
-
-        The sim publishes the raw MJCF joint value, which runs opposite to the
-        command coordinate (``MujocoSimModule._gripper_joint_to_ctrl`` inverts),
-        so reflect it about the joint range. Without that reflection a closed
-        gripper reads as the open end of its range.
-        """
+        """Measured gripper position in the coordinate commands use, as the sim publishes it."""
         arr = np.ndarray((_GRP_SLOTS,), dtype=np.float64, buffer=self.shm.grp.buf)
-        low, high = float(arr[2]), float(arr[3])
-        if high <= low:
-            return float(arr[0])
-        return low + high - float(arr[0])
+        return float(arr[0])
 
     def read_gripper_range(self) -> tuple[float, float]:
         """Read the published MJCF gripper range; (0.0, 1.0) if undeclared."""
