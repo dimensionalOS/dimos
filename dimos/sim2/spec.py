@@ -42,6 +42,7 @@ class SimulatedSensor:
     """A sensor at a frame: a site or body of a robot's model, or of the scene. The engine decides what each kind becomes.
 
     Simulation fills in robot_id: the robot whose model names the frame (None: the scene's).
+    A camera's frame is its optical frame (z forward, x right, y down).
     """
 
     kind: Literal["camera", "lidar", "imu"]

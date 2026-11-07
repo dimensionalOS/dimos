@@ -74,7 +74,11 @@ def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str
             raise ValueError(f"{owner}: no site or body {frame!r} for its {sensor.kind}")
     name = prefix + frame
     if sensor.kind == "camera":
-        body.add_camera(name=name, fovy=sensor.fovy, pos=pos, quat=quat)
+        # The frame is the optical frame (z forward, y down); a MuJoCo camera looks down -z, y up.
+        optical = Rotation.from_quat(quat, scalar_first=True) * Rotation.from_euler("x", np.pi)
+        body.add_camera(
+            name=name, fovy=sensor.fovy, pos=pos, quat=optical.as_quat(scalar_first=True)
+        )
     elif site is None or prefix:
         body.add_site(name=name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), pos=pos, quat=quat)
 
