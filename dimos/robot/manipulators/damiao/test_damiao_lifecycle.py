@@ -122,11 +122,12 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
         pose = _middle(physical)
         _set_pose(native, connection_type, pose)
         target = robot.arm_joint_names[0]
-        opening = 0.5
+        jaw = robot.grippers[0]
+        halfway = sum(robot.gripper_travel()[jaw.joint]) / 2.0
         commands.publish(
             JointState(
-                name=[f"arm/{target}", f"arm/{robot.gripper_joint_names[0]}"],
-                position=[float(pose[0]), opening],
+                name=[f"arm/{target}", f"arm/{jaw.joint}"],
+                position=[float(pose[0]), halfway],
             )
         )
         first_bus = robot.buses[0]
@@ -137,7 +138,7 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
             assert rows[0, 4] != 0.0
         else:
             assert rows[0, 4] == 0.0
-        assert native.groups[robot.gripper_joint_names[0]].commands[-1] == opening
+        assert native.groups[jaw.name].commands[-1] == pytest.approx(0.5)
 
         # The reader keeps publishing the fake feedback in declared order.
         wait_until(lambda: len(readings.sent) > 1, timeout=2)
@@ -205,7 +206,8 @@ def test_teach_mode_zero_stiffness_passive_jaw_and_live_gravity(boundary, mocker
         # gravity torque follows the measured pose.
         np.testing.assert_allclose(rows[:, 2], 0.0)
         assert gripper.commands == []
-        assert readings.sent[-1].position[-1] == 0.4
+        closed, opened = OPENYAM.gripper_travel()["joint7"]
+        assert readings.sent[-1].position[-1] == pytest.approx(closed + 0.4 * (opened - closed))
         assert commands.sent == []
     finally:
         module.stop()

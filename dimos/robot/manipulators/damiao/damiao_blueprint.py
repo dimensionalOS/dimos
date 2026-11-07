@@ -61,15 +61,14 @@ class DamiaoTeleopCoordinator(TeleopControlCoordinator):
 
 
 def mock_initial_positions(robot: DamiaoRobot) -> dict[str, float]:
-    """The simulated start: the robot's home posture with its jaws closed."""
+    """The simulated start: the robot's home posture with its jaws closed.
+
+    Loads the robot's model, to find where each jaw is closed.
+    """
     home = robot.home_joints or [0.0] * len(robot.arm_joint_names)
-    return dict(
-        zip(
-            robot.joint_names,
-            [*home, *([0.0] * len(robot.gripper_joint_names))],
-            strict=True,
-        )
-    )
+    travel = robot.gripper_travel()
+    closed = [travel[joint][0] for joint in robot.gripper_joint_names]
+    return dict(zip(robot.joint_names, [*home, *closed], strict=True))
 
 
 def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -> Blueprint:
@@ -82,7 +81,7 @@ def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -
     if global_config.simulation:
         return MockJointConnection.blueprint(
             source="arm",
-            model=connection.control_model(),
+            model=connection.robot.model,
             initial_positions=mock_initial_positions(connection.robot),
         )
     return connection.blueprint(source="arm", teach=teach)

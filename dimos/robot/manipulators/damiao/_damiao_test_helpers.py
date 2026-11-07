@@ -105,21 +105,22 @@ class MockConnectionRig:
 
 
 def _local_test_model(connection: type[DamiaoConnection], path: Path) -> RobotModel:
+    """The robot's joints without its geometry; each jaw keeps its URDF range."""
     root = ET.Element("robot", name="test")
     ET.SubElement(root, "link", name="base")
-    gripper_names = connection.robot.gripper_joint_names
-    grippers = set(gripper_names)
-    for index, name in enumerate([*connection.robot.arm_joint_names, *gripper_names]):
+    travel = connection.robot.gripper_travel()
+    for index, name in enumerate(connection.robot.joint_names):
         child = f"link{index}"
         ET.SubElement(root, "link", name=child)
         joint = ET.SubElement(root, "joint", name=name, type="revolute")
         ET.SubElement(joint, "parent", link="base")
         ET.SubElement(joint, "child", link=child)
+        lower, upper = sorted(travel.get(name, (-3.2, 3.2)))
         ET.SubElement(
             joint,
             "limit",
-            lower="0" if name in grippers else "-3.2",
-            upper="1" if name in grippers else "3.2",
+            lower=str(lower),
+            upper=str(upper),
             velocity="2",
             effort="100",
         )
@@ -147,7 +148,8 @@ def mock_connection_rig(
             robot = connection_type.robot
             home = robot.home_joints or [0.0] * len(robot.arm_joint_names)
             names = [*robot.arm_joint_names, *robot.gripper_joint_names]
-            positions = [*home, *([0.0] * len(robot.gripper_joint_names))]
+            travel = robot.gripper_travel()
+            positions = [*home, *(travel[name][0] for name in robot.gripper_joint_names)]
             connection = MockJointConnection(
                 model=model,
                 source="arm",

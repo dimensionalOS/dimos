@@ -44,7 +44,7 @@ def openarm_control(tasks: list[TaskConfig] | None = None) -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenArmConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=list(tasks if tasks is not None else [_trajectory_task()]),
             zero_stiffness_joints=[],
         ),

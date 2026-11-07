@@ -40,7 +40,7 @@ class OpenArmConnectionConfig(DamiaoConnectionConfig):
         if self.left_can_port == self.right_can_port:
             raise ValueError("OpenArm requires distinct CAN selectors")
         if self.model is None:
-            self.model = OpenArmConnection.control_model()
+            self.model = OPENARM.model
         return self
 
 

@@ -48,11 +48,11 @@ def _tasks() -> list[TaskConfig]:
 
 
 def seeed_b601_dm_control_blueprint() -> Blueprint:
-    """Trajectories and normalized gripper control over the direct connection."""
+    """Trajectories and gripper control over the direct connection."""
     return autoconnect(
         SeeedB601DMCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=B601DMConnection.control_model("arm"),
+            model=B601_DM_PLANNING_MODEL.model,
             tasks=_tasks(),
             zero_stiffness_joints=[],
         ),
@@ -61,7 +61,7 @@ def seeed_b601_dm_control_blueprint() -> Blueprint:
 
 
 def seeed_b601_dm_control() -> Blueprint:
-    """Trajectories and normalized gripper control over the direct connection."""
+    """Trajectories and gripper control over the direct connection."""
     return seeed_b601_dm_control_blueprint().remappings([])
 
 

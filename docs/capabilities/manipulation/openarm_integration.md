@@ -1,7 +1,7 @@
 # OpenArm integration
 
 dimOS drives the [OpenArm](https://openarm.dev) bimanual platform as one
-`OpenArmConnection`. It owns both seven-joint arms and two normalized grippers,
+`OpenArmConnection`. It owns both seven-joint arms and two grippers,
 with one CAN bus per arm.
 
 Related:
@@ -28,9 +28,11 @@ streams and has no hardware adapters. The `openarm_hardware` factory and
 
 Deployed blueprints use source `arm`. Their command and feedback vectors contain
 `arm/openarm_left_joint1..7`, `arm/openarm_right_joint1..7`,
-`arm/left_gripper`, and `arm/right_gripper`, in that order. Gripper opening is
-normalized from `0.0` closed to `1.0` open. A standalone connection defaults to
-source `openarm`; its messages use that prefix instead.
+`arm/openarm_left_finger_joint1`, and `arm/openarm_right_finger_joint1`, in that
+order. Each jaw is its URDF finger joint, in radians, and `finger_joint2` copies
+it. The left jaw is closed at 0 and fully open at 0.7854; the right is closed at
+0 and fully open at -0.7854. A standalone connection defaults to source
+`openarm`; its messages use that prefix instead.
 
 Per arm, shoulder to wrist, send IDs `0x01..0x07` select two DM8009, two DM4340,
 and three DM4310 motors. Feedback IDs are `send | 0x10`. Each gripper is a DM4310
@@ -38,9 +40,8 @@ at send ID `0x08`, feedback ID `0x18`.
 
 Gravity compensation and planning use the official bimanual OpenArm v2.0 Xacro,
 pinned to commit `1fba2cbc05001f05b4514120b70130b4ac06f409` and loaded lazily
-through the robot asset cache. The physical model fixes the fingers and
-preflights all fourteen arm coordinates before enabling the motors. Logical
-gripper coordinates appear only in the control model.
+through the robot asset cache. The physical model holds the fingers closed and
+preflights all fourteen arm coordinates before enabling the motors.
 
 Planning treats both arms as one robot with `left_arm`, `right_arm`, and
 `both_arms` groups. Planning models, groups, tasks, and streams use the same

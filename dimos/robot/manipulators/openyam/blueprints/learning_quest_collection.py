@@ -25,8 +25,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_webxr_openyam
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
+from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 
-_JOINTS = [*make_openyam_model_config(robot="arm").joint_names, "arm/gripper"]
+_JOINTS = [*make_openyam_model_config(robot="arm").joint_names, OPENYAM_GRIPPER_JOINT]
 
 _state = FeatureSpec(
     stream="coordinator_joint_state",

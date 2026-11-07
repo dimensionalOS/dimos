@@ -33,21 +33,21 @@ from dimos.utils.testing.waiting import wait_until
 def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, boundary):
     module, commands, readings = make_rig()
     native = boundary[0]
-    commands.publish(JointState(name=["arm/joint2", "arm/left_gripper"], position=[-0.5, 0.8]))
+    commands.publish(JointState(name=["arm/joint2", "arm/left_finger"], position=[-0.5, 0.032]))
     np.testing.assert_equal(
         native.groups["left_arm"].commands[-1], [[80, 5, 0.2, 0, 0], [10, 1.5, -0.5, 0, 0]]
     )
     np.testing.assert_equal(native.groups["right_arm"].commands[-1], [[20, 0.6, 0.2, 0, 0]])
-    assert native.groups["left_gripper"].commands == [0.8]
-    assert native.groups["right_gripper"].commands == [0.4]
+    assert native.groups["left_gripper"].commands == [pytest.approx(0.8)]
+    assert native.groups["right_gripper"].commands == [pytest.approx(0.4)]
     commands.publish(JointState(name=["arm/joint1"], position=[0.6]))
     assert native.groups["left_arm"].commands[-1][1, 2] == -0.5
     assert readings.sent[-1].name == [
         "arm/joint1",
         "arm/joint2",
         "arm/joint3",
-        "arm/left_gripper",
-        "arm/right_gripper",
+        "arm/left_finger",
+        "arm/right_finger",
     ]
     assert readings.sent[-1].velocity == [0.3, 0.3, 0.3, 0, 0]
     assert readings.sent[-1].effort == [0.4, 0.4, 0.4, 0, 0]
