@@ -1,0 +1,31 @@
+[package]
+name = "dimos-r1-head-camera"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust module: the Galaxea R1 Pro's two head cameras captured off V4L2 (UYVY) and NVENC-encoded to H.264 CompressedVideo, every frame"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_r1_head_camera"
+path = "src/lib.rs"
+
+[[bin]]
+name = "r1_head_camera"
+path = "src/bin/r1_head_camera.rs"
+
+[package.metadata.dimos.module.r1_head_camera]
+path = "dimos_r1_head_camera::module::R1HeadCamera"
+python = "dimos.robot.galaxea.r1pro.head_camera.module:R1HeadCameraRelay"
+
+[package.metadata.dimos.module.r1_head_camera.outputs]
+head_left_camera = "foxglove_msgs.CompressedVideo"
+head_right_camera = "foxglove_msgs.CompressedVideo"
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "process", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }
+anyhow = "1"
