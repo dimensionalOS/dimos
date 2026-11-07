@@ -482,34 +482,26 @@ class ControlCoordinator(Module):
                 port = self.inputs[f"{robot}_{kind}"]
                 self.register_disposable(Disposable(port.subscribe(handler)))
         logger.info(f"Driving robots through connection modules: {robots}")
-        self._tell_holds_the_base_axes()
-
-    def _connection_base_axes(self) -> list[str]:
-        """Every connection robot's base axes (``go2/base/vx``, ...)."""
-        with self._hardware_lock:
-            return [
-                axis for source in self._connections.values() for axis in source.base_joint_names
-            ]
-
-    def _tell_holds_the_base_axes(self) -> None:
-        """Name the connection base axes for every registered operator hold.
-
-        A base axis is a commanded speed, never a read position, so a hold
-        cannot find one in the joint-state snapshot the way it finds joints.
-        """
-        axes = self._connection_base_axes()
-        with self._task_lock:
-            for task in self._tasks.values():
-                if isinstance(task, OperatorHoldTask):
-                    task.set_base_axes(axes)
 
     def _publish_command(self, robot: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
         which holds ``_hardware_lock``."""
         if self._estopped:
             return
+        # A positional hold does not own virtual velocity joints. Gate the
+        # connection base at the final output boundary instead, regardless
+        # of the winning velocity task's priority or whether joints are read.
+        source = self._connections[robot]
+        if source.base_joint_names:
+            with self._task_lock:
+                holding = any(
+                    isinstance(task, OperatorHoldTask) and task.is_active()
+                    for task in self._tasks.values()
+                )
+            if holding:
+                values = {**values, **dict.fromkeys(source.base_joint_names, 0.0)}
         ports = self._command_ports[robot]
-        for out in self._connections[robot].command_messages(values, time.time()):
+        for out in source.command_messages(values, time.time()):
             ports[out.port].publish(out.message)
 
     @rpc
@@ -669,9 +661,6 @@ class ControlCoordinator(Module):
                 f"task {task.name!r} was given stream_bind {sorted(stream_bind)} but no "
                 "task_type; the inputs it remaps come from the type's card, so pass task_type"
             )
-
-        if isinstance(task, OperatorHoldTask):
-            task.set_base_axes(self._connection_base_axes())
 
         with self._task_lock:
             if task.name in self._tasks:
