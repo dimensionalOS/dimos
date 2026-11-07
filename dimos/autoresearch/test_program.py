@@ -13,20 +13,25 @@
 # limitations under the License.
 
 from pathlib import Path
+import time
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D
 import pytest
 
+from dimos.autoresearch import program
 from dimos.autoresearch.program import (
     DimosBackend,
     GripperRange,
+    MapStamps,
+    RobotCallError,
     TraceLine,
     program_box,
     run_program,
 )
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
@@ -128,10 +133,17 @@ def test_a_program_is_killed_at_the_timeout(tmp_path: Path) -> None:
 
 
 class Bench:
-    """A scene holding a cube and a bowl, and a box filter that keeps its boxes by name."""
+    """A scene holding a cube and a bowl, and a box filter that keeps its boxes by
+    name and, while ``mapping``, sends a map captured after each change."""
 
     def __init__(self) -> None:
         self.boxes: set[str] = set()
+        self.maps = MapStamps()
+        self.mapping = True
+
+    def _send_map(self) -> None:
+        if self.mapping:
+            self.maps.on_map(PointCloud2(ts=time.time() + 1.0))
 
     def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
         detections = []
@@ -149,19 +161,37 @@ class Bench:
 
     def set_box(self, name: str, pose: object, size: object, frame_id: str | None = None) -> bool:
         self.boxes.add(name)
+        self._send_map()
         return True
 
     def clear_box(self, name: str) -> bool:
         removed = name in self.boxes
         self.boxes.discard(name)
+        self._send_map()
         return removed
 
 
 def test_cleared_objects_stay_out_of_the_map_together_until_restore() -> None:
     bench = Bench()
-    backend = DimosBackend(bench, bench, bench, bench, GripperRange(closed=0.0, open=-0.05))
+    backend = DimosBackend(
+        bench, bench, bench, bench, GripperRange(closed=0.0, open=-0.05), bench.maps
+    )
     backend.clear_object("cube", 0.03)
     backend.clear_object("bowl", 0.03)
     assert bench.boxes == {program_box("cube"), program_box("bowl")}
     backend.restore()
     assert bench.boxes == set()
+
+
+def test_clearing_an_object_times_out_when_no_newer_map_arrives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(program, "MAP_TIMEOUT_S", 0.0)
+    bench = Bench()
+    bench.mapping = False
+    backend = DimosBackend(
+        bench, bench, bench, bench, GripperRange(closed=0.0, open=-0.05), bench.maps
+    )
+    with pytest.raises(RobotCallError) as raised:
+        backend.clear_object("cube", 0.03)
+    assert raised.value.status == "TIMEOUT"

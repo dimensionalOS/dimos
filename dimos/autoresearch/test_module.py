@@ -264,7 +264,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
                 )
             )
             joints.publish(JointState(name=JOINTS, position=list(bench.joints)))
-            maps.publish(PointCloud2())
+            maps.publish(PointCloud2(ts=time.time()))
             frames.publish(Image(data=np.zeros((4, 4, 3), np.uint8), format=ImageFormat.RGB))
             time.sleep(0.02)
 

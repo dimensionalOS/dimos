@@ -89,7 +89,7 @@ class Feeder:
                     ),
                 )
             )
-            self.world.on_voxel_map(PointCloud2())
+            self.world.on_voxel_map(PointCloud2(ts=time.time()))
             time.sleep(0.02)
 
 

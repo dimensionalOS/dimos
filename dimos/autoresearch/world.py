@@ -51,6 +51,10 @@ REST_TOLERANCE = 0.002
 # How long to wait for the first message after a reset, and for the arm to come to rest.
 MESSAGE_TIMEOUT_S = 10.0
 REST_TIMEOUT_S = 30.0
+# Obstacle maps captured after the reset arm comes to rest that a reset waits
+# for: enough camera frames for the mapper's rays to carve out where the
+# objects and the arm were before the reset (a voxel needs about this many misses).
+RESET_MAP_FRAMES = 6
 
 
 class TrajectoryControlSpec(Spec, Protocol):
@@ -110,7 +114,7 @@ class MujocoWorld:
         self._pose_counts: dict[str, int] = {}
         self._joints: deque[tuple[float, list[float]]] = deque(maxlen=1000)
         self._joint_count = 0
-        self._map_count = 0
+        self._map_stamps: deque[float] = deque(maxlen=100)
 
     def on_body_poses(self, msg: TFMessage) -> None:
         with self._changed:
@@ -132,7 +136,8 @@ class MujocoWorld:
 
     def on_voxel_map(self, msg: PointCloud2) -> None:
         with self._changed:
-            self._map_count += 1
+            if msg.ts is not None:
+                self._map_stamps.append(msg.ts)
             self._changed.notify_all()
 
     def reset(self, seed: int) -> None:
@@ -204,13 +209,13 @@ class MujocoWorld:
         )
 
     def _wait_for_map(self) -> None:
-        """Wait for an obstacle map published from now on. The arm has held still
-        for REST_WINDOW_S since the reset, longer than the map lags the camera,
-        so that map shows the bench as reset, not the objects where they were."""
-        with self._changed:
-            count = self._map_count
+        """Wait for RESET_MAP_FRAMES obstacle maps captured from now on, with the
+        arm at rest after the reset, so the map shows the bench as reset."""
+        rested = time.time()
         self._wait(
-            lambda: self._map_count > count, "an obstacle map of the reset bench", MESSAGE_TIMEOUT_S
+            lambda: sum(stamp > rested for stamp in self._map_stamps) >= RESET_MAP_FRAMES,
+            "an obstacle map of the reset bench",
+            MESSAGE_TIMEOUT_S,
         )
 
     def _at_rest(self) -> bool:

@@ -50,6 +50,7 @@ from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose as PoseMsg
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.experimental.object_scene_registration_spec import (
     ObjectSceneRegistrationSpec,
 )
@@ -63,6 +64,8 @@ CallStatus = Literal["OK", "PLANNING_FAILED", "EXECUTION_FAILED", "TIMEOUT", "RA
 TRACE_NAME = "trace.jsonl"
 # How often the runner checks whether the lab asked it to stop, seconds.
 _STOP_POLL_S = 0.2
+# How long scene.clear and scene.restore wait for an obstacle map with their change, seconds.
+MAP_TIMEOUT_S = 2.0
 
 
 def program_box(object_id: str) -> str:
@@ -395,10 +398,49 @@ class GripperRange:
     open: float
 
 
+class MapStamps:
+    """The capture time of the newest obstacle map: feed ``on_map`` from the
+    map stream, and ``wait_newer`` blocks until a map captured after a time
+    arrives."""
+
+    def __init__(self) -> None:
+        self._newest = -math.inf
+        self._changed = threading.Condition()
+
+    def on_map(self, msg: PointCloud2) -> None:
+        if msg.ts is None:
+            return
+        with self._changed:
+            self._newest = max(self._newest, msg.ts)
+            self._changed.notify_all()
+
+    def wait_newer(self, than: float, timeout_s: float) -> bool:
+        """True once a map captured after ``than`` (Unix time, seconds) has arrived; False after ``timeout_s``."""
+        with self._changed:
+            return self._changed.wait_for(lambda: self._newest > than, timeout_s)
+
+
+def subscribe_map(app: Dimos, maps: MapStamps) -> Callable[[], None]:
+    """Feed ``maps`` from the box filter's output, the map the planner avoids; returns the unsubscribe."""
+    outputs = [
+        info
+        for info in app.list_streams()
+        if info.name == "filtered_cloud" and info.direction == "out"
+    ]
+    if len(outputs) != 1 or outputs[0].module_name is None:
+        raise RuntimeError(
+            f"expected one filtered_cloud stream, found {[info.module_name for info in outputs]}"
+        )
+    stream = app.get_module(outputs[0].module_name).get_stream("filtered_cloud")
+    return stream.subscribe(maps.on_map)
+
+
 class DimosBackend:
     """``RobotBackend`` over a running DimOS stack: the ``Arm`` SDK for motion
     and the gripper, the object-registration module for the scene, the map's
-    box filter for clearing objects, and an ``Observer`` for camera frames."""
+    box filter for clearing objects, and an ``Observer`` for camera frames.
+    ``maps`` must be fed from the box filter's output: ``clear_object`` and
+    ``restore`` return once a map captured after the change has arrived."""
 
     def __init__(
         self,
@@ -407,12 +449,14 @@ class DimosBackend:
         box_filter: PointCloudBoxFilterSpec,
         observer: Observer,
         gripper: GripperRange,
+        maps: MapStamps,
     ) -> None:
         self._arm = arm
         self._scene = scene
         self._box_filter = box_filter
         self._observer = observer
         self._gripper = gripper
+        self._maps = maps
         # The boxes this program set, so restore() clears them all.
         self._boxes: set[str] = set()
 
@@ -433,7 +477,9 @@ class DimosBackend:
         arm = Arm.from_app(app, group=group, instance_name=instance_name)
         scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
         box_filter = app.find_module_by_spec(PointCloudBoxFilterSpec)
-        return cls(arm, scene, box_filter, observer, gripper)
+        maps = MapStamps()
+        subscribe_map(app, maps)
+        return cls(arm, scene, box_filter, observer, gripper, maps)
 
     def joints(self) -> list[float]:
         return [float(value) for value in self._arm.joints()]
@@ -525,13 +571,23 @@ class DimosBackend:
                     detections.header.frame_id,
                 )
                 self._boxes.add(name)
+                self._wait_for_map(f"a map without {object_id!r}")
                 return
         raise ValueError(f"no object with id {object_id!r} in the scene")
 
     def restore(self) -> None:
+        if not self._boxes:
+            return
         for name in sorted(self._boxes):
             self._box_filter.clear_box(name)
         self._boxes.clear()
+        self._wait_for_map("a map with the cleared objects back")
+
+    def _wait_for_map(self, what: str) -> None:
+        # Taken after the box filter changed, so any later capture reaches the planner with the change.
+        changed = time.time()
+        if not self._maps.wait_newer(changed, MAP_TIMEOUT_S):
+            raise RobotCallError("TIMEOUT", f"waited {MAP_TIMEOUT_S} s for {what}")
 
     def capture(self, path: Path) -> None:
         self._observer.capture(path)

@@ -21,7 +21,13 @@ import atexit
 from pathlib import Path
 import threading
 
-from dimos.autoresearch.program import DimosBackend, GripperRange, RobotBackend
+from dimos.autoresearch.program import (
+    DimosBackend,
+    GripperRange,
+    MapStamps,
+    RobotBackend,
+    subscribe_map,
+)
 from dimos.core.stream import RemoteOut
 from dimos.manipulation.sdk import Arm
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
@@ -83,4 +89,6 @@ def backend(trial_dir: Path) -> RobotBackend:
     arm = Arm.from_app(app)
     scene = app.find_module_by_spec(ObjectSceneRegistrationSpec)
     box_filter = app.find_module_by_spec(PointCloudBoxFilterSpec)
-    return DimosBackend(arm, scene, box_filter, observer, METAL_GRIPPER)
+    maps = MapStamps()
+    atexit.register(subscribe_map(app, maps))
+    return DimosBackend(arm, scene, box_filter, observer, METAL_GRIPPER, maps)
