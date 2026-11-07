@@ -14,10 +14,8 @@
 
 """URDF to USD: one robot as a USD stage, and the grafting that joins subtrees onto it.
 
-USD is becoming the description format, so this is the bridge while the robots are still
-authored as URDF. A converted stage is a string (a ``.usda`` layer), never a file: the
-description already travels as one string through ``UrdfManager.file_info``, and a stage
-that names external layers would need a second resolution contract on the renderer side.
+A converted stage is a string (a ``.usda`` layer), never a file: a description already travels
+as one through ``UrdfManager.file_info``.
 """
 
 from __future__ import annotations
@@ -41,25 +39,14 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Where a prim keeps the URDF that urdf_to_usd itself has no use for, and where the root prim
-# keeps the whole original document. customData is USD's own field for exactly this: data a
-# schema has no place for, readable by anything, and not an attribute of our invention.
-# Their pose comes from odometry rather than the model, so they have no single position and
-# no UsdPhysics equivalent matching URDF's semantics. Kept in step with UsdManager's own set.
+# No single position, and no UsdPhysics equivalent: their pose comes from odometry.
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
-# Assets are identified by content, so a consumer can tell whether what it fetched is what the
-# description meant. The algorithm is in the value, so this can change without the old values
-# becoming unreadable.
+# The algorithm is inside the value, so it can change without the old ones becoming unreadable.
 HASH_ALGORITHM = "sha256"
 
+# customData holding the URDF this converter does not read. Standard field, not an attribute.
 PASSTHROUGH_KEY = "urdf:unconverted"
-SOURCE_KEY = "urdf:source"
-
-# A prim's displayName carries the original URDF spelling of the link or joint it stands for.
-# USD prim names are identifiers, so "base-link" and "base:link" would both come out
-# "base_link"; displayName is the standard field for a name that is not so restricted, and it
-# is what a frame_id is matched against.
 
 _NO_USD = (
     "URDF to USD needs usd-core (pxr), which is in the 'scene-cooking' extra and ships no "
@@ -111,17 +98,11 @@ def urdf_to_usd(
     name: str | None = None,
     include_collision: bool = True,
 ) -> str:
-    """``model`` as one ``.usda`` layer.
+    """``model`` as one ``.usda`` layer; ``name`` is the defaultPrim, default ``<robot name>``.
 
-    Links become nested Xforms down the kinematic tree, each posed at the URDF zero pose, so
-    a viewer with no physics engine still shows the robot assembled. The joints are also
-    written as ``UsdPhysics`` prims under ``/<name>/joints`` for consumers that articulate it.
-
-    A ``<mesh>`` becomes a reference to the path the URDF named. Nothing is converted here:
-    UsdManager already serves exactly those paths over ``render_file_request``, so resolving
-    them is the consumer's job, the same as it already is for the URDF.
-
-    ``name`` is the defaultPrim; it defaults to the URDF's own ``<robot name>``.
+    Links nest down the kinematic tree at the URDF zero pose, so a viewer with no physics
+    engine still shows the robot assembled; joints are also written as ``UsdPhysics`` prims. A
+    ``<mesh>`` becomes a reference to the path the URDF named, converted no further.
     """
     pxr = _pxr()
     root_element = ET.fromstring(model.xml)
@@ -137,9 +118,6 @@ def urdf_to_usd(
     stage.SetDefaultPrim(root.GetPrim())
 
     link_extras, joint_extras = _urdf_extras(model.xml)
-    # The whole document on the root, so a round trip through USD loses nothing at all, even
-    # the parts that belong to no link or joint (<material>, <gazebo> at robot level, ...).
-    root.GetPrim().SetCustomDataByKey(SOURCE_KEY, model.xml)
 
     paths: dict[str, str] = {}
     _write_link_tree(
@@ -230,15 +208,10 @@ def _rebase_relationships(
 
 
 def _link_prim_paths(stage: Any) -> dict[str, str]:
-    """URDF link name -> prim path, for every link prim in ``stage``.
+    """URDF link name -> prim path, for every prim carrying ``UsdPhysics.RigidBodyAPI``.
 
-    A link is exactly a prim carrying ``UsdPhysics.RigidBodyAPI``, which is what this converter
-    applies to each one. That is narrower than "any Xform": it leaves out the defaultPrim
-    standing for the robot itself, and the joint prims, either of which could otherwise shadow
-    a link that shares its name.
-
-    The name comes from displayName, falling back to the prim name for a layer that authored
-    none (they agree whenever the URDF name was already a USD identifier).
+    Narrower than "any Xform": it leaves out the defaultPrim and the joints, either of which
+    could shadow a link sharing its name. The name is displayName, or the prim name without one.
     """
     pxr = _pxr()
     paths: dict[str, str] = {}
@@ -307,10 +280,8 @@ def _geometry_name(geometry: _Geometry, index: int) -> str:
 def _zero_pose(joint: JointDescription) -> NDArray[np.float64]:
     """Where this joint puts its child before anything moves.
 
-    A floating or planar joint has no single position to be at -- that is the whole point of
-    it, its pose comes from odometry rather than from the model -- so asking it for one raises.
-    Its origin is the honest answer, and it is also what parent_from_child(0) gives for every
-    other joint type, so the tree is posed consistently either way.
+    A floating or planar joint has no single position to be asked for, so its origin stands in
+    -- which is also what parent_from_child(0) gives every other type.
     """
     if joint.type in _MULTI_DOF_JOINT_TYPES:
         return joint.origin()
@@ -360,12 +331,10 @@ def _define_gprim(
 def _define_mesh(
     pxr: Any, stage: Any, path: str, geometry: _Geometry, base_dir: Path | None
 ) -> Any:
-    """A reference to the file the URDF named. Nothing is read, parsed or converted here.
+    """A reference to the file the URDF named, plus its hash. Nothing is converted here.
 
-    A reference is USD's own way to say "this geometry lives over there", so the mesh needs no
-    attribute of our own and no triangles of ours in the layer. Resolving it is the consumer's
-    job: UsdManager serves exactly these paths over render_file_request, and USD resolves a
-    non-USD mesh through a file format plugin for that extension.
+    A reference is USD's own "this geometry lives over there", so the mesh needs no attribute
+    of ours and no triangles of ours. Resolving it is the consumer's job.
     """
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
@@ -518,9 +487,7 @@ def _passthrough_xml(element: ET.Element, understood: frozenset[str]) -> list[st
 def _urdf_extras(xml: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     """Per-link and per-joint XML that urdf_to_usd does not itself understand.
 
-    A URDF carries more than a kinematic tree and some geometry: mass and inertia, gazebo
-    blocks, transmissions, sensors, and whatever else a vendor put there. None of it means
-    anything to this converter, which is not a reason to lose it.
+    Inertia, gazebo blocks, transmissions, vendor tags: meaningless here, not a reason to lose.
     """
     root = ET.fromstring(xml)
     links = {
@@ -557,9 +524,8 @@ def hash_of_file(path: str, base_dir: Path | None = None) -> str | None:
 def _set_asset_info(pxr: Any, prim: Any, filename: str, base_dir: Path | None) -> None:
     """Identify the asset this prim references, and hash it if it can be read.
 
-    assetInfo is USD's own metadata for exactly this, and ``version`` is its own key for which
-    one of them this is, so a consumer can tell whether the file it fetched is the file the
-    description meant without knowing anything about us.
+    assetInfo is USD's own metadata for this, so a consumer can check what it fetched against
+    what the description meant without knowing anything about us.
     """
     prim.SetAssetInfoByKey("identifier", pxr.Sdf.AssetPath(filename))
     digest = hash_of_file(filename, base_dir)
@@ -596,10 +562,8 @@ def _referenced_assets(pxr: Any, prim: Any) -> list[str]:
 def require_asset_hashes(usd: str, *, what: str) -> None:
     """Refuse a layer whose assets are not identified by content.
 
-    An asset path only means something on the machine that wrote it, so a hash is the only way
-    a consumer can tell that what it fetched is what the description meant. Rather than just
-    say no, the error carries the hash each one should have been given, computed here wherever
-    the file can still be read -- so the answer is the fix, ready to paste.
+    The error carries the hash each one should have had, computed wherever the file can still
+    be read, so the answer is the fix ready to paste.
     """
     missing = unhashed_assets(usd)
     if not missing:
@@ -626,9 +590,8 @@ def require_asset_hashes(usd: str, *, what: str) -> None:
 def _set_passthrough(pxr: Any, prim: Any, xml: Sequence[str] | None) -> None:
     """Hang the URDF this converter did not read off the prim it belongs to.
 
-    customData is USD's own field for data a schema has no place for, so this costs a reader
-    nothing and invents no attribute of ours. Nothing here is interpreted; it is kept so that
-    converting to USD is not also a way to lose half a description.
+    Nothing here is interpreted; it is kept so converting is not also a way to lose half a
+    description.
     """
     if xml:
         # A plain python list is not a value USD can hold; an array of strings is.

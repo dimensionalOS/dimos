@@ -61,15 +61,11 @@ class UrdfManagerConfig(ModuleConfig):
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
-    # What is physically bolted to this robot: a frame of its URDF -> the module owning the subtree that hangs off
-    # that frame. get_scene asks each of them for its own USD and grafts the result onto the root URDF, so every
-    # module named here must answer the get_usd RPC. Nothing else reads this yet; the manager's tf and file serving
-    # are unchanged by it, which is what keeps the empty default backwards compatible.
+    # What is bolted to this robot: a frame of its URDF -> the module owning the subtree there.
+    # Nothing else reads it, so the empty default leaves tf and file serving untouched.
     mounts: dict[str, type[Module]] = Field(default_factory=dict)
-    # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
-    # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
-    # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
-    # named a module that has to be there.
+    # How often to re-ask a module that is not up yet. There is no deadline: a scene missing an
+    # arm is not a scene, so a mount that never comes up hangs the caller.
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
 
@@ -138,8 +134,8 @@ class UrdfManager(Module):
     def get_usd(self) -> str:
         """This robot's own URDF as a USD layer, with nothing attached to it.
 
-        Every module that can be mounted on another answers this, UrdfManager included,
-        so one bolted to another robot's frame needs no special case.
+        Anything mountable answers this, UrdfManager included, so a robot on a robot is no
+        special case.
         """
         with self._usd_lock:
             if self._usd is None:
@@ -150,9 +146,8 @@ class UrdfManager(Module):
     async def get_scene(self) -> str:
         """The whole tree as one USD layer: this URDF with every mounted subtree on it.
 
-        Async and meant to be called before start(): it waits for every module in the map, with no
-        deadline, because a scene missing an arm is not a scene. A mount that never answers hangs
-        the caller rather than handing back half a robot.
+        Async and meant to be called before start(). It waits with no deadline: half a scene is
+        a robot with no arm, so a mount that never answers hangs the caller instead.
         """
         subtrees = await self._subtrees()
         root = self.get_usd()
@@ -168,16 +163,11 @@ class UrdfManager(Module):
         return dict(zip(mounts, results, strict=True))
 
     async def _subtree(self, frame_id: str, module: type[Module]) -> str:
-        """``module``'s USD, retried until it answers.
-
-        No deadline: a mount is a module the blueprint says is physically there, so not
-        answering is a thing to wait out rather than to give up on.
-        """
+        """``module``'s USD, retried until it answers; no deadline (see get_scene)."""
         client = self._subtree_clients.setdefault(
-            # Hand-rolled rather than a declared module ref: a ref is one annotated attribute
-            # resolved by type, and this is a mapping whose keys are only known per robot. The
-            # remote name is the class name, so a module deployed under an instance_name (the same
-            # class twice in one blueprint) is not reachable this way yet.
+            # Hand-rolled rather than a module ref: a ref is one annotated attribute resolved by
+            # type, and this is a mapping. Addresses by class name, so two instances of one class
+            # are not reachable this way yet.
             module,
             RPCClient.remote(module, rpc=self.rpc),
         )
