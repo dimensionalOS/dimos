@@ -111,6 +111,7 @@ _CHARGE_STATUS_MAX_AGE_S = 3.0
 _CHARGE_STATUS_WAIT_S = 5.0
 # Reports arrive at 2 Hz, so a status read this soon after a command can predate it.
 _CHARGE_COMMAND_GRACE_S = 1.0
+_BUSY_GOAL_CANCEL_PERIOD_S = 1.0
 
 DOCK_CHARGING = "charging"
 
@@ -173,7 +174,8 @@ class M20Connection(Module):
     """Expose the planner-facing M20 command and terrain surface.
 
     The hardware bridge owns ROS 2/DrDDS and the command watchdog. This module
-    publishes manual movement RPCs on the standard DimOS ``cmd_vel`` stream. The
+    forwards ``requested_cmd_vel`` and its own movement RPCs on the standard DimOS
+    ``cmd_vel`` stream, and drops them while docking or on the dock. The
     robot-local bridge consumes that stream and is the single command-validation
     and velocity-clamping boundary.
 
@@ -186,7 +188,10 @@ class M20Connection(Module):
 
     config: M20ConnectionConfig
 
+    # cmd_vel goes to the drdds bridge on NOS. MovementManager's velocity arrives on
+    # requested_cmd_vel and is forwarded only off the dock, so this is the one sender.
     cmd_vel: Out[Twist]
+    requested_cmd_vel: In[Twist]
     command_ready: In[Bool]
     motion_state: In[Int32]
     gait_state: In[UInt32]
@@ -217,10 +222,14 @@ class M20Connection(Module):
         self._charge_task: ChargeTask | None = None
         self._dock_started = False
         self._charge_thread: Thread | None = None
+        self._last_busy_goal_cancel = -math.inf
 
     @rpc
     def start(self) -> None:
         super().start()
+        self.register_disposable(
+            Disposable(self.requested_cmd_vel.subscribe(self._on_requested_cmd_vel))
+        )
         self.register_disposable(Disposable(self.command_ready.subscribe(self._on_command_ready)))
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
@@ -425,7 +434,7 @@ class M20Connection(Module):
             self.stop_tool("dock")
             return f"Not docking: {refusal}."
 
-        self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
+        self._cancel_nav_goal()
         self._charge_thread = Thread(target=self._run_dock, name="m20-dock", daemon=True)
         self._charge_thread.start()
         return "Docking. A tool update reports each stage and the result."
@@ -648,6 +657,22 @@ class M20Connection(Module):
             _BASIC_SERVER_CHARGE_TYPE, _BASIC_SERVER_CHARGE_COMMAND, {"Charge": command}
         )
         return self._send_udp(apdu)
+
+    def _cancel_nav_goal(self) -> None:
+        self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
+
+    def _on_requested_cmd_vel(self, twist: Twist) -> None:
+        if not self._charge_busy():
+            self.cmd_vel.publish(twist)
+            return
+        now = time.monotonic()
+        with self._lock:
+            cancel = now - self._last_busy_goal_cancel >= _BUSY_GOAL_CANCEL_PERIOD_S
+            if cancel:
+                self._last_busy_goal_cancel = now
+        if cancel:
+            logger.warning("M20 dropped velocity while docking or on the dock, cancelling the goal")
+            self._cancel_nav_goal()
 
     def _on_command_ready(self, msg: Bool) -> None:
         with self._state_condition:

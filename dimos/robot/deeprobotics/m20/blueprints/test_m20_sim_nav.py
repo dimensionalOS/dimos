@@ -20,6 +20,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager
@@ -27,10 +28,14 @@ from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
 from dimos.robot.deeprobotics.m20.blueprints.m20 import m20
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav import m20_sim_nav
 from dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode import m20_sim_nav_episode
+from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.rerun import m20_nav_overrides, m20_nav_static
 from dimos.simulation.m20_sim.world import SIM_M20, STEP_LIMIT
 from dimos.spec.utils import Spec
 from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+# The robot's connection gates nav velocity, the sim world takes it directly.
+_ROBOT_ONLY_REMAPPINGS = {("movementmanager", "cmd_vel"): "requested_cmd_vel"}
 
 
 def _atoms(blueprint: Blueprint) -> dict[str, BlueprintAtom]:
@@ -55,7 +60,12 @@ def test_sim_composes_the_navigation_the_robot_runs() -> None:
             sim_stack[name].module,
             sim_stack[name].kwargs,
         )
-        assert _remappings(m20_sim_nav, name) == _remappings(m20, name)
+        robot_remappings = {
+            key: target
+            for key, target in _remappings(m20, name).items()
+            if key not in _ROBOT_ONLY_REMAPPINGS
+        }
+        assert _remappings(m20_sim_nav, name) == robot_remappings
 
 
 def test_the_sim_plans_only_steps_its_policy_climbs() -> None:
@@ -78,6 +88,18 @@ def test_teleop_cancel_reaches_the_planner() -> None:
         return m20.remapping_map.get((atom.name, "goal"), "goal"), stream.type
 
     assert goal_topic(MLSPlannerNative) == goal_topic(MovementManager)
+
+
+def test_only_the_connection_sends_velocity_to_the_robot() -> None:
+    senders = [
+        atom.module
+        for atom in m20.active_blueprints
+        for stream in atom.streams
+        if stream.type is Twist
+        and stream.direction == "out"
+        and m20.remapping_map.get((atom.name, stream.name), stream.name) == "cmd_vel"
+    ]
+    assert senders == [M20Connection]
 
 
 def test_one_movement_manager() -> None:

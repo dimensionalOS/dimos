@@ -26,6 +26,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.robot.deeprobotics.m20 import connection as m20_connection
@@ -51,8 +52,8 @@ from dimos.robot.deeprobotics.m20.connection import (
     dock_verdict,
 )
 
-INPUTS = ("command_ready", "motion_state", "gait_state", "odometry")
-OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "odom")
+INPUTS = ("requested_cmd_vel", "command_ready", "motion_state", "gait_state", "odometry")
+OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "odom", "goal")
 HEADER = struct.Struct("<4sHHB7s")
 
 
@@ -557,6 +558,34 @@ def test_stop_does_not_sit_the_robot_on_the_dock(
 
     connection.motion_state_cmd.publish.assert_not_called()  # type: ignore[attr-defined]
     connection.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_requested_velocity_reaches_the_robot_off_the_dock(
+    started: Callable[..., M20Connection],
+) -> None:
+    conn = started()
+    _wait_for_status(conn, CHARGE_IDLE)
+    twist = Twist(linear=Vector3(0.3, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.1))
+
+    conn.requested_cmd_vel.transport.publish(twist)  # type: ignore[attr-defined]
+
+    assert conn.cmd_vel.transport.sent == [twist]  # type: ignore[attr-defined]
+    assert conn.goal.transport.sent == []  # type: ignore[attr-defined]
+
+
+def test_requested_velocity_is_dropped_on_the_dock_and_cancels_the_goal_once(
+    started: Callable[..., M20Connection], server: FakeBasicServer
+) -> None:
+    server.charge = CHARGE_CHARGING
+    conn = started()
+    _wait_for_status(conn, CHARGE_CHARGING)
+
+    for _ in range(5):
+        conn.requested_cmd_vel.transport.publish(Twist(linear=Vector3(0.3, 0.0, 0.0)))  # type: ignore[attr-defined]
+
+    assert conn.cmd_vel.transport.sent == []  # type: ignore[attr-defined]
+    (goal,) = conn.goal.transport.sent  # type: ignore[attr-defined]
+    assert math.isnan(goal.x)
 
 
 def test_the_dock_guards_hold_when_reports_go_stale(
