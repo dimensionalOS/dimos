@@ -48,6 +48,9 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 # The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
 
+# get_scene waits forever, so say so periodically rather than hang silently.
+_WAITING_LOG_EVERY = 20
+
 
 class UrdfManagerConfig(ModuleConfig):
     model: RobotModel
@@ -63,9 +66,10 @@ class UrdfManagerConfig(ModuleConfig):
     # module named here must answer the get_usd RPC. Nothing else reads this yet; the manager's tf and file serving
     # are unchanged by it, which is what keeps the empty default backwards compatible.
     mounts: dict[str, type[Module]] = Field(default_factory=dict)
-    # get_scene has every subtree or it has nothing, so it waits this long for the slowest one.
-    scene_timeout_s: float = Field(default=60.0, gt=0.0)
-    # A module that is not up yet answers nothing, so retry it this often inside that budget.
+    # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
+    # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
+    # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
+    # named a module that has to be there.
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
 
@@ -146,9 +150,9 @@ class UrdfManager(Module):
     async def get_scene(self) -> str:
         """The whole tree as one USD layer: this URDF with every mounted subtree on it.
 
-        Async and meant to be called before start(): it waits for every module in the map, because a
-        scene missing an arm is worse than a scene that arrives late. Raises TimeoutError when one of
-        them has not answered within scene_timeout_s.
+        Async and meant to be called before start(): it waits for every module in the map, with no
+        deadline, because a scene missing an arm is not a scene. A mount that never answers hangs
+        the caller rather than handing back half a robot.
         """
         subtrees = await self._subtrees()
         root = self.get_usd()
@@ -158,14 +162,17 @@ class UrdfManager(Module):
         mounts = self.config.mounts
         if not mounts:
             return {}
-        deadline = time.monotonic() + self.config.scene_timeout_s
         results = await asyncio.gather(
-            *(self._subtree(frame_id, module, deadline) for frame_id, module in mounts.items())
+            *(self._subtree(frame_id, module) for frame_id, module in mounts.items())
         )
         return dict(zip(mounts, results, strict=True))
 
-    async def _subtree(self, frame_id: str, module: type[Module], deadline: float) -> str:
-        """``module``'s USD, retried until it answers or the deadline passes."""
+    async def _subtree(self, frame_id: str, module: type[Module]) -> str:
+        """``module``'s USD, retried until it answers.
+
+        No deadline: a mount is a module the blueprint says is physically there, so not
+        answering is a thing to wait out rather than to give up on.
+        """
         client = self._subtree_clients.setdefault(
             # Hand-rolled rather than a declared module ref: a ref is one annotated attribute
             # resolved by type, and this is a mapping whose keys are only known per robot. The
@@ -183,10 +190,10 @@ class UrdfManager(Module):
                     f"subtree for {frame_id} from {module.__name__} after {attempts} ask(s)"
                 )
                 return usd
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"{module.__name__} did not answer {SUBTREE_RPC}() for frame {frame_id!r} "
-                    f"within {self.config.scene_timeout_s}s ({attempts} attempts)"
+            if attempts % _WAITING_LOG_EVERY == 0:
+                logger.warning(
+                    f"still waiting on {module.__name__} for {SUBTREE_RPC}() at frame "
+                    f"{frame_id!r} after {attempts} asks"
                 )
             await asyncio.sleep(self.config.scene_retry_s)
 

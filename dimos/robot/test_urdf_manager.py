@@ -559,7 +559,7 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=5.0, scene_retry_s=0.01)
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
     client = _FakeClient(RuntimeError("no reply"), None, _SUBTREE_USD)
     module._subtree_clients[_FakeArm] = cast("Any", client)
 
@@ -569,16 +569,27 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
     assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
 
 
-def test_get_scene_times_out_naming_the_module_that_never_answered(
+def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
-    # Half a scene would hand a renderer a robot with no arm, so it is all or an error.
-    pytest.importorskip("pxr")
-    module = make_manager(mounts={"arm": _FakeArm}, scene_timeout_s=0.05, scene_retry_s=0.01)
-    module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(RuntimeError("never")))
+    """Half a scene would hand a renderer a robot with no arm, so there is no partial answer.
 
-    with pytest.raises(TimeoutError, match="_FakeArm did not answer get_usd"):
-        _scene(module)
+    There is no deadline and so no error to assert; assert instead that it is still waiting.
+    wait_for cancels it, which is also what keeps this test from leaking the retry loop.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
+    client = _FakeClient(RuntimeError("never"))
+    module._subtree_clients[_FakeArm] = cast("Any", client)
+
+    async def wait_a_moment() -> None:
+        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(coroutine(), 0.2)
+
+    asyncio.run(wait_a_moment())
+
+    assert client.asked > 1, "it should have kept asking rather than giving up or answering"
 
 
 def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
