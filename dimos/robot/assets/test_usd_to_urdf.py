@@ -216,3 +216,81 @@ def test_a_layer_with_no_joints_is_still_a_robot(tmp_path: Path) -> None:
 
     assert [link.get("name") for link in root.findall("link")] == ["world"]
     assert root.findall("joint") == []
+
+
+def test_the_root_link_is_found_in_the_layer_not_taken_from_the_default_prim(
+    probe: Any, tmp_path: Path
+) -> None:
+    """The defaultPrim is the robot, not a link, so a tf lookup on it finds nothing."""
+    from dimos.robot.assets.usd_to_urdf import usd_root_link
+
+    usd = urdf_to_usd(probe)
+
+    assert usd_root_link(usd) == probe.root_link == "base"
+    assert "probe" not in usd_root_link(usd)
+
+
+_NESTED_USDA = """#usda 1.0
+(
+    defaultPrim = "rig"
+)
+
+def Xform "rig"
+{
+    def Xform "chassis" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Xform "mast" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            matrix4d xformOp:transform = ( (1,0,0,0), (0,1,0,0), (0,0,1,0), (0,0,0.5,1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Cube "collision_0" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 1
+                float3 xformOp:scale = (0.1, 0.1, 0.1)
+                uniform token[] xformOpOrder = ["xformOp:scale"]
+            }
+        }
+    }
+}
+"""
+
+
+def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
+    """USD conveys the tree by nesting; a URDF with two unconnected links will not load.
+
+    A hand-written layer often states only the hierarchy, so the weld has to be inferred or
+    nothing downstream can read the result.
+    """
+    root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
+
+    assert {link.get("name") for link in root.findall("link")} == {"chassis", "mast"}
+    joints = root.findall("joint")
+    assert len(joints) == 1
+    assert joints[0].get("type") == "fixed"
+    parent = joints[0].find("parent")
+    child = joints[0].find("child")
+    assert parent is not None and child is not None
+    assert (parent.get("link"), child.get("link")) == ("chassis", "mast")
+
+
+def test_an_inferred_weld_keeps_the_nested_prim_s_pose() -> None:
+    root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
+
+    origin = root.findall("joint")[0].find("origin")
+    assert origin is not None
+    np.testing.assert_allclose(
+        [float(v) for v in (origin.get("xyz") or "").split()], [0, 0, 0.5], atol=1e-9
+    )
+
+
+def test_a_nested_layer_names_its_root_link() -> None:
+    from dimos.robot.assets.usd_to_urdf import usd_root_link
+
+    assert usd_root_link(_NESTED_USDA) == "chassis"
