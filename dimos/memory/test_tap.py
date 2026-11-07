@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,10 @@ from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class _Transport(Transport[Any]):
@@ -181,3 +185,32 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("ts", [42.25, 0.0])
+def test_records_tf_and_odom_at_source_time(tmp_path, ts):
+    tf = TFMessage(Transform(ts=ts + 1.0), Transform(ts=ts))
+    with SqliteStore(path=str(tmp_path / "memory.db")) as store:
+        with closing(TransportRecorder(store)) as recorder:
+            tf_transport, odom_transport = _Transport(), _Transport()
+            recorder.tap("tf", TFMessage, tf_transport)
+            recorder.tap("odom", PoseStamped, odom_transport)
+            tf_transport.publish(tf)
+            odom_transport.publish(PoseStamped(ts=ts))
+        assert store.stream("tf", TFMessage).first().ts == ts
+        assert store.stream("odom", PoseStamped).first().ts == ts
+        assert [transform.ts for transform in store.stream("tf", TFMessage).first().data] == [
+            ts + 1.0,
+            ts,
+        ]
+
+
+@pytest.mark.parametrize("message", [TFMessage(), String("unstamped")])
+def test_missing_source_time_uses_reception_time(tmp_path, mocker, message):
+    with SqliteStore(path=str(tmp_path / "memory.db")) as store:
+        with closing(TransportRecorder(store)) as recorder:
+            transport = _Transport()
+            recorder.tap("message", type(message), transport)
+            mocker.patch.object(tap.time, "time", return_value=99.0)
+            transport.publish(message)
+        assert store.stream("message").first().ts == 99.0

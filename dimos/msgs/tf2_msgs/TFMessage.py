@@ -112,6 +112,11 @@ class TFMessage:
     def __init__(self, *transforms: Transform) -> None:
         self.transforms = list(transforms)
 
+    @property
+    def ts(self) -> float | None:
+        """Earliest transform source stamp, or None for an empty message."""
+        return min((transform.ts for transform in self.transforms), default=None)
+
     def add_transform(self, transform: Transform, child_frame_id: str = "base_link") -> None:
         """Add a transform to the message."""
         self.transforms.append(transform)

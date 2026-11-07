@@ -122,7 +122,9 @@ class TransportRecorder:
 
         def on_msg(msg: Any) -> None:
             try:
-                ts = getattr(msg, "ts", None) or time.time()
+                ts = getattr(msg, "ts", None)
+                if ts is None:
+                    ts = time.time()
                 self._queue.put_nowait((name, stream_type, msg, ts))
             except queue.Full:
                 self.dropped += 1

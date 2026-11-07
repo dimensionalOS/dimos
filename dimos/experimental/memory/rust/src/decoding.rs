@@ -15,8 +15,8 @@
 use anyhow::{Context, Result};
 use lcm_msgs::foxglove_msgs::CompressedVideo;
 use lcm_msgs::geometry_msgs::{
-    PointStamped, PoseStamped, PoseWithCovarianceStamped, TwistStamped, TwistWithCovarianceStamped,
-    WrenchStamped,
+    PointStamped, PoseArray, PoseStamped, PoseWithCovarianceStamped, TwistStamped,
+    TwistWithCovarianceStamped, WrenchStamped,
 };
 use lcm_msgs::nav_msgs::{OccupancyGrid, Odometry, Path};
 use lcm_msgs::sensor_msgs::{
@@ -76,15 +76,11 @@ pub(crate) fn decode(
         }]);
     }
     if stream.is_tf() {
-        return decode_tf(data, reception_ts);
+        return decode_tf(data);
     }
     if stream.payload_type == IMAGE_PAYLOAD_TYPE {
         let image = Image::decode(data).context("invalid LCM Image")?;
-        let ts = header_timestamp(
-            image.header.stamp.sec,
-            image.header.stamp.nsec,
-            reception_ts,
-        );
+        let ts = header_timestamp(image.header.stamp.sec, image.header.stamp.nsec);
         return Ok(vec![DecodedObservation {
             ts,
             payload: DecodedPayload::Image(image),
@@ -98,17 +94,13 @@ pub(crate) fn decode(
     }])
 }
 
-fn decode_tf(data: &[u8], reception_ts: f64) -> Result<Vec<DecodedObservation>> {
+fn decode_tf(data: &[u8]) -> Result<Vec<DecodedObservation>> {
     let message = TFMessage::decode(data).context("invalid LCM TFMessage")?;
     Ok(message
         .transforms
         .into_iter()
         .map(|transform| DecodedObservation {
-            ts: header_timestamp(
-                transform.header.stamp.sec,
-                transform.header.stamp.nsec,
-                reception_ts,
-            ),
+            ts: header_timestamp(transform.header.stamp.sec, transform.header.stamp.nsec),
             payload: DecodedPayload::Lcm(
                 TFMessage {
                     transforms: vec![transform],
@@ -134,6 +126,7 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Resul
 
     let (sec, nsec) = match payload_type {
         "dimos.msgs.geometry_msgs.PointStamped.PointStamped" => stamped!(PointStamped),
+        "dimos.msgs.geometry_msgs.PoseArray.PoseArray" => stamped!(PoseArray),
         "dimos.msgs.geometry_msgs.PoseStamped.PoseStamped" => stamped!(PoseStamped),
         "dimos.msgs.geometry_msgs.PoseWithCovarianceStamped.PoseWithCovarianceStamped" => {
             stamped!(PoseWithCovarianceStamped)
@@ -176,21 +169,51 @@ fn source_timestamp(payload_type: &str, data: &[u8], reception_ts: f64) -> Resul
         }
         _ => return Ok(reception_ts),
     };
-    Ok(header_timestamp(sec, nsec, reception_ts))
+    Ok(header_timestamp(sec, nsec))
 }
 
-pub(crate) fn header_timestamp(sec: i32, nsec: i32, fallback: f64) -> f64 {
-    if sec > 0 {
-        f64::from(sec) + f64::from(nsec) / 1_000_000_000.0
-    } else {
-        fallback
-    }
+pub(crate) fn header_timestamp(sec: i32, nsec: i32) -> f64 {
+    f64::from(sec) + f64::from(nsec) / 1_000_000_000.0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use lcm_msgs::std_msgs::String as LcmString;
+    use lcm_msgs::std_msgs::{Header, Time};
+
+    #[test]
+    fn pose_arrays_preserve_source_time_including_zero_and_subsecond_stamps() {
+        let stream = StreamConfig {
+            port: "pgo_keyframes".into(),
+            name: "pgo_keyframes".into(),
+            payload_type: "dimos.msgs.geometry_msgs.PoseArray.PoseArray".into(),
+            codec: Codec::Lcm,
+            timestamp_field: None,
+            json_schema: None,
+        };
+        for (sec, nsec, expected) in [
+            (42, 250_000_000, 42.25),
+            (0, 0, 0.0),
+            (0, 250_000_000, 0.25),
+        ] {
+            let message = PoseArray {
+                header: Header {
+                    stamp: Time { sec, nsec },
+                    ..Default::default()
+                },
+                poses: vec![Default::default()],
+            };
+            let encoded = message.encode();
+            let result = decode(&stream, &encoded, 99.0).unwrap();
+            assert_eq!(result.len(), 1);
+            assert_eq!(result[0].ts, expected);
+            let DecodedPayload::Lcm(data) = &result[0].payload else {
+                panic!("not LCM")
+            };
+            assert_eq!(data, &encoded);
+        }
+    }
 
     fn json_stream(field: Option<&str>) -> StreamConfig {
         StreamConfig {
