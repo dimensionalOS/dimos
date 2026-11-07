@@ -23,6 +23,13 @@ collisions are MuJoCo convex hulls, with known structural overlaps excluded by
 scene configuration. Gripper joints are fixed: vendor limits/efforts are zero.
 The vendor omits wheel effort/speed limits; the demo assumptions below are NOT
 hardware specifications. Servo gains likewise are simulation tuning only.
+Wrist variant: retain the vendor D405 mount, mesh and inertia unchanged. The
+co-located alternative GMSL fisheye cameras are absent on this depth-camera
+configuration: their links remain frame-only (no visual, collision or inertia).
+This prevents the alternative housing from occluding the D405 lens. The D405
+link origin is used as an ideal optical center (+X right, +Y down, +Z forward);
+mesh ray checks place the lens at z=0 with the housing behind it. Factory
+optical-center corrections and distortion remain unavailable.
 """
 
 import argparse
@@ -53,6 +60,11 @@ def gen_urdf() -> str:
         .load()
     )
     root = ET.fromstring(source.xml)
+    for side in ("left", "right"):
+        link = root.find(f"link[@name='r1pro/{side}_gmsl_link']")
+        assert link is not None
+        for element in list(link):
+            link.remove(element)
     for name in WHEEL_JOINTS:
         joint = root.find(f"joint[@name='{name}']")
         assert joint is not None

@@ -39,6 +39,7 @@ private:
     TArray<uint8> SendBuffer;
     int32 SendOffset = 0;
     FString CaptureEpoch;
+    FString CaptureView;
     bool bExitAfterSend = false;
     bool bHasScene = false;
     bool bHeadless = false;
@@ -47,6 +48,9 @@ private:
     UPROPERTY() TMap<int32, TObjectPtr<USceneComponent>> Geometries;
     UPROPERTY() TObjectPtr<USceneCaptureComponent2D> ColorCapture;
     UPROPERTY() TObjectPtr<USceneCaptureComponent2D> DepthCapture;
+    // Bounded resolution cache: switching cameras must not allocate GPU targets each frame.
+    UPROPERTY() TArray<TObjectPtr<UTextureRenderTarget2D>> ColorTargets;
+    UPROPERTY() TArray<TObjectPtr<UTextureRenderTarget2D>> DepthTargets;
     UPROPERTY() TObjectPtr<UTextureRenderTarget2D> ColorTarget;
     UPROPERTY() TObjectPtr<UTextureRenderTarget2D> DepthTarget;
     UPROPERTY() TObjectPtr<UMaterialInterface> MeshMaterial;

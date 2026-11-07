@@ -23,7 +23,13 @@ from functools import partial
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.robot.galaxea.r1pro.sim.cameras import head_camera
+from dimos.robot.galaxea.r1pro.sim.camera_module import R1ProSimCameras
+from dimos.robot.galaxea.r1pro.sim.cameras import (
+    WRIST_MAX_DEPTH_M,
+    WRIST_MIN_DEPTH_M,
+    head_camera,
+    wrist_camera,
+)
 from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, MODEL, SCENE as ROBOT_SCENE
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
 from dimos.robot.galaxea.r1pro.sim.spatial import R1ProSpatialTeleop
@@ -37,7 +43,6 @@ from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.scenes.sf555.config import OFFICE_MODEL, OFFICE_RENDERER
-from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
 from dimos.sim2.sensors.lidar.config import LidarConfig
@@ -82,7 +87,13 @@ r1pro_sim2 = (
             instance_name="torso_imu",
             sensor=ImuConfig("r1pro/imu_torso_link", orientation="ideal"),
         ).remappings([("torso_imu", "imu", "imu_torso")]),
-        SimCameraModule.blueprint(scene=SCENE, sensor=CAMERA, renderer=OFFICE_RENDERER),
+        R1ProSimCameras.blueprint(
+            scene=SCENE,
+            head=CAMERA,
+            left=wrist_camera("left"),
+            right=wrist_camera("right"),
+            renderer=OFFICE_RENDERER,
+        ),
         SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
             [(SimLidarModule, "lidar", "lidar_raw")]
         ),
@@ -110,7 +121,15 @@ r1pro_sim2 = (
                 )
                 for side in ("left", "right")
             },
-            cameras={"workspace": "Head · RGB-D"},
+            cameras={
+                "workspace": "Head · RGB-D",
+                "left": "Left wrist · RGB-D",
+                "right": "Right wrist · RGB-D",
+            },
+            camera_depth_ranges={
+                side: (WRIST_MIN_DEPTH_M, WRIST_MAX_DEPTH_M) for side in ("left", "right")
+            },
+            camera_max_edge_m={side: 0.035 for side in ("left", "right")},
             base_drive=True,
             max_depth_m=12.0,
             max_edge_m=0.25,

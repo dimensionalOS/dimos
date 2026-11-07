@@ -81,6 +81,8 @@ are not compared against the wall clock.
 | Streams | Source | Requested rate |
 |---|---|---|
 | `color_image`, `depth_image`, `camera_info` | Head-left optical frame, native Unreal | 15 Hz ceiling |
+| `left_wrist`, `left_wrist_depth`, `left_wrist_info` | Left D405 mount, shared native Unreal | 15 Hz ceiling |
+| `right_wrist`, `right_wrist_depth`, `right_wrist_info` | Right D405 mount, shared native Unreal | 15 Hz ceiling |
 | `lidar_raw` | Chassis Mid-360 frame, rolling ray acquisition | 10 Hz |
 | `pointcloud` | Truth-registered lidar for visualization | 10 Hz |
 | `global_map` | VoxelGridMapper accumulating registered lidar | Every 5 scans |
@@ -103,6 +105,33 @@ capture in favor of that native driver. Neither this capture path nor the camera
 specification establishes a working depth stream: vendor driver documentation
 lists registered head depth only **if available**. Optional wrist depth cameras
 are separate devices.
+
+This demo selects the **optional wrist depth-camera configuration**, not the
+alternative fisheye pair. Each wrist renders 320×180 (physical 1280×720 aspect),
+with approximate 87°×58° FOV and valid depth restricted to 0.07–0.50 m, from the
+[2026 specification](https://docs.galaxea-dynamics.com/R1Pro/en/docs/2026/).
+RGB remains visible beyond that depth range. Both use the pinned URDF's
+`left_d405_link` / `right_d405_link` poses as ideal optical frames; factory
+intrinsics, distortion and optical-center corrections are not available.
+The generator removes the alternative GMSL wrist housings, collisions and masses
+while preserving their fixed frames. Upstream includes both alternatives in
+nearly the same location, which otherwise occludes the D405 views.
+
+`R1ProSimCameras` shares one Unreal process/world across all three cameras. Its
+single worker captures one latest pose at a time, round-robin, with independent
+rate ceilings; 15 Hz is requested **per camera**, not measured throughput.
+Unreal reuses up to three target resolutions and resets temporal history when
+switching optical frames to prevent cross-camera ghosting. Rebuild the prepared
+renderer after updating native source (see the SF555 setup).
+
+Desktop and headset expose Head / Left wrist / Right wrist panels. Each RGB-D
+pair has its own calibration, timestamped optical-to-world TF and mesh. Wrist
+meshes reject depth discontinuities over 3.5 cm. Empty depth clears previous
+geometry; stale camera surfaces are hidden rather than attached to a moving arm.
+Only robot geometry, sensor-derived surfaces and the global map reach the viewer.
+`GET /spatial/surface?camera=workspace|left|right` serves independent surface
+updates; omitting `camera` retains the original head-view API. Per-camera ages,
+errors and valid point counts are in `/spatial/state` under `surfaces`.
 
 Unreal currently supplies **ideal, registered axial depth in metres**, aligned to
 head-left RGB. The surface encoder pairs timestamps, uses CameraInfo and optical
@@ -192,3 +221,19 @@ headset tracking/comfort check still requires an operator.
 The torso remains owned by the sim servo; repeated Hold/Enable does not replace
 its posture target with measured gravity sag. The Desktop joint-jog endpoint was
 also exercised against the running simulation, including automatic headset hold.
+
+With all three cameras enabled, a 20-second November 6 measurement after the
+wrist integration recorded 2.40 / 2.40 / 2.35 captures per second (head / left /
+right), 1.000× simulation speed and zero additional late physics steps. Surface
+update rates were 2.45 / 2.45 / 2.40 Hz; p95 age since receipt was approximately
+0.48 seconds. These are shared-renderer measurements, not 15 fps per camera.
+One Unreal process was running. All three panels and the reconstructed scene
+were visually checked in the workspace. Evidence is in `wrist_results.json`,
+`wrist_{workspace,left,right}.{jpg,json}` and `demo_wrist_cameras.py` in the local
+validation directory. The native calibration test also exercised switching
+optical frames and reusing earlier target sizes; its report is under
+`wrist_calibration/`. The 74 focused Python/registry checks, 22 JavaScript checks,
+and targeted mypy checks passed. The new live motion smoke attempt was refused
+because a control client was already connected; the earlier motion results above
+are not a rerun of this camera configuration. Physical headset validation remains
+outstanding.

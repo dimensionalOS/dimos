@@ -45,6 +45,9 @@ def validate(executable: Path, project: Path, output: Path) -> None:
         model = RobotModel.from_file(urdf).with_fixed_frame(
             "camera", "box", xyz=(0, 0, 1), rpy=(-np.pi / 2, 0, -np.pi / 2)
         )
+        model = model.with_fixed_frame(
+            "camera_right", "box", xyz=(0.5, 0, 1), rpy=(-np.pi / 2, 0, -np.pi / 2)
+        )
         scene = SceneConfig((Instance("box", model),), ground_plane=False)
         backend = MujocoBackend()
         cleanup.callback(backend.close)
@@ -99,6 +102,18 @@ def validate(executable: Path, project: Path, output: Path) -> None:
             captures.append(
                 {"width": width, "height": height, "center_depth_m": float(next_depth[63, 77])}
             )
+        # Switch optical frames without an epoch reset. Each view keeps its own
+        # calibration, and returning to an earlier resolution reuses its targets.
+        for frame_id, width, height, expected in [
+            ("camera_right", 317, 119, 2.0),
+            ("camera", 200, 150, 2.5),
+            ("camera_right", 317, 119, 2.0),
+        ]:
+            camera = replace(renderer.camera, frame_id=frame_id, width=width, height=height)
+            renderer.set_poses(state)
+            view_rgb, view_depth = renderer.render_camera(camera, poses_by_id(state)[frame_id])
+            assert abs(float(view_depth[63, 77]) - expected) < 0.0001
+            assert view_rgb[63, 77, 0] > view_rgb[63, 77, 1] + 50
         report = {
             "center_depth_m": float(depth[63, 77]),
             "projected_center_px": [float(xx.mean()), float(yy.mean())],

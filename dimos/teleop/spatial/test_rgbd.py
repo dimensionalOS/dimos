@@ -91,3 +91,17 @@ def test_rectification_keeps_depth_holes_and_rejects_unknown_distortion(observat
     info.distortion_model = "unknown"
     with pytest.raises(ValueError, match="calibration"):
         RGBDEncoder().encode(color, depth, info, mount)
+
+
+def test_wrist_depth_range_and_empty_frame_clear_previous_surface(observations):
+    color, depth, info, mount = observations
+    depth.data[:] = [0.06, 0.1, 0.5, 0.51]
+    encoder = RGBDEncoder(min_depth_m=0.07, max_depth_m=0.5)
+    _, depth_mm, _ = unpack(encoder.encode(color, depth, info, mount).payload)
+    np.testing.assert_array_equal(depth_mm, [0, 100, 500, 0] * 3)
+    depth.data[:] = 1
+    empty = encoder.encode(color, depth, info, mount)
+    _, depth_mm, jpeg = unpack(empty.payload)
+    assert not depth_mm.any()
+    assert len(empty.points) == 0
+    assert jpeg[:2] == b"\xff\xd8"

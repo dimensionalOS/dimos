@@ -46,12 +46,14 @@ class RGBDEncoder:
         *,
         max_pixels: int = 60000,
         max_depth_m: float = 2.0,
+        min_depth_m: float = 0.0,
         depth_unit_m: float = 0.001,
         sync_tolerance_s: float = 0.03,
         max_edge_m: float = 0.035,
     ) -> None:
         self.max_pixels = max_pixels
         self.max_depth_m = max_depth_m
+        self.min_depth_m = min_depth_m
         self.depth_unit_m = depth_unit_m
         self.sync_tolerance_s = sync_tolerance_s
         self.max_edge_m = max_edge_m
@@ -104,10 +106,14 @@ class RGBDEncoder:
         while math.ceil(info.width / step) * math.ceil(info.height / step) > self.max_pixels:
             step += 1
         sampled = metres[::step, ::step]
-        valid = np.isfinite(sampled) & (sampled > 0) & (sampled <= self.max_depth_m)
+        valid = (
+            np.isfinite(sampled)
+            & (sampled > 0)
+            & (sampled >= self.min_depth_m)
+            & (sampled <= self.max_depth_m)
+        )
         millimetres = np.rint(np.where(valid, sampled, 0) * 1000).astype("<u2")
-        if not np.any(millimetres):
-            raise ValueError("No valid workspace depth observations")
+        # Empty observations clear old geometry when a close-range camera moves away.
         height, width = sampled.shape
         v, u = np.mgrid[:height, :width]
         z = millimetres.astype(np.float32) * 0.001

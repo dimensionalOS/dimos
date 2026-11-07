@@ -136,9 +136,9 @@ function update() {
   $("control-state").textContent = state.control.paused
     ? "Ⅱ Held · release and re-grip after enabling"
     : "Headset control enabled";
-  $("surface-state").textContent = state.surface_age < 1
-    ? "Live RGB-D surface · sensor observations"
-    : state.observation_error || "Surface delayed";
+  const views=Object.values(state.surfaces || {});
+  const live=views.filter(view=>view.ts>0 && view.age<state.observation_timeout_s).length;
+  $("surface-state").textContent = `${live}/${views.length} live RGB-D views · sensor observations`;
   for (const out of document.querySelectorAll("output[data-joint]")) {
     out.textContent = `${
       ((state.joints[out.dataset.joint] || 0) * 180 / Math.PI).toFixed(1)

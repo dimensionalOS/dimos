@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 import socket
 import threading
 import time
@@ -134,6 +135,8 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     joint_jog_available: bool = False
     groups: dict[str, SpatialGroup] = Field(default_factory=dict)
     cameras: dict[str, str] = Field(default_factory=lambda: {"workspace": "Head camera"})
+    camera_depth_ranges: dict[str, tuple[float, float]] = Field(default_factory=dict)
+    camera_max_edge_m: dict[str, float] = Field(default_factory=dict)
     base_drive: bool = False
     input_timeout_s: float = 0.3
     joint_feedback_timeout_s: float = Field(default=0.5, gt=0)
@@ -152,6 +155,12 @@ class SpatialViewerConfig(WebXRTeleopConfig):
             raise ValueError("Bind robot groups to the left/right operator slots")
         if set(self.cameras) - {"workspace", "left", "right"}:
             raise ValueError("Remap camera streams to workspace/left/right slots")
+        if (set(self.camera_depth_ranges) | set(self.camera_max_edge_m)) - set(self.cameras):
+            raise ValueError("Depth settings require a configured camera slot")
+        if any(not 0 <= near < far <= 60 for near, far in self.camera_depth_ranges.values()):
+            raise ValueError("Invalid camera depth range")
+        if any(not 0 < edge <= 0.5 for edge in self.camera_max_edge_m.values()):
+            raise ValueError("Invalid camera mesh edge length")
         return self
 
 
@@ -171,6 +180,10 @@ class SpatialTeleopModule(ArmTeleopModule):
     camera_info: In[CameraInfo]
     left_wrist: In[Image]
     right_wrist: In[Image]
+    left_wrist_depth: In[Image]
+    right_wrist_depth: In[Image]
+    left_wrist_info: In[CameraInfo]
+    right_wrist_info: In[CameraInfo]
     global_map: In[PointCloud2]
     tf: In[TFMessage]
     objects: In[list[Object]]
@@ -181,23 +194,29 @@ class SpatialTeleopModule(ArmTeleopModule):
         self._desktop_port = 0
         self._robot: SpatialRobot | None = None
         self._feedback: dict[str, Any] = {}
-        self._surface: SurfaceFrame | None = None
-        self._surface_received = 0.0
+        self._surfaces: dict[str, SurfaceFrame] = {}
+        self._surface_received: dict[str, float] = {}
         self._feedback_received = 0.0
-        self._camera_info: CameraInfo | None = None
-        self._observation_error = "Waiting for registered RGB-D and camera calibration"
-        self._encoder = RGBDEncoder(
-            **{
-                name: getattr(self.config, name)
-                for name in (
-                    "max_pixels",
-                    "max_depth_m",
-                    "depth_unit_m",
-                    "sync_tolerance_s",
-                    "max_edge_m",
-                )
-            }
-        )
+        self._camera_info: dict[str, CameraInfo] = {}
+        self._observation_errors = {
+            slot: "Waiting for registered RGB-D and camera calibration"
+            for slot in self.config.cameras
+        }
+        self._encoders = {
+            slot: RGBDEncoder(
+                max_pixels=self.config.max_pixels,
+                min_depth_m=self.config.camera_depth_ranges.get(slot, (0, self.config.max_depth_m))[
+                    0
+                ],
+                max_depth_m=self.config.camera_depth_ranges.get(slot, (0, self.config.max_depth_m))[
+                    1
+                ],
+                depth_unit_m=self.config.depth_unit_m,
+                sync_tolerance_s=self.config.sync_tolerance_s,
+                max_edge_m=self.config.camera_max_edge_m.get(slot, self.config.max_edge_m),
+            )
+            for slot in self.config.cameras
+        }
         self._map_payload = b""
         self._map_stamp = 0.0
         self._images: dict[str, tuple[float, bytes]] = {}
@@ -222,7 +241,6 @@ class SpatialTeleopModule(ArmTeleopModule):
         super().build()
         subscriptions: list[tuple[In[Any], Callable[[Any], None]]] = [
             (self.coordinator_joint_state, self._on_feedback),
-            (self.camera_info, self._on_camera_info),
             (self.tf, self._transforms.receive_tfmessage),
             (self.left_wrist, lambda image: self._on_image("left", image)),
             (self.right_wrist, lambda image: self._on_image("right", image)),
@@ -232,13 +250,23 @@ class SpatialTeleopModule(ArmTeleopModule):
         ]
         for port, callback in subscriptions:
             self.register_disposable(Disposable(port.subscribe(callback)))
-        frames = align_timestamped(
-            self.color_image.observable(),
-            self.depth_image.observable(),
-            buffer_size=0.3,
-            match_tolerance=self.config.sync_tolerance_s,
-        )
-        self.register_disposable(backpressure(frames).subscribe(self._on_rgbd))
+        camera_ports = {
+            "workspace": (self.color_image, self.depth_image, self.camera_info),
+            "left": (self.left_wrist, self.left_wrist_depth, self.left_wrist_info),
+            "right": (self.right_wrist, self.right_wrist_depth, self.right_wrist_info),
+        }
+        for slot in self.config.cameras:
+            color, depth, info = camera_ports[slot]
+            self.register_disposable(
+                Disposable(info.subscribe(partial(self._on_camera_info, slot)))
+            )
+            frames = align_timestamped(
+                color.observable(),
+                depth.observable(),
+                buffer_size=0.3,
+                match_tolerance=self.config.sync_tolerance_s,
+            )
+            self.register_disposable(backpressure(frames).subscribe(partial(self._on_rgbd, slot)))
 
     @rpc
     def start(self) -> None:
@@ -297,9 +325,22 @@ class SpatialTeleopModule(ArmTeleopModule):
                 return {
                     **self._feedback,
                     "server_time": now,
-                    "surface_ts": self._surface.ts if self._surface else 0.0,
-                    "surface_age": now_mono - self._surface_received,
-                    "observation_error": self._observation_error,
+                    "surface_ts": self._surfaces["workspace"].ts
+                    if "workspace" in self._surfaces
+                    else 0.0,
+                    "surface_age": now_mono - self._surface_received.get("workspace", 0),
+                    "observation_error": self._observation_errors.get("workspace", ""),
+                    "surfaces": {
+                        slot: {
+                            "ts": self._surfaces[slot].ts if slot in self._surfaces else 0.0,
+                            "age": now_mono - self._surface_received.get(slot, 0),
+                            "error": self._observation_errors[slot],
+                            "points": len(self._surfaces[slot].points)
+                            if slot in self._surfaces
+                            else 0,
+                        }
+                        for slot in self.config.cameras
+                    },
                     "opening_handle_offset": self.config.opening_handle_offset,
                     "opening_handle_travel_m": self.config.opening_handle_travel_m,
                     "actions": {
@@ -349,11 +390,13 @@ class SpatialTeleopModule(ArmTeleopModule):
                 )
 
         @app.get("/spatial/surface")
-        def surface(after: float = 0) -> Response:
+        def surface(after: float = 0, camera: str = "workspace") -> Response:
+            if camera not in self.config.cameras:
+                raise HTTPException(404, "Unknown camera")
             with self._lock:
-                frame = self._surface
+                frame = self._surfaces.get(camera)
             if frame is None:
-                raise HTTPException(503, self._observation_error)
+                raise HTTPException(503, self._observation_errors[camera])
             if frame.ts == after:
                 return Response(status_code=204, headers={"Cache-Control": "no-store"})
             return Response(
@@ -529,28 +572,29 @@ class SpatialTeleopModule(ArmTeleopModule):
         with self._lock:
             self._images[side] = (time.time(), data)
 
-    def _on_camera_info(self, message: CameraInfo) -> None:
-        self._camera_info = message
+    def _on_camera_info(self, slot: str, message: CameraInfo) -> None:
+        self._camera_info[slot] = message
 
-    def _on_rgbd(self, frames: tuple[Image, ...]) -> None:
+    def _on_rgbd(self, slot: str, frames: tuple[Image, ...]) -> None:
         color, depth = frames
-        info = self._camera_info
+        info = self._camera_info.get(slot)
         if info is None:
             return
         transform = self._transforms.get("world", depth.frame_id, depth.ts, 0.1, warn=False)
         if transform is None:
-            self._observation_error = "Camera-to-world calibration unavailable"
+            self._observation_errors[slot] = "Camera-to-world calibration unavailable"
             return
         try:
-            frame = self._encoder.encode(color, depth, info, transform)
+            frame = self._encoders[slot].encode(color, depth, info, transform)
         except ValueError as error:
-            self._observation_error = str(error)
+            self._observation_errors[slot] = str(error)
             return
         with self._lock:
-            if self._surface is None or frame.ts != self._surface.ts:
-                self._surface = frame
-                self._surface_received = time.monotonic()
-                self._observation_error = ""
+            previous = self._surfaces.get(slot)
+            if previous is None or frame.ts != previous.ts:
+                self._surfaces[slot] = frame
+                self._surface_received[slot] = time.monotonic()
+                self._observation_errors[slot] = ""
 
     def _on_objects(self, objects: list[Object]) -> None:
         # Match ManipulationModule's world-frame object contract. Do not guess a frame.
@@ -724,15 +768,23 @@ class SpatialTeleopModule(ArmTeleopModule):
                 )
             if (
                 message.focus is not None
-                and self._surface is not None
                 and 0 <= now - message.observed_at <= self.config.observation_timeout_s
-                and time.monotonic() - self._surface_received <= self.config.observation_timeout_s
             ):
-                points = self._surface.points
-                if len(points) and np.min(np.linalg.norm(points - message.focus, axis=1)) < 0.04:
-                    self.perception_focus.publish(
-                        PointStamped(*message.focus, frame_id="world", ts=now)
-                    )
+                for slot, surface in self._surfaces.items():
+                    if (
+                        time.monotonic() - self._surface_received[slot]
+                        > self.config.observation_timeout_s
+                    ):
+                        continue
+                    points = surface.points
+                    if (
+                        len(points)
+                        and np.min(np.linalg.norm(points - message.focus, axis=1)) < 0.04
+                    ):
+                        self.perception_focus.publish(
+                            PointStamped(*message.focus, frame_id="world", ts=now)
+                        )
+                        break
             return True
 
     def _owner(self, arm: Hand, action: str) -> Hand | None:

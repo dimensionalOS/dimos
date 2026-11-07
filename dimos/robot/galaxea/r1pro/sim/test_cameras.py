@@ -17,7 +17,7 @@ import math
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.robot.galaxea.r1pro.sim.cameras import head_camera
+from dimos.robot.galaxea.r1pro.sim.cameras import head_camera, wrist_camera
 
 
 def test_vendor_fov_is_preserved_at_preview_resolution():
@@ -34,3 +34,12 @@ def test_rectified_factory_intrinsics_scale_with_image():
     calibration.D = [0.1, 0, 0, 0, 0]
     with pytest.raises(ValueError, match="rectified"):
         head_camera(calibration)
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_wrist_fov_matches_depth_option_at_reduced_resolution(side):
+    camera = wrist_camera(side)
+    assert camera.width / camera.height == 1280 / 720
+    assert camera.frame_id == f"r1pro/{side}_d405_link"
+    assert math.degrees(2 * math.atan(camera.width / (2 * camera.fx))) == pytest.approx(87)
+    assert math.degrees(2 * math.atan(camera.height / (2 * camera.fy))) == pytest.approx(58)

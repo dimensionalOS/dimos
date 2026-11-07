@@ -717,6 +717,10 @@ bool ADimosRendererGameMode::Capture(const TSharedPtr<FJsonObject>& Command, FSt
     }
     const FString NextEpoch = Command->GetStringField(TEXT("clock_id")) + TEXT(":") + Command->GetStringField(TEXT("epoch"));
     const bool bNewEpoch = CaptureEpoch != NextEpoch;
+    FString NextView;
+    (*Camera)->TryGetStringField(TEXT("view_id"), NextView);
+    const bool bCameraCut = bNewEpoch || CaptureView != NextView;
+    CaptureView = NextView;
     TSet<int32> Ids;
     for (const auto& Value : *Poses)
     {
@@ -729,8 +733,13 @@ bool ADimosRendererGameMode::Capture(const TSharedPtr<FJsonObject>& Command, FSt
     }
     if (Ids.Num() != Geometries.Num())
     { Error = TEXT("Capture requires a complete geometry snapshot"); return false; }
-    if (!ColorTarget || ColorTarget->SizeX != Width || ColorTarget->SizeY != Height)
+    int32 TargetIndex = ColorTargets.IndexOfByPredicate([Width, Height](const auto& Target)
+    { return Target->SizeX == Width && Target->SizeY == Height; });
+    if (TargetIndex == INDEX_NONE)
     {
+        // Keep at most three resolutions even if an external client varies them.
+        if (ColorTargets.Num() == 3)
+        { ColorTargets.RemoveAt(0); DepthTargets.RemoveAt(0); }
         ColorTarget = NewObject<UTextureRenderTarget2D>(this);
         ColorTarget->InitCustomFormat(Width, Height, PF_B8G8R8A8, false);
         ColorTarget->UpdateResourceImmediate(true);
@@ -738,9 +747,16 @@ bool ADimosRendererGameMode::Capture(const TSharedPtr<FJsonObject>& Command, FSt
         DepthTarget->ClearColor = FLinearColor(MAX_flt, 0, 0, 0);
         DepthTarget->InitCustomFormat(Width, Height, PF_R32_FLOAT, true);
         DepthTarget->UpdateResourceImmediate(true);
-        ColorCapture->TextureTarget = ColorTarget;
-        DepthCapture->TextureTarget = DepthTarget;
+        ColorTargets.Add(ColorTarget);
+        DepthTargets.Add(DepthTarget);
     }
+    else
+    {
+        ColorTarget = ColorTargets[TargetIndex];
+        DepthTarget = DepthTargets[TargetIndex];
+    }
+    ColorCapture->TextureTarget = ColorTarget;
+    DepthCapture->TextureTarget = DepthTarget;
     const double Started = FPlatformTime::Seconds();
     for (const auto& Value : *Poses)
     {
@@ -762,7 +778,7 @@ bool ADimosRendererGameMode::Capture(const TSharedPtr<FJsonObject>& Command, FSt
         SetPose(CaptureComponent, *Camera);
         CaptureComponent->CustomProjectionMatrix = Projection;
         CaptureComponent->FOVAngle = FMath::RadiansToDegrees(2 * FMath::Atan(Width / (2 * Fx)));
-        CaptureComponent->bCameraCutThisFrame = bNewEpoch;
+        CaptureComponent->bCameraCutThisFrame = bCameraCut;
     }
     // Pose updates and both captures are ordered on the render command queue.
     // EnqueueCopy follows those captures; no game-thread flush/readback is needed.

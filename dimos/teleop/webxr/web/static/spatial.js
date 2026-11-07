@@ -75,14 +75,10 @@ for (const side of ['left', 'right']) {
 }
 let showSurface=true;
 const mapCloud=new THREE.Points(new THREE.BufferGeometry(),new THREE.PointsMaterial({color:0x77939b,size:0.035,transparent:true,opacity:0.45}));stage.add(mapCloud);
-const cloud = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({side:THREE.DoubleSide}));
-cloud.matrixAutoUpdate = false;
-stage.add(cloud);
-let surfaceGrid = null;
 const detections = new THREE.Group(); stage.add(detections);
 const focusMarker = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 8), new THREE.MeshBasicMaterial({color: 0xffffff, wireframe: true}));
 focusMarker.visible = false; stage.add(focusMarker);
-let feedback = null, feedbackAt = 0, cloudAt = 0, cloudTS = 0, sequence = 0, socket = null;
+let feedback = null, feedbackAt = 0, sequence = 0, socket = null;
 let placeAhead = true, lastSend = 0, stopped = false, controlRequested = false;
 let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
@@ -119,6 +115,11 @@ for (const geom of geometry.body || []) {
  const mesh = new THREE.Mesh(meshes[geom.mesh],new THREE.MeshStandardMaterial({color:new THREE.Color(...geom.rgba.slice(0,3)),roughness:0.65}));
  mesh.matrixAutoUpdate=false; body.add(mesh);
 }
+const surfaces = Object.fromEntries(Object.keys(geometry.cameras).map(slot => {
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({side:THREE.DoubleSide}));
+  mesh.matrixAutoUpdate = false; mesh.visible = false; stage.add(mesh);
+  return [slot, {mesh, grid:null, ts:0, received:0}];
+}));
 ui.configureCameras(geometry.cameras || {});
 document.querySelector('h1').textContent=geometry.title || 'Robot workspace';
 for (const side of geometry.sides) {
@@ -206,10 +207,12 @@ poll(endpoint('state'), 35, async response => {
   }
 });
 // Each request asks only for a newer acquisition. One in flight; no frame queue.
-async function pollSurface() {
+async function pollSurface(slot, surface) {
+  const cloud=surface.mesh;
+  let surfaceGrid=null;
   while(!stopped) {
     try {
-      const response=check(await fetch(endpoint(`surface?after=${cloudTS}`),{cache:'no-store'}));
+      const response=check(await fetch(endpoint(`surface?camera=${encodeURIComponent(slot)}&after=${surface.ts}`),{cache:'no-store'}));
       if(response.status!==204) {
         const {header:h,depth,jpeg}=decodeSurface(await response.arrayBuffer());
         const bitmap=await createImageBitmap(new Blob([jpeg],{type:'image/jpeg'}),{imageOrientation:'flipY'});
@@ -230,13 +233,13 @@ async function pollSurface() {
           cloud.material.needsUpdate=true;
         }
         cloud.material.map.image?.close(); cloud.material.map.image=bitmap; cloud.material.map.needsUpdate=true;
-        cloudTS=h.ts; cloudAt=performance.now();
+        surface.ts=h.ts; surface.received=performance.now(); surface.grid=surfaceGrid;
       }
     } catch(error) { console.warn('RGB-D:',error.message); }
     await new Promise(resolve=>setTimeout(resolve,25));
   }
 }
-pollSurface();
+for (const [slot, surface] of Object.entries(surfaces)) pollSurface(slot, surface);
 let mapStamp=0;
 poll(endpoint('map'),1000,async response=>{if(response.status===204)return;const stamp=Number(response.headers.get('X-Frame-Timestamp'));if(stamp===mapStamp)return;const points=new Float32Array(await response.arrayBuffer());mapCloud.geometry.dispose();mapCloud.geometry=new THREE.BufferGeometry();mapCloud.geometry.setAttribute('position',new THREE.BufferAttribute(points,3));mapCloud.geometry.computeBoundingSphere();mapStamp=stamp;});
 function resetTools() {
@@ -268,11 +271,16 @@ function applyPlacement() {
     .scale(new THREE.Vector3().setScalar(workspace.scale)).setPosition(...workspace.position);
   stage.updateMatrixWorld(true);
 }
+function surfaceFresh(slot, surface) {
+  const timeout=(feedback?.observation_timeout_s || 0.5)*1000;
+  return surface.ts>0 && performance.now()-surface.received<timeout
+    && feedback?.surfaces?.[slot]?.age*1000<timeout;
+}
 function observationsFresh() {
   const now=feedback?.server_time+(performance.now()-feedbackAt)/1000;
-  return feedback?.arms && performance.now()-feedbackAt < 350 && performance.now()-cloudAt < 500
+  return feedback?.arms && performance.now()-feedbackAt < 350
     && now-feedback.ts < feedback.observation_timeout_s
-    && feedback.surface_age < feedback.observation_timeout_s;
+    && Object.entries(surfaces).some(([slot,surface])=>surfaceFresh(slot,surface));
 }
 function place(viewer) {
   const position = new THREE.Vector3().copy(viewer.transform.position);
@@ -431,7 +439,7 @@ function track(frame, reference, observationsFresh, viewer) {
     if(gesture.pressed && gesture.action?.startsWith('ui:') && !gesture.action.startsWith('ui:drag:')) ui.activate(gesture.action.slice(3));
     if (activeMode==='tools' && observationsFresh && gesture.releasedFree && target===null) {
       if (ray) {
-        const hit = ray.intersectObject(cloud)[0];
+        const hit = ray.intersectObjects(Object.entries(surfaces).filter(([slot,surface])=>surfaceFresh(slot,surface)).map(([,surface])=>surface.mesh))[0];
         if (hit) { focus = hit.point.clone().applyMatrix4(inverseStage).toArray(); focusMarker.position.fromArray(focus); focusMarker.visible = true; }
       }
     }
@@ -456,7 +464,10 @@ renderer.setAnimationLoop((time, frame) => {
     if(c.requested.visible) c.requested.position.x=(opening.opening-0.5)*feedback.opening_handle_travel_m;
   }
   // Delayed observations change presentation, never an active tool's ownership.
-  cloud.visible = showSurface && cloudTS > 0;
+  for (const [slot,surface] of Object.entries(surfaces)) {
+    // A stale wrist surface must not linger as the arm changes pose.
+    surface.mesh.visible=showSurface && surfaceFresh(slot,surface);
+  }
   if(embedded && !desktopFramed && ready) {
     desktopFramed=true; frameWorkspace('fit');
     parent.postMessage({type:'dimos.spatial.ready'},location.origin);
@@ -464,10 +475,12 @@ renderer.setAnimationLoop((time, frame) => {
   detections.visible=fresh;
   if(!fresh) focusMarker.visible=false;
   const controlStatus=paused?'teleop paused':!controlRequested?'desktop controls':socket?.readyState!==WebSocket.OPEN?'control disconnected':feedback?.control?.mode!==activeMode?'changing control mode':feedback?.control?.hold_reason || (ready?'control connected':'waiting for robot joint feedback');
-  const viewStatus=fresh?`Live · ${surfaceGrid?.valid || 0} depth samples`:cloudTS>0?'View delayed · showing last surface':feedback?.observation_error || 'Waiting for RGB-D observations';
+  const liveSurfaces=Object.entries(surfaces).filter(([slot,surface])=>surfaceFresh(slot,surface));
+  const depthSamples=liveSurfaces.reduce((sum,[,surface])=>sum+(surface.grid?.valid || 0),0);
+  const viewStatus=fresh?`Live · ${liveSurfaces.length}/${Object.keys(surfaces).length} RGB-D views · ${depthSamples} depth samples`:feedback?.observation_error || 'Waiting for fresh RGB-D observations';
   status.textContent = entryError || `${viewStatus} · ${controlStatus}`;
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
-    ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:cloudTS>0,connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
+    ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:Object.values(surfaces).some(surface=>surface.ts>0),connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
     workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();

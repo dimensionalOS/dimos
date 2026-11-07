@@ -196,7 +196,7 @@ export class SpatialUI {
     const controlLabel=!ready?'ROBOT FEEDBACK UNAVAILABLE':paused?'TELEOP PAUSED':preview?'DESKTOP · STATION CONTROLS':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'XR INPUT DISCONNECTED':'XR INPUT CONNECTED';
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING',home:'PLANNING HOME',hold:'HOLDING',resume:'RESUMING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.available===false?'NO RECORDER':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
-    const hint=this.error || (paused&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · showing the last observed surface.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
+    const hint=this.error || (paused&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · waiting for fresh sensor surfaces.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || 'Point at a button and pinch. Tool handles move only their own arm.';
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;

@@ -47,3 +47,25 @@ def head_camera(rectified_info: CameraInfo | None = None) -> CameraConfig:
     return CameraConfig(
         "r1pro/camera_head_left_link", width=width, height=height, fx=fx, fy=fy, cx=cx, cy=cy
     )
+
+
+# Optional 2026 depth-camera configuration, not the alternative fisheye option.
+WRIST_MIN_DEPTH_M = 0.07
+WRIST_MAX_DEPTH_M = 0.50
+
+
+def wrist_camera(side: str) -> CameraConfig:
+    if side not in ("left", "right"):
+        raise ValueError("Wrist side must be left or right")
+    # Vendor D405 link: preserve its mount pose; treat +Z as the ideal optical
+    # axis. Factory optical-center offsets/calibration are not available here.
+    width, height = 320, 180
+    return CameraConfig(
+        f"r1pro/{side}_d405_link",
+        width=width,
+        height=height,
+        fx=width / (2 * math.tan(math.radians(87 / 2))),
+        fy=height / (2 * math.tan(math.radians(58 / 2))),
+        cx=width / 2,
+        cy=height / 2,
+    )
