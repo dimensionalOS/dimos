@@ -118,22 +118,34 @@ class LoadedRobotModel:
 
 @dataclass(frozen=True)
 class UsdModel:
-    """A USD file as a root description: lazy, pickle-safe, and served as it is.
+    """A robot or scene as USD: what a UsdManager works from, whatever it was described in.
 
-    For a scene that is already USD -- a simulated world, say -- rather than a robot in URDF
-    that has to be converted. One class, unlike RobotModel: there is no expansion step to
-    materialize, so a UsdModel is its own loaded form.
+    One class and not two, unlike RobotModel's split into a loaded form: a USD layer has
+    nothing to expand, so ``load()`` returns itself.
 
-    It has no joints. A USD layer states them as UsdPhysics prims, and reading those back into
-    forward kinematics is not something anything does yet, so a robot that poses itself still
-    wants a URDF. A world does not pose itself.
+    A layer alone cannot answer everything a manager asks. Its joints are UsdPhysics prims and
+    nothing reads those back into forward kinematics yet; its defaultPrim is the robot, not the
+    root link; and a URDF names files, a texture among them, that the conversion does not carry
+    into the layer. So a model converted from a URDF keeps it, and answers from whichever of the
+    two knows. A layer read from disk has only the layer.
+
+    The layer itself is produced on demand. Converting one needs usd-core, which has no wheel
+    for linux-aarch64, and a robot that only poses itself on tf never asks for a layer.
     """
 
-    _source_path: Path | str | os.PathLike[str]
+    _source_path: Path | str | os.PathLike[str] | None = None
+    # The description this converts, where it came from a URDF.
+    _urdf: LoadedRobotModel | None = None
+    # A layer given outright, rather than read or converted.
+    _text: str | None = None
 
     @classmethod
     def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
-        """A model from a .usd/.usda file, read when it is used rather than now."""
+        """A model from a .usd/.usda file, read when it is used rather than now.
+
+        Lazy because a blueprint is built wherever it is imported, which is not always a
+        machine the file is on.
+        """
         if Path(source_path).suffix not in _USD_SUFFIXES:
             raise ValueError(
                 f"UsdModel.from_file wants a USD file, got {str(source_path)!r}; "
@@ -141,14 +153,29 @@ class UsdModel:
             )
         return cls(source_path)
 
+    @classmethod
+    def from_robot_model(cls, model: RobotModel) -> UsdModel:
+        """A URDF description as USD, converted when its layer is first asked for."""
+        loaded = model.load()
+        return cls(loaded.source_path, loaded)
+
     @property
-    def source_path(self) -> Path:
-        return Path(self._source_path).expanduser()
+    def source_path(self) -> Path | None:
+        """The file this came from, which is what its relative asset paths are relative to."""
+        return None if self._source_path is None else Path(self._source_path).expanduser()
 
     @cached_property
     def usd(self) -> str:
-        """The layer's text. No pxr: a USD file is text, and nothing here parses it."""
+        """The layer. Converted from the URDF, or read from the file, the first time it is asked."""
+        if self._text is not None:
+            return self._text
+        if self._urdf is not None:
+            from dimos.robot.assets.usd import urdf_to_usd
+
+            return urdf_to_usd(self._urdf)
         path = self.source_path
+        if path is None:
+            raise ValueError("a UsdModel has neither a layer, a URDF nor a file to read one from")
         if not path.is_file():
             raise FileNotFoundError(f"no USD file at {path}")
         try:
@@ -162,22 +189,46 @@ class UsdModel:
 
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        return ()
+        """The joints to pose on tf, which only a URDF states in a form that can be posed."""
+        return () if self._urdf is None else self._urdf.joints
 
     @property
     def root_link(self) -> str:
-        """The layer's defaultPrim, which is the frame everything else hangs under."""
+        """The frame everything hangs under: the URDF's root link, or the layer's defaultPrim."""
+        if self._urdf is not None:
+            return self._urdf.root_link
         match = re.search(r"""\bdefaultPrim\s*=\s*["']([^"']+)["']""", self.usd)
         return match.group(1) if match else ""
 
     def get_joint(self, name: str) -> JointDescription | None:
-        return None
+        """Return the named joint when it exists."""
+        return next((joint for joint in self.joints if joint.name == name), None)
+
+    def frame_names(self) -> set[str]:
+        """Every link and joint name, by the name it travels under.
+
+        Off the URDF where there is one, so a robot that never needs a layer never builds one.
+        """
+        if self._urdf is None:
+            from dimos.robot.assets.usd import usd_frame_names
+
+            return usd_frame_names(self.usd)
+        names = {self._urdf.root_link}
+        for joint in self._urdf.joints:
+            names |= {joint.name, joint.parent_link, joint.child_link}
+        return names
 
     def referenced_files(self) -> set[str]:
-        """Every asset path the layer names, which is what a renderer may ask to be served."""
-        from dimos.robot.assets.usd import referenced_asset_paths
+        """Every file this names, which is what a renderer may ask to be served.
 
-        return referenced_asset_paths(self.usd)
+        The URDF's own list where there is one: it names files, a texture among them, that the
+        conversion does not carry into the layer.
+        """
+        if self._urdf is None:
+            from dimos.robot.assets.usd import referenced_asset_paths
+
+            return referenced_asset_paths(self.usd)
+        return self._urdf.referenced_files()
 
     def load(self) -> UsdModel:
         """Itself: there is nothing to expand, so it is already its own loaded form."""
@@ -445,6 +496,10 @@ class RobotModel:
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError("Default joint acceleration limit must be positive and finite")
         return replace(self, _default_joint_acceleration_limit=float(value))
+
+    def to_usd(self) -> UsdModel:
+        """This description as USD. The layer is converted when it is first asked for."""
+        return UsdModel.from_robot_model(self)
 
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter.
