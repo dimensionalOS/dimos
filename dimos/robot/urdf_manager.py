@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock
 import time
@@ -40,6 +41,7 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
+    rename_usd_frames,
     resolve_usd_assets,
     urdf_to_usd,
 )
@@ -87,6 +89,27 @@ class Mount:
     # remote_name: namespace() sets the two together but keeps a frame_id_prefix the user set
     # by hand, and that override is the answer to "what are this module's frames called".
     frame_prefix: str = ""
+    # Frame renames, on either side of the namespace prefix. ``pre`` is in the subtree's own
+    # names, as its description spells them, which is what you want when a vendor calls its root
+    # "base_link" and this robot calls that mount "arm_base". ``post`` is in the prefixed names,
+    # for the cases where the prefix is not the shape you wanted. Both are mappings of old -> new
+    # and both apply to links and joints alike. Set them with ``.renaming(...)``.
+    rename_pre: Mapping[str, str] = field(default_factory=dict)
+    rename_post: Mapping[str, str] = field(default_factory=dict)
+
+    def renaming(
+        self, pre: Mapping[str, str] | None = None, post: Mapping[str, str] | None = None
+    ) -> Mount:
+        """This mount with frames renamed before and/or after the namespace prefix goes on.
+
+        Mount.of(arm).renaming(pre={"base_link": "arm_base"})       -> left/arm_base
+        Mount.of(arm).renaming(post={"left/base_link": "left_arm"}) -> left_arm
+        """
+        return replace(
+            self,
+            rename_pre={**self.rename_pre, **(pre or {})},
+            rename_post={**self.rename_post, **(post or {})},
+        )
 
     @classmethod
     def of(cls, value: object) -> Mount:
@@ -323,9 +346,14 @@ class UrdfManager(Module):
         process that knew that root. Its frames are renamed here rather than at its end: a
         module holds one description and does not know which copy of itself it is, while the
         name it was deployed under says exactly that.
+
+        The order is rename, prefix, rename again, so a mount can work in the subtree's own
+        names or in the prefixed ones, whichever the rename is easier to express in.
         """
         usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
-        return prefix_usd_frames(usd, mount.frame_prefix)
+        usd = rename_usd_frames(usd, mount.rename_pre)
+        usd = prefix_usd_frames(usd, mount.frame_prefix)
+        return rename_usd_frames(usd, mount.rename_post)
 
     def _ask_for_usd(self, client: Any, frame_id: str) -> list[str] | None:
         """One RPC attempt; a module that is not serving yet is a retry, not a failure."""
