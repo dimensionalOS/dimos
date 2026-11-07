@@ -83,11 +83,54 @@ def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
 
     for link_name, prim in links.items():
         _write_link(pxr, root, link_name, prim)
+    # A USD conveys parent and child by nesting; a UsdPhysics joint only adds how it moves.
+    # So a link nested inside another with no joint between them is welded, and URDF has to
+    # be told that outright or the tree comes out disconnected and will not load.
+    joints = joints + _welds_of(pxr, links, joints)
     for joint in joints:
         _write_joint(root, joint)
 
     _warn_about_orphans(links, joints)
     return ET.tostring(root, encoding="unicode")
+
+
+def usd_root_link(usd: str) -> str:
+    """The name of the link everything else hangs under.
+
+    The layer's defaultPrim is the robot, not a link, so the root is found the way a URDF
+    defines it: the one link no joint claims as a child and no other link contains.
+    """
+    pxr = _pxr()
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
+    links = _links_of(pxr, stage)
+    children = {
+        _body_name(prim, "physics:body1") for prim in _joint_prims(pxr, stage)
+    } | _nested_link_names(pxr, links)
+    roots = [name for name in links if name not in children]
+    if not roots:
+        return next(iter(links), "")
+    if len(roots) > 1:
+        logger.warning(f"this layer has more than one root link ({roots}); taking the first")
+    return roots[0]
+
+
+def _nested_link_names(pxr: Any, links: dict[str, Any]) -> set[str]:
+    """Every link that sits inside another link, which is a welded child."""
+    nested = set()
+    for name, prim in links.items():
+        if _link_ancestor(pxr, prim) is not None:
+            nested.add(name)
+    return nested
+
+
+def _link_ancestor(pxr: Any, prim: Any) -> Any | None:
+    """The nearest enclosing link prim, or None at the top of the tree."""
+    parent = prim.GetParent()
+    while parent and parent.GetPath() != pxr.Sdf.Path.absoluteRootPath:
+        if parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            return parent
+        parent = parent.GetParent()
+    return None
 
 
 def _links_of(pxr: Any, stage: Any) -> dict[str, Any]:
@@ -342,6 +385,34 @@ def _append_fragment(parent: ET.Element, fragment: str) -> None:
         parent.append(ET.fromstring(fragment))
     except ET.ParseError:
         logger.warning(f"dropping an unconverted fragment that will not parse: {fragment[:60]}")
+
+
+def _welds_of(pxr: Any, links: dict[str, Any], joints: list[_Joint]) -> list[_Joint]:
+    """A fixed joint for every nested link no joint already accounts for."""
+    claimed = {joint.child for joint in joints}
+    welds = []
+    for name, prim in links.items():
+        if name in claimed:
+            continue
+        ancestor = _link_ancestor(pxr, prim)
+        if ancestor is None:
+            continue
+        xyz, rpy = _placement_of(prim)
+        welds.append(
+            _Joint(
+                name=f"{name}_weld",
+                kind="fixed",
+                parent=str(ancestor.GetDisplayName() or ancestor.GetName()),
+                child=name,
+                origin_xyz=xyz,
+                origin_rpy=rpy,
+                axis=np.array([0.0, 0.0, 1.0]),
+                lower=None,
+                upper=None,
+                extras=[],
+            )
+        )
+    return welds
 
 
 def _warn_about_orphans(links: dict[str, Any], joints: list[_Joint]) -> None:
