@@ -305,7 +305,7 @@ def _twist_wiring(blueprint: Any) -> tuple[set[str], set[str]]:
     return produced, consumed
 
 
-def test_thumbstick_twist_is_the_only_chassis_command_path() -> None:
+def test_thumbstick_twist_is_the_only_chassis_command_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """One producer of a base Twist (the teleop sticks), one robot base port.
 
     The stack's only Twist streams are the coordinator's twist bus and the
@@ -313,6 +313,10 @@ def test_thumbstick_twist_is_the_only_chassis_command_path() -> None:
     ``vel_chassis`` task arbitrates it onto the latter, and nothing else can
     inject a base speed.
     """
+    from dimos.core.global_config import global_config
+
+    # Match the served viser stack, not an optional rerun bridge.
+    monkeypatch.setattr(global_config, "viewer", "none")
     for backend in ("fake", "real"):
         blueprint = make_r1pro_vr_teleop(backend=backend, boot_vendor_stack=False)
         connection_cls = FakeR1ProConnection if backend == "fake" else R1ProConnection

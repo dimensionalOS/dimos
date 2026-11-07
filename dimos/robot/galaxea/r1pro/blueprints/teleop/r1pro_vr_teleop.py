@@ -102,6 +102,7 @@ from dimos.robot.galaxea.r1pro.connection import (
     R1ProConnection,
 )
 from dimos.robot.galaxea.r1pro.fake_connection import FakeR1ProConnection
+from dimos.robot.galaxea.r1pro.teleop_ik import R1ProPinkPoseTargetSolver
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.teleop.webxr.extensions import ArmThumbstickTeleopModule
 
@@ -174,6 +175,8 @@ def _teleop_task(*, full_torso: bool = False) -> TaskConfig:
                 for hand, frame in R1PRO_VR_TARGET_FRAMES.items()
             ],
             "pink": _r1pro_vr_pink,
+            "solver_type": R1ProPinkPoseTargetSolver,
+            "joint_velocity_limits_rad_s": {"r1pro/torso_joint3": 0.15},
             "timeout": 0.5,
             # The vendor tracker follows at config.tracking_speed (0.5 rad/s).
             "max_joint_velocity_rad_s": 0.5,
@@ -339,3 +342,12 @@ def make_r1pro_vr_teleop(
 # also the terminal the registry generator's AST scan recognises as a
 # runnable blueprint, so keep it on this assignment.
 r1pro_vr_teleop = make_r1pro_vr_teleop(backend="fake").global_config(transport="zenoh")
+
+# Explicit hardware entrypoint. Booting this enables the vendor control stack;
+# it does not submit Home or any other autonomous joint trajectory.
+r1pro_vr_teleop_real = make_r1pro_vr_teleop(
+    backend="real",
+    tracking_speed=0.2,
+    enable_wrist_color=False,
+    enable_wrist_depth=False,
+).global_config(transport="zenoh")
