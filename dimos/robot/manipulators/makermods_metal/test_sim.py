@@ -39,6 +39,7 @@ from dimos.robot.manipulators.makermods_metal.config import (
 )
 from dimos.robot.manipulators.makermods_metal.mjcf import (
     METAL_CAMERA_NAME,
+    METAL_SCENE_CAMERA_NAME,
     METAL_SIM_SPEC,
     metal_mjcf_spec,
     write_metal_mjcf,
@@ -90,6 +91,7 @@ def test_bench_composes_with_the_arm_the_way_the_sim_module_reads_it() -> None:
         f"/joint{i}" for i in range(1, 8)
     ]
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, f"/{METAL_CAMERA_NAME}") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, METAL_SCENE_CAMERA_NAME) >= 0
     for body in METAL_BENCH_OBJECTS:
         assert model.body(body).jntnum[0] == 1
     # The bench's free bodies come first in the model; none of them is the arm's root.
@@ -112,6 +114,7 @@ def test_sim_blueprint_wires_the_arm_the_jaw_and_the_bench() -> None:
     assert sim_config.scene_xml == METAL_BENCH_PATH
     assert sim_config.robot_sim_spec == METAL_SIM_SPEC
     assert sim_config.camera_name == METAL_CAMERA_NAME
+    assert sim_config.scene_camera == METAL_SCENE_CAMERA_NAME
     control = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name))
     [arm] = control.hardware
     assert (arm.adapter_type, arm.joints) == ("sim_mujoco", metal_sim_joints())

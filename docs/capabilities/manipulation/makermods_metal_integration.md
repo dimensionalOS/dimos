@@ -16,12 +16,14 @@ uv run dimos --simulation run metal-perception-sim   # + object detection and pi
 
 `metal-sim` runs the coordinator on the `sim_mujoco` adapter, the planner and
 the URDF server. The wrist camera publishes `color_image`, `depth_image` and
-`camera_info`; the three objects' true poses come out on `body_poses`. The
-bench top is the world's z = 0 and the arm's base is at the origin. The arm MJCF
-is `makermods_metal/assets/metal.xml`, generated from the pinned URDF by
-`python -m dimos.robot.manipulators.makermods_metal.mjcf`; its meshes load from
-the pinned description at run time. Pass `--mujocosimmodule.headless true` to
-run without the MuJoCo window.
+`camera_info`; the three objects' true poses come out on `body_poses`; a fixed
+camera over the far corner of the bench publishes the whole bench on
+`scene_image`, which the Controller's camera panel offers as a tab next to the
+wrist camera. The bench top is the world's z = 0 and the arm's base is at the
+origin. The arm MJCF is `makermods_metal/assets/metal.xml`, generated from the
+pinned URDF by `python -m dimos.robot.manipulators.makermods_metal.mjcf`; its
+meshes load from the pinned description at run time. Pass
+`--mujocosimmodule.headless true` to run without the MuJoCo window.
 
 The mock connection, which echoes accepted joint positions without dynamics,
 gripper contact or calibration:

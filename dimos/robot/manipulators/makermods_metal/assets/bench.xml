@@ -28,6 +28,11 @@
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" pos="0 0 -0.74" type="plane" material="groundplane"/>
 
+    <!-- Fixed view of the whole bench: 1.2 m from (0.25, 0, 0.15), off the far
+         right-hand corner (azimuth 150 degrees), looking down 30 degrees, so the
+         arm, the cube, the cylinder and the bowl all stay in frame. -->
+    <camera name="scene_camera" pos="1.15 -0.52 0.75" xyaxes="0.5 0.866 0 -0.433 0.25 0.866" fovy="50"/>
+
     <!-- Bench: 0.74 m tall, top face at z = 0, reaching from 0.10 m behind the arm to 0.60 m in front. -->
     <geom name="bench_top" type="box" size="0.35 0.30 0.01" pos="0.25 0 -0.01" material="bench_top"/>
     <geom name="bench_leg1" type="cylinder" size="0.02 0.36" pos="-0.07 -0.27 -0.38" material="bench_leg"/>
