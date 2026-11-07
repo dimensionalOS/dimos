@@ -23,16 +23,27 @@ outgoing data frames are one-shot bidi streams, delivery pacing uses
 `sender.is_finished` (ACK-based), and reset_stream is only ever called on ids
 still present in `_quic._streams` within one event-loop turn (resetting a
 discarded id corrupts aioquic's stream-id allocator).
+
+Upgrade audit for the aioquic==1.3.0 pin:
+* ``_quic._loss._pacer`` is replaced to bound bursts after window growth.
+* ``_quic._streams_finished`` must only need ``add`` and membership tests.
+* Completed HTTP/3 records are removed from ``h3._stream``.
+* Sender ``_buffer_start``/``_buffer_stop`` track ACK progress and byte bounds.
+* Reset releases ``sender._buffer``; ``on_data_delivery`` must ignore reset senders.
+* ``datagram_received``/``transmit`` overrides batch flushes while preserving timers.
+Re-audit these together and run the real relay suites before changing the pin.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Iterable, Iterator, MutableSet
 import ssl
 import time
+from typing import cast
 
 from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.h3.connection import H3_ALPN, ErrorCode, H3Connection
+from aioquic.h3.connection import H3_ALPN, ErrorCode, FrameType, H3Connection, StreamType
 from aioquic.h3.events import (
     DatagramReceived,
     H3Event,
@@ -40,7 +51,9 @@ from aioquic.h3.events import (
     WebTransportStreamDataReceived,
 )
 from aioquic.quic.configuration import QuicConfiguration
-from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamReset
+from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamDataReceived, StreamReset
+from aioquic.quic.rangeset import RangeSet
+from aioquic.quic.recovery import QuicPacketPacer
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
@@ -60,6 +73,13 @@ from dimos.web.relay_bridge.protocol import (
     decode_datagram,
     encode_data_frame,
     encode_datagram,
+)
+from dimos.web.relay_bridge.topic_protocol import (
+    MAX_TOPIC_GUARD_BYTES,
+    MAX_TOPIC_PAYLOAD_BYTES,
+    MAX_TOPIC_ROUTES,
+    TOPIC_GUARD_CHANNEL,
+    TOPIC_PUBLISH_CHANNEL,
 )
 
 logger = setup_logger()
@@ -108,10 +128,11 @@ class _FrameQueue:
     consumer task), so the plain byte counter is safe.
     """
 
-    def __init__(self, max_frames: int, max_bytes: int) -> None:
+    def __init__(self, max_frames: int, max_bytes: int, *, drop_oldest: bool = True) -> None:
         self._queue: asyncio.Queue[DataFrame] = asyncio.Queue()
         self._max_frames = max_frames
         self._max_bytes = max_bytes
+        self._drop_oldest = drop_oldest
         self.bytes = 0
         self.dropped = 0
 
@@ -121,7 +142,12 @@ class _FrameQueue:
     def put_nowait(self, frame: DataFrame) -> None:
         """Enqueue, evicting oldest frames until both bounds hold (a single
         frame over the byte bound still enqueues once it is alone)."""
+        frame.received_at = time.monotonic()
         size = len(frame.payload)
+        if not self._drop_oldest and (
+            self._queue.qsize() >= self._max_frames or self.bytes + size > self._max_bytes
+        ):
+            raise BufferError("reliable publication queue overflow")
         while self._queue.qsize() > 0 and (
             self._queue.qsize() >= self._max_frames or self.bytes + size > self._max_bytes
         ):
@@ -154,11 +180,93 @@ def make_quic_configuration(insecure: bool, cafile: str | None = None) -> QuicCo
     return config
 
 
+class _FinishedStreams(MutableSet[int]):
+    """Compact aioquic's closed-stream tombstones without forgetting any ID.
+
+    QUIC assigns four interleaved monotonic ID families. Completed runs in
+    each family occupy one interval; holes correspond to unfinished streams,
+    which are already bounded by QUIC flow control. aioquic 1.3 only adds to
+    and checks membership in this set. A normal Python set grew per video
+    frame for the entire connection lifetime.
+    """
+
+    def __init__(self, values: Iterable[int] = ()) -> None:
+        self._families = [RangeSet() for _ in range(4)]
+        self._count = 0
+        for value in values:
+            self.add(value)
+
+    def __contains__(self, value: object) -> bool:
+        return isinstance(value, int) and value >= 0 and value // 4 in self._families[value % 4]
+
+    def __iter__(self) -> Iterator[int]:
+        for family, intervals in enumerate(self._families):
+            for interval in intervals:
+                for ordinal in interval:
+                    yield ordinal * 4 + family
+
+    def __len__(self) -> int:
+        return self._count
+
+    @property
+    def range_count(self) -> int:
+        return sum(len(family) for family in self._families)
+
+    def add(self, value: int) -> None:
+        if value < 0:
+            raise ValueError("negative QUIC stream ID")
+        if value not in self:
+            self._families[value % 4].add(value // 4)
+            self._count += 1
+
+    def discard(self, value: int) -> None:
+        if value in self:
+            self._families[value % 4].subtract(value // 4, value // 4 + 1)
+            self._count -= 1
+
+
+class _PacketPacer(QuicPacketPacer):
+    """Keep aioquic 1.3's burst budget consistent with its packet-time floor.
+
+    Upstream floors packet_time at one microsecond but computes bucket_max
+    from the unfloored rate. On a low-RTT link, a growing congestion window
+    therefore shrinks the burst from sixteen packets towards zero. A healthy
+    long-lived media connection progressively stalls despite ample credit.
+    Use the actual packet time for burst credit. Non-loopback connections keep
+    the upstream sixteen-packet cap; loopback can use thirty-two to avoid
+    splitting small event batches across native send wake-ups. The window's
+    quarter-window limit, congestion control and per-packet pacing still apply.
+    """
+
+    def __init__(self, *, max_datagram_size: int, max_burst_packets: int = 16) -> None:
+        super().__init__(max_datagram_size=max_datagram_size)
+        self._max_burst_packets = max_burst_packets
+
+    def update_rate(self, congestion_window: int, smoothed_rtt: float) -> None:
+        credit = self.bucket_time
+        super().update_rate(congestion_window, smoothed_rtt)
+        assert self.packet_time is not None
+        packets = max(
+            2.0, min(congestion_window // 4 / self._max_datagram_size, self._max_burst_packets)
+        )
+        self.bucket_max = packets * self.packet_time
+        # super() clamps against its temporary, unfloored bucket. Preserve
+        # already-earned credit, bounded by our corrected allowance instead.
+        self.bucket_time = min(credit, self.bucket_max)
+
+
 class SessionProtocol(QuicConnectionProtocol):
     """One WebTransport session (CONNECT + datagram control + data streams)."""
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
+    def __init__(self, *args: object, packet_burst: int = 16, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self._quic._loss._pacer = _PacketPacer(
+            max_datagram_size=self._quic._max_datagram_size, max_burst_packets=packet_burst
+        )
+        self.finished_streams = _FinishedStreams(self._quic._streams_finished)
+        # Pinned aioquic 1.3 declares a concrete set, but uses only the set
+        # operations above. Keep its late-packet rejection semantics intact.
+        self._quic._streams_finished = cast("set[int]", self.finished_streams)
         self.h3 = H3Connection(self._quic, enable_webtransport=True)
         self.session_ready = asyncio.Event()
         self.welcomed = asyncio.Event()
@@ -168,6 +276,8 @@ class SessionProtocol(QuicConnectionProtocol):
         self.closed = asyncio.Event()
         self.relay_error: Error | None = None
         self.frames = _FrameQueue(_FRAME_QUEUE_MAX, _FRAME_QUEUE_MAX_BYTES)
+        self.topic_publications = _FrameQueue(64, 32 * 1024 * 1024, drop_oldest=False)
+        self.topic_guard_frames = _FrameQueue(512, 6 * 1024 * 1024, drop_oldest=False)
         self.frames_oversized = 0
         # Control messages plus, on the robot leg, forwarded publish frames
         # (tx DataFrames from the carrier) - one ordered consumer queue.
@@ -181,6 +291,7 @@ class SessionProtocol(QuicConnectionProtocol):
         # reset, or an end of one fails the session instead of poisoning or
         # dropping the stream (see _carrier_stream).
         self.incoming_is_carrier: bool = False
+        self.control_must_not_drop = False
         self.session_id: int | None = None
         self._pong_waiters: dict[int | float, asyncio.Future[Pong]] = {}
         self._frame_readers: dict[int, DataFrameStreamReader | None] = {}
@@ -191,6 +302,7 @@ class SessionProtocol(QuicConnectionProtocol):
         # forward only then): the latest-wins pump waits here instead of
         # polling. See wait_delivery_progress.
         self._delivery_waiters: list[asyncio.Future[None]] = []
+        self._delivery_listeners: set[Callable[[], None]] = set()
 
     def open_session(self, authority: str, path: str) -> None:
         self.session_id = self._quic.get_next_available_stream_id()
@@ -208,8 +320,20 @@ class SessionProtocol(QuicConnectionProtocol):
         self.transmit()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:  # type: ignore[override]
-        super().datagram_received(data, addr)
+        # Process inbound control immediately, then build outgoing packets
+        # once for the datagrams delivered in this event-loop turn. aioquic's
+        # default builds packets after every ACK, including empty builds.
+        self._quic.receive_datagram(data, addr, now=self._loop.time())
+        self._process_events()
+        self._transmit_soon()
         self._wake_delivery_waiters()
+
+    def transmit(self) -> None:
+        # An explicit control/media flush can precede the scheduled ACK flush.
+        # Cancel that callback so it cannot repeat the same packet build.
+        if self._transmit_task is not None:
+            self._transmit_task.cancel()
+        super().transmit()
 
     def error_received(self, exc: Exception) -> None:
         """Fail immediately on connection refusal from the connected UDP socket.
@@ -236,10 +360,31 @@ class SessionProtocol(QuicConnectionProtocol):
             # this pop the reader map grows by one entry per latest stream.
             # A partial frame in that reader is stale by definition.
             self._frame_readers.pop(event.stream_id, None)
+            # aioquic 1.3 also leaves its HTTP/3 parser record behind on a
+            # reset. The receive direction is terminal; no future bytes can
+            # need that parser, even if our send direction is still draining.
+            self.h3._stream.pop(event.stream_id, None)
             if self._carrier_stream(event.stream_id):
                 self.fail_session(f"carrier stream {event.stream_id} reset")
         for h3_event in self.h3.handle_event(event):
             self._h3_event_received(h3_event)
+        if isinstance(event, StreamDataReceived) and event.end_stream:
+            stream = self.h3._stream.get(event.stream_id)
+            if (
+                stream is not None
+                and event.stream_id != self.session_id
+                and (
+                    stream.stream_type == StreamType.WEBTRANSPORT
+                    or stream.frame_type == FrameType.WEBTRANSPORT_STREAM
+                    # Our outbound bidi streams carry one-way WT frames. Deno
+                    # FINs their unused receive half, sometimes with no preamble.
+                    or event.stream_id % 4 == 0
+                )
+            ):
+                # H3Stream.is_ended requires both HTTP send/receive flags;
+                # raw WebTransport writes never set its HTTP send flag.
+                # Retire after handle_event's context manager has finished.
+                self.h3._stream.pop(event.stream_id, None)
 
     def _carrier_stream(self, stream_id: int) -> bool:
         """True when `stream_id` is the relay-opened control carrier.
@@ -308,6 +453,21 @@ class SessionProtocol(QuicConnectionProtocol):
             # the consumer queue; see RelayClient.control_messages().
             self._queue_control_msg(msg)
 
+    def enable_topic_provider(self) -> None:
+        """Reserve the bounded reconnect burst before sending a provider hello.
+
+        The relay can reopen every route at once, followed by activations while
+        Zenoh declarations are still pending. Keep room for both plus unrelated
+        control traffic, without changing the legacy bridge's drop-oldest queue.
+        """
+        if self.control_must_not_drop:
+            return
+        queued = self._drain_control_msgs()
+        self.control_msgs = asyncio.Queue(maxsize=2 * MAX_TOPIC_ROUTES + _CONTROL_QUEUE_MAX)
+        for message in queued:
+            self.control_msgs.put_nowait(message)
+        self.control_must_not_drop = True
+
     def _queue_control_msg(self, msg: Msg | DataFrame) -> None:
         """Bounded drop-oldest enqueue that never loses subscription state.
 
@@ -325,6 +485,9 @@ class SessionProtocol(QuicConnectionProtocol):
                 if not isinstance(queued, Subs):
                     self.control_msgs.put_nowait(queued)
         if self.control_msgs.full():
+            if self.control_must_not_drop:
+                self.fail_session("topic provider control queue overflow")
+                return
             msgs = self._drain_control_msgs()
             # A victim always exists: at most one queued Subs (coalesced
             # above) among _CONTROL_QUEUE_MAX messages.
@@ -345,7 +508,22 @@ class SessionProtocol(QuicConnectionProtocol):
         # stream carries them back to back, so frames dispatch on byte count
         # (the peer's FIN can be seconds late). None poisons a stream that
         # produced a bad frame: framing is unrecoverable mid-stream.
-        reader = self._frame_readers.get(stream_id, DataFrameStreamReader())
+        if self.control_must_not_drop:
+            # A topic provider receives only two persistent uni streams.
+            # Include all partial readers, before extending a bytearray.
+            buffered = sum(r.buffered_bytes for r in self._frame_readers.values() if r is not None)
+            if (len(self._frame_readers) >= 8 and stream_id not in self._frame_readers) or (
+                buffered + len(data) > 16 * 1024 * 1024
+            ):
+                self.fail_session("topic ingress limit")
+                return
+        reader = self._frame_readers.get(stream_id)
+        if stream_id not in self._frame_readers:
+            reader = (
+                DataFrameStreamReader(MAX_TOPIC_PAYLOAD_BYTES)
+                if self.control_must_not_drop
+                else DataFrameStreamReader()
+            )
         if reader is not None:
             self._frame_readers[stream_id] = reader
             corrupt = False
@@ -365,6 +543,20 @@ class SessionProtocol(QuicConnectionProtocol):
                 frames = []
                 self._frame_readers[stream_id] = None
             for frame in frames:
+                if frame.header.ch in (TOPIC_PUBLISH_CHANNEL, TOPIC_GUARD_CHANNEL):
+                    guarded = frame.header.ch == TOPIC_GUARD_CHANNEL
+                    if not self.control_must_not_drop or len(frame.payload) > (
+                        MAX_TOPIC_GUARD_BYTES if guarded else MAX_TOPIC_PAYLOAD_BYTES
+                    ):
+                        self.fail_session("unauthorized or oversized topic publication")
+                        return
+                    try:
+                        queue = self.topic_guard_frames if guarded else self.topic_publications
+                        queue.put_nowait(frame)
+                    except BufferError:
+                        self.fail_session("topic publication queue overflow")
+                        return
+                    continue
                 if frame.header.ch == CONTROL_CHANNEL:
                     # Robot control carrier frames feed the control consumer,
                     # never the data-frame queue (nothing drains it on the
@@ -456,9 +648,13 @@ class SessionProtocol(QuicConnectionProtocol):
 
     def send_frame(self, header: FrameHeader, payload: bytes) -> int:
         """One-shot bidi stream: whole frame + FIN in one call. Returns the stream id."""
+        return self.send_frame_bytes(encode_data_frame(header, payload))
+
+    def send_frame_bytes(self, frame: bytes) -> int:
+        """Send a pre-encoded bounded frame on an independent latest stream."""
         assert self.session_id is not None
         stream_id = self.h3.create_webtransport_stream(self.session_id, is_unidirectional=False)
-        self._quic.send_stream_data(stream_id, encode_data_frame(header, payload), end_stream=True)
+        self._quic.send_stream_data(stream_id, frame, end_stream=True)
         self.transmit()
         return stream_id
 
@@ -474,6 +670,50 @@ class SessionProtocol(QuicConnectionProtocol):
             return False
         return not bool(stream.sender.is_finished)
 
+    def open_ordered_stream(self) -> int:
+        """A topic route owns this stream until unsubscribe/session loss."""
+        assert self.session_id is not None
+        return self.h3.create_webtransport_stream(self.session_id, is_unidirectional=False)
+
+    def write_ordered_stream(self, stream_id: int, frame: bytes) -> int:
+        """Append without FIN. Returns end offset for cumulative ACK accounting."""
+        stream = self._quic._streams.get(stream_id)
+        if stream is None or stream.sender.is_finished or self.closed.is_set():
+            raise ConnectionError("ordered topic stream closed")
+        self._quic.send_stream_data(stream_id, frame, end_stream=False)
+        return int(stream.sender._buffer_stop)
+
+    def ordered_stream_offsets(self, stream_id: int) -> tuple[int, int]:
+        """Contiguously ACKed / written offsets in pinned aioquic 1.3.
+
+        Sender storage retains bytes until contiguous ACK, including lost and
+        flow-control-blocked bytes. Merely calling send_stream_data is not drain.
+        """
+        stream = self._quic._streams.get(stream_id)
+        if stream is None or stream.sender.is_finished or self.closed.is_set():
+            raise ConnectionError("ordered topic stream closed")
+        return int(stream.sender._buffer_start), int(stream.sender._buffer_stop)
+
+    def reset_ordered_stream(self, stream_id: int) -> None:
+        """Cancel and discard topic bytes even before the RESET is ACKed.
+
+        aioquic 1.3 retains sender payload storage on reset. Its delivery
+        callback ignores data ACK/loss after reset, so the unused buffer can
+        be released without changing offsets or RESET retransmission state.
+        """
+        stream = self._quic._streams.get(stream_id)
+        if stream is None:
+            return
+        self._quic.reset_stream(stream_id, STALE_STREAM_ERROR_CODE)
+        stream.sender._buffer.clear()
+        self.transmit()
+
+    def add_delivery_listener(self, listener: Callable[[], None]) -> None:
+        self._delivery_listeners.add(listener)
+
+    def remove_delivery_listener(self, listener: Callable[[], None]) -> None:
+        self._delivery_listeners.discard(listener)
+
     def reset_if_in_flight(self, stream_id: int) -> bool:
         """Reset a stale stream. Membership check and reset happen in the same
         event-loop turn: aioquic's reset_stream() on a discarded id re-creates
@@ -485,6 +725,8 @@ class SessionProtocol(QuicConnectionProtocol):
         return True
 
     def _wake_delivery_waiters(self) -> None:
+        for listener in tuple(self._delivery_listeners):
+            listener()
         waiters, self._delivery_waiters = self._delivery_waiters, []
         for waiter in waiters:
             if not waiter.done():

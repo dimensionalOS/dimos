@@ -41,6 +41,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -178,6 +179,12 @@ class TestEstopStatus:
             coordinator.stop()
 
         assert [msg.data for msg in statuses] == [False]
+
+
+def test_request_operator_reaches_the_coordinator() -> None:
+    assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
+        "ControlCoordinator"
+    )
 
 
 def test_blueprint_ranks_hold_over_jog_over_autonomy():
