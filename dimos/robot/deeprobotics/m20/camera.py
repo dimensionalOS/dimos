@@ -22,7 +22,7 @@ import av
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -68,9 +68,15 @@ _REAR_CAMERA_INFO = CameraInfo.from_intrinsics(
 )
 
 
+class M20CameraRelayConfig(ModuleConfig):
+    # Publish only keyframes (~1 Hz on the M20, each decodable alone) instead of every frame (30 Hz)
+    keyframes_only: bool = False
+
+
 class M20CameraRelay(Module):
     """Relay both vendor RTSP cameras as compressed H.265 streams."""
 
+    config: M20CameraRelayConfig
     front_camera: Out[CompressedVideo]
     rear_camera: Out[CompressedVideo]
     front_camera_info: Out[CameraInfo]
@@ -176,14 +182,14 @@ class M20CameraRelay(Module):
                     for packet in container.demux(video):
                         if self._stop_event.is_set():
                             return
-                        # The vendor RTSP stream already contains Annex-B access
-                        # units and emits an IDR about every other frame. Publishing
-                        # only IDRs makes every Zenoh sample independently decodable.
-                        if not packet.size or packet.is_corrupt or not packet.is_keyframe:
+                        # The vendor RTSP stream is Annex-B at 30 fps with an IDR once a second
+                        if not packet.size or packet.is_corrupt:
+                            continue
+                        if self.config.keyframes_only and not packet.is_keyframe:
                             continue
                         output.publish(
                             CompressedVideo(
-                                parameter_sets + bytes(packet),
+                                (parameter_sets if packet.is_keyframe else b"") + bytes(packet),
                                 format="h265",
                                 frame_id="",
                                 ts=time.time(),
