@@ -1531,7 +1531,6 @@ def Xform "room" (
                 asset identifier = @meshes/table.stl@
                 string version = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
             }
-            prepend references = @meshes/table.stl@
         )
         {
         }
@@ -1576,11 +1575,19 @@ def test_a_usd_model_serves_the_files_its_layer_names(scene_file: Path) -> None:
         module.dispose()
 
 
-def test_a_usd_model_poses_nothing_on_tf(scene_file: Path) -> None:
-    """A USD layer states its joints as UsdPhysics prims and nothing reads them back yet."""
+def test_a_usd_model_poses_its_own_frames_on_tf(scene_file: Path) -> None:
+    """A USD layer's own frame tree goes out on tf, so a renderer can place what it is sent.
+
+    A USD conveys the tree by nesting and a nested link with no joint is welded, so this scene's
+    one edge is room -> table. The joint state names something else entirely and is ignored,
+    which is the point: the tree is published either way.
+    """
+    pytest.importorskip("pxr")
     module = UrdfManager(model=UsdModel.from_file(scene_file))
     try:
-        assert module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[1.0])) == []
+        posed = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[1.0]))
+
+        assert [(t.frame_id, t.child_frame_id) for t in posed] == [("room", "table")]
     finally:
         module.dispose()
 
