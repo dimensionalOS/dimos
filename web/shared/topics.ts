@@ -7,6 +7,8 @@ export const TOPIC_VERSION = 1;
 export const MAX_TOPIC_KEY_BYTES = 1024;
 export const MAX_TOPIC_PAYLOAD_BYTES = 8 * 1024 * 1024;
 export const MAX_TOPIC_HANDLES = 64;
+/** Sources a relay serves at once: the bound of a topic_sources snapshot. */
+export const MAX_TOPIC_SOURCES = 64;
 export const MAX_TOPIC_ROUTES = 256;
 export const MAX_TOPIC_KEYS = 128;
 export const MAX_TOPIC_PAGE = 32;
@@ -316,7 +318,8 @@ export function topicMsgFromUnknown(v: Record<string, unknown>): TopicMsg | null
         string(v.code, 64, 0) && finite(v.providerTs);
       break;
     case "topic_sources":
-      ok = v.v === TOPIC_VERSION && Array.isArray(v.sources) && v.sources.length <= 64 &&
+      ok = v.v === TOPIC_VERSION && Array.isArray(v.sources) &&
+        v.sources.length <= MAX_TOPIC_SOURCES &&
         v.sources.every(sourceInfo);
       break;
     case "topic_sub":
