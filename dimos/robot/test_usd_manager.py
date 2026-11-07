@@ -45,7 +45,13 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
-from dimos.robot.usd_manager import Mount, UsdManager
+from dimos.robot.usd_manager import (
+    USD,
+    CircularMountError,
+    Mount,
+    UsdManager,
+    _is_circular_mount,
+)
 from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
 # A 20cm cube on `arm`, with no external assets.
@@ -361,7 +367,7 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_render_file_request_serves_the_urdf_and_only_files_it_names(
+def test_render_file_request_serves_the_usd_and_only_files_it_names(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
@@ -385,18 +391,20 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
     cube = str((package / "meshes" / "cube.stl").resolve())
     texture = str((package / "textures" / "skin.png").resolve())
 
-    # the URDF and the files by the full paths it names; anything else on disk gets nothing
+    # the scene and the files by the full paths it names; the URDF and anything else gets nothing
+    pytest.importorskip("pxr")
     for request in (
-        str(urdf),
+        "robot.usda",
         cube,
         texture,
+        str(urdf),
         str(package / "meshes"),
         "package://box/meshes/cube.stl",
     ):
         asyncio.run(module.handle_render_file_request(String(request)))
 
-    assert [file.uri for file in sent] == [str(urdf), cube, texture]
-    assert f'filename="{cube}"' in sent[0].data.decode()
+    assert [file.uri for file in sent] == ["robot.usda", cube, texture]
+    assert sent[0].data.decode().startswith("#usda")
     assert File.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
     assert sent[2].data == b"png bytes"
 
@@ -637,7 +645,8 @@ def test_get_scene_without_mounts_is_just_the_robot(
     pytest.importorskip("pxr")
     module = make_manager()
 
-    assert _scene_answer(module) == module.get_usd()
+    # Same layer; only the root differs, since a published scene resolves nothing off disk.
+    assert _scene(module) == module.get_usd()[USD]
 
 
 def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
@@ -1078,17 +1087,7 @@ def test_a_rename_matching_no_subtree_at_all_fails_the_scene(
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager, tf_renames_pre_namespace={"elbow": "wrist"})
 
-    with pytest.raises(ValueError, match="which no mounted subtree has"):
-        _scene(module)
-
-
-def test_a_rename_with_no_mounts_at_all_still_fails(
-    make_manager: Callable[..., UsdManager],
-) -> None:
-    pytest.importorskip("pxr")
-    module = make_manager(tf_renames={"nothing": "here"})
-
-    with pytest.raises(ValueError, match="which no mounted subtree has"):
+    with pytest.raises(ValueError, match="nor of any mounted subtree"):
         _scene(module)
 
 
@@ -1262,3 +1261,125 @@ def test_mounts_hang_off_the_world_link_of_a_manager_with_no_model(
         assert stage.GetPrimAtPath("/world/world/g1/head_mount/fake_arm")
     finally:
         module.dispose()
+
+
+def test_tf_renames_reach_this_robots_own_frames_on_tf(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """The field is called tf_renames: a robot's own frames are the first thing it should rename."""
+    module = make_manager(tf_renames={"base": "world", "arm": "gripper"})
+
+    (transform,) = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.0]))
+
+    assert (transform.frame_id, transform.child_frame_id) == ("world", "gripper")
+
+
+def test_tf_renames_reach_this_robots_own_frames_in_its_usd(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # Both sides or neither: a layer naming a frame no transform arrives for is worse than none.
+    pytest.importorskip("pxr")
+    module = make_manager(tf_renames={"arm": "gripper"})
+
+    stage = _usd_stage(module.get_usd()[USD])
+
+    assert _link_of(stage, "/box_robot/base/arm") == "gripper"
+
+
+def test_a_pre_namespace_rename_also_reaches_this_robots_own_frames(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # This robot takes no namespace prefix, so for its frames the two dicts just run in order.
+    module = make_manager(
+        tf_renames_pre_namespace={"arm": "forearm"}, tf_renames={"forearm": "gripper"}
+    )
+
+    (transform,) = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.0]))
+
+    assert transform.child_frame_id == "gripper"
+
+
+def test_renaming_a_joint_leaves_the_name_its_joint_state_arrives_under(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """The description keeps the hardware's names; only what goes out is renamed."""
+    module = make_manager(tf_renames={"shoulder": "elbow"}, urdf_xml=_joint_robot("revolute"))
+
+    (transform,) = module.joint_transforms(
+        JointState(ts=1.0, name=["shoulder"], position=[np.pi / 2])
+    )
+
+    # Rotated about x by the position the state carried, so the rename did not hide it.
+    np.testing.assert_allclose(
+        transform.rotation.to_tuple(), [np.sin(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)], atol=1e-9
+    )
+
+
+def test_a_rename_of_this_robots_own_frame_needs_no_mounts(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # It used to be a hard error to rename anything without mounting something first.
+    pytest.importorskip("pxr")
+    module = make_manager(tf_renames={"arm": "gripper"})
+
+    assert _usd_stage(_scene(module)).GetPrimAtPath("/box_robot/base/arm")
+
+
+def test_a_rename_matching_neither_this_robot_nor_a_subtree_fails_at_construction(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """With no mounts every name is known up front, so the typo need not wait for get_scene."""
+    with pytest.raises(ValueError, match="which is neither a link or joint of this robot"):
+        make_manager(tf_renames={"nothing": "here"})
+
+
+def test_point_clearing_looks_tf_up_under_the_renamed_root(
+    make_filter: Callable[..., UsdManagerPointClearing],
+) -> None:
+    """Rename the root and the filter has to follow, or every cloud is dropped for missing tf."""
+    module = make_filter(tf_renames={"base": "chassis"})
+
+    assert module._base_link == "chassis"
+
+
+def test_a_circular_mount_is_recognised_across_a_process_boundary() -> None:
+    """The transport only rebuilds builtin exception types; everything else names the type it was."""
+    from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
+
+    original = CircularMountError("circular mount: a -> b -> a")
+
+    arrived = deserialize_exception(serialize_exception(original))
+
+    assert not isinstance(arrived, CircularMountError)
+    assert _is_circular_mount(arrived)
+
+
+def test_an_ordinary_rpc_failure_is_not_mistaken_for_a_cycle() -> None:
+    assert not _is_circular_mount(RuntimeError("circular mount is only a phrase in here"))
+
+
+def test_render_file_request_serves_the_whole_scene_once_one_is_assembled(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """A renderer wants the tree it is drawing, not just the robot at the root of it."""
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+    sent: list[File] = []
+    module.file_info.publish = sent.append  # type: ignore[method-assign]
+    _scene(module)
+
+    asyncio.run(module.handle_render_file_request(String("scene.usd")))
+
+    assert "fake_arm" in sent[0].data.decode()
+
+
+def test_the_published_scene_carries_no_asset_root_to_resolve_against(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """Every path in it is a name this manager answers for, not a path on anyone's disk."""
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    assert _scene_answer(module)[0] == ""
