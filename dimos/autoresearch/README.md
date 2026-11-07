@@ -13,7 +13,9 @@ separately.
 
 ```
 session.json          task, budget (iterations, candidates per round, dev and
-                      held-out trial counts, threshold), model, status
+                      held-out trial counts, threshold), model, status (idle,
+                      running, frozen, scored) and, once scored, the frozen
+                      candidate's held-out pass rate
 candidates/NN/        one directory per submitted program, never changed
   program.py          the candidate
   hypothesis.md       what the agent expects it to fix and where it may fail
@@ -117,7 +119,26 @@ backend_factory, timeout_s)`:
 6. `session.record_trial(NN, record)`.
 
 Judges are pure functions of the two snapshots (`LiftJudge`: the body rose at
-least 5 cm; `PlaceJudge`: the body ended inside a box), or `OperatorJudge`,
-which asks the person at the robot. A `Snapshot` is each tracked body's pose,
-which is what the MuJoCo sim publishes for its tracked bodies. `NoEpisodes`
-stands in for the recorder on a stack without one.
+least 5 cm; `PlaceJudge`: the body ended inside a box; `PlaceAtJudge`: within
+5 cm of where another body stood), or `OperatorJudge`, which asks the person
+at the robot. A `Snapshot` is each tracked body's pose, which is what the
+MuJoCo sim publishes for its tracked bodies. `NoEpisodes` stands in for the
+recorder on a stack without one.
+
+## The lab module
+
+`AutoresearchModule` (`module.py`) puts a robot behind the loop. Its config
+names the session directory, the task, the budget and the judge; `start()`
+creates the session and homes the arm. The actor's tools are its skills,
+served over MCP: `task`, `scene`, `submit`, `run`, `stop_run`, `results`,
+`leaderboard`, `freeze` and `note`. `run` and `freeze` run the trials on a
+background thread and return at once; `results` is polled. The world is
+`MujocoWorld` (`world.py`): a seeded reset places the cube through
+`SimSceneSpec`, re-homes the arm and waits for fresh poses; a snapshot stops
+the arm and waits for it to hold still. Programs run on `live.py:backend`,
+which attaches to the stack and takes keyframes from its `color_image`
+stream. `TruthSceneModule` (`truth_scene.py`) answers scene scans from the
+simulator's true poses so no detector is needed. The lab publishes an
+`AutoresearchStatus` document (`status.py`) on `autoresearch_status`, and
+`session.json` goes idle, running, frozen, scored with the held-out rate.
+The blueprint is `autoresearch-metal-sim`.

@@ -29,6 +29,7 @@ import math
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from types import ModuleType
@@ -58,6 +59,8 @@ ProgramStatus = Literal["completed", "raised", "timeout"]
 CallStatus = Literal["OK", "PLANNING_FAILED", "EXECUTION_FAILED", "TIMEOUT", "RAISED"]
 
 TRACE_NAME = "trace.jsonl"
+# How often the runner checks whether the lab asked it to stop, seconds.
+_STOP_POLL_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,11 @@ class RobotCallError(RuntimeError):
     def __init__(self, status: CallStatus, message: str) -> None:
         self.status: CallStatus = status
         super().__init__(message)
+
+
+class RunStoppedError(RuntimeError):
+    """The lab stopped the run before the trial could be judged: the program was
+    killed, or a wait on the world was abandoned."""
 
 
 class Observer(Protocol):
@@ -556,9 +564,11 @@ def run_program(
     timeout_s: float,
     backend_factory: str,
     env: Mapping[str, str] | None = None,
+    stop: threading.Event | None = None,
 ) -> ProgramOutcome:
     """Run a candidate on one trial in a fresh ``python -I`` process, killed after
-    ``timeout_s`` seconds; ``env`` replaces the child's environment (bus settings).
+    ``timeout_s`` seconds; ``env`` replaces the child's environment (bus settings)
+    and setting ``stop`` kills the child and raises ``RunStoppedError``.
     The program's own errors come back as the outcome status. A child that dies
     before writing an outcome, because its backend could not connect or it was
     killed before the backend was up, raises ``RuntimeError`` instead."""
@@ -578,15 +588,9 @@ def run_program(
     log_path = trial_dir / "program.log"
     started = time.monotonic()
     with log_path.open("wb") as log:
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, env=env)
         try:
-            completed = subprocess.run(
-                command,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=timeout_s,
-                check=False,
-                env=env,
-            )
+            _wait(process, timeout_s, stop)
         except subprocess.TimeoutExpired as error:
             if not (trial_dir / TRACE_NAME).is_file():
                 raise RuntimeError(
@@ -599,12 +603,30 @@ def run_program(
                 duration_s=time.monotonic() - started,
             )
     outcome = trial_dir / "outcome.json"
-    if completed.returncode != 0 or not outcome.is_file():
+    if process.returncode != 0 or not outcome.is_file():
         raise RuntimeError(
-            f"the program runner exited with code {completed.returncode} before writing "
+            f"the program runner exited with code {process.returncode} before writing "
             f"an outcome; see {log_path}"
         )
     return ProgramOutcome.model_validate_json(outcome.read_text())
+
+
+def _wait(process: subprocess.Popen[bytes], timeout_s: float, stop: threading.Event | None) -> None:
+    """Wait for the child; kill it at ``timeout_s`` (``TimeoutExpired``) or once ``stop`` is set (``RunStoppedError``)."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            process.wait(timeout=min(_STOP_POLL_S, max(deadline - time.monotonic(), 0.0)))
+            return
+        except subprocess.TimeoutExpired:
+            if stop is not None and stop.is_set():
+                process.kill()
+                process.wait()
+                raise RunStoppedError("the run was stopped while the program was running") from None
+            if time.monotonic() >= deadline:
+                process.kill()
+                process.wait()
+                raise
 
 
 def main(argv: Sequence[str]) -> None:

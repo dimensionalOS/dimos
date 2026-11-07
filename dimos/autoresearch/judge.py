@@ -117,6 +117,22 @@ class PlaceJudge:
 
 
 @dataclass(frozen=True)
+class PlaceAtJudge:
+    """Success when ``body`` ends within ``half_m`` metres, on every axis, of
+    where ``target`` stood before the trial."""
+
+    body: str
+    target: str
+    half_m: float = 0.05
+
+    def verdict(self, before: Snapshot, after: Snapshot) -> Verdict:
+        x, y, z = before.bodies[self.target].position
+        h = self.half_m
+        region = Region(low=(x - h, y - h, z - h), high=(x + h, y + h, z + h))
+        return PlaceJudge(self.body, region).verdict(before, after)
+
+
+@dataclass(frozen=True)
 class OperatorJudge:
     """Asks the person at the robot. They answer ``y`` or ``n``, optionally
     followed by a note, e.g. ``n dropped it at the bowl rim``."""

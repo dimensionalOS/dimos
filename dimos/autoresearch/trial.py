@@ -19,6 +19,7 @@ store the record."""
 from __future__ import annotations
 
 from collections.abc import Mapping
+import threading
 from typing import Protocol
 
 from dimos.autoresearch.judge import Judge, Snapshot
@@ -71,12 +72,14 @@ def run_trial(
     backend_factory: str,
     timeout_s: float,
     env: Mapping[str, str] | None = None,
+    stop: threading.Event | None = None,
 ) -> TrialRecord:
     """Run ``candidate`` on trial ``index`` of ``split`` and store the record.
-    ``timeout_s`` (seconds), ``backend_factory`` and ``env`` go to ``run_program``.
-    The recorder episode is saved only when the judge says success; the judge
-    decides from the world even when the program raised or timed out, and the
-    record's note then says so."""
+    ``timeout_s`` (seconds), ``backend_factory``, ``env`` and ``stop`` go to
+    ``run_program``; a stop discards the episode and writes no record, so the
+    trial can run again. The recorder episode is saved only when the judge says
+    success; the judge decides from the world even when the program raised or
+    timed out, and the record's note then says so."""
     trial_dir = session.trial_dir(candidate, split, index)
     world.reset(trial_seed(split, index))
     before = world.snapshot()
@@ -89,6 +92,7 @@ def run_trial(
             timeout_s,
             backend_factory,
             env,
+            stop,
         )
         verdict = judge.verdict(before, world.snapshot())
     except BaseException:

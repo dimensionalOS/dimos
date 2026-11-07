@@ -32,26 +32,31 @@ from dimos.constants import STATE_DIR
 SESSIONS_DIR = STATE_DIR / "autoresearch"
 
 Split = Literal["dev", "heldout"]
+#: idle or running while candidates may still be submitted, frozen once the final
+#: one is named, scored when its held-out trials are in.
+SessionStatus = Literal["idle", "running", "frozen", "scored"]
 
 
 class Budget(BaseModel):
     """How much searching a session may do and the dev pass rate that ends
     it early."""
 
-    iterations: int = Field(gt=0)
-    candidates_per_round: int = Field(gt=0)
-    dev_trials: int = Field(gt=0)
-    heldout_trials: int = Field(gt=0)
-    threshold: float = Field(ge=0.0, le=1.0)
+    iterations: int = Field(default=5, gt=0)
+    candidates_per_round: int = Field(default=3, gt=0)
+    dev_trials: int = Field(default=5, gt=0)
+    heldout_trials: int = Field(default=10, gt=0)
+    threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
 class SessionInfo(BaseModel):
-    """The contents of ``session.json``."""
+    """The contents of ``session.json``. ``heldout_rate`` is the frozen
+    candidate's held-out pass rate, set when the session is scored."""
 
     task: str
     budget: Budget
     model: str
-    status: Literal["open", "frozen"] = "open"
+    status: SessionStatus = "idle"
+    heldout_rate: float | None = None
 
 
 class TrialRecord(BaseModel):
@@ -187,7 +192,11 @@ class Session:
         self._require_open("freeze")
         self.candidate_dir(candidate)
         (self.dir / "frozen").write_text(f"{candidate}\n")
-        info = self.info().model_copy(update={"status": "frozen"})
+        self.set_status("frozen")
+
+    def set_status(self, status: SessionStatus, *, heldout_rate: float | None = None) -> None:
+        """Write ``status`` to session.json; ``heldout_rate`` goes with ``scored``."""
+        info = self.info().model_copy(update={"status": status, "heldout_rate": heldout_rate})
         (self.dir / "session.json").write_text(info.model_dump_json(indent=2))
 
     def frozen(self) -> int | None:
@@ -209,5 +218,6 @@ class Session:
         return sorted((self.dir / "library").glob("*.md"))
 
     def _require_open(self, action: str) -> None:
-        if self.info().status != "open":
-            raise RuntimeError(f"cannot {action}: session {self.name} is frozen")
+        status = self.info().status
+        if status not in ("idle", "running"):
+            raise RuntimeError(f"cannot {action}: session {self.name} is {status}")
