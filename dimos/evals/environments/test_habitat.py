@@ -166,6 +166,25 @@ def test_launch_and_cleanup(tmp_path, mocker):
     store.stop.assert_called_once()
 
 
+def test_a_python_api_launch_pings_and_hands_out_the_forced_transport(tmp_path, mocker):
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.extra_env = {}
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run", return_value=SimpleNamespace(mcp_url=None)
+    )
+    connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
+    mocker.patch("dimos.memory.store.sqlite.SqliteStore")
+    env = HabitatEnvironment(blueprint=["habitat-nav", "observe-skill"], scene_id="apt_1")
+    mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
+    mocker.patch.object(env, "wait_ready")
+    try:
+        result = env.start(())
+        assert connectable.call_args.args[2] == {"DIMOS_TRANSPORT": "zenoh"}
+        assert result.client_env == {"DIMOS_TRANSPORT": "zenoh"}
+    finally:
+        env.stop()
+
+
 def test_readiness_failure_releases_resources(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     mocker.patch(
