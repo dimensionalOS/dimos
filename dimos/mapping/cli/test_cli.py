@@ -225,19 +225,21 @@ def test_global_snippet(dataset: str, tmp_path: Path) -> None:
     assert out.exists() and out.stat().st_size > 0
 
 
-def test_view_pc2(tmp_path: Path) -> None:
+def test_view_map_cloud(tmp_path: Path) -> None:
     import numpy as np
 
+    from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-    pc2 = tmp_path / "map.pc2.lcm"
+    recording = tmp_path / "map.db"
     cloud = PointCloud2.from_numpy(
         np.random.default_rng(0).random((256, 3)), frame_id="world", timestamp=0.0
     )
-    pc2.write_bytes(cloud.lcm_encode())
+    with SqliteStore(path=str(recording)) as store:
+        store.stream("map_cloud", PointCloud2).append(cloud, ts=0.0)
 
     out = tmp_path / "view.rrd"
-    res = _run("view", str(pc2), "--out", str(out))
+    res = _run("view", str(recording), "--out", str(out))
     assert res.returncode == 0, res.stderr
     assert "256 points" in res.stdout
     assert out.exists() and out.stat().st_size > 0

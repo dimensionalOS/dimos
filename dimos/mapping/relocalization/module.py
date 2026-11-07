@@ -14,33 +14,91 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-The base loads ``map_file`` into ``self.premap``, publishes accepted
+The base loads ``map_file`` into ``self.premap`` (the last ``map_stream`` cloud of a
+``.db``/``.mcap`` recording), publishes accepted
 ``world -> map`` fixes on ``tf`` and the premap on ``loaded_map`` once a fix lands.
 An implementation reads ``self.premap`` after ``super().start()`` (``None`` when
 no map is configured), picks its inputs, decides when a fix is good enough, and
-hands it to :meth:`RelocalizationModule.submit`. See ``lidar/module.py``.
+hands it to :meth:`PremapModule.submit`. See ``lidar/module.py``.
+
+Named locations live here too, kept in the ``map`` frame so every new fix moves them
+with the old map. Each is also a tf frame under ``map``. Wire contract:
+
+- ``named_locations`` (in and out): the whole list, as an ``InteractiveMarkerUpdate`` whose
+  ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}, and whose
+  ``server_id``/``seq_num`` name the module run and the revision of the list. Anyone may
+  publish it; adding, moving, renaming and deleting are all a new whole list, carrying the
+  ``server_id``/``seq_num`` of the list it was edited from. The module adopts it only when that
+  is its current revision, then publishes the result as the next revision; a list edited from
+  an older revision, or from another run, is dropped and the current list republished, so a
+  stale cache can never bring back a renamed or deleted location. A viewer replaces its cache
+  with every list the module publishes, and sends ``named_locations_request`` when it connects.
+- Going to a location is the viewer's job: it sends the location's pose on the planner's
+  ``goal`` as a ``PointStamped`` in ``map_frame``, which the planner re-expresses through tf on
+  every replan, so the goal follows a later fix.
+
+The locations are seeded from the last ``locations_stream`` snapshot of the ``map_file``
+recording; a recording of ``named_locations`` keeps them for the next run. With no map and ``new_map`` set, this run's world frame is the map:
+the module submits an identity ``world -> map`` fix itself.
 """
 
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import threading
 from typing import Any
+import uuid
 
 import reactivex as rx
 from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import IO, In, Out
+from dimos.mapping.relocalization.named_locations import (
+    load_locations,
+    location_frame,
+    same_locations,
+)
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
+    InteractiveMarkerUpdate,
+    named_pose,
+    pose_of,
+)
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-MAP_SUFFIX = ".pc2.lcm"
+RECORDING_SUFFIXES = (".db", ".mcap")
+
+
+def find_stream(streams: list[str], wanted: str) -> str | None:
+    """The stream named *wanted*, ignoring a leading ``/`` (or the ``_`` an .mcap topic becomes)."""
+    return next((name for name in streams if name.lstrip("/_") == wanted.lstrip("/_")), None)
+
+
+def load_premap(map_file: str, stream: str) -> PointCloud2:
+    """The last *stream* cloud of a ``.db``/``.mcap`` recording."""
+    if Path(map_file).suffix not in RECORDING_SUFFIXES:
+        raise ValueError(
+            f"map_file {map_file!r} must be a {' or '.join(RECORDING_SUFFIXES)} recording"
+        )
+    from dimos.memory.cli.dataset import open_store
+
+    path = resolve_named_path(map_file, Path(map_file).suffix)
+    with open_store(path, decode_metadata=True) as store:
+        name = find_stream(store.list_streams(), stream)
+        if name is None:
+            raise ValueError(f"{path} has no {stream!r} stream, have {store.list_streams()}")
+        cloud: PointCloud2 = store.stream(name).last().data
+    return cloud
 
 
 def yaw_deg(tf: Transform) -> float:
@@ -64,8 +122,11 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 
 
 class Config(ModuleConfig):
-    # Premap stem or path (`.pc2.lcm` appended if absent); None never attempts a fix
+    # Premap: a `.db`/`.mcap` recording whose last `map_stream` cloud is the map; None never
+    # attempts a fix
     map_file: str | None = None
+    # Recording stream holding the map cloud
+    map_stream: str = "map_cloud"
     # Live fixed frame
     world_frame: str = "world"
     # Frame for the loaded premap
@@ -76,12 +137,18 @@ class Config(ModuleConfig):
     republish_loaded_map: float = 0.0
     # Stop attempting once a fix is accepted.
     relocalize_once: bool = True
+    # No map_file: this run's world frame is the map (submit an identity fix)
+    new_map: bool = False
+    # Stream (recorded topic) the named-location snapshots live on
+    locations_stream: str = "named_locations"
 
 
-class RelocalizationModule(Module):
+class PremapModule(Module):
     config: Config
-    tf: Out[TFMessage]
+    tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
+    named_locations: IO[InteractiveMarkerUpdate]
+    named_locations_request: In[String]
 
     _placed: bool = False
 
@@ -89,24 +156,36 @@ class RelocalizationModule(Module):
         super().__init__(**kwargs)
         self.fixes: Subject[Transform] = Subject()
         self.premap: PointCloud2 | None = None
+        self.fix: Transform | None = None
+        self._lock = threading.Lock()
+        # name -> pose in map_frame, in the order they were added
+        self._locations: dict[str, PoseStamped] = {}
+        # The list's revision, under an id of its own per run so another run's revisions never match
+        self._server_id = uuid.uuid4().hex
+        self._revision = 0
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            fix_stream(self.fixes, self.config.tf_interval).subscribe(
-                lambda tf: self.tf.publish(TFMessage(tf.now()))
-            )
+            fix_stream(self.fixes, self.config.tf_interval).subscribe(lambda _: self.publish_tf())
         )
+        self.open_locations()
         if not self.config.map_file:
-            logger.info("Relocalization module disabled (no map_file configured)")
+            if self.config.new_map:
+                logger.info("Relocalization: new map, this run's world frame is the map frame")
+                self.submit(self._identity(), "new map")
+            else:
+                logger.info("Relocalization module disabled (no map_file configured)")
             return
         self._load_premap(self.config.map_file)
         logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
 
+    def _identity(self) -> Transform:
+        return Transform(frame_id=self.config.world_frame, child_frame_id=self.config.map_frame)
+
     def _load_premap(self, map_file: str) -> None:
-        path = resolve_named_path(map_file, MAP_SUFFIX)
-        premap = PointCloud2.lcm_decode(path.read_bytes())
+        premap = load_premap(map_file, self.config.map_stream)
 
         premap.frame_id = self.config.map_frame
         self.premap = premap
@@ -116,6 +195,18 @@ class RelocalizationModule(Module):
                 lambda _: self.loaded_map.publish(premap)
             )
         )
+
+    def map_anchored(self) -> list[Transform]:
+        """Frames that hang off the old map (they move with every fix); subclasses add theirs."""
+        with self._lock:
+            locations = list(self._locations.items())
+        return [Transform.from_pose(location_frame(name), pose).now() for name, pose in locations]
+
+    def publish_tf(self) -> None:
+        """The current fix plus every frame anchored to the old map."""
+        if self.fix is None:
+            return
+        self.tf.publish(TFMessage(self.fix.now(), *self.map_anchored()))
 
     @property
     def placed(self) -> bool:
@@ -141,7 +232,83 @@ class RelocalizationModule(Module):
             translation=str(tf.translation),
             yaw_deg=round(yaw_deg(tf), 1),
         )
+        self.fix = tf
         self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")
         self._placed = True
+
+    # Named locations
+
+    def open_locations(self) -> None:
+        """Load the locations recorded in the map file."""
+        if self.config.map_file:
+            source = str(
+                resolve_named_path(self.config.map_file, Path(self.config.map_file).suffix)
+            )
+            self._locations = load_locations(source, self.config.locations_stream)
+            # A premap's locations are in its coordinates whatever frame its writer named
+            for pose in self._locations.values():
+                pose.frame_id = self.config.map_frame
+            logger.info(
+                f"Loaded {len(self._locations)} named locations from {source}: {list(self._locations)}"
+            )
+
+    async def handle_named_locations(self, published: InteractiveMarkerUpdate) -> None:
+        locations: dict[str, PoseStamped] = {}
+        for named in published.poses:
+            pose = self.reexpress(pose_of(named), self.config.map_frame)
+            if pose is None:
+                logger.warning(
+                    f"named locations ignored: no transform from {named.header.frame_id!r} to {self.config.map_frame!r}"
+                )
+                return
+            locations[named.name] = pose
+        with self._lock:
+            if same_locations(locations, self._locations):
+                return
+            edited_from = (published.server_id, published.seq_num)
+            current = (self._server_id, self._revision)
+            if edited_from == current:
+                self._locations = locations
+                self._revision += 1
+        if edited_from != current:
+            logger.warning(
+                f"named locations dropped: edited from revision {edited_from}, current is {current}"
+            )
+            self.named_locations.publish(self.locations_snapshot())
+            return
+        logger.info(f"named locations: {list(locations)}")
+        snapshot = self.locations_snapshot()
+        self.named_locations.publish(snapshot)
+        self.publish_tf()
+
+    async def handle_named_locations_request(self, _: String) -> None:
+        self.named_locations.publish(self.locations_snapshot())
+
+    def frame_to(self, frame: str, child: str) -> Transform | None:
+        """``frame -> child``: from this module's own fix for world/map, else from tf."""
+        world, map_frame = self.config.world_frame, self.config.map_frame
+        if self.fix is not None and (frame, child) == (world, map_frame):
+            return self.fix
+        if self.fix is not None and (frame, child) == (map_frame, world):
+            return self.fix.inverse()
+        return self.tfbuffer.get(frame, child)
+
+    def reexpress(self, pose: PoseStamped, frame: str) -> PoseStamped | None:
+        """*pose* re-expressed in *frame*; None without a transform yet."""
+        if pose.frame_id == frame:
+            return pose
+        frame_to_pose = self.frame_to(frame, pose.frame_id)
+        if frame_to_pose is None:
+            return None
+        placed = frame_to_pose + Transform.from_pose("placed", pose)
+        return placed.to_pose(ts=pose.ts)
+
+    def locations_snapshot(self) -> InteractiveMarkerUpdate:
+        with self._lock:
+            return InteractiveMarkerUpdate(
+                [named_pose(name, pose) for name, pose in self._locations.items()],
+                server_id=self._server_id,
+                seq_num=self._revision,
+            )

@@ -14,6 +14,8 @@
 
 """The ray tracer and MLS planner settings every Go2 nav_3d blueprint shares."""
 
+from typing import Any
+
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
 from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
@@ -57,8 +59,8 @@ mls_planner_config = MLSPlannerNativeConfig(
 )
 
 
-def relocalization(republish_loaded_map: float) -> Blueprint:
-    """The premap relocalizer every Go2 nav_3d stack shares.
+def relocalization(republish_loaded_map: float, **config: Any) -> Blueprint:
+    """The premap relocalizer every Go2 nav_3d stack shares; *config* adds module settings.
 
     The republish covers a ray tracer that missed the one-shot loaded_map publish.
     Zero under zenoh, where loaded_map is a never-drop channel.
@@ -67,4 +69,5 @@ def relocalization(republish_loaded_map: float) -> Blueprint:
         world_frame="odom",
         republish_loaded_map=republish_loaded_map,
         relocalize=MID360_NAV,
+        **config,
     )
