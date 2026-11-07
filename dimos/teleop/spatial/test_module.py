@@ -65,3 +65,10 @@ def test_each_camera_uses_its_own_calibration_pose_and_empty_observation(viewer)
     assert len(viewer._surfaces["right"].points) == 0
     assert len(viewer._surfaces["left"].points) == 4
     assert viewer._surfaces["workspace"] is original
+
+
+def test_remote_workspace_uses_configured_https_listener(viewer):
+    viewer.config.server_port = 9443
+    view = viewer.get_web_views()[0]
+    assert view["network"] == {"scheme": "https", "port": 9443}
+    assert view["path"].startswith("/workspace?operator_session=")

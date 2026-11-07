@@ -70,7 +70,7 @@ r1pro_spatial = (
         PointLio.blueprint(frame_id="world", sensor_frame_id="lidar_pointlio_link").remappings(
             [(PointLio, "odometry", "pointlio_odometry")]
         ),
-        R1ProLio.blueprint().remappings([(R1ProLio, "odometry", "pointlio_odometry")]),
+        R1ProLio.blueprint(publish_hz=15).remappings([(R1ProLio, "odometry", "pointlio_odometry")]),
         R1SpatialCloud.blueprint(),
         VoxelGridMapper.blueprint(
             device="CPU:0", voxel_size=0.05, carve_columns=False, block_count=100_000, emit_every=5

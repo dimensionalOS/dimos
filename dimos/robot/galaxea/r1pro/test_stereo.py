@@ -54,3 +54,14 @@ def test_stereo_pairs_close_timestamps_and_never_reuses_or_restamps_old_frames(s
     sensors._receive("c", image_stamp(99))
     sensors._receive("d", image_stamp(99.007))
     assert sensors._pair("c", "d") is None
+
+
+def test_camera_period_includes_processing_time(sensors, mocker):
+    mocker.patch(
+        "dimos.robot.galaxea.r1pro.spatial_sensors.time.monotonic", side_effect=[10.0, 10.15]
+    )
+    capture = mocker.patch.object(sensors, "capture", side_effect=sensors._stop.set)
+    wait = mocker.patch.object(sensors._stop, "wait")
+    sensors._run()
+    capture.assert_called_once_with()
+    assert wait.call_args.args[0] == pytest.approx(0.05)

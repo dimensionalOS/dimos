@@ -135,8 +135,11 @@ class R1SpatialSensors(Module):
             return x, y
 
     @staticmethod
-    def _color(msg: Any) -> np.ndarray:
-        image = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    def _color(msg: Any, *, reduced: bool = False) -> np.ndarray:
+        # Head stereo is processed at quarter resolution: downsample in the
+        # JPEG decoder instead of decoding 3 MP only to discard 15/16 pixels.
+        mode = cv2.IMREAD_REDUCED_COLOR_4 if reduced else cv2.IMREAD_COLOR
+        image = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), mode)
         if image is None:
             raise ValueError("Invalid camera JPEG")
         return image
@@ -145,7 +148,6 @@ class R1SpatialSensors(Module):
         assert self._stereo is not None
         pair = self._pair("head_left", "head_right")
         if pair:
-            color, depth = self._stereo.process(*(self._color(msg) for msg in pair))
             ts = _stamp_secs(pair[0])
             matrix = np.eye(4)
             matrix[:3, :3] = self._stereo.rotation
@@ -159,6 +161,7 @@ class R1SpatialSensors(Module):
                     )
                 )
             )
+            color, depth = self._stereo.process(*(self._color(msg, reduced=True) for msg in pair))
             self._publish(
                 (self.color_image, self.depth_image, self.camera_info),
                 color,
@@ -217,12 +220,16 @@ class R1SpatialSensors(Module):
         ports[1].publish(Image.from_numpy(depth, ImageFormat.DEPTH, frame, ts))
 
     def _run(self) -> None:
-        while not self._stop.wait(1 / self.config.publish_hz):
+        period = 1 / self.config.publish_hz
+        while not self._stop.is_set():
+            started = time.monotonic()
             try:
                 self.capture()
             except (ValueError, RuntimeError, cv2.error):
                 self._stats["errors"] += 1
                 logger.exception("R1 spatial camera capture failed")
+            # Processing is part of the period, not an extra delay on top of it.
+            self._stop.wait(max(0.0, period - (time.monotonic() - started)))
 
     @rpc
     def sensor_stats(self) -> dict[str, int]:

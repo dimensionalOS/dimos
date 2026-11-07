@@ -538,6 +538,9 @@ class SpatialTeleopModule(ArmTeleopModule):
                 "presentation": "spatial-workspace",
                 "scheme": "http",
                 "port": self._desktop_port,
+                # The ephemeral HTTP listener is loopback-only; remote Desktop
+                # clients use the existing HTTPS listener instead.
+                "network": {"scheme": "https", "port": self.config.server_port},
                 "path": f"/workspace?operator_session={self._operator_session}",
                 "embed": True,
                 "description": "Grab a tool handle or use grip clutch to move a configured arm. Release to hold.",
