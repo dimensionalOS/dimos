@@ -165,7 +165,7 @@ class UrdfManagerConfig(ModuleConfig):
     # them -- but a key matching none of them at all is an error, since a misspelt frame would
     # otherwise be a silent no-op.
     tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
-    tf_renames_post_namespace: dict[str, str] = Field(default_factory=dict)
+    tf_renames: dict[str, str] = Field(default_factory=dict)
     # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
     # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
     # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
@@ -297,9 +297,7 @@ class UrdfManager(Module):
 
     def _check_renames_matched(self, matched: set[str]) -> None:
         """A rename key that matched no subtree at all is a typo, not a no-op."""
-        wanted = set(self.config.tf_renames_pre_namespace) | set(
-            self.config.tf_renames_post_namespace
-        )
+        wanted = set(self.config.tf_renames_pre_namespace) | set(self.config.tf_renames)
         missing = sorted(wanted - matched)
         if missing:
             raise ValueError(
@@ -361,7 +359,7 @@ class UrdfManager(Module):
         own names or in the prefixed ones, whichever is easier to express it in.
         """
         pre = self.config.tf_renames_pre_namespace
-        post = self.config.tf_renames_post_namespace
+        post = self.config.tf_renames
         usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
         matched = usd_frame_names(usd) & set(pre) if pre else set()
         usd = prefix_usd_frames(rename_usd_frames(usd, pre), mount.frame_prefix)
