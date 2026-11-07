@@ -14,10 +14,16 @@
 
 """R1 Pro Quest WebXR teleop: both arms and the torso through one IK model.
 
-The Quest's controllers drive the whole 18-DOF upper body (torso 4 + arms
-7+7) through a single ``teleop_ik`` task on the standard control contract —
-the same input, task, IK and model path regardless of backend — and each
-trigger drives its own jaw through a dedicated feedback-gated gripper task.
+The Quest's controllers drive both arms (7+7) and **one** torso joint through
+a single ``teleop_ik`` task on the standard control contract — the same input,
+task, IK and model path regardless of backend — and each trigger drives its
+own jaw through a dedicated feedback-gated gripper task.
+
+The IK solves both arms (7+7) plus the waist's top pitch and yaw joints, so the
+torso acts as the redundancy that lets the operator reach without a locked
+waist. The two lower pitch joints stay outside the controlled set and are
+locked at their feedback. ``make_r1pro_vr_teleop(full_torso=True)`` restores the old 18-DOF
+behaviour for both backends.
 
 The same controllers drive the holonomic chassis: the thumbsticks are
 mapped to a body-frame Twist exactly as the Go2's are (one shared
@@ -73,8 +79,11 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.operator_hold_task.operator_hold_task import operator_hold_task
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.stream import In, Out
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -82,6 +91,7 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_visualization
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_COORDINATOR_MODEL,
+    R1PRO_HOME_POSE,
     R1PRO_PLANAR_BASE,
     make_r1pro_model_config,
 )
@@ -98,6 +108,38 @@ from dimos.teleop.webxr.extensions import ArmThumbstickTeleopModule
 R1PRO_VR_TASK_NAME = "teleop_r1pro_vr"
 R1PRO_VR_CHASSIS_TASK_NAME = "vel_chassis"
 
+#: The torso joints the IK may steer: the waist's top pitch and its yaw. The
+#: two pitch joints below them stay outside the controlled set, so an operator
+#: leaning forward never folds the whole waist. Pass ``full_torso=True`` to
+#: ``make_r1pro_vr_teleop`` to hand all four back to the solver.
+R1PRO_VR_STEERED_TORSO_JOINTS = ("r1pro/torso_joint3", "r1pro/torso_joint4")
+
+#: Posture the fake stack starts in (and therefore the IK's first seed): the
+#: same waist-and-arms-forward pose the model declares as ``home_joints``, so
+#: the ``Home`` preset in the manipulation panel and the simulated start agree
+#: and one edit moves both.
+R1PRO_VR_START_POSE: dict[str, float] = {
+    f"r1pro/{name}": value for name, value in R1PRO_HOME_POSE.items()
+}
+
+
+def _teleop_joint_names(*, full_torso: bool = False) -> tuple[str, ...]:
+    """Upper-body joints the IK solves, in the vendor layout order.
+
+    The joints left out stay fixed: the Pink solver locks everything outside
+    its controlled set against the current feedback, so omitting them is what
+    keeps them still rather than an omission the solver could exploit.
+    """
+    if full_torso:
+        return tuple(R1PRO_UPPER_BODY_JOINTS)
+    arms = tuple(j for j in R1PRO_UPPER_BODY_JOINTS if "_arm_joint" in j)
+    steered = tuple(j for j in R1PRO_UPPER_BODY_JOINTS if j in R1PRO_VR_STEERED_TORSO_JOINTS)
+    assert len(steered) == len(R1PRO_VR_STEERED_TORSO_JOINTS), (
+        f"steered torso joints not in the upper body: {R1PRO_VR_STEERED_TORSO_JOINTS}"
+    )
+    return (*steered, *arms)
+
+
 #: End-effector frames the Quest controllers steer, in the R1 Pro URDF.
 R1PRO_VR_TARGET_FRAMES = {"left": "left_gripper_link", "right": "right_gripper_link"}
 
@@ -105,15 +147,17 @@ _r1pro_vr_pink = PinkKinematicsConfig(
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
-    posture_cost=0.01,
+    # High posture pull: the solver prefers arm motion and keeps the waist
+    # near its seed, so the torso only leans when the arms cannot reach.
+    posture_cost=0.05,
     joint_limit_posture_margin=0.3,
     lm_damping=0.01,
     gain=0.25,
 )
 
 
-def _teleop_task() -> TaskConfig:
-    """Both hands on one 18-DOF model: torso and both arms solve together.
+def _teleop_task(*, full_torso: bool = False) -> TaskConfig:
+    """Both hands on one model: the steered torso joints and both arms together.
 
     ``max_joint_velocity_rad_s`` matches the vendor tracker's speed cap, so
     teleop never asks the real tracker for more than it follows.
@@ -122,7 +166,7 @@ def _teleop_task() -> TaskConfig:
         name=R1PRO_VR_TASK_NAME,
         type="teleop_ik",
         priority=20,
-        joint_names=list(R1PRO_UPPER_BODY_JOINTS),
+        joint_names=list(_teleop_joint_names(full_torso=full_torso)),
         params={
             "robot_model": make_r1pro_model_config(),
             "bindings": [
@@ -199,9 +243,9 @@ class R1ProVrCoordinator(ControlCoordinator):
     right_gripper_command: In[Float32]
 
 
-def _vr_tasks() -> list[TaskConfig]:
+def _vr_tasks(*, full_torso: bool = False) -> list[TaskConfig]:
     return [
-        _teleop_task(),
+        _teleop_task(full_torso=full_torso),
         _gripper_task("r1pro_left_gripper", "r1pro/left_gripper", "left_gripper_command"),
         _gripper_task("r1pro_right_gripper", "r1pro/right_gripper", "right_gripper_command"),
         joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
@@ -213,6 +257,8 @@ def _vr_tasks() -> list[TaskConfig]:
 def make_r1pro_vr_teleop(
     *,
     backend: Literal["fake", "real"] = "fake",
+    manipulation: bool = True,
+    full_torso: bool = False,
     **connection: Any,
 ) -> Blueprint:
     """Assemble the R1 Pro Quest VR teleop stack on the chosen backend.
@@ -226,7 +272,9 @@ def make_r1pro_vr_teleop(
     deliberate operation.
     """
     if backend == "fake":
-        connection_bp = FakeR1ProConnection.blueprint(**connection)
+        connection_bp = FakeR1ProConnection.blueprint(
+            **{"initial_positions": dict(R1PRO_VR_START_POSE), **connection}
+        )
         connection_cls: type = FakeR1ProConnection
     elif backend == "real":
         connection_bp = R1ProConnection.blueprint(**connection)
@@ -241,6 +289,7 @@ def make_r1pro_vr_teleop(
     teleop_bp = ArmThumbstickTeleopModule.blueprint(
         linear_speed=min(vx, vy),
         angular_speed=wz,
+        body_tracking_mode="optional",
     )
 
     return (
@@ -253,7 +302,18 @@ def make_r1pro_vr_teleop(
                 tick_rate=100,
                 model=R1PRO_COORDINATOR_MODEL,
                 command_only_joints=list(R1PRO_GRIPPER_JOINTS),
-                tasks=_vr_tasks(),
+                tasks=_vr_tasks(full_torso=full_torso),
+            ),
+            *(
+                [
+                    ManipulationModule.blueprint(
+                        model=make_r1pro_model_config(),
+                        planning_timeout=10.0,
+                        visualization=ViserVisualizationConfig(host=global_config.listen_host),
+                    )
+                ]
+                if manipulation
+                else []
             ),
         )
         .remappings(

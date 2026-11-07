@@ -179,6 +179,48 @@ R1PRO_GRIPPER_TASKS = {
 }
 
 
+#: The pose the waist and both arms are meant to start from: hands out in
+#: front where the operator can hand over the controllers, elbows bent, and the
+#: wrists clear of their hard stops. It is the model's ``home_joints`` (the
+#: ``Home`` preset in the manipulation panel, and the planning seed) and the
+#: simulation's initial state, so fake and real share one target instead of two
+#: copies of the numbers. Solved by forward kinematics on the vendor URDF:
+#: gripper links at roughly x=0.44 m, z=1.07 m, smallest joint-limit margin
+#: about 0.2 rad. It is a joint-space target, not a collision-checked path —
+#: planning still has to succeed before hardware may move.
+R1PRO_HOME_POSE: dict[str, float] = {
+    "torso_joint1": 0.0,
+    "torso_joint2": 0.0,
+    "torso_joint3": 0.0,
+    "torso_joint4": 0.0,
+    "left_arm_joint1": -0.852,
+    "left_arm_joint2": 0.418,
+    "left_arm_joint3": -0.888,
+    "left_arm_joint4": -0.728,
+    "left_arm_joint5": 1.254,
+    "left_arm_joint6": 0.815,
+    "left_arm_joint7": -0.244,
+    "right_arm_joint1": -0.852,
+    "right_arm_joint2": -0.413,
+    "right_arm_joint3": 0.887,
+    "right_arm_joint4": -0.727,
+    "right_arm_joint5": -1.255,
+    "right_arm_joint6": 0.815,
+    "right_arm_joint7": 0.243,
+}
+
+
+def r1pro_home_joints(joint_names: tuple[str, ...] | list[str]) -> list[float]:
+    """``R1PRO_HOME_POSE`` expanded to the given coordinator joint names."""
+    poses: list[float] = []
+    for name in joint_names:
+        bare = name.split("/", 1)[-1]
+        if bare not in R1PRO_HOME_POSE:
+            raise KeyError(f"home pose has no value for joint {name!r}")
+        poses.append(R1PRO_HOME_POSE[bare])
+    return poses
+
+
 def make_r1pro_model_config(
     gripper_tasks: dict[str, str] | None = None,
 ) -> RobotModelConfig:
@@ -195,7 +237,7 @@ def make_r1pro_model_config(
         planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
-        home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),
+        home_joints=r1pro_home_joints(R1PRO_UPPER_BODY_PLANNING_JOINTS),
         gripper_tasks=dict(R1PRO_GRIPPER_TASKS) if gripper_tasks is None else gripper_tasks,
     )
 

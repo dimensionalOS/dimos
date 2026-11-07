@@ -107,6 +107,10 @@ class FakeR1ProConnectionConfig(ConnectionConfig):
     gripper_speed_m_s: float = Field(default=0.1)
     publish_rate_hz: float = Field(default=100.0)
     frame_id: str = Field(default="base_link")
+    #: Joints the simulation starts at, by coordinator name
+    #: (``r1pro/<joint>``); unlisted joints start at zero. Used to begin
+    #: teleop from a reachable posture instead of the stowed all-zero pose.
+    initial_positions: dict[str, float] = Field(default_factory=dict)
 
 
 class FakeR1ProConnection(ConnectionModule):
@@ -134,6 +138,12 @@ class FakeR1ProConnection(ConnectionModule):
         self._lock = threading.Lock()
         # Simulated state: measured positions, and the targets they follow.
         self._q = [0.0] * _NUM_MOTORS
+        bare = [name.split("/", 1)[-1] for name in R1PRO_UPPER_BODY_JOINTS]
+        for joint, value in (self.config.initial_positions or {}).items():
+            name = joint.split("/", 1)[-1]
+            if name not in bare:
+                raise ValueError(f"initial_positions: unknown joint {joint!r}")
+            self._q[bare.index(name)] = float(value)
         self._target_q: list[float] | None = None
         self._speed = Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
         #: Planar chassis pose (x, y, yaw) integrated from ``_speed``, for

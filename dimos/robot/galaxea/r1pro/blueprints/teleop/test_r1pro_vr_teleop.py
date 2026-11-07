@@ -43,13 +43,19 @@ from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.robot.galaxea.r1pro._connection_test_fakes import LocalTransport
 from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import (
     R1PRO_VR_CHASSIS_TASK_NAME,
+    R1PRO_VR_START_POSE,
+    R1PRO_VR_STEERED_TORSO_JOINTS,
     R1PRO_VR_TARGET_FRAMES,
     R1PRO_VR_TASK_NAME,
     R1ProVrCoordinator,
     _vr_tasks,
     make_r1pro_vr_teleop,
 )
-from dimos.robot.galaxea.r1pro.config import R1PRO_COORDINATOR_MODEL, R1PRO_PLANAR_BASE
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_COORDINATOR_MODEL,
+    R1PRO_PLANAR_BASE,
+    make_r1pro_model_config,
+)
 from dimos.robot.galaxea.r1pro.connection import (
     R1PRO_BASE_JOINTS,
     R1PRO_GRIPPER_JOINTS,
@@ -352,11 +358,34 @@ def test_blueprint_teleop_scaling_matches_the_base_range() -> None:
         assert atom.kwargs["angular_speed"] == pytest.approx(wz)
 
 
+def test_ik_steers_arms_and_top_torso_joints() -> None:
+    """Top pitch + yaw give the operator reach; the lower waist stays put."""
+    teleop = next(t for t in _vr_tasks() if t.type == "teleop_ik")
+    arms = tuple(j for j in R1PRO_UPPER_BODY_JOINTS if "_arm_joint" in j)
+    assert teleop.joint_names == [*R1PRO_VR_STEERED_TORSO_JOINTS, *arms]
+    assert len(teleop.joint_names) == 16
+    # Both lower pitch joints are outside the controlled set, so the solver
+    # locks them at their feedback instead of folding the whole waist.
+    assert not any(j in teleop.joint_names for j in R1PRO_UPPER_BODY_JOINTS[:2])
+    full = next(t for t in _vr_tasks(full_torso=True) if t.type == "teleop_ik")
+    assert full.joint_names == list(R1PRO_UPPER_BODY_JOINTS)
+    assert len(full.joint_names) == 18
+
+
+def test_model_home_pose_is_the_forward_reaching_start() -> None:
+    """One preset: the model's home_joints and the fake's start pose agree."""
+    model = make_r1pro_model_config()
+    assert model.home_joints is not None
+    by_name = dict(zip(model.joint_names, model.home_joints, strict=True))
+    for joint, value in R1PRO_VR_START_POSE.items():
+        assert by_name[joint] == pytest.approx(value)
+    # Arms out front, not the stowed all-zero pose.
+    assert any(abs(by_name[j]) > 0.2 for j in by_name if "_arm_joint" in j)
+    assert all(by_name[j] == 0.0 for j in by_name if "/torso_joint" in j)
+
+
 def test_ik_model_is_torso_plus_both_arms_grippers_excluded() -> None:
     teleop = next(t for t in _vr_tasks() if t.type == "teleop_ik")
-    # All 18 upper-body joints, torso included, in the vendor layout order.
-    assert teleop.joint_names == R1PRO_UPPER_BODY_JOINTS
-    assert len(teleop.joint_names) == 18
     # The jaws and the chassis never enter the IK set or any trajectory.
     assert not any("gripper" in joint or "/base/" in joint for joint in teleop.joint_names)
     trajectory = next(t for t in _vr_tasks() if t.type == "trajectory")
