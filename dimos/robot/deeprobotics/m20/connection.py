@@ -215,6 +215,7 @@ class M20Connection(Module):
         self._charge_error: int | None = None
         self._usage_mode: int | None = None
         self._charge_task: ChargeTask | None = None
+        self._dock_started = False
         self._charge_thread: Thread | None = None
 
     @rpc
@@ -287,7 +288,7 @@ class M20Connection(Module):
         """Publish an immediate zero velocity without disabling future commands.
 
         Velocity would fight the vendor's own docking, so a dock in progress is
-        cancelled instead, and the robot backs off the dock and stands.
+        cancelled instead.
         """
         with self._lock:
             docking = self._charge_task == "dock" or self._fresh_charge_status() == CHARGE_ENTERING
@@ -418,6 +419,7 @@ class M20Connection(Module):
             refusal = self._dock_refusal()
             if refusal is None:
                 self._charge_task = "dock"
+                self._dock_started = False
                 self._charge_error = None
         if refusal is not None:
             self.stop_tool("dock")
@@ -438,6 +440,11 @@ class M20Connection(Module):
         with self._state_condition:
             if self._charge_task == "undock":
                 return "Already undocking. A tool update reports the result."
+            if self._charge_task == "dock" and not self._dock_started:
+                self._charge_task = None
+                self._state_condition.notify_all()
+                self.stop_tool("undock")
+                return "Cancelled docking before it started."
             status = self._fresh_charge_status()
             if self._charge_task is None and status == CHARGE_IDLE:
                 self.stop_tool("undock")
@@ -473,6 +480,8 @@ class M20Connection(Module):
             return "the robot is not reporting its charge status"
         if self._charge_task == "undock":
             return "an undock is still running"
+        if self._charge_thread is not None and self._charge_thread.is_alive():
+            return "the last dock or undock is still finishing"
         if status != CHARGE_IDLE:
             return f"its charge status is {_CHARGE_LABELS.get(status, status)}"
         if self._motion_state != MOTION_RL_CONTROL:
@@ -505,8 +514,9 @@ class M20Connection(Module):
                 return "Docking cancelled before it started."
             if self._link_stop.is_set():
                 return "Docking cancelled, module stopping."
-        if not self._send_charge_command(CHARGE_COMMAND_START):
-            return "Docking failed: could not reach the robot."
+            self._dock_started = True
+            if not self._send_charge_command(CHARGE_COMMAND_START):
+                return "Docking failed: could not reach the robot."
 
         started = time.monotonic()
         entered = False
@@ -618,9 +628,7 @@ class M20Connection(Module):
 
     def _charge_busy(self) -> bool:
         with self._lock:
-            return (
-                self._charge_task is not None or self._fresh_charge_status() in _CHARGE_BUSY_STATES
-            )
+            return self._charge_task is not None or self._charge_status in _CHARGE_BUSY_STATES
 
     def _fresh_charge_status(self) -> int | None:
         with self._lock:

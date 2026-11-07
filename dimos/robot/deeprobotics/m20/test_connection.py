@@ -33,6 +33,8 @@ from dimos.robot.deeprobotics.m20.connection import (
     _BASIC_SERVER_HEADER,
     _BASIC_SERVER_MAGIC,
     CHARGE_CHARGING,
+    CHARGE_COMMAND_START,
+    CHARGE_COMMAND_STOP,
     CHARGE_ENTERING,
     CHARGE_ERROR,
     CHARGE_EXITING,
@@ -435,6 +437,48 @@ def test_undock_cancels_a_running_dock(connection: M20Connection, server: FakeBa
     assert "Off the dock and ready to navigate." in updates
 
 
+def test_stop_during_the_settle_cancels_without_commanding_the_robot(
+    connection: M20Connection, server: FakeBasicServer
+) -> None:
+    connection.config.dock_settle_s = 5.0
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+
+    connection.stop_movement()
+
+    _wait_until(lambda: "Docking cancelled before it started." in _updates(connection))
+    assert connection._charge_task is None
+    assert server.charge_commands() == []
+    connection._stand.assert_not_called()  # type: ignore[attr-defined]
+
+    assert connection._charge_thread is not None
+    _wait_until(lambda: not connection._charge_thread.is_alive())  # type: ignore[union-attr]
+    connection.config.dock_settle_s = 0.05
+    assert "Docking." in connection.dock()
+    _wait_until(lambda: server.charge_commands() == [CHARGE_COMMAND_START])
+
+
+def test_undock_racing_the_dock_start_stops_after_it(
+    connection: M20Connection, server: FakeBasicServer, mocker: MockerFixture
+) -> None:
+    send = connection._send_charge_command
+
+    def undock_while_starting(command: int) -> bool:
+        if command == CHARGE_COMMAND_START:
+            racer = Thread(target=connection.undock, daemon=True)
+            racer.start()
+            racer.join(timeout=0.2)
+        return send(command)
+
+    mocker.patch.object(connection, "_send_charge_command", side_effect=undock_while_starting)
+    _wait_for_status(connection, CHARGE_IDLE)
+    connection.dock()
+
+    _wait_until(lambda: connection._charge_task is None)
+    assert server.charge_commands() == [CHARGE_COMMAND_START, CHARGE_COMMAND_STOP]
+    assert "Docking cancelled by undock." in _updates(connection)
+
+
 def test_stop_movement_cancels_a_running_dock(
     connection: M20Connection, server: FakeBasicServer
 ) -> None:
@@ -504,6 +548,23 @@ def test_stop_does_not_sit_the_robot_on_the_dock(
     connection.config.auto_stand = True
     _wait_for_status(connection, CHARGE_CHARGING)
 
+    connection.stop()
+
+    connection.motion_state_cmd.publish.assert_not_called()  # type: ignore[attr-defined]
+    connection.cmd_vel.publish.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_the_dock_guards_hold_when_reports_go_stale(
+    connection: M20Connection, server: FakeBasicServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server.charge = CHARGE_CHARGING
+    connection.config.auto_stand = True
+    _wait_for_status(connection, CHARGE_CHARGING)
+    server.reporting = False
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
+    _wait_until(lambda: connection.charge_status() == "unknown")
+
+    assert connection.move(Twist.zero()) is False
     connection.stop()
 
     connection.motion_state_cmd.publish.assert_not_called()  # type: ignore[attr-defined]
