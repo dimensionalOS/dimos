@@ -75,19 +75,23 @@ jobs:
 
   cachix-build-check:
     # Holds no secrets, so it runs on fork PRs too: forks need its inputs-hash
-    # output to restore the base branch's publish marker and download the
-    # prebuilt binaries. Only cachix-build itself is fork-guarded.
+    # and marker-run outputs to download the prebuilt binaries. Only
+    # cachix-build itself is fork-guarded.
     if: ${{ !cancelled() }}
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
+      actions: read  # To list the publish-marker artifacts
     env:
       CACHIX_CACHE_NAME: dimensionalos
     outputs:
       needs-build-linux: ${{ steps.decide.outputs.linux }}
       needs-build-macos: ${{ steps.decide.outputs.macos }}
       inputs-hash: ${{ steps.hash.outputs.inputs-hash }}
+      # The run that uploaded each platform's marker; empty when there is none.
+      marker-run-linux: ${{ steps.marker.outputs.linux }}
+      marker-run-macos: ${{ steps.marker.outputs.macos }}
 
     steps:
       - name: Checkout
@@ -95,36 +99,41 @@ jobs:
       - name: Compute native-module inputs hash
         id: hash
         run: python3 bin/native-modules --inputs-hash
-      - name: Probe Linux publish marker
-        id: marker-linux
-        uses: actions/cache/restore@v6
-        with:
-          path: .cachix-marker
-          key: cachix-published-Linux-X64-${{ steps.hash.outputs.inputs-hash }}
-          lookup-only: true
-      - name: Probe macOS publish marker
-        id: marker-macos
-        uses: actions/cache/restore@v6
-        with:
-          path: .cachix-marker
-          key: cachix-published-macOS-ARM64-${{ steps.hash.outputs.inputs-hash }}
-          lookup-only: true
+      - name: Find the publish markers
+        id: marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          INPUTS_HASH: ${{ steps.hash.outputs.inputs-hash }}
+        run: |
+          find_marker() {  # $1=<os>-<arch>; prints the uploading run's id, or nothing
+            gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/artifacts" \
+              -f name="cachix-published-$1-${INPUTS_HASH}" -F per_page=100 \
+              --jq "[.artifacts[] | select(.expired == false and (.workflow_run.head_repository_id | tostring) == \"${REPOSITORY_ID}\")]
+                    | sort_by(.created_at) | last | .workflow_run.id // empty" \
+              || echo "::warning::Could not look up the $1 publish marker; treating it as missing" >&2
+          }
+          linux=$(find_marker Linux-X64)
+          macos=$(find_marker macOS-ARM64)
+          echo "linux=${linux}" >> "$GITHUB_OUTPUT"
+          echo "macos=${macos}" >> "$GITHUB_OUTPUT"
+          echo "Linux marker: ${linux:+run $linux}${linux:-none}; macOS marker: ${macos:+run $macos}${macos:-none}"
       - name: Decide which platforms need a publish
         id: decide
         env:
           FORCE: ${{ inputs.force-cachix-build }}
-          LINUX_HIT: ${{ steps.marker-linux.outputs.cache-hit }}
-          MACOS_HIT: ${{ steps.marker-macos.outputs.cache-hit }}
+          LINUX_RUN: ${{ steps.marker.outputs.linux }}
+          MACOS_RUN: ${{ steps.marker.outputs.macos }}
         run: |
-          emit() {  # $1=output name, $2=this platform's marker hit
-            if [ "$FORCE" != "true" ] && [ "$2" = "true" ]; then
+          emit() {  # $1=output name, $2=the run holding this platform's marker, if any
+            if [ "$FORCE" != "true" ] && [ -n "$2" ]; then
               echo "$1=false" >> "$GITHUB_OUTPUT"
             else
               echo "$1=true" >> "$GITHUB_OUTPUT"
             fi
           }
-          emit linux "$LINUX_HIT"
-          emit macos "$MACOS_HIT"
+          emit linux "$LINUX_RUN"
+          emit macos "$MACOS_RUN"
 
   cachix-build:
     # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
@@ -194,7 +203,7 @@ jobs:
           CACHIX_CACHE_NAME: dimensionalos
         run: python3 bin/native-modules --verify-published
       - name: Record the published inputs manifest
-        # The manifest is forensics for the marker saved below; links.txt maps
+        # The manifest is forensics for the marker uploaded below; links.txt maps
         # each result symlink to its store path so consumers can materialise
         # the binaries with --link-results instead of re-running nix.
         env:
@@ -204,11 +213,14 @@ jobs:
           python3 bin/native-modules --inputs-hash \
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
           python3 bin/native-modules --record-links > .cachix-marker/links.txt
-      - name: Save publish marker
-        uses: actions/cache/save@v6
+      - name: Upload publish marker
+        uses: actions/upload-artifact@v7
         with:
+          name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
           path: .cachix-marker
-          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+          include-hidden-files: true  # The marker lives in a dot directory.
+          if-no-files-found: error
+          overwrite: true  # A re-run of this job replaces its earlier upload.
 
   cachix-build-macos:
     # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️ — holds CACHIX_AUTH_TOKEN, same
@@ -268,11 +280,14 @@ jobs:
           python3 bin/native-modules --inputs-hash \
             > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
           python3 bin/native-modules --record-links > .cachix-marker/links.txt
-      - name: Save publish marker
-        uses: actions/cache/save@v6
+      - name: Upload publish marker
+        uses: actions/upload-artifact@v7
         with:
+          name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
           path: .cachix-marker
-          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+          include-hidden-files: true  # The marker lives in a dot directory.
+          if-no-files-found: error
+          overwrite: true  # A re-run of this job replaces its earlier upload.
 
   lint:
     timeout-minutes: 10
@@ -307,7 +322,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Check declared dependencies
@@ -375,7 +390,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
@@ -423,7 +438,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install project system dependencies
         env:
           SYSTEM_PACKAGES: ${{ toJSON(matrix.system_packages) }}
@@ -459,7 +474,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Restore cargo build cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/index
@@ -470,6 +485,9 @@ jobs:
           restore-keys: pyo3-${{ runner.os }}-${{ runner.arch }}-
       - name: Install uv
         uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependency for pyaudio (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -485,6 +503,16 @@ jobs:
       # Tested here, not in the tests jobs, so those start without waiting for this build.
       - name: Test the extensions
         run: uv run python bin/pyo3-extensions --test
+      - name: Save cargo build cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target/pyo3
+          key: pyo3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
   md-babel:
     timeout-minutes: 15
@@ -505,7 +533,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
@@ -680,6 +708,7 @@ jobs:
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
+      actions: read  # To download the publish marker from the run that uploaded it
 
     steps:
       - name: Checkout
@@ -688,7 +717,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
-          prune-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
           python-version: ${{ matrix.pyver }}
       - name: Extract Deno version
         id: deno-version
@@ -728,18 +757,22 @@ jobs:
           git config --global --unset-all filter.lfs.process || true
       # The published store paths are x86_64-linux, so the arm leg (and any
       # future macOS leg) skips provisioning; binary-needing tests skip there.
-      # On a marker miss (fork PR, eviction) the binaries are simply absent —
-      # hosted runners never fall back to building the heavy C++ closures.
-      - name: Restore publish marker
-        if: runner.os == 'Linux' && runner.arch == 'X64'
+      # Without a marker (a fork PR whose inputs changed, or an expired
+      # artifact when the publish was fork-guarded) the binaries are simply
+      # absent: hosted runners never fall back to building the heavy C++ closures.
+      - name: Download publish marker
+        if: runner.os == 'Linux' && runner.arch == 'X64' && (needs.cachix-build.result == 'success' || needs.cachix-build-check.outputs.marker-run-linux != '')
         id: native-marker
-        uses: actions/cache/restore@v6
+        uses: actions/download-artifact@v8
         with:
+          name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
           path: .cachix-marker
-          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+          # A publish in this run supersedes the marker the check job found.
+          run-id: ${{ needs.cachix-build.result == 'success' && github.run_id || needs.cachix-build-check.outputs.marker-run-linux }}
+          github-token: ${{ github.token }}
       - name: Install Nix (with Cachix substituter)
-        # cache-hit implies the restore ran, which is already Linux/X64-gated.
-        if: steps.native-marker.outputs.cache-hit == 'true'
+        # A downloaded marker implies the step ran, which is already Linux/X64-gated.
+        if: steps.native-marker.outcome == 'success'
         env:
           INPUT_EXTRA_NIX_CONFIG: |
             http-connections = 50
@@ -748,7 +781,7 @@ jobs:
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
       - name: Provision native modules from Cachix
-        if: steps.native-marker.outputs.cache-hit == 'true'
+        if: steps.native-marker.outcome == 'success'
         run: python3 bin/native-modules --link-results .cachix-marker/links.txt
       - name: Install dependencies
         run: uv sync --group tests --frozen
@@ -756,7 +789,7 @@ jobs:
         run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
       - name: Native module e2e tests
-        if: steps.native-marker.outputs.cache-hit == 'true'
+        if: steps.native-marker.outcome == 'success'
         run: uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
@@ -852,6 +885,7 @@ jobs:
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
+      actions: read  # To download the publish marker from the run that uploaded it
     container: ${{ matrix.container }}
 
     steps:
@@ -970,19 +1004,31 @@ jobs:
           raise kern.ipc.maxsockbuf 6291456
           raise net.inet.udp.recvspace 2097152
           raise net.inet.udp.maxdgram 65535
-      - name: Restore publish marker
+      - name: Locate the publish marker for this platform
+        id: marker-run
+        # A publish in this run supersedes the marker the check job found.
+        env:
+          LINUX_RUN: ${{ needs.cachix-build.result == 'success' && github.run_id || needs.cachix-build-check.outputs.marker-run-linux }}
+          MACOS_RUN: ${{ needs.cachix-build-macos.result == 'success' && github.run_id || needs.cachix-build-check.outputs.marker-run-macos }}
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then run="$LINUX_RUN"; else run="$MACOS_RUN"; fi
+          echo "run-id=${run}" >> "$GITHUB_OUTPUT"
+      - name: Download publish marker
+        if: steps.marker-run.outputs.run-id != ''
         id: native-marker
-        uses: actions/cache/restore@v6
+        uses: actions/download-artifact@v8
         with:
+          name: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
           path: .cachix-marker
-          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+          run-id: ${{ steps.marker-run.outputs.run-id }}
+          github-token: ${{ github.token }}
       - name: Provision native modules from Cachix
         # The marker records every result -> store path mapping, so the warm
         # path is symlink recreation against the persistent /nix plus
         # substitution of anything missing by exact path — no nix evaluation.
-        # A missed marker (evicted) falls back to the full nix build.
+        # Without a marker (expired artifact) this falls back to the full nix build.
         run: |
-          if [ "${{ steps.native-marker.outputs.cache-hit }}" = "true" ]; then
+          if [ "${{ steps.native-marker.outcome }}" = "success" ]; then
             python3 bin/native-modules --link-results .cachix-marker/links.txt
           else
             python3 bin/native-modules --build
@@ -1120,6 +1166,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       - name: Install dependencies
         run: uv sync --group tests --frozen
         env:
