@@ -1387,7 +1387,7 @@ def test_the_published_scene_carries_no_asset_root_to_resolve_against(
 
 
 def test_trivialize_leaves_the_frames_and_drops_the_geometry(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """Real hardware wants the mount points without the shapes; sim wants both."""
     pytest.importorskip("pxr")
@@ -1400,7 +1400,7 @@ def test_trivialize_leaves_the_frames_and_drops_the_geometry(
 
 
 def test_a_trivialized_robot_publishes_the_same_tf_as_a_full_one(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # The whole point: the same blueprint wiring works against either.
     state = JointState(ts=1.0, name=["shoulder"], position=[0.0])
@@ -1413,7 +1413,7 @@ def test_a_trivialized_robot_publishes_the_same_tf_as_a_full_one(
 
 
 def test_a_trivialized_robot_names_no_assets_to_serve(
-    make_manager: Callable[..., UrdfManager], tmp_path: Path
+    make_manager: Callable[..., UsdManager], tmp_path: Path
 ) -> None:
     """Nothing to hash and nothing to publish, since the meshes went with the shapes."""
     pytest.importorskip("pxr")
