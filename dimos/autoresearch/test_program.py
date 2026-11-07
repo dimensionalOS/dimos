@@ -14,9 +14,22 @@
 
 from pathlib import Path
 
+from dimos_lcm.geometry_msgs import Pose
+from dimos_lcm.vision_msgs import BoundingBox3D
 import pytest
 
-from dimos.autoresearch.program import TraceLine, run_program
+from dimos.autoresearch.program import (
+    DimosBackend,
+    GripperRange,
+    TraceLine,
+    program_box,
+    run_program,
+)
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 
 FAKE = "dimos.autoresearch._test_helpers:fake_backend"
 
@@ -112,3 +125,43 @@ def test_a_program_is_killed_at_the_timeout(tmp_path: Path) -> None:
     assert outcome.status == "timeout"
     assert outcome.duration_s >= 1.0
     assert not (tmp_path / "trial" / "outcome.json").exists()
+
+
+class Bench:
+    """A scene holding a cube and a bowl, and a box filter that keeps its boxes by name."""
+
+    def __init__(self) -> None:
+        self.boxes: set[str] = set()
+
+    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
+        detections = []
+        for name, x in (("cube", 0.2), ("bowl", 0.36)):
+            detection = Detection3D()
+            detection.id = name
+            detection.bbox = BoundingBox3D(
+                center=Pose(position=Vector3(x, 0.0, 0.02), orientation=Quaternion()),
+                size=Vector3(0.04, 0.04, 0.04),
+            )
+            detections.append(detection)
+        return Detection3DArray(
+            detections_length=len(detections), header=Header(1.0, "world"), detections=detections
+        )
+
+    def set_box(self, name: str, pose: object, size: object, frame_id: str | None = None) -> bool:
+        self.boxes.add(name)
+        return True
+
+    def clear_box(self, name: str) -> bool:
+        removed = name in self.boxes
+        self.boxes.discard(name)
+        return removed
+
+
+def test_cleared_objects_stay_out_of_the_map_together_until_restore() -> None:
+    bench = Bench()
+    backend = DimosBackend(bench, bench, bench, bench, GripperRange(closed=0.0, open=-0.05))
+    backend.clear_object("cube", 0.03)
+    backend.clear_object("bowl", 0.03)
+    assert bench.boxes == {program_box("cube"), program_box("bowl")}
+    backend.restore()
+    assert bench.boxes == set()

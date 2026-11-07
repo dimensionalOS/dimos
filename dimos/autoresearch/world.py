@@ -29,7 +29,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from dimos.autoresearch.judge import BodyPose, Snapshot
-from dimos.autoresearch.program import PROGRAM_BOX, RunStoppedError
+from dimos.autoresearch.program import RunStoppedError, program_box
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
@@ -153,7 +153,10 @@ class MujocoWorld:
         self.wait_for_rest()
         self._wait_for_map()
         # With the arm away from the objects, every object is an obstacle again.
-        self._box_filter.clear_box(PROGRAM_BOX)
+        with self._changed:
+            bodies = sorted(set(self._poses) | {self._body})
+        for body in bodies:
+            self._box_filter.clear_box(program_box(body))
         self._wait_for_poses(pose_counts)
 
     def home(self) -> None:

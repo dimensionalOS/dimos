@@ -61,10 +61,13 @@ ProgramStatus = Literal["completed", "raised", "timeout"]
 CallStatus = Literal["OK", "PLANNING_FAILED", "EXECUTION_FAILED", "TIMEOUT", "RAISED"]
 
 TRACE_NAME = "trace.jsonl"
-# The box filter's name for the one object a program may leave out of the obstacle map.
-PROGRAM_BOX = "autoresearch/target"
 # How often the runner checks whether the lab asked it to stop, seconds.
 _STOP_POLL_S = 0.2
+
+
+def program_box(object_id: str) -> str:
+    """The box filter's name for the box that leaves ``object_id`` out of the obstacle map."""
+    return f"autoresearch/{object_id}"
 
 
 @dataclass(frozen=True)
@@ -330,7 +333,7 @@ class GripperApi:
 
 
 class SceneApi:
-    """What the camera sees, and the one object the obstacle map may leave out."""
+    """What the camera sees, and the objects the obstacle map leaves out."""
 
     def __init__(self, robot: Robot) -> None:
         self._robot = robot
@@ -349,8 +352,8 @@ class SceneApi:
         """Leave the object out of the obstacle map so the arm may touch it. The map
         treats every object as an obstacle, so a move onto one fails planning
         until it is cleared. ``object_id`` is an id from ``objects()``; ``margin``
-        is the extra clearance on every side of its box, metres. One object at a
-        time: clearing another puts the first back."""
+        is the extra clearance on every side of its box, metres. Clears add up:
+        clear each object you will touch or put something into."""
         self._robot._traced(
             "scene.clear",
             {"object_id": object_id, "margin": margin},
@@ -359,7 +362,7 @@ class SceneApi:
         )
 
     def restore(self) -> None:
-        """Put the cleared object back in the obstacle map."""
+        """Put every object this program cleared back in the obstacle map."""
         self._robot._traced("scene.restore", {}, self._robot._backend.restore, motion=False)
 
 
@@ -395,7 +398,7 @@ class GripperRange:
 class DimosBackend:
     """``RobotBackend`` over a running DimOS stack: the ``Arm`` SDK for motion
     and the gripper, the object-registration module for the scene, the map's
-    box filter for clearing an object, and an ``Observer`` for camera frames."""
+    box filter for clearing objects, and an ``Observer`` for camera frames."""
 
     def __init__(
         self,
@@ -410,6 +413,8 @@ class DimosBackend:
         self._box_filter = box_filter
         self._observer = observer
         self._gripper = gripper
+        # The boxes this program set, so restore() clears them all.
+        self._boxes: set[str] = set()
 
     @classmethod
     def connect(
@@ -498,8 +503,9 @@ class DimosBackend:
         for detection in detections.detections:
             if str(detection.id) == object_id:
                 box = detection.bbox
+                name = program_box(object_id)
                 self._box_filter.set_box(
-                    PROGRAM_BOX,
+                    name,
                     PoseMsg(
                         position=Vector3(
                             box.center.position.x, box.center.position.y, box.center.position.z
@@ -518,11 +524,14 @@ class DimosBackend:
                     ),
                     detections.header.frame_id,
                 )
+                self._boxes.add(name)
                 return
         raise ValueError(f"no object with id {object_id!r} in the scene")
 
     def restore(self) -> None:
-        self._box_filter.clear_box(PROGRAM_BOX)
+        for name in sorted(self._boxes):
+            self._box_filter.clear_box(name)
+        self._boxes.clear()
 
     def capture(self, path: Path) -> None:
         self._observer.capture(path)

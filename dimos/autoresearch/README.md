@@ -71,8 +71,8 @@ the program may catch it and try another way.
 | `gripper.open()` / `close()` | fully open or closed | `Arm.open_gripper` / `close_gripper` |
 | `gripper.set(x)` | the gripper joint at `x`, URDF units; `gripper.range()` gives (closed, open) | `Arm.set_gripper_position` |
 | `scene.objects(words)` | detected objects: id, name, position, size | the object-registration module's `scan_scene` |
-| `scene.clear(object_id, margin=0.03)` | leave that object, plus `margin` metres on every side, out of the obstacle map: the map treats every object as an obstacle, so clear it before touching it; one object at a time | the map's box filter `set_box` |
-| `scene.restore()` | put the cleared object back in the map | the box filter `clear_box` |
+| `scene.clear(object_id, margin=0.03)` | leave that object, plus `margin` metres on every side, out of the obstacle map: the map treats every object as an obstacle, so clear each object you will touch or put something into; clears add up | the map's box filter `set_box` |
+| `scene.restore()` | put every cleared object back in the map | the box filter `clear_box` |
 | `observe()` | saves a keyframe, returns its path | an `Observer` |
 | `log(text)` | a line in the trace | the trace |
 

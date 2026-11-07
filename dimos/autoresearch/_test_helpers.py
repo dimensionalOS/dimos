@@ -42,7 +42,8 @@ class FakeBackend:
 
     def __init__(self) -> None:
         self.gripper = 0.0
-        self.cleared: tuple[str, float] | None = None
+        # Each cleared object's id and its margin, metres.
+        self.cleared: dict[str, float] = {}
         self.home()
 
     def joints(self) -> list[float]:
@@ -92,10 +93,10 @@ class FakeBackend:
         ]
 
     def clear_object(self, object_id: str, margin: float) -> None:
-        self.cleared = (object_id, margin)
+        self.cleared[object_id] = margin
 
     def restore(self) -> None:
-        self.cleared = None
+        self.cleared.clear()
 
     def capture(self, path: Path) -> None:
         path.write_bytes(_BLANK_PNG)

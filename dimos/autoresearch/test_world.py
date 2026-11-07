@@ -19,7 +19,7 @@ import time
 import pytest
 
 from dimos.autoresearch.judge import BodyPose
-from dimos.autoresearch.program import PROGRAM_BOX, RunStoppedError
+from dimos.autoresearch.program import RunStoppedError, program_box
 from dimos.autoresearch.world import MujocoWorld, PlacementBounds
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
@@ -123,7 +123,14 @@ def test_reset_places_the_body_then_homes_the_arm_without_the_planner_before_res
     scene.reset(seed=3)
     assert bench.placements == [{"cube": PlacementBounds().sample(3)}]
     assert bench.trajectories == [(["j"], [0.5])]
-    assert bench.events == ["cancel", "reset", "home", "open", f"clear {PROGRAM_BOX}"]
+    assert bench.events == [
+        "cancel",
+        "reset",
+        "home",
+        "open",
+        f"clear {program_box('bowl')}",
+        f"clear {program_box('cube')}",
+    ]
 
 
 def test_a_stopped_world_gives_up_its_waits(

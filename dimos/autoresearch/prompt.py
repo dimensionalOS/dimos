@@ -38,9 +38,9 @@ RobotCallError (with a .status) when planning or execution fails; catch it to tr
   robot.scene.objects(words)              detected objects: id, name, position (m), size (m)
   robot.scene.clear(object_id, margin)    leave that object, plus margin (m, default 0.03) on
                                           every side, out of the obstacle map: the map treats
-                                          every object as an obstacle, so clear it before
-                                          touching it; one object at a time
-  robot.scene.restore()                   put the cleared object back in the map
+                                          every object as an obstacle, so clear each object
+                                          you will touch or put something into; clears add up
+  robot.scene.restore()                   put every cleared object back in the map
   robot.observe()                         saves a keyframe, returns its path
   robot.log(text)                         a line in the trace
 Example:
