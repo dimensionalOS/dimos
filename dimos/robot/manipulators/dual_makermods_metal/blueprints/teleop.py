@@ -111,7 +111,7 @@ def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
 
 
 teleop_webxr_dual_metal = autoconnect(
-    ArmTeleopModule.blueprint(zero_button="B"),
+    ArmTeleopModule.blueprint(zero_button="X"),
     dual_metal_teleop_control(dual_metal_quest_tasks()),
     DualMetalManipulationModule.blueprint(
         model=DUAL_METAL_QUEST_MODEL,

@@ -100,7 +100,7 @@ def metal_teleop_control(
 
 
 teleop_webxr_metal = autoconnect(
-    ArmTeleopModule.blueprint(zero_button="B"),
+    ArmTeleopModule.blueprint(zero_button="X"),
     metal_teleop_control(metal_quest_tasks()),
     ManipulationModule.blueprint(
         model=METAL_QUEST_MODEL,

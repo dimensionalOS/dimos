@@ -89,7 +89,8 @@ feedback. The single-Metal planner binds `arm` to `metal_gripper`.
 ## Quest teleop and collection
 
 `teleop-webxr-metal` drives the arm from the right Quest controller: hold the
-grip to engage, the trigger closes the jaw, B plans back to the zero pose. The
+grip to engage, the trigger closes the jaw, X plans back to the zero pose (B and Y
+belong to the episode monitor: start or save, and discard). The
 IK target is `gripper_base`, the jaw mount; the URDF has no fingertip frame.
 `metal-quest-collection` adds the episode monitor, a wrist webcam and the
 recorder. It records `observation.images.wrist` (480x640 RGB),

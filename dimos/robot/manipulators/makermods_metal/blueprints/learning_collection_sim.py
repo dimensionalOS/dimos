@@ -48,7 +48,7 @@ _HEIGHT, _WIDTH = METAL_QUEST_PROFILE.observations["observation.images.wrist"].s
 metal_quest_collection_sim = autoconnect(
     collect(profile=METAL_QUEST_PROFILE),
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
-    ArmTeleopModule.blueprint(zero_button="B"),
+    ArmTeleopModule.blueprint(zero_button="X"),
     # The simulated arm is attached through shared memory, so the coordinator
     # needs only the Quest inputs.
     coordinator(
