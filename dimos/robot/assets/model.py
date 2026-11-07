@@ -194,6 +194,10 @@ class RobotModel:
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
     _default_joint_acceleration_limit: float | None = None
+    _base_model: RobotModel | None = None
+    _added_joints: tuple[JointDescription, ...] = ()
+    # (follower, leader, multiplier, offset) per joint that copies another.
+    _mimic_joints: tuple[tuple[str, str, float, float], ...] = ()
 
     @classmethod
     def from_file(
@@ -346,12 +350,40 @@ class RobotModel:
             raise ValueError("At least one joint rename is required")
         if any(not source or not target for source, target in names.items()):
             raise ValueError("Joint rename names must not be empty")
-        requested = (*self._renamed_joints, *names.items())
-        sources = [source for source, _target in requested]
-        if len(sources) != len(set(sources)):
-            duplicate = next(name for name in sources if sources.count(name) > 1)
-            raise ValueError(f"Joint is already renamed: {duplicate}")
-        return replace(self, _renamed_joints=requested)
+        return RobotModel(
+            _source_path=self._source_path, _base_model=self, _renamed_joints=tuple(names.items())
+        )
+
+    def with_added_joints(self, *joints: JointDescription) -> RobotModel:
+        """Add joints and their child links after loading this model's existing view."""
+        if not joints:
+            raise ValueError("At least one joint must be added")
+        return RobotModel(_source_path=self._source_path, _base_model=self, _added_joints=joints)
+
+    def with_mimic_joint(
+        self, follower: str, leader: str, multiplier: float = 1.0, offset: float = 0.0
+    ) -> RobotModel:
+        """Make one joint copy another, e.g. a gripper's second finger following the first.
+
+        The follower then sits at ``multiplier * leader + offset`` and is no
+        longer driven on its own. Names are the joints as this model calls them.
+
+        Args:
+            follower: The joint that copies.
+            leader: The joint it copies.
+            multiplier: How far the follower moves per unit of the leader.
+            offset: The follower's position when the leader is at 0, in the
+                follower's unit (m or rad).
+        """
+        if not follower or not leader or follower == leader:
+            raise ValueError("A mimic joint needs two different joint names")
+        if not math.isfinite(multiplier) or not math.isfinite(offset):
+            raise ValueError("Mimic multiplier and offset must be finite")
+        return RobotModel(
+            _source_path=self._source_path,
+            _base_model=self,
+            _mimic_joints=((follower, leader, float(multiplier), float(offset)),),
+        )
 
     def with_joint_position_limits(
         self,
@@ -377,6 +409,14 @@ class RobotModel:
         """Replace named joint velocity limits in every planning backend."""
         if not limits or any(not math.isfinite(value) or value <= 0 for value in limits.values()):
             raise ValueError("Joint velocity limits must be positive and finite")
+        if self._renamed_joints:
+            # Renamed joints only exist after the base view loads; carry the
+            # limits on a view of that loaded model so they apply to the new names.
+            return RobotModel(
+                _source_path=self._source_path,
+                _base_model=self,
+                _joint_velocity_limits=tuple(limits.items()),
+            )
         return replace(self, _joint_velocity_limits=(*self._joint_velocity_limits, *limits.items()))
 
     def with_default_joint_acceleration_limit(self, value: float) -> RobotModel:
@@ -396,6 +436,10 @@ class RobotModel:
 
     @cached_property
     def _loaded(self) -> LoadedRobotModel:
+        if self._base_model is not None:
+            loaded = self._base_model.load()
+            source_path, package_paths, xml = loaded.source_path, loaded.package_paths, loaded.xml
+            return self._materialize(xml, source_path, package_paths)
         package_paths = _normalize_package_paths(dict(self._package_paths))
         source_path = None
         if self._source_path is not None:
@@ -419,6 +463,12 @@ class RobotModel:
         else:
             raise ValueError("RobotModel requires a source file, URDF content or root link")
         xml = _resolve_package_uris(xml, package_paths)
+        return self._materialize(xml, source_path, package_paths)
+
+    def _materialize(
+        self, xml: str, source_path: Path | None, package_paths: Mapping[str, Path]
+    ) -> LoadedRobotModel:
+        """Apply this view's structural filters and edits to an already loaded XML."""
         if self._subtree_root_link is not None or self._removed_joint_subtrees:
             xml = _select_structural_subtree(
                 xml,
@@ -437,8 +487,12 @@ class RobotModel:
             xml = _add_planar_base(xml, self._planar_base)
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
+        if self._added_joints:
+            xml = _add_joints(xml, self._added_joints)
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
+        if self._mimic_joints:
+            xml = _set_mimic_joints(xml, self._mimic_joints)
         if self._joint_position_limits:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
         if self._joint_velocity_limits:
@@ -464,6 +518,47 @@ class RobotModel:
     def __setstate__(self, state: dict[str, object]) -> None:
         for name, value in state.items():
             object.__setattr__(self, name, value)
+
+
+def _add_joints(xml: str, joints: tuple[JointDescription, ...]) -> str:
+    root = ET.fromstring(xml)
+    links = {link.get("name") for link in root.findall("link")}
+    names = {joint.get("name") for joint in root.findall("joint")}
+    for joint in joints:
+        if not joint.name or joint.name in names:
+            raise ValueError(f"Joint already exists or has no name: {joint.name!r}")
+        if joint.parent_link not in links:
+            raise ValueError(f"Joint parent link does not exist: {joint.parent_link!r}")
+        if not joint.child_link or joint.child_link in links:
+            raise ValueError(
+                f"Joint child link already exists or has no name: {joint.child_link!r}"
+            )
+        ET.SubElement(root, "link", name=joint.child_link)
+        element = ET.SubElement(root, "joint", name=joint.name, type=joint.type)
+        ET.SubElement(element, "parent", link=joint.parent_link)
+        ET.SubElement(element, "child", link=joint.child_link)
+        ET.SubElement(
+            element,
+            "origin",
+            xyz=" ".join(map(str, joint.origin_xyz)),
+            rpy=" ".join(map(str, joint.origin_rpy)),
+        )
+        ET.SubElement(element, "axis", xyz=" ".join(map(str, joint.axis)))
+        limits = {
+            name: str(value)
+            for name in ("lower", "upper", "velocity", "effort", "acceleration")
+            if (value := getattr(joint, name)) is not None
+        }
+        if limits:
+            ET.SubElement(element, "limit", limits)
+        if joint.mimic is not None:
+            leader, multiplier, offset = joint.mimic
+            ET.SubElement(
+                element, "mimic", joint=leader, multiplier=str(multiplier), offset=str(offset)
+            )
+        links.add(joint.child_link)
+        names.add(joint.name)
+    return ET.tostring(root, encoding="unicode")
 
 
 def _attach_model_tree(host: ET.Element, child_xml: str, mount: _AttachedModel) -> None:
@@ -716,6 +811,31 @@ def _set_joints_fixed(xml: str, names: tuple[str, ...]) -> str:
             if element.tag in movable_elements:
                 joint.remove(element)
 
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_mimic_joints(xml: str, mimics: tuple[tuple[str, str, float, float], ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    for follower, leader, multiplier, offset in mimics:
+        for name in (follower, leader):
+            joint = joints.get(name)
+            if joint is None:
+                raise ValueError(f"Joint not found: {name}")
+            if joint.get("type") == "fixed":
+                raise ValueError(f"Joint is fixed and cannot mimic or be mimicked: {name}")
+        element = joints[follower]
+        if element.find("mimic") is not None:
+            raise ValueError(f"Joint already mimics another: {follower}")
+        # No chains: a leader that mimics, or a follower that leads, could close a loop
+        # where every joint is a follower and none is left to command.
+        if joints[leader].find("mimic") is not None:
+            raise ValueError(f"Joint mimics another and cannot be mimicked: {leader}")
+        if any(mimic.get("joint") == follower for mimic in root.iter("mimic")):
+            raise ValueError(f"Joint is mimicked and cannot mimic another: {follower}")
+        ET.SubElement(
+            element, "mimic", joint=leader, multiplier=str(multiplier), offset=str(offset)
+        )
     return ET.tostring(root, encoding="unicode")
 
 

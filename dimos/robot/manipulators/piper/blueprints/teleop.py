@@ -71,6 +71,7 @@ keyboard_teleop_piper = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_piper_model,
         visualization={"backend": "viser"},
     ),
@@ -123,6 +124,7 @@ coordinator_teleop_piper = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_piper_model,
         visualization={"backend": "viser"},
     ),

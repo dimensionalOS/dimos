@@ -224,9 +224,21 @@ class NativeHarness:
         )
 
     def run(self, agent: PiAdapter) -> Trajectory:
-        return agent.run(
+        result = agent.run(
             "Inspect selected observations.", self.environment, self.root, timeout_s=10
         )
+        if result.extra.ended_by == "timeout":
+            stderr_path = self.root / "pi-stderr.txt"
+            stderr = (
+                stderr_path.read_text(errors="replace") if stderr_path.exists() else "(missing)"
+            )
+            timeline = "\n".join(
+                f"{step.timestamp} {step.source}: {step.tool_calls or step.message}\n"
+                f"  observation={step.observation}"
+                for step in result.steps
+            )
+            pytest.fail(f"{result.extra}\npi-stderr.txt:\n{stderr}\nStep timeline:\n{timeline}")
+        return result
 
 
 @pytest.fixture(params=["pi", "dimcode"])
@@ -235,6 +247,11 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NativeHa
     executable = shutil.which(os.environ.get(f"EVAL_{name.upper()}_CLI", name))
     if executable is None:
         pytest.skip(f"requires installed {name}")
+    if shutil.which("rg") is None:
+        pytest.skip(
+            "requires ripgrep (rg) on PATH; run bin/install-test-clis and add "
+            "<prefix>/node_modules/.bin to PATH"
+        )
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     with SqliteStore(path=tmp_path / "source.db") as store:

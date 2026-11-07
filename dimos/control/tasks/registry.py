@@ -30,8 +30,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 import importlib
+import inspect
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.control.routing import (
     Routing,
@@ -42,9 +43,11 @@ from dimos.control.routing import (
 if TYPE_CHECKING:
     from types import ModuleType
 
+    from dimos.control.connection_source import ConnectionSource
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
     from dimos.control.task import ControlTask
+    from dimos.robot.assets.model import RobotModel
 
 TaskFactory = Callable[..., "ControlTask"]
 
@@ -143,6 +146,8 @@ class ControlTaskRegistry:
         cfg: TaskConfig,
         *,
         hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody] | None = None,
+        connections: Mapping[str, ConnectionSource] | None = None,
+        model: RobotModel | None = None,
     ) -> ControlTask:
         """Instantiate a task by registered name.
 
@@ -153,10 +158,22 @@ class ControlTaskRegistry:
             hardware: Coordinator's hardware map. Tasks that need an
                 adapter resolve it from their typed params; pass ``None``
                 only if no task in this registry needs hardware.
+            connections: Coordinator's robot map for connection modules.
+                Passed only to a factory that takes a ``connections``
+                argument, so tasks can read deployment declarations such as
+                zero-stiffness joints.
+            model: The coordinator's model of the robots it drives through
+                connection modules, joints named ``<robot>/<joint>``. Passed
+                only to a factory that takes a ``model`` argument.
         """
         key = name.lower()
         factory = self._resolve_factory(key)
-        task = factory(cfg=cfg, hardware=hardware or {})
+        kwargs: dict[str, Any] = {"cfg": cfg, "hardware": hardware or {}}
+        if "connections" in inspect.signature(factory).parameters:
+            kwargs["connections"] = connections or {}
+        if "model" in inspect.signature(factory).parameters:
+            kwargs["model"] = model
+        task = factory(**kwargs)
         self._validate_bound_handlers(key, task)
         return task
 
