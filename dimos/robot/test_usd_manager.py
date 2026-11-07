@@ -1442,3 +1442,59 @@ def test_trivialize_leaves_a_mounted_subtree_alone(
     assert "Cube" not in scene
     assert "Mesh" in scene
     assert list(module._published_assets.values()) == ["/opt/arm/arm.stl"]
+
+
+def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
+    make_filter: Callable[..., UrdfManagerPointClearing],
+) -> None:
+    """The filter works in the description's names and reads tf in the published ones.
+
+    Those are two different sets of names once tf_renames is in play, so the whole mask hangs
+    on the lookups going through frame() and the joint keys not.
+    """
+    module = make_filter(tf_renames={"base": "chassis", "arm": "forearm"})
+    for parent in ("camera", "world"):
+        module.tfbuffer.receive_transform(
+            Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                frame_id=parent,
+                child_frame_id="chassis",
+                ts=1.0,
+            )
+        )
+
+    result = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [0.05, 0.0, 0.0], [2.0, 0.0, 0.0]]))
+
+    assert result is not None
+    np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+
+
+def test_a_renamed_multidof_joint_is_still_found_on_tf(
+    make_filter: Callable[..., UrdfManagerPointClearing],
+) -> None:
+    """A floating joint's motion comes from tf, so its edge has to be looked up renamed too."""
+    urdf = _joint_robot("floating")
+    module = make_filter(urdf_xml=urdf, tf_renames={"base": "chassis", "arm": "forearm"})
+    for parent in ("camera", "world"):
+        module.tfbuffer.receive_transform(
+            Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                frame_id=parent,
+                child_frame_id="chassis",
+                ts=1.0,
+            )
+        )
+    module.tfbuffer.receive_transform(
+        Transform(
+            translation=Vector3(1.0, 0.0, 0.0),
+            frame_id="chassis",
+            child_frame_id="forearm",
+            ts=1.0,
+        )
+    )
+
+    result = module.filter_cloud(_cloud([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]))
+
+    # The cube moved with the floating joint, so the point at its new home goes and the far one stays.
+    assert result is not None
+    np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
