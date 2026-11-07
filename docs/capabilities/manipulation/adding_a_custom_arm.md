@@ -1,5 +1,7 @@
 # How to Integrate a New Manipulator Arm
 
+> Arm built on Damiao motors? Start with [Arms with Damiao motors](#arms-with-damiao-motors) below.
+
 This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
 ## Architecture Overview
@@ -53,14 +55,15 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
     `dimos/hardware/whole_body/<yourarm>/_registry.py` and add its name to the `"whole_body"` set in
     `dimos/hardware/test_adapter_registries.py`.
 
-    Joint states, commands, gains and motors are matched by position, not by name. The adapter's joint order is every arm group in declaration
-    order, then the grippers; `HardwareComponent.joints` and the `kp`/`kd` tuples must use the same order. List
-    each group's motors in its `arm_joints` order and give each `MotorSpec` its joint's name, as the examples do.
-    Name the arm joints after the URDF joints and set `kinematic_joint_names` to every arm joint in declaration
-    order. The model must contain those joints, in that order, with finite limits, or `connect()` fails; any other
-    joint in it is locked at its neutral position. Fix an order error by reordering the arm groups,
-    `HardwareComponent.joints` and the gain tuples together: a `kinematic_joint_names` that differs from the arm
-    order passes `connect()` and `activate()` and applies gravity torques and feedback limits to the wrong joints.
+    Joint states, commands, gains and motors are matched by position, not by name. The adapter's joint order is
+    every arm group in declaration order, then the grippers; `HardwareComponent.joints` and the `kp`/`kd` tuples
+    must use the same order. List each group's motors in its `arm_joints` order and give each `MotorSpec` its
+    joint's name, as the examples do. Name the arm joints after the URDF joints and set `kinematic_joint_names` to
+    every arm joint in declaration order. The model must contain those joints, in that order, with finite limits, or
+    `connect()` fails; any other joint in it is locked at its neutral position. Fix an order error by reordering the
+    arm groups, `HardwareComponent.joints` and the gain tuples together: a `kinematic_joint_names` that differs from
+    the arm order passes `connect()` and `activate()` and applies gravity torques and feedback limits to the wrong
+    joints.
 
 2. **Motors.** Use the stock `damiao.MotorType` that matches each motor in the vendor's motor table. A wrong
     type scales velocity and torque incorrectly. Define a custom `damiao.MotorProfile`, registered with
@@ -111,10 +114,9 @@ limit checks live in a shared stack: the `can-motor-control` library (installed 
     `openyam_damiao/test_adapter.py`, which runs on `can_motor_control.MockCanBus`, and a test that loads the real
     kinematic model and checks the kinematic joints' order and limits, like
     `test_openarm_feedback_limits_match_urdf_joint_limits` in `openarm_damiao/test_adapter.py` (a `self_hosted`
-    test: run it with `-m self_hosted`). On `MockCanBus`
-    the adapter's `DamiaoCodec` gets no feedback, so `activate()` fails at the gripper's mode read-back; to test
-    activation and calibration offline, patch `can_motor_control.damiao.DamiaoCodec` to return
-    `can_motor_control.MockFeedbackCodec(<gripper recv_id>)`. Add
+    test: run it with `-m self_hosted`). On `MockCanBus` the adapter's `DamiaoCodec` gets no feedback, so
+    `activate()` fails at the gripper's mode read-back; to test activation and calibration offline, patch
+    `can_motor_control.damiao.DamiaoCodec` to return `can_motor_control.MockFeedbackCodec(<gripper recv_id>)`. Add
     `docs/capabilities/manipulation/<yourarm>_integration.md`, modeled on
     [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
 
