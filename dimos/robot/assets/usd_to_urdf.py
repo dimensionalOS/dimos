@@ -42,7 +42,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.usd import FREE_JOINT_KEY, PASSTHROUGH_KEY, _layer_from, _pxr
+from dimos.robot.assets.usd import PASSTHROUGH_KEY, _layer_from, _pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -59,7 +59,13 @@ _JOINT_TYPES = {
     "PhysicsRevoluteJoint": "revolute",
     "PhysicsPrismaticJoint": "prismatic",
     "PhysicsFixedJoint": "fixed",
+    # The generic joint: free in all six degrees unless something is locked, which is a URDF
+    # floating joint. Locking the axes out of one plane makes it planar -- see _free_kind.
+    "PhysicsJoint": "floating",
 }
+
+# A URDF planar joint moves in its own xy and turns about z, so a planar one has these locked.
+_OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 
 
 def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
@@ -194,6 +200,8 @@ def _joint_of(pxr: Any, prim: Any) -> _Joint | None:
         return None
 
     kind = _JOINT_TYPES.get(str(prim.GetTypeName()), "fixed")
+    if kind == "floating":
+        kind = _free_kind(prim)
     lower, upper = _limits_of(prim, kind)
     # A revolute joint carrying no limit at all is what a continuous joint was written as.
     if kind == "revolute" and lower is None and upper is None:
@@ -219,6 +227,18 @@ def _joint_of(pxr: Any, prim: Any) -> _Joint | None:
         upper=upper,
         extras=_passthrough_of(prim),
     )
+
+
+def _free_kind(prim: Any) -> str:
+    """floating, or planar when the axes out of one plane are locked.
+
+    Read off the applied schemas rather than any metadata of ours, so a layer written by
+    anything else says the same thing.
+    """
+    applied = {str(name) for name in prim.GetAppliedSchemas()}
+    if all(f"PhysicsLimitAPI:{axis}" in applied for axis in _OUT_OF_PLANE):
+        return "planar"
+    return "floating"
 
 
 def _body_name(prim: Any, relationship: str) -> str | None:
@@ -397,13 +417,10 @@ def _append_fragment(parent: ET.Element, fragment: str) -> None:
 def _welds_of(pxr: Any, links: dict[str, Any], joints: list[_Joint]) -> list[_Joint]:
     """A joint for every nested link no joint prim already accounts for.
 
-    A floating or planar joint is written as no joint prim at all, so it arrives here looking
-    exactly like a welded body. The one that was left out is recorded on the child link, and
-    that record is what tells the two apart -- without it a floating base comes back fixed, at
-    whatever pose it happened to be authored at.
-
-    A layer this converter did not write has no such record, and standard USD cannot say which
-    was meant, so it is read as a weld and said out loud.
+    A USD conveys parent and child by nesting, and a joint prim only adds how the child moves,
+    so a link nested inside another with no joint at all is welded. Every joint this converter
+    writes is a prim, floating and planar included, so this only fires for a layer written
+    elsewhere that states nothing but the hierarchy.
     """
     claimed = {joint.child for joint in joints}
     welds = []
@@ -413,19 +430,11 @@ def _welds_of(pxr: Any, links: dict[str, Any], joints: list[_Joint]) -> list[_Jo
         ancestor = _link_ancestor(pxr, prim)
         if ancestor is None:
             continue
-        free = prim.GetCustomDataByKey(FREE_JOINT_KEY) or {}
         xyz, rpy = _placement_of(prim)
-        if free:
-            kind = str(free.get("type") or "floating")
-            joint_name = str(free.get("name") or f"{name}_{kind}")
-            parent = str(free.get("parent") or (ancestor.GetDisplayName() or ancestor.GetName()))
-            xyz = np.asarray(free.get("xyz") or xyz, dtype=np.float64)
-            rpy = np.asarray(free.get("rpy") or rpy, dtype=np.float64)
-        else:
-            kind = "fixed"
-            joint_name = f"{name}_weld"
-            parent = str(ancestor.GetDisplayName() or ancestor.GetName())
-            logger.debug(f"{name} is nested with no joint prim; reading it as welded to {parent}")
+        parent = str(ancestor.GetDisplayName() or ancestor.GetName())
+        joint_name = f"{name}_weld"
+        kind = "fixed"
+        logger.debug(f"{name} is nested with no joint prim; reading it as welded to {parent}")
         welds.append(
             _Joint(
                 name=joint_name,
