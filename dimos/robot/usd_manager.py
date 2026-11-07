@@ -40,7 +40,9 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
+    publish_usd_assets,
     rename_usd_frames,
+    require_asset_hashes,
     resolve_usd_assets,
     urdf_to_usd,
     usd_frame_names,
@@ -239,6 +241,10 @@ class UsdManager(Module):
         self._usd_lock = RLock()
         # Keyed by remote name: two instances of one class are two different modules to ask.
         self._subtree_clients: dict[str, RPCClient] = {}
+        # What the last scene promised to answer for: public asset path -> the real file.
+        # render_file_request serves these as well as the URDF's own names, which is the whole
+        # point of handing out paths that are not paths on anyone's disk.
+        self._published_assets: dict[str, str] = {}
         try:
             self._check_mounts()
         except Exception:
@@ -330,9 +336,12 @@ class UsdManager(Module):
             )
         subtrees = await self._subtrees([*chain, self._scene_identity])
         root = self.get_usd()
-        if not subtrees:
-            return root
-        return [root[ASSET_ROOT], self._graft_in_waves(root[USD], subtrees)]
+        scene = self._graft_in_waves(root[USD], subtrees) if subtrees else root[USD]
+        # Grafting works in absolute paths, which say nothing to whoever ends up asking for the
+        # file. So the scene leaves under names this manager answers for instead.
+        published, assets = await asyncio.to_thread(publish_usd_assets, scene)
+        self._published_assets = assets
+        return [root[ASSET_ROOT], published]
 
     @property
     def _scene_identity(self) -> str:
@@ -417,6 +426,14 @@ class UsdManager(Module):
             answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id, mount, chain)
             if answer is not None:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
+                # Refused rather than retried: a subtree whose assets are not identified by
+                # content will not become identified by asking again, and the error carries
+                # the hashes it should have had.
+                await asyncio.to_thread(
+                    require_asset_hashes,
+                    answer[USD],
+                    what=f"the subtree {name} answered for frame {frame_id!r}",
+                )
                 return await asyncio.to_thread(self._adopt, answer, mount)
             if attempts % _WAITING_LOG_EVERY == 0:
                 logger.warning(
@@ -483,11 +500,17 @@ class UsdManager(Module):
         if name.endswith(".urdf"):
             self.file_info.publish(File(name, self._description.xml.encode()))
             return
-        # Only files the URDF names: a request is never an arbitrary path into the filesystem.
-        if name not in self._file_paths:
-            logger.warning(f"render_file_request for {name!r}, which is not a file the URDF names")
+        # Only files this manager has published: a request is never an arbitrary path into the
+        # filesystem. That is the URDF's own names, plus the public names the last scene handed
+        # out, which is how a mounted arm's mesh gets served at all.
+        real = self._published_assets.get(name, name if name in self._file_paths else None)
+        if real is None:
+            logger.warning(
+                f"render_file_request for {name!r}, which is neither a file this URDF names nor "
+                f"an asset the last scene published"
+            )
             return
-        data = await asyncio.to_thread(Path(name).read_bytes)
+        data = await asyncio.to_thread(Path(real).read_bytes)
         self.file_info.publish(File(name, data))
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
