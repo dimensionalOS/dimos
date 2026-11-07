@@ -36,87 +36,106 @@ dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is re
 
 ## Arms with Damiao motors
 
-If dimOS talks to your arm's Damiao motors directly (DM4310, DM4340, DM8009 and similar, each on its own CAN
-ID, through a CAN adapter or a Damiao USB-CAN bridge), don't write a vendor-SDK `ManipulatorAdapter` (Step 1
-below). The Damiao motor protocol, the CAN transports, gripper calibration, gravity compensation and feedback
-limit checks live in a shared stack: the `can-motor-control` library (installed by the `control` extra) and
-`dimos/hardware/whole_body/damiao/`. These arms are whole-body hardware (`HardwareType.WHOLE_BODY`,
-`whole_body_adapter_registry`). Your arm only declares what is specific to it. Start from the closest example:
-`openyam_damiao/` (one arm, one bus) or `openarm_damiao/` (two arms, two buses), and its robot folder under
-`dimos/robot/manipulators/`.
+If dimOS talks to your arm's Damiao motors directly (DM4310, DM4340, DM8009, each on its own CAN ID, through a CAN
+adapter or a Damiao USB-CAN bridge), don't write a vendor-SDK `ManipulatorAdapter` (Step 1 below). Damiao arms are
+connection modules: the motor protocol, the CAN transports, gripper calibration, gravity compensation and command
+checks live in `dimos/robot/manipulators/damiao/` and the `can-motor-control` library (installed by the `control`
+extra). Your arm declares its data and a small connection class in `dimos/robot/manipulators/<yourarm>/`. Copy the
+closest example: `openyam/` or `makermods_metal/` (one arm, one bus) or `openarm/` (two arms, two buses).
 
-1. **Adapter.** Subclass `DamiaoWholeBodyAdapter` (`dimos/hardware/whole_body/damiao/adapter.py`) in
-    `dimos/hardware/whole_body/<yourarm>/adapter.py`. It declares the arm and gripper joints, the CAN bus names,
-    the kinematic joints and model (used for gravity compensation and feedback limit checks), the gripper's
-    normalized opening range in `get_limits()` (0.0 closed, 1.0 open), and `_build_robot()`, which builds the
-    `can_motor_control.Robot`: one `add_bus` per name in `bus_names`, with `self._make_can_bus(name)` and its own
-    `damiao.DamiaoCodec()`; the vendor's motor table as `MotorSpec(name, type, send_id, recv_id)`, where `recv_id`
-    is the feedback ID; one `add_arm` per arm group and one `add_gripper` per gripper. Register the adapter in
-    `dimos/hardware/whole_body/<yourarm>/_registry.py` and add its name to the `"whole_body"` set in
-    `dimos/hardware/test_adapter_registries.py`.
+1. **Files.** `config.py` (the URDF model, a `RobotModelConfig` factory that takes `robot="arm"` and passes the
+    finger joints to `named_for_robot(..., fingers=...)`, and the robot data), `connection.py`,
+    `blueprints/basic.py` (the coordinator, the trajectory and gripper `TaskConfig`s, the planner), `test_config.py`
+    and `docs/capabilities/manipulation/<yourarm>_integration.md`; optionally `joints.py` (joint-name constants) and
+    `coordinator.py` (an empty `DamiaoCoordinator` subclass, as in `openyam/coordinator.py`). There is no adapter
+    registry, `_registry.py` or `__init__.py`.
 
-    Joint states, commands, gains and motors are matched by position, not by name. The adapter's joint order is
-    every arm group in declaration order, then the grippers; `HardwareComponent.joints` and the `kp`/`kd` tuples
-    must use the same order. List each group's motors in its `arm_joints` order and give each `MotorSpec` its
-    joint's name, as the examples do. Name the arm joints after the URDF joints and set `kinematic_joint_names` to
-    every arm joint in declaration order. The model must contain those joints, in that order, with finite limits, or
-    `connect()` fails; any other joint in it is locked at its neutral position. Fix an order error by reordering the
-    arm groups, `HardwareComponent.joints` and the gain tuples together: a `kinematic_joint_names` that differs from
-    the arm order passes `connect()` and `activate()` and applies gravity torques and feedback limits to the wrong
-    joints.
+2. **Robot data.** Declare one module-level `DamiaoRobot(buses=[...], model=..., gravity_model=..., base_link=...,
+    joint_names=[...], gravity=True, home_joints=[...])` (`dimos/robot/manipulators/damiao/robot.py`). Each
+    `DamiaoBus(arm=[...], kp=[...], kd=[...], gripper=..., name="arm")` is one CAN bus with one arm group and at
+    most one gripper. Each arm motor is `DamiaoMotor(name, type, send_id, reply_id)` from the vendor's motor table;
+    its name is the joint's name in `model` and `gravity_model`, and `reply_id` is the feedback ID. `joint_names`
+    lists every arm motor in bus order, then each gripper's finger joint. Commands and states are matched by joint
+    name, but `kp` and `kd` (per bus), `teach_kd`, `home_joints` and the CAN selectors are matched by position, so
+    keep them in motor order. Nothing checks the motor table against the arm: a wrong or swapped CAN ID is not
+    detected (only a reply ID used twice on one bus is rejected). A motor that never answers reads 0.0, and one that
+    stops answering keeps its last reading. Holds target the reading, so a joint with a wrong `reply_id` is driven
+    toward 0 rad at full gain as soon as the arm starts. Check the IDs with the vendor's tool, and start the first
+    time with the arm supported near its zero pose. Motor fault codes are not read either: a motor that trips its
+    own protection goes limp without an error in dimOS.
 
-2. **Motors.** Use the stock `damiao.MotorType` that matches each motor in the vendor's motor table. A wrong
-    type scales velocity and torque incorrectly. Define a custom `damiao.MotorProfile`, registered with
-    `damiao.DamiaoCodec(profiles=[...])`, only when the motor firmware uses non-standard protocol scaling (MakerMods
-    Metal is the example in this repo). dimOS has no per-joint sign or zero offset: each motor's zero pose and
-    positive direction must match the URDF, or gravity compensation, the feedback limits and planned motions are
-    wrong. Do the vendor's motor ID and zero-pose procedure first, and confirm each joint's direction on the arm.
+3. **Motors.** `type` is `"DM4310"`, `"DM4340"` or `"DM8009"`. A wrong type scales velocity and torque incorrectly
+    while positions still look right. Pass a `DamiaoProfile(code, p_max, v_max, t_max)` as
+    `DamiaoMotor(..., profile=...)` (its `type` is then ignored; `code` is 0x8000 to 0xFFFF) only when the PMAX,
+    VMAX and TMAX stored in the motor differ from the stock ones (MakerMods Metal is the example in this repo).
+    dimOS has no per-joint sign or zero offset: each motor's zero pose and positive direction must match the URDF,
+    or gravity compensation, the joint limits and planned motions are wrong. Do the vendor's motor ID and zero-pose
+    procedure first, and confirm each joint's direction on the arm.
 
-3. **Transport.** Don't implement Damiao framing or a serial protocol yourself. `_make_can_bus()` picks each
-    bus's transport from its device: SocketCAN on Linux, gs_usb on macOS, and a Damiao USB-CAN bridge for a
-    `/dev/...` serial path. Pass devices as `DamiaoRuntimeConfig(bus_devices={"<bus name>": "<device>"})`, as
-    `openyam_hardware(bus_devices=...)` does. Without a `bus_devices` entry, a bus gets `can<i>` on Linux or gs_usb
-    index `i` on macOS, where `i` is its position in `bus_names`. The adapter rejects
-    `HardwareComponent.address`. If a transport you need is missing, add it to the shared stack, not to your arm.
+4. **Connection and transport.** In `connection.py`, subclass `DamiaoConnectionConfig` with a default `source`, one
+    required `str` field per bus (`can_port`, or `left_can_port` and `right_can_port`) and a validator that rejects
+    blank values and defaults `model` to your robot's model. Subclass `DamiaoConnection` with
+    `config: <YourConfig>`, `robot = <YOUR_ROBOT>` and a `can_ports()` that returns the selectors in bus order (see
+    `openyam/connection.py`). Don't implement Damiao framing or a serial protocol yourself. A selector that starts
+    with `/dev/` uses the Damiao USB-CAN bridge on that serial port (`can_motor_control.DmSerialBus`); otherwise it
+    is a SocketCAN interface such as `can0` on Linux, or a gs_usb adapter's serial number on macOS. There are no
+    default selectors, and dimOS doesn't configure interfaces: see `dimos hardware can list` and
+    `dimos hardware can setup`. On a two-bus arm the buses can share motor IDs, so swapped selectors drive the wrong
+    arm without any error. If a transport you need is missing, add it to the shared code, not to your arm.
 
-4. **Gains.** `WholeBodyConfig` holds one `kp` and one `kd` per joint, in `HardwareComponent.joints` order (0.0
-    for gripper slots); without it every joint gets `kp` 40 and `kd` 3. For every motor type the Damiao codec
-    accepts `kp` from 0 to 500 and `kd` from 0 to 5. A value outside those ranges raises `CodecError`, and
-    `write_motor_commands()` returns `False` on every tick: the offending motor, the rest of its arm, later arms
-    and the grippers get no command (on the USB-CAN bridge, joints declared before it still do). Check gains
-    copied from a vendor SDK against these ranges. The codec also checks each command's position, velocity
-    and torque, including the gravity term the adapter adds, against the motor type's limits.
+5. **Gains.** `kp` and `kd` on each `DamiaoBus` hold one value per arm motor; grippers have no gains. dimOS checks
+    the count when the robot data is built and, when it sends, that every value is finite; only the codec checks
+    ranges, at send time. For every motor type the codec accepts `kp` from 0 to 500 and `kd` from 0 to 5, and it
+    checks each command's position, velocity and torque, including the gravity term, against the motor type's limits
+    (DM4310: 10 N·m, 30 rad/s; DM4340: 28 N·m, 10 rad/s; DM8009: 54 N·m, 45 rad/s; positions ±12.5 rad). With a
+    value out of range the arm still starts and enables, then every command and hold raises `CodecError`: the motors
+    stay enabled without commands, and it shows up only as a repeated warning and in `status().last_error`. Check
+    gains copied from a vendor SDK against these ranges, and check the largest gravity torque over the joint range
+    (for example with `PhysicalModel(...).gravity(q)`) against the motor's torque limit.
 
-5. **Gripper.** `add_gripper` needs `opening_direction` (`"increasing_position"` or `"decreasing_position"`).
-    `default_current` is a per-unit current in (0, 1], not amperes, and `calibration_travel` (radians, default
-    4.0) must exceed the gripper's full stroke. These depend on the physical gripper: take them from the vendor
-    or measure them, and say which values are unverified. Activation calibrates the gripper by driving it to
-    both of its stops; deactivation removes motor torque.
+6. **Gripper.** `DamiaoGripper(name, joint, open_at, motor, opening, current, calibration_travel)`. `joint` is the
+    URDF finger joint (a second finger must be a mimic or fixed joint, see `RobotModel.with_mimic_joint`; if the
+    URDF has no driven finger joint, add one as `dual_openyam/config.py` does), and the jaw is read and commanded in
+    that joint's unit, with the `open_at` end (`"lower"` or `"upper"`) open. `opening` is the motor direction that
+    opens the jaw (`"increasing_position"` or `"decreasing_position"`). `current` is a per-unit current in (0, 1],
+    not amperes. `calibration_travel` (motor radians, default 4.0) must exceed the gripper's full stroke; a shorter
+    one silently calibrates only part of it. A wrong `opening` or `open_at`, or a gripper task whose `open_at`
+    differs from the robot data, inverts the jaw. These values depend on the physical gripper: take them from the
+    vendor or measure them, and say which values are unverified. Activation calibrates the gripper by driving it to
+    both of its stops, and the arm motors get no commands while it does.
 
-6. **Gravity compensation and feedback limits.** `DamiaoRuntimeConfig.gravity_comp` is on by default and needs
-    the kinematic model with real inertias. Set `gravity_comp=False` only when you can't provide them (MakerMods
-    Metal does this for commissioning). Feedback more than `feedback_clamp_margin_rad` (0.05 rad) outside the URDF
-    joint limits latches a fault and disables the motors, so an arm without brakes falls. Check the URDF limits
-    against the arm's real stops (MakerMods Metal raises the margin to 0.06 rad).
+7. **Model and gravity.** `model` is the URDF the connection drives and reports: its movable, non-mimic joints must
+    be exactly `joint_names`, each with a finite position range. Don't make an arm joint continuous: the limit
+    checks accept it, but if `gravity_model` has it as continuous too, `connect()` fails. `gravity_model` must list
+    the arm joints in motor order (other joints are locked), or `connect()` fails even with `gravity=False`.
+    `gravity` is on by default and needs real masses and inertias; set it to `False` only when you can't provide
+    them (MakerMods Metal sets `gravity=False`). Readings are published as measured, even past a limit, while joints
+    that no task drives are held at their last position clamped into the URDF limits, so check the URDF limits
+    against the arm's real stops. Disabling the motors (a fault, a stop or a failed start) removes all torque, so an
+    arm without brakes falls.
 
-7. **Robot config and blueprints.** Follow the closest example's robot folder: the joint names; a hardware
-    config that returns a `HardwareComponent` with `HardwareType.WHOLE_BODY` and selects the `mock_whole_body`
-    adapter, with the gripper's 0.0 to 1.0 `limits` on the component, when it isn't configured for hardware
-    (`--simulation` in `openyam/config.py`; no CAN port in `openarm/config.py` and `makermods_metal/config.py`);
-    a coordinator that takes the CAN port from the command line (`--can-port`, see
-    `makermods_metal/coordinator.py`; one port per bus for a two-bus arm, as in `openarm/blueprints/basic.py`),
-    with `instance_name="ControlCoordinator"` so RPC clients find it; a `TaskConfig(type="gripper")` next to the
-    trajectory task and `gripper_tasks` on the planner (`openyam/blueprints/basic.py`, and
-    `openarm/blueprints/teleop.py` for two arms); and planner and coordinator blueprints. Steps 4 (URDF and
-    planning) and 5 (register blueprints) below apply; the other steps describe the vendor-SDK path.
+8. **Blueprints.** In `blueprints/basic.py`, compose the coordinator and the connection as the examples do:
+    `autoconnect(<Coordinator>.blueprint(instance_name="ControlCoordinator", model=<model config with
+    robot="arm">.model, tasks=[...], zero_stiffness_joints=[]), arm_connection(<YourConnection>))` remapped with
+    `arm_remaps(<YourConnection>, <Coordinator>)`, a trajectory task over the `arm/<joint>` names, a
+    `TaskConfig(type="gripper")` whose `open_at` matches the robot data, and a planner blueprint built with
+    `planner(...)` and `gripper_tasks` (which maps each planning group to its gripper task). The CAN selector lives
+    on the connection, so users pass `--can-port` (or `--left-can-port` and `--right-can-port`); `--simulation`
+    swaps in `MockJointConnection`, and so does a `SIMULATION` environment variable or `.env` entry. Register
+    blueprints by regenerating `dimos/robot/all_blueprints.py` with
+    `pytest dimos/robot/test_all_blueprints_generation.py` (outside CI it rewrites the file, then fails until you
+    stage it). The scanner registers only a plain top-level assignment to a public name (no leading `_`, no type
+    annotation) whose value is an `autoconnect(...)` call or ends in `.blueprint`, `.remappings`, `.transports`,
+    `.global_config`, `.requirements` or `.configurators`; a bare `x = yourarm_control()` is not registered, which
+    is why the examples end with `.remappings([])`. Also add each new blueprint whose name doesn't start with
+    `coordinator-` to `experimental/gateway/annotations.yaml`, or `experimental/gateway/tests/test_config.py` fails.
+    Steps 4 (URDF and planning) and 5 (register blueprints) below apply; the other steps describe the vendor-SDK
+    path.
 
-8. **Tests and docs.** Add `dimos/hardware/whole_body/<yourarm>/test_adapter.py` modeled on
-    `openyam_damiao/test_adapter.py`, which runs on `can_motor_control.MockCanBus`, and a test that loads the real
-    kinematic model and checks the kinematic joints' order and limits, like
-    `test_openarm_feedback_limits_match_urdf_joint_limits` in `openarm_damiao/test_adapter.py` (a `self_hosted`
-    test: run it with `-m self_hosted`). On `MockCanBus` the adapter's `DamiaoCodec` gets no feedback, so
-    `activate()` fails at the gripper's mode read-back; to test activation and calibration offline, patch
-    `can_motor_control.damiao.DamiaoCodec` to return `can_motor_control.MockFeedbackCodec(<gripper recv_id>)`. Add
+9. **Tests and docs.** Add `test_config.py` modeled on `makermods_metal/test_config.py` (selectors, CLI options,
+    tasks), and add your arm's wiring and gains to `ARMS` in `dimos/robot/manipulators/damiao/test_damiao_robot.py`
+    and its connection to `ARMS` in `test_damiao_lifecycle.py`. These tests use a fake native robot that accepts any
+    value, so they pass with gains or gravity torques the codec rejects; check those as described in step 5. Add
     `docs/capabilities/manipulation/<yourarm>_integration.md`, modeled on
     [OpenYAM integration](/docs/capabilities/manipulation/openyam_integration.md).
 
