@@ -581,6 +581,31 @@ def test_with_fixed_joints_requires_a_joint(tmp_path: Path) -> None:
         robot_model.RobotModel.from_file(urdf).with_fixed_joints()
 
 
+def test_with_mimic_joint_makes_one_finger_copy_the_other(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='hand'/><link name='left'/><link name='right'/>"
+        "<joint name='left_finger' type='prismatic'><parent link='hand'/><child link='left'/>"
+        "<limit lower='0' upper='0.04' effort='1' velocity='1'/></joint>"
+        "<joint name='right_finger' type='prismatic'><parent link='hand'/><child link='right'/>"
+        "<limit lower='-0.04' upper='0' effort='1' velocity='1'/></joint></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_renamed_joints({"left_finger": "arm/left_finger", "right_finger": "arm/right_finger"})
+        .with_mimic_joint("arm/right_finger", "arm/left_finger", multiplier=-1.0, offset=0.01)
+        .load()
+    )
+
+    assert loaded.get_joint("arm/left_finger").mimic is None
+    assert loaded.get_joint("arm/right_finger").mimic == ("arm/left_finger", -1.0, 0.01)
+    with pytest.raises(ValueError, match="mimic"):
+        robot_model.RobotModel.from_file(urdf).with_mimic_joint(
+            "right_finger", "left_finger"
+        ).with_mimic_joint("left_finger", "right_finger").load()
+
+
 def test_with_renamed_joints_updates_model_references(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
@@ -878,3 +903,28 @@ def test_a_binary_usd_layer_is_refused_with_what_to_do(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="export it as .usda"):
         model.usd  # noqa: B018 - reading the property is what reads the file
+
+
+def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='tip'/>"
+        "<joint name='slide' type='prismatic'><parent link='base'/><child link='tip'/>"
+        "<limit lower='0' upper='1' effort='10' velocity='50'/></joint></robot>"
+    )
+    original = robot_model.RobotModel.from_file(urdf)
+    renamed = original.with_renamed_joints({"slide": "arm/slide"})
+    renamed.load()
+    limited = renamed.with_joint_velocity_limits({"arm/slide": 0.2})
+    limited_joint = limited.load().get_joint("arm/slide")
+    renamed_joint = renamed.load().get_joint("arm/slide")
+    original_joint = original.load().get_joint("slide")
+    assert limited_joint is not None
+    assert renamed_joint is not None
+    assert original_joint is not None
+    assert limited_joint.velocity == 0.2
+    assert renamed_joint.velocity == 50.0
+    assert original_joint.velocity == 50.0
+    transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
+    assert transferred_joint is not None
+    assert transferred_joint.velocity == 0.2

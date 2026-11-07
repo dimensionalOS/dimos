@@ -564,7 +564,9 @@ class UrdfManager(Module):
         # out, which is how a mounted arm's mesh gets served at all.
         real = self._published_assets.get(name, name if name in self._file_paths else None)
         if real is None:
-            logger.warning(
+            # debug, not warning: another module on this topic (the sim's world) answers for
+            # its own files, and every one of those would otherwise be logged here as a miss.
+            logger.debug(
                 f"render_file_request for {name!r}, which is neither a file this URDF names nor "
                 f"an asset the last scene published"
             )
