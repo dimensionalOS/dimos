@@ -70,8 +70,9 @@ hand-selection flag (the task's binding is `{"hand": "right", ...}`). The dual
 blueprint binds the left controller to the left arm and the right controller to
 the right arm, with independent grips and triggers; use the matching controller
 for the arm you want to move. Holding a grip takes that arm; moving the
-controller while the grip is open does nothing. The trigger drives only that
-arm's jaw (1 fully open, 0 closed), and the `X` button commands the zero joint
+controller while the grip is open does nothing. While holding the grip, squeeze
+the trigger to close that arm's jaw and release the trigger to open it (the
+internal normalized opening is `1 - trigger`). The `X` button commands the zero joint
 pose. Releasing the grip, stale controller input, a disconnect or a stop all end
 the session without resuming motion on their own; re-engage by squeezing the
 grip again, which recaptures the reference at the current controller pose.
@@ -79,7 +80,7 @@ grip again, which recaptures the reference at the current controller pose.
 The WebXR server listens on `8443` and binds `global_config.listen_host`
 (`127.0.0.1` by default). A headset reaches the robot over the LAN, so pass
 `--listen-host 0.0.0.0` (or `--armteleopmodule.server-host 0.0.0.0`) and open
-`https://<robot-host-ip>:8443/` in the Quest browser. The server generates a
+`https://<robot-host-ip>:8443/teleop` in the Quest browser. The server generates a
 self-signed certificate under `assets/teleop_certs/` on first start; accept the
 browser warning once, or trust that certificate on the headset. Use
 `--armteleopmodule.server-port` to change the port, and keep the default
@@ -87,6 +88,13 @@ loopback bind when only a local browser drives the arm.
 
 Quest browser testing against real hardware is still a manual step; the
 automated tests exercise the blueprint wiring and the input-to-mock path only.
+
+If another DimOS stack is running on the same computer, isolate discovery as
+well as stream topics. For example, append
+`--zenoh-scout-addr 224.0.0.225:17446 --zenoh-domain metal-quest --no-serve-coordinator-rpc`
+to the command. A distinct `--zenoh-domain` alone does not isolate module RPC
+names from another stack on the default discovery bus. Diagnostic clients for
+this run must use the same scouting address and domain.
 
 ## Select native hardware
 
