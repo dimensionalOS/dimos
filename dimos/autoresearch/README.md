@@ -154,9 +154,12 @@ pointed at this stack's MCP server, on the config's `model` and
 `actor_timeout_s` bound the run. The provider's key must be in the lab's
 environment: put it in the `.env` of the dimos directory, which `dimos run`
 loads. `anthropic` reads `ANTHROPIC_API_KEY`, `openai` reads
-`OPENAI_API_KEY`, `google` reads `GEMINI_API_KEY`. Without the key, or
-without `pi` or `dimos` on PATH, the actor fails at once and the status says
-why. `stop_actor()` kills the Pi process; the session stays as it is, so a
+`OPENAI_API_KEY`, `google` reads `GEMINI_API_KEY`. The Pi process gets the
+lab interpreter's `bin` directory first on its PATH, so a stack launched by
+Desktop, whose service environment has no venv on PATH, still lets Pi run
+`dimos mcp call`. Without the key, without `pi` on PATH, or without `dimos`
+there or on PATH, the actor fails at once and the status says why.
+`stop_actor()` kills the Pi process; the session stays as it is, so a
 trial loop the actor started runs on. In the status document `actor` goes
 idle, running, then done (the actor returned; freeze from the app if it did
 not) or failed with `actor_error`, beside `actor_model` and `actor_provider`.

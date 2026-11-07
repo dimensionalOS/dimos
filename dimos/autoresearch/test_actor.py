@@ -29,7 +29,7 @@ def test_run_actor_names_the_missing_key_before_launching_anything(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
     session = Session.create(tmp_path / "s", task="lift the cube", budget=Budget(), model="m")
-    adapter = mocker.patch("dimos.autoresearch.actor.PiAdapter")
+    adapter = mocker.patch("dimos.autoresearch.actor.Actor")
     mocker.patch.dict(os.environ, {}, clear=True)
 
     for provider, key in (("anthropic", "ANTHROPIC_API_KEY"), ("google", "GEMINI_API_KEY")):

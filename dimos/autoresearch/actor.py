@@ -22,11 +22,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import threading
 
 from dimos.autoresearch.prompt import EXCLUDED_KEYWORDS, actor_prompt
 from dimos.autoresearch.session import Session
 from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.evals.agents.lib.pi_config import RunPaths
 from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.constants import PROVIDERS
 from dimos.evals.types import RunningEnvironment, Trajectory
@@ -35,6 +37,23 @@ from dimos.evals.types import RunningEnvironment, Trajectory
 RUN_ID_ENV = "DIMOS_EVAL_RUN_ID"
 # How often the stop watcher looks at the stop event, seconds.
 STOP_POLL_S = 0.5
+# Where the dimos CLI lives: this interpreter's bin directory, which a stack
+# launched by Desktop (a service environment) does not have on its PATH.
+INTERPRETER_BIN = Path(sys.executable).parent
+
+
+def _pi_path() -> str:
+    """The PATH the Pi process gets: the interpreter's bin directory first, so ``dimos`` resolves."""
+    return os.pathsep.join([str(INTERPRETER_BIN), os.environ.get("PATH", "")])
+
+
+class Actor(PiAdapter):
+    """Pi whose process finds the dimos CLI beside this interpreter."""
+
+    def _build_process_env(self, paths: RunPaths) -> dict[str, str]:
+        env = super()._build_process_env(paths)
+        env["PATH"] = _pi_path()
+        return env
 
 
 def provider_key(provider: str) -> str:
@@ -62,19 +81,22 @@ def run_actor(
     trajectory, also written to ``run_dir/trajectory.json``. Setting ``stop``
     kills the Pi process, and the run returns what it has. Raises before
     launching anything when the provider's key is not in the environment or
-    the ``pi`` or ``dimos`` command is not on PATH."""
+    the ``pi`` command is not on PATH or ``dimos`` is on neither PATH nor
+    this interpreter's bin directory."""
     key = provider_key(provider)
     if not os.environ.get(key):
         raise RuntimeError(f"{key} is not set: put it in the .env of the dimos directory")
-    agent = PiAdapter(
+    agent = Actor(
         provider=provider, model=model, max_steps=max_steps, excluded_keywords=EXCLUDED_KEYWORDS
     )
     if shutil.which(agent.config.cli) is None:
         raise RuntimeError(
             f"{agent.config.cli!r} is not on PATH (npm install -g @earendil-works/pi-coding-agent)"
         )
-    if shutil.which("dimos") is None:
-        raise RuntimeError("Pi reaches the lab through the dimos CLI, which is not on PATH")
+    if shutil.which("dimos", path=_pi_path()) is None:
+        raise RuntimeError(
+            f"Pi reaches the lab through the dimos CLI, which is on neither PATH nor {INTERPRETER_BIN}"
+        )
     info = session.info()
     env = RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"session": session.dir})
     run_dir.mkdir(parents=True, exist_ok=True)
