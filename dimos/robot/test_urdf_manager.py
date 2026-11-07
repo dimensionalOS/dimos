@@ -37,7 +37,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd import unhashed_assets, usd_frame_names
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
@@ -1509,3 +1509,100 @@ def test_a_renamed_multidof_joint_is_still_found_on_tf(
     # The cube moved with the floating joint, so the point at its new home goes and the far one stays.
     assert result is not None
     np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+
+
+_SCENE_USDA = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+def Xform "room" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+)
+{
+    def Xform "table" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Mesh "visual_0" (
+            assetInfo = {
+                asset identifier = @meshes/table.stl@
+                string version = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+            }
+            prepend references = @meshes/table.stl@
+        )
+        {
+        }
+    }
+}
+"""
+
+
+@pytest.fixture
+def scene_file(tmp_path: Path) -> Path:
+    path = tmp_path / "room.usda"
+    path.write_text(_SCENE_USDA)
+    return path
+
+
+def test_a_usd_model_is_served_as_it_is(scene_file: Path) -> None:
+    """A scene that is already USD is not round-tripped through a URDF."""
+    pytest.importorskip("pxr")
+    module = UrdfManager(model=UsdModel.from_file(scene_file))
+    try:
+        root, usd = module.get_usd()
+
+        assert usd == _SCENE_USDA
+        assert root == str(scene_file.parent)
+    finally:
+        module.dispose()
+
+
+def test_a_usd_model_serves_the_files_its_layer_names(scene_file: Path) -> None:
+    pytest.importorskip("pxr")
+    (scene_file.parent / "meshes").mkdir()
+    (scene_file.parent / "meshes" / "table.stl").write_bytes(b"stl bytes")
+    module = UrdfManager(model=UsdModel.from_file(scene_file))
+    try:
+        sent: list[File] = []
+        module.file_info.publish = sent.append  # type: ignore[method-assign]
+
+        asyncio.run(module.handle_render_file_request(String("meshes/table.stl")))
+
+        assert [file.data for file in sent] == [b"stl bytes"]
+    finally:
+        module.dispose()
+
+
+def test_a_usd_model_poses_nothing_on_tf(scene_file: Path) -> None:
+    """A USD layer states its joints as UsdPhysics prims and nothing reads them back yet."""
+    module = UrdfManager(model=UsdModel.from_file(scene_file))
+    try:
+        assert module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[1.0])) == []
+    finally:
+        module.dispose()
+
+
+def test_a_usd_model_is_still_trivialized_and_renamed(scene_file: Path) -> None:
+    pytest.importorskip("pxr")
+    module = UrdfManager(
+        model=UsdModel.from_file(scene_file), trivialize=True, tf_renames={"table": "desk"}
+    )
+    try:
+        usd = module.get_usd()[USD]
+
+        assert "Mesh" not in usd
+        assert "desk" in usd_frame_names(usd)
+    finally:
+        module.dispose()
+
+
+def test_point_clearing_refuses_a_usd_model(scene_file: Path) -> None:
+    """Its filter is built from the URDF's collision geometry, which a USD layer has none of."""
+    with pytest.raises(ValueError, match="needs a RobotModel"):
+        UrdfManagerPointClearing(model=UsdModel.from_file(scene_file))
+
+
+def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="RobotModel.from_file"):
+        UsdModel.from_file(tmp_path / "robot.urdf")
