@@ -364,3 +364,52 @@ def test_passthrough_is_customdata_not_an_attribute(extra: Any) -> None:
 
     assert "customData" in usd
     assert "custom " not in usd
+
+
+_FLOATING_URDF = """<?xml version="1.0"?>
+<robot name="floater">
+  <link name="world"/>
+  <link name="base_link"><visual><geometry><box size="0.1 0.1 0.1"/></geometry></visual></link>
+  <joint name="floating_base_joint" type="floating">
+    <parent link="world"/><child link="base_link"/>
+    <origin xyz="0 0 0.8"/>
+  </joint>
+</robot>
+"""
+
+
+@pytest.fixture
+def floater(tmp_path: Path) -> Any:
+    urdf = tmp_path / "floater.urdf"
+    urdf.write_text(_FLOATING_URDF)
+    return RobotModel.from_file(urdf).load()
+
+
+def test_a_floating_base_converts_at_all(floater: Any) -> None:
+    """A floating joint has no single position, which is the whole point of it.
+
+    Asking one to pose its child raises, so a robot with a floating base -- a g1, a go2,
+    anything that walks -- could not be converted at all.
+    """
+    stage = _stage(urdf_to_usd(floater))
+
+    assert stage.GetPrimAtPath("/floater/world/base_link")
+
+
+def test_a_floating_joints_child_sits_at_the_joint_origin(floater: Any) -> None:
+    # Its real pose comes from odometry; the origin is the honest stand-in, and it is what
+    # parent_from_child(0) gives for every other joint type.
+    from pxr import UsdGeom
+
+    stage = _stage(urdf_to_usd(floater))
+    prim = stage.GetPrimAtPath("/floater/world/base_link")
+
+    transform = UsdGeom.Xformable(prim).GetLocalTransformation()
+    np.testing.assert_allclose(tuple(transform.ExtractTranslation()), (0, 0, 0.8), atol=1e-9)
+
+
+def test_a_floating_joint_gets_no_joint_prim(floater: Any) -> None:
+    # UsdPhysics has no equivalent matching URDF's semantics, so it is left out deliberately.
+    stage = _stage(urdf_to_usd(floater))
+
+    assert not stage.GetPrimAtPath("/floater/joints/floating_base_joint")
