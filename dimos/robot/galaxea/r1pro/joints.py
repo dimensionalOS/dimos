@@ -26,6 +26,10 @@ RIGHT_ARM_JOINTS = tuple(f"right_arm_joint{i}" for i in range(1, 8))
 # Order matches the flat 18-element MotorCommandArray the vendor stack speaks.
 UPPER_BODY_JOINTS = (*TORSO_JOINTS, *LEFT_ARM_JOINTS, *RIGHT_ARM_JOINTS)
 
+# One scalar per hand, 0 closed to 100 open (the vendor's percent), after the upper body when the
+# connection drives the grippers. Not in the URDF: its finger joints stay welded (PASSIVE_JOINTS).
+GRIPPER_JOINTS = ("left_gripper", "right_gripper")
+
 # Driven by the chassis velocity task or the gripper adapter, never planned, so
 # the planning model welds them at their URDF zero.
 PASSIVE_JOINTS = (

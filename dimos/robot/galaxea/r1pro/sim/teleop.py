@@ -19,12 +19,11 @@ from pydantic import Field
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In, Out
-from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.sim.config import MODEL
 from dimos.robot.galaxea.r1pro.sim.model import FINGER_JOINTS, STEER_JOINTS, WHEEL_JOINTS
+from dimos.robot.galaxea.r1pro.teleop import arm_tasks as r1_arm_tasks
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.extensions import VideoArmTeleopConfig, VideoArmTeleopModule
 
@@ -36,46 +35,7 @@ TELEOP_MODEL = MODEL.with_fixed_joints(
 
 
 def arm_tasks() -> list[TaskConfig]:
-    """Independent grip/clutch sessions, using the same tasks as dual OpenYAM."""
-    return [
-        TaskConfig(
-            name=f"teleop_{side}",
-            type="teleop_ik",
-            joint_names=[f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)],
-            priority=20,
-            params={
-                "robot_model": RobotModelConfig(
-                    model=MODEL.with_subtree_rooted_at(f"r1pro/{side}_arm_base_link")
-                    .with_fixed_joints(*(f"r1pro/{side}_gripper_finger_joint{i}" for i in (1, 2)))
-                    .with_default_joint_acceleration_limit(2.0),
-                    joint_names=[f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)],
-                    base_link=f"r1pro/{side}_arm_base_link",
-                ),
-                "bindings": [{"hand": side, "target_frame": f"r1pro/{side}_gripper_link"}],
-                "pink": PinkKinematicsConfig(
-                    # ProxQP falsely reports infeasibility for feasible R1
-                    # differential steps, including with preconditioning off.
-                    solver="quadprog",
-                    dt=0.02,
-                    position_cost=8.0,
-                    orientation_cost=2.0,
-                    posture_cost=0.01,
-                    joint_limit_posture_margin=0.3,
-                    lm_damping=0.01,
-                    gain=1.0,
-                ),
-                "timeout": 0.3,
-                "max_joint_velocity_rad_s": 0.5,
-                "max_command_tracking_error_deg": 10.0,
-                # MuJoCo soft stops can overshoot by a few milliradians. Permit
-                # recovery, while commanding 0.03 rad inside physical limits.
-                "feedback_limit_tolerance": 0.01,
-                "command_limit_margin": 0.03,
-                "joint_command_filter_cutoff_hz": 10.0,
-            },
-        )
-        for side in ("left", "right")
-    ]
+    return r1_arm_tasks(MODEL.with_fixed_joints(*FINGER_JOINTS), "r1pro/")
 
 
 class R1ProTeleopCoordinator(TeleopControlCoordinator):

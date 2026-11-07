@@ -61,21 +61,37 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
+from dimos.robot.galaxea.r1pro.joints import GRIPPER_JOINTS, UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Joint layout — flat 18-element MotorCommandArray indexing.
+# Joint layout — flat 18-element MotorCommandArray indexing, the grippers after it.
 _TORSO_SLICE = slice(0, 4)
 _LEFT_SLICE = slice(4, 11)
 _RIGHT_SLICE = slice(11, 18)
 _NUM_MOTORS = 18
+_NUM_MOTORS_WITH_GRIPPERS = _NUM_MOTORS + len(GRIPPER_JOINTS)
 
 _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
+R1PRO_GRIPPER_JOINTS: list[str] = [coordinator_name(j) for j in GRIPPER_JOINTS]
+# The whole-body joints with ``enable_grippers``: the upper body, then left and right hand.
+R1PRO_WHOLE_BODY_JOINTS: list[str] = [*R1PRO_UPPER_BODY_JOINTS, *R1PRO_GRIPPER_JOINTS]
+
+# The vendor's gripper unit, percent open; the coordinator's gripper task maps 0..1 onto it.
+GRIPPER_CLOSED = 0.0
+GRIPPER_OPEN = 100.0
+_GRIPPER_TARGET_TOPICS = (
+    "/motion_target/target_position_gripper_left",
+    "/motion_target/target_position_gripper_right",
+)
+_GRIPPER_FEEDBACK_TOPICS = ("/hdas/feedback_gripper_left", "/hdas/feedback_gripper_right")
+# A commanded opening this close to the last one sent (or, before the first, to the measured one)
+# is the coordinator re-sending its hold: nothing goes to the hand.
+_GRIPPER_DEADBAND = 0.5
 
 # JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
@@ -144,6 +160,9 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_wrist_depth: bool = Field(default=False)
     # Each wrist copies and publishes JPEG frames even when unread; turn off if nothing reads them.
     enable_wrist_color: bool = Field(default=True)
+    # The two hands as joints 19 and 20 of motor_states and motor_command (R1PRO_WHOLE_BODY_JOINTS),
+    # in the vendor's percent open. Off, both stay 18 wide and the hands are left alone.
+    enable_grippers: bool = Field(default=False)
     # Max Hz per color camera (0 = no cap); the cameras arrive at ~28 Hz, so 30 passes every frame.
     color_publish_hz: float = Field(default=30.0)
     # Boot the vendor stack (HDAS, mobiman), which serves every ROS topic used here, if it is not running.
@@ -189,6 +208,7 @@ class R1ProConnection(Module):
         self._cmd_torso_topic: RawROSTopic | None = None
         self._cmd_left_topic: RawROSTopic | None = None
         self._cmd_right_topic: RawROSTopic | None = None
+        self._cmd_gripper_topics: list[RawROSTopic] = []
         self._speed_topic: RawROSTopic | None = None
         self._control_unsubs: list[Any] = []
         self._sensor_unsubs: list[Any] = []
@@ -211,6 +231,10 @@ class R1ProConnection(Module):
         self._ts_right = 0.0
         self._left_seen = False
         self._right_seen = False
+        # Left, right: percent open as the hands report it, and the last target sent to each.
+        self._latest_gripper_q: list[float] = [0.0] * len(GRIPPER_JOINTS)
+        self._gripper_seen: list[bool] = [False] * len(GRIPPER_JOINTS)
+        self._gripper_sent: list[float | None] = [None] * len(GRIPPER_JOINTS)
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
 
@@ -262,16 +286,17 @@ class R1ProConnection(Module):
         deadline = time.monotonic() + _FEEDBACK_DISCOVERY_TIMEOUT_S
         while time.monotonic() < deadline:
             with self._lock:
-                if self._torso_seen and self._left_seen and self._right_seen:
+                if self._all_feedback_seen():
                     break
             time.sleep(0.05)
 
         with self._lock:
-            seen = (self._torso_seen, self._left_seen, self._right_seen)
-        if not all(seen):
+            seen = (self._torso_seen, self._left_seen, self._right_seen, *self._gripper_seen)
+            complete = self._all_feedback_seen()
+        if not complete:
             logger.warning(
-                "Feedback discovery timeout: torso=%s left=%s right=%s — "
-                "motor_states will gate first publish until all three arrive.",
+                "Feedback discovery timeout: torso=%s left=%s right=%s gripper_left=%s "
+                "gripper_right=%s — motor_states will gate first publish until all arrive.",
                 *seen,
             )
 
@@ -319,10 +344,18 @@ class R1ProConnection(Module):
 
         with self._lock:
             self._torso_seen = self._left_seen = self._right_seen = False
+            self._gripper_seen = [False] * len(GRIPPER_JOINTS)
+            self._gripper_sent = [None] * len(GRIPPER_JOINTS)
             self._latest_imu_chassis = None
             self._latest_imu_torso = None
+        self._cmd_gripper_topics = []
 
         super().stop()
+
+    def _all_feedback_seen(self) -> bool:
+        """Every segment motor_states carries has reported once. Call under ``_lock``."""
+        hands = all(self._gripper_seen) if self.config.enable_grippers else True
+        return self._torso_seen and self._left_seen and self._right_seen and hands
 
     # Control topics
 
@@ -360,6 +393,18 @@ class R1ProConnection(Module):
             ),
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
+
+        if self.config.enable_grippers:
+            self._cmd_gripper_topics = [
+                RawROSTopic(topic, RosJointState, qos=qos) for topic in _GRIPPER_TARGET_TOPICS
+            ]
+            for index, gripper_topic in enumerate(_GRIPPER_FEEDBACK_TOPICS):
+                self._control_unsubs.append(
+                    self._ros.subscribe(
+                        RawROSTopic(gripper_topic, RosJointState, qos=qos),
+                        self._make_gripper_feedback_cb(index),
+                    )
+                )
 
         # Executed chassis speed — integrated into wheel odometry.
         self._control_unsubs.append(
@@ -516,8 +561,9 @@ class R1ProConnection(Module):
     # Control input handlers
 
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != _NUM_MOTORS:
-            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
+        expected = _NUM_MOTORS_WITH_GRIPPERS if self.config.enable_grippers else _NUM_MOTORS
+        if msg.num_joints != expected:
+            logger.warning(f"Expected {expected} motor commands, got {msg.num_joints}; ignoring")
             return
 
         from sensor_msgs.msg import JointState as RosJointState
@@ -541,6 +587,37 @@ class R1ProConnection(Module):
             cmd.velocity = self._tracking_velocities(msg.dq[sl])
             cmd.effort = [0.0]
             ros.publish(topic, cmd)
+
+        if not self.config.enable_grippers:
+            return
+        for index, target in self._gripper_targets(list(msg.q[_NUM_MOTORS:])):
+            cmd = RosJointState()
+            cmd.header.stamp = stamp
+            cmd.position = [target]
+            ros.publish(self._cmd_gripper_topics[index], cmd)
+
+    def _gripper_targets(self, commanded: list[float]) -> list[tuple[int, float]]:
+        """The hands whose commanded opening is a new target, clamped to 0..100.
+
+        The whole-body adapter re-sends every joint on every write, a hand's last value
+        included (its measured opening until a gripper task first speaks), so only a change
+        goes out: against the last target sent, or before the first against the measured
+        opening, so a restart leaves a hand where it is.
+        """
+        targets = []
+        with self._lock:
+            for index, value in enumerate(commanded):
+                if not math.isfinite(value):
+                    continue
+                target = _clamp_opening(value)
+                sent = self._gripper_sent[index]
+                # Clamped too: an open hand reads a little over 100 (101.1 measured).
+                reference = _clamp_opening(self._latest_gripper_q[index]) if sent is None else sent
+                if abs(target - reference) <= _GRIPPER_DEADBAND:
+                    continue
+                self._gripper_sent[index] = target
+                targets.append((index, target))
+        return targets
 
     def _tracking_velocities(self, dqs: list[float]) -> list[float]:
         """Map MotorCommand.dq to ROS tracking velocity (0/sentinel → configured)."""
@@ -586,6 +663,18 @@ class R1ProConnection(Module):
             )
             self._ts_right = _stamp_secs(msg)
             self._right_seen = True
+
+    def _make_gripper_feedback_cb(self, index: int) -> Any:
+        """The hand's opening, position[0] in the vendor's percent."""
+
+        def cb(msg: Any, _topic: Any) -> None:
+            if not msg.position:
+                return
+            with self._lock:
+                self._latest_gripper_q[index] = float(msg.position[0])
+                self._gripper_seen[index] = True
+
+        return cb
 
     @staticmethod
     def _copy_segment(
@@ -649,12 +738,14 @@ class R1ProConnection(Module):
         period = 1.0 / float(self.config.publish_rate_hz)
         next_tick = time.perf_counter()
         frame_id = self.config.frame_id
+        grippers = self.config.enable_grippers
+        names = R1PRO_WHOLE_BODY_JOINTS if grippers else R1PRO_UPPER_BODY_JOINTS
         bootstrapped = False
 
         while not self._stop_event.is_set():
             with self._lock:
                 if not bootstrapped:
-                    if not (self._torso_seen and self._left_seen and self._right_seen):
+                    if not self._all_feedback_seen():
                         # No publish until every segment reports once — a
                         # zero-position snapshot would walk the arms to home.
                         positions = None
@@ -676,10 +767,15 @@ class R1ProConnection(Module):
                         + list(self._latest_left_eff)
                         + list(self._latest_right_eff)
                     )
+                    if grippers:
+                        positions += self._latest_gripper_q
+                        velocities += [0.0] * len(GRIPPER_JOINTS)
+                        efforts += [0.0] * len(GRIPPER_JOINTS)
                     imu_chassis = self._latest_imu_chassis
                     imu_torso = self._latest_imu_torso
                     # Oldest of the three segments: the fused snapshot is only
-                    # as fresh as its stalest part.
+                    # as fresh as its stalest part. The hands are left out: the
+                    # planning model welds their fingers, so no pose hangs on them.
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
 
             if bootstrapped:
@@ -687,7 +783,7 @@ class R1ProConnection(Module):
                     JointState(
                         ts=ts,
                         frame_id=frame_id,
-                        name=R1PRO_UPPER_BODY_JOINTS,
+                        name=names,
                         position=positions,  # type: ignore[arg-type]
                         velocity=velocities,
                         effort=efforts,
@@ -777,6 +873,10 @@ class R1ProConnection(Module):
                     setattr(self, target_attr, imu)
             except Exception:
                 logger.exception(f"R1Pro {stream} decode error")
+
+
+def _clamp_opening(value: float) -> float:
+    return min(max(float(value), GRIPPER_CLOSED), GRIPPER_OPEN)
 
 
 def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:

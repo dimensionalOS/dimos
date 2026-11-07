@@ -22,7 +22,7 @@ from scipy.spatial.transform import Rotation
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.galaxea.r1pro.sim.spatial import R1ProSpatialTeleop
+from dimos.robot.galaxea.r1pro.spatial import R1ProSpatialTeleop
 from dimos.teleop.spatial.model import SpatialGroup
 from dimos.teleop.webxr.controller_types import Hand
 

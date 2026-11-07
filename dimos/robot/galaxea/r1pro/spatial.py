@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 bindings for the shared spatial workstation; motion stays in sim controllers."""
+"""R1 bindings for the shared spatial workstation in simulation and on hardware."""
 
 import json
 from typing import Any, Protocol
@@ -51,8 +51,8 @@ class Jog(BaseModel):
 
 
 class R1SpatialConfig(SpatialViewerConfig):
-    # This simulation is enabled by entering XR and gripping/moving a stick.
-    # Explicit Hold still latches until Resume; hardware stations keep their gate.
+    # Entering XR and gripping/moving a stick enables input.
+    # Explicit Hold still latches until Resume.
     start_paused: bool = False
     body_relative_clutch: bool = True
     torso_height_control: bool = True

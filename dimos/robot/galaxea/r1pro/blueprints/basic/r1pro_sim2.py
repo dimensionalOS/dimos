@@ -34,12 +34,12 @@ from dimos.robot.galaxea.r1pro.sim.cameras import (
 from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, MODEL, SCENE as ROBOT_SCENE
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
 from dimos.robot.galaxea.r1pro.sim.model import FINGER_TRAVEL_M
-from dimos.robot.galaxea.r1pro.sim.spatial import R1ProSpatialTeleop
 from dimos.robot.galaxea.r1pro.sim.teleop import (
     TELEOP_MODEL,
     R1ProTeleopCoordinator,
     arm_tasks,
 )
+from dimos.robot.galaxea.r1pro.spatial import R1ProSpatialTeleop
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.module import SimModule

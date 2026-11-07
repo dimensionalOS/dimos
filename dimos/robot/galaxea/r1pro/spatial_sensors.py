@@ -1,0 +1,261 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Read vendor camera topics without competing for the camera devices."""
+
+from collections import deque
+from collections.abc import Callable
+import importlib
+import threading
+import time
+from typing import Any
+
+import cv2
+import numpy as np
+from pydantic import Field
+
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import IO, In, Out
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.galaxea.r1pro.connection import _make_qos, _stamp_secs
+from dimos.robot.galaxea.r1pro.stereo import HeadStereo, rectify_wrist
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+class R1SpatialSensorsConfig(ModuleConfig):
+    calibration_path: str = "/opt/galaxea/body/stereo.yaml"
+    publish_hz: float = Field(default=5.0, gt=0, le=15)
+    stereo_width: int = 480
+    max_pair_skew_s: float = 0.02
+
+
+class R1SpatialSensors(Module):
+    config: R1SpatialSensorsConfig
+    dedicated_worker = True
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    camera_info: Out[CameraInfo]
+    left_wrist: Out[Image]
+    left_wrist_depth: Out[Image]
+    left_wrist_info: Out[CameraInfo]
+    right_wrist: Out[Image]
+    right_wrist_depth: Out[Image]
+    right_wrist_info: Out[CameraInfo]
+    tf: Out[TFMessage]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._ros: Any = None
+        self._unsubs: list[Callable[[], None]] = []
+        self._lock = threading.Lock()
+        self._frames: dict[str, deque[Any]] = {}
+        self._infos: dict[str, Any] = {}
+        self._last: dict[str, float] = {}
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._stereo: HeadStereo | None = None
+        self._stats: dict[str, int] = {"head": 0, "left": 0, "right": 0, "errors": 0}
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        cv2.setNumThreads(2)
+        self._stereo = HeadStereo(self.config.calibration_path, self.config.stereo_width)
+        # ROS is optional at package import; the hardware launcher supplies its environment.
+        ros = importlib.import_module("dimos.protocol.pubsub.impl.rospubsub")
+        msgs = importlib.import_module("sensor_msgs.msg")
+        self._ros = ros.RawROS(node_name="r1_spatial_cameras")
+        self._ros.start()
+        topics = [
+            (
+                f"head_{s}",
+                f"/hdas/camera_head/{s}_raw/image_raw_color/compressed",
+                msgs.CompressedImage,
+            )
+            for s in ("left", "right")
+        ]
+        for side in ("left", "right"):
+            base = f"/hdas/camera_wrist_{side}"
+            topics += [
+                (side + "_color", base + "/color/image_raw/compressed", msgs.CompressedImage),
+                (side + "_depth", base + "/aligned_depth_to_color/image_raw", msgs.Image),
+                (side + "_info", base + "/color/camera_info", msgs.CameraInfo),
+            ]
+        for key, topic, kind in topics:
+            self._unsubs.append(
+                self._ros.subscribe(
+                    ros.RawROSTopic(topic, kind, qos=_make_qos()),
+                    lambda msg, _, key=key: self._receive(key, msg),
+                )
+            )
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _receive(self, key: str, msg: Any) -> None:
+        with self._lock:
+            if key.endswith("_info"):
+                self._infos[key] = msg
+            else:
+                self._frames.setdefault(key, deque(maxlen=6)).append(msg)
+
+    def _pair(self, a: str, b: str) -> tuple[Any, Any] | None:
+        with self._lock:
+            pairs = [
+                (x, y)
+                for x in self._frames.get(a, [])
+                for y in self._frames.get(b, [])
+                if abs(_stamp_secs(x) - _stamp_secs(y)) <= self.config.max_pair_skew_s
+                and _stamp_secs(x) > self._last.get(a, 0)
+            ]
+            if not pairs:
+                return None
+            x, y = max(pairs, key=lambda pair: _stamp_secs(pair[0]))
+            self._last[a] = _stamp_secs(x)
+            if abs(time.time() - _stamp_secs(x)) > 0.5:
+                return None
+            return x, y
+
+    @staticmethod
+    def _color(msg: Any) -> np.ndarray:
+        image = cv2.imdecode(np.frombuffer(msg.data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("Invalid camera JPEG")
+        return image
+
+    def capture(self) -> None:
+        assert self._stereo is not None
+        pair = self._pair("head_left", "head_right")
+        if pair:
+            color, depth = self._stereo.process(*(self._color(msg) for msg in pair))
+            ts = _stamp_secs(pair[0])
+            matrix = np.eye(4)
+            matrix[:3, :3] = self._stereo.rotation
+            self.tf.publish(
+                TFMessage(
+                    Transform.from_matrix(
+                        matrix,
+                        frame_id="camera_head_left_link",
+                        child_frame_id="head_stereo_optical",
+                        ts=ts,
+                    )
+                )
+            )
+            self._publish(
+                (self.color_image, self.depth_image, self.camera_info),
+                color,
+                depth,
+                self._stereo.info,
+                "head_stereo_optical",
+                ts,
+            )
+            self._stats["head"] += 1
+        for side in ("left", "right"):
+            with self._lock:
+                info = self._infos.get(side + "_info")
+            if info is None:
+                continue
+            pair = self._pair(side + "_color", side + "_depth")
+            if pair is None:
+                continue
+            rgb, raw = pair
+            if raw.encoding != "16UC1":
+                raise ValueError(f"Expected RealSense millimetre depth, got {raw.encoding}")
+            # Respect ROS row padding and byte order. RealSense ROS converts device units to mm.
+            dtype = np.dtype(">u2" if raw.is_bigendian else "<u2")
+            depth = (
+                np.ndarray(
+                    (raw.height, raw.width),
+                    dtype=dtype,
+                    buffer=bytes(raw.data),
+                    strides=(raw.step, 2),
+                ).astype(np.float32)
+                * 0.001
+            )
+            color = self._color(rgb)
+            if color.shape[:2] != depth.shape or depth.shape != (info.height, info.width):
+                raise ValueError("Wrist color/depth/calibration dimensions differ")
+            color, depth, calibration = rectify_wrist(color, depth, info)
+            ports = (
+                (self.left_wrist, self.left_wrist_depth, self.left_wrist_info)
+                if side == "left"
+                else (self.right_wrist, self.right_wrist_depth, self.right_wrist_info)
+            )
+            self._publish(ports, color, depth, calibration, f"{side}_d405_link", _stamp_secs(rgb))
+            self._stats[side] += 1
+
+    @staticmethod
+    def _publish(
+        ports: tuple[Out[Image], Out[Image], Out[CameraInfo]],
+        color: np.ndarray,
+        depth: np.ndarray,
+        info: CameraInfo,
+        frame: str,
+        ts: float,
+    ) -> None:
+        info.frame_id, info.ts = frame, ts
+        ports[2].publish(info)
+        ports[0].publish(Image.from_numpy(color, ImageFormat.BGR, frame, ts))
+        ports[1].publish(Image.from_numpy(depth, ImageFormat.DEPTH, frame, ts))
+
+    def _run(self) -> None:
+        while not self._stop.wait(1 / self.config.publish_hz):
+            try:
+                self.capture()
+            except (ValueError, RuntimeError, cv2.error):
+                self._stats["errors"] += 1
+                logger.exception("R1 spatial camera capture failed")
+
+    @rpc
+    def sensor_stats(self) -> dict[str, int]:
+        return dict(self._stats)
+
+    @rpc
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+            self._thread = None
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
+        if self._ros is not None:
+            self._ros.stop()
+            self._ros = None
+        super().stop()
+
+
+class R1SpatialCloud(Module):
+    """Put Point-LIO's sensor-local cloud into the spatial viewer's world frame."""
+
+    lidar: In[PointCloud2]
+    pointcloud: Out[PointCloud2]
+    tf: IO[TFMessage]
+
+    @rpc
+    def start(self) -> None:
+        self.tfbuffer  # noqa: B018
+        super().start()
+
+    async def handle_lidar(self, cloud: PointCloud2) -> None:
+        transform = self.tfbuffer.get("world", cloud.frame_id, cloud.ts, 0.1, warn=False)
+        if transform is not None:
+            self.pointcloud.publish(cloud.transform(transform))

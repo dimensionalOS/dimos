@@ -338,3 +338,72 @@ This checks free-space actuation, not grasp force or object retention. The
 office blueprint restarted with 28 joint feedback coordinates and three fresh
 camera streams. A live WebSocket motion test was refused because the headset
 had already reconnected; no new live arm-motion result is claimed.
+
+## Real R1 Pro deployment
+
+`r1pro-spatial` uses the same Desktop/WebXR workstation as `r1pro-sim2`.
+It replaces simulation with `R1ProConnection`, the vendor joint tracker and
+chassis gatekeeper. Both use the shared arm IK tasks and body-relative clutch.
+The hardware binding captures measured posture at engagement; it never homes
+on startup. Grippers use the vendor's 0–100 percent opening, not the simulated
+finger displacement. Hardware joint jogging and automatic homing are disabled.
+
+On robot `r1-pro-0219` (Tailscale `100.68.53.40`):
+
+```bash
+ssh nvidia@100.68.53.40
+cd ~/dimos-r1pro-spatial
+./bin/run-r1pro-spatial --check  # optional: feedback + competing-controller checks only
+./bin/run-r1pro-spatial
+```
+
+The launcher uses ROS Humble, the installed Galaxea workspace, ROS domain **0**
+(the domain actually used by this robot's running drivers), FastDDS, and the
+checkout's system-Python-3.10 venv. It requires the vendor stack already running;
+it does not boot another vendor profile. Ctrl-C stops DimOS. The preflight refuses
+to start alongside another publisher on any arm, torso, gripper or chassis target.
+
+Open `https://100.68.53.40:8443/spatial` over Tailscale, or
+`https://10.10.167.201:8443/spatial` on the robot's current Wi-Fi. WebXR requires
+HTTPS accepted/trusted by the headset browser. The checkout uses the robot's
+existing Desktop certificate (covers both addresses). The same spatial page is
+exposed as a Desktop webview when that Desktop is connected to this run.
+Enter XR, release then squeeze a grip to clutch that arm, and use its trigger
+for the gripper. Left stick drives/straffes; right stick X turns; right stick Y
+changes torso height. Hold is explicit and latches until Resume. View scaling
+is on the HUD and does not share the gripper triggers.
+
+Hardware control caps arm commands at 0.25 rad/s, torso joints at 0.15 rad/s,
+base translation at 0.15 m/s and rotation at 0.25 rad/s. Torso height follows the
+URDF's two 0.35 m links, preserving horizontal reach, pitch and yaw; it advances
+only while tracking error remains under five degrees. This is model-based
+teleop, not a collision-avoiding whole-body controller. Physical motion has not
+been exercised during deployment.
+
+Sensors are read from the already-running vendor ROS camera drivers. Head depth
+is computed from the factory `/opt/galaxea/body/stereo.yaml`, with rectification
+and a 480×384 SGBM disparity map. Unsupported disparities stay holes. The two
+D405 wrist streams use aligned depth converted from ROS millimetres to metres;
+color and depth are rectified together using their live CameraInfo. All three
+RGB-D feeds target 5 Hz. A read-only on-robot sample measured about 104 ms for
+head JPEG decode plus stereo computation; this is not an end-to-end FPS claim.
+
+The chassis Mid-360 and Point-LIO supply world pose and the 5 cm voxel map, using
+the existing R1 mount transform. Native lidar sockets use the SDK host ports + 1
+to avoid the vendor listener sockets. The native driver configures the lidar
+stream when the blueprint starts. This stack does not launch another driver for
+any camera. URDF finger meshes remain welded in the hardware planning model;
+the interface's gripper opening is measured feedback, but the finger mesh itself
+is not animated.
+
+Install/update on the robot with:
+
+```bash
+uv sync --python /usr/bin/python3.10 --python-preference only-system \
+  --no-default-groups --extra base --extra manipulation --extra cpu
+```
+
+The native Mid-360/Point-LIO binaries must also be built for this checkout (Nix
+builds in their respective `rust` directories); they are prepared as part of this
+deployment. Keep the former `~/tmp/dimos-r1pro-manipulation` checkout separate:
+it contains pre-existing uncommitted hardware work.
