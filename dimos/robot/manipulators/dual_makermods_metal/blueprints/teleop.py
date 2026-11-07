@@ -110,21 +110,31 @@ def dual_metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     ).remappings(arm_remaps(DualMetalConnection, DamiaoTeleopCoordinator))
 
 
-teleop_webxr_dual_metal = autoconnect(
-    ArmTeleopModule.blueprint(zero_button="X"),
-    dual_metal_teleop_control(dual_metal_quest_tasks()),
-    DualMetalManipulationModule.blueprint(
-        model=DUAL_METAL_QUEST_MODEL,
-        gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
-        kinematics=DUAL_METAL_QUEST_KINEMATICS,
-        visualization={"backend": "viser"},
-        default_speed_scale=0.2,
-    ),
-).remappings(
-    [
-        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-    ]
-)
+def build_dual_metal_webxr() -> Blueprint:
+    """Compose two Metals' Quest teleop, one controller per arm.
+
+    A function rather than a bare expression so a deployment can rebuild the
+    stack, and so tests can compose it after changing ``global_config``, which
+    ``arm_connection`` reads when it decides between the Metal and the mock.
+    """
+    return autoconnect(
+        ArmTeleopModule.blueprint(zero_button="X"),
+        dual_metal_teleop_control(dual_metal_quest_tasks()),
+        DualMetalManipulationModule.blueprint(
+            model=DUAL_METAL_QUEST_MODEL,
+            gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
+            kinematics=DUAL_METAL_QUEST_KINEMATICS,
+            visualization={"backend": "viser"},
+            default_speed_scale=0.2,
+        ),
+    ).remappings(
+        [
+            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+        ]
+    )
+
+
+teleop_webxr_dual_metal = autoconnect(build_dual_metal_webxr())

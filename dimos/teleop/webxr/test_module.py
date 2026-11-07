@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 import pytest
 import pytest_mock
 
+from dimos.core.global_config import global_config
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Joy import Joy
@@ -164,10 +165,26 @@ def test_webxr_web_server_is_initialized_during_start(
 
     module.start()
 
-    web_interface.assert_called_once_with(host="0.0.0.0", port=9443)
+    # Loopback by default: a headset on the LAN opts in with --listen-host 0.0.0.0.
+    web_interface.assert_called_once_with(host=global_config.listen_host, port=9443)
     setup_routes.assert_called_once_with()
     start_server.assert_called_once_with()
     start_control_loop.assert_called_once_with()
+
+
+def test_webxr_web_server_binds_the_configured_listen_host(
+    module: WebXRTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    module.config.server_host = "127.0.0.1"
+    web_interface = mocker.patch("dimos.teleop.webxr.module.RobotWebInterface")
+    mocker.patch.object(module, "_setup_routes")
+    mocker.patch.object(module, "_start_server")
+    mocker.patch.object(module, "_start_control_loop")
+
+    module.start()
+
+    # A headset on the LAN needs the default 0.0.0.0; loopback-only is opt-in.
+    web_interface.assert_called_once_with(host="127.0.0.1", port=9443)
 
 
 def test_build_subscribes_to_episode_status(

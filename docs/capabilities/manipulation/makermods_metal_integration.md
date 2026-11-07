@@ -40,6 +40,54 @@ control without a planner is also available as `makermods-metal-connection-contr
 See the [connection test runbook](/docs/capabilities/manipulation/damiao-connections.md)
 for repository setup, command checks, and deadman checks.
 
+## Quest teleoperation
+
+The WebXR blueprints drive a Metal with a Meta Quest controller. They reuse the
+same coordinator, `TeleopIKTask`, gripper tasks and connection as the
+leader/follower stacks; only the input module changes.
+
+One Metal, simulated echo connection (no CAN, no vendor SDK):
+
+```bash
+uv run dimos --simulation run teleop-webxr-metal --listen-host 0.0.0.0
+```
+
+One Metal on hardware (again, only when you intend to move the arm):
+
+```bash
+uv run dimos run teleop-webxr-metal --can-port can0 --listen-host 0.0.0.0
+```
+
+Two Metals, one controller per arm:
+
+```bash
+uv run dimos run teleop-webxr-dual-metal \
+  --left-can-port can0 --right-can-port can1 --listen-host 0.0.0.0
+```
+
+The single-arm blueprint binds the **right** controller to the arm; there is no
+hand-selection flag (the task's binding is `{"hand": "right", ...}`). The dual
+blueprint binds the left controller to the left arm and the right controller to
+the right arm, with independent grips and triggers; use the matching controller
+for the arm you want to move. Holding a grip takes that arm; moving the
+controller while the grip is open does nothing. The trigger drives only that
+arm's jaw (1 fully open, 0 closed), and the `X` button commands the zero joint
+pose. Releasing the grip, stale controller input, a disconnect or a stop all end
+the session without resuming motion on their own; re-engage by squeezing the
+grip again, which recaptures the reference at the current controller pose.
+
+The WebXR server listens on `8443` and binds `global_config.listen_host`
+(`127.0.0.1` by default). A headset reaches the robot over the LAN, so pass
+`--listen-host 0.0.0.0` (or `--armteleopmodule.server-host 0.0.0.0`) and open
+`https://<robot-host-ip>:8443/` in the Quest browser. The server generates a
+self-signed certificate under `assets/teleop_certs/` on first start; accept the
+browser warning once, or trust that certificate on the headset. Use
+`--armteleopmodule.server-port` to change the port, and keep the default
+loopback bind when only a local browser drives the arm.
+
+Quest browser testing against real hardware is still a manual step; the
+automated tests exercise the blueprint wiring and the input-to-mock path only.
+
 ## Select native hardware
 
 Configure the existing CAN interfaces before starting the connection. Use a

@@ -41,6 +41,7 @@ from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
@@ -86,6 +87,8 @@ class WebXRTeleopConfig(ModuleConfig):
 
     control_loop_hz: float = 50.0
     server_port: int = 8443
+    #: Interface the embedded HTTPS server binds to; None uses ``global_config.listen_host``.
+    server_host: str | None = Field(default=None, min_length=1)
     input_timeout_s: float = Field(default=1.0, gt=0)
     body_tracking_mode: BodyTrackingMode = "off"
     # Quest button (e.g. "B") whose press moves ArmTeleopModule's arms to the zero joint pose.
@@ -341,13 +344,21 @@ class WebXRTeleopModule(Module):
         if self.status.connection is not None or self.status._transport is not None:
             self.register_disposable(Disposable(self.status.subscribe(self._on_episode_status)))
 
+    @property
+    def _listen_host(self) -> str:
+        """The configured bind address, or the deployment-wide one."""
+        return self.config.server_host or global_config.listen_host
+
     @rpc
     def start(self) -> None:
         super().start()
         self._body_report_started_at = None
         self._body_snapshots_since_report = 0
         self._body_tracking_acquired = False
-        self._web_server = RobotWebInterface(host="0.0.0.0", port=self.config.server_port)
+        self._web_server = RobotWebInterface(
+            host=self._listen_host,
+            port=self.config.server_port,
+        )
         self._setup_routes()
         self._start_server()
         self._start_control_loop()
@@ -491,7 +502,10 @@ class WebXRTeleopModule(Module):
             name="WebXRTeleopWebServer",
         )
         self._web_server_thread.start()
-        logger.info(f"WebXR teleop web server started on https://0.0.0.0:{self.config.server_port}")
+        logger.info(
+            f"WebXR teleop web server started on "
+            f"https://{self._listen_host}:{self.config.server_port}"
+        )
 
     def _stop_server(self) -> None:
         """Shutdown the embedded web server."""

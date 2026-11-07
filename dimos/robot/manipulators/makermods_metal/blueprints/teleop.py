@@ -99,14 +99,24 @@ def metal_teleop_control(
     ).remappings(arm_remaps(MetalConnection, coordinator))
 
 
-teleop_webxr_metal = autoconnect(
-    ArmTeleopModule.blueprint(zero_button="X"),
-    metal_teleop_control(metal_quest_tasks()),
-    ManipulationModule.blueprint(
-        model=METAL_QUEST_MODEL,
-        gripper_tasks={"arm": "metal_gripper"},
-        kinematics=METAL_QUEST_KINEMATICS,
-        visualization={"backend": "viser"},
-        default_speed_scale=0.2,
-    ),
-).remappings([(ArmTeleopModule, "right_controller_output", "right_cartesian_command")])
+def build_metal_webxr() -> Blueprint:
+    """Compose one Metal's Quest teleop: arm input, coordinator, connection and planner.
+
+    A function rather than a bare expression so a deployment can rebuild the
+    stack, and so tests can compose it after changing ``global_config``, which
+    ``arm_connection`` reads when it decides between the Metal and the mock.
+    """
+    return autoconnect(
+        ArmTeleopModule.blueprint(zero_button="X"),
+        metal_teleop_control(metal_quest_tasks()),
+        ManipulationModule.blueprint(
+            model=METAL_QUEST_MODEL,
+            gripper_tasks={"arm": "metal_gripper"},
+            kinematics=METAL_QUEST_KINEMATICS,
+            visualization={"backend": "viser"},
+            default_speed_scale=0.2,
+        ),
+    ).remappings([(ArmTeleopModule, "right_controller_output", "right_cartesian_command")])
+
+
+teleop_webxr_metal = autoconnect(build_metal_webxr())
