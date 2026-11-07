@@ -42,17 +42,15 @@ logger = setup_logger()
 # No single position, and no UsdPhysics equivalent: their pose comes from odometry.
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
+# A URDF planar joint moves in its own xy and turns about z, so the other three are locked.
+_OUT_OF_PLANE = ("transZ", "rotX", "rotY")
+
 # The algorithm is inside the value, so it can change without the old ones becoming unreadable.
 HASH_ALGORITHM = "sha256"
 
 # customData holding the URDF this converter does not read. Standard field, not an attribute.
 PASSTHROUGH_KEY = "urdf:unconverted"
 
-# A floating or planar joint is written as no joint prim at all, because in USD a rigid body
-# with no joint is already free. That is right, but it is also indistinguishable from a body
-# simply nested inside another, so the joint this converter chose not to express is recorded
-# on the child link. Without it, reading the layer back turns a floating base into a weld.
-FREE_JOINT_KEY = "urdf:freeJoint"
 
 _NO_USD = (
     "Reading or writing USD needs usd-core (pxr), which is in the 'scene-cooking' extra: "
@@ -372,9 +370,6 @@ def _write_joints(
             continue
         prim = _define_joint(pxr, stage, f"{scope.GetPath()}/{_identifier(pxr, joint.name)}", joint)
         if prim is None:
-            # No joint prim for a floating or planar joint, so say on the child what was left
-            # out; otherwise reading this layer back cannot tell it from a welded body.
-            _set_free_joint(pxr, stage.GetPrimAtPath(child), joint)
             continue
         prim.CreateBody0Rel().SetTargets([pxr.Sdf.Path(parent)])
         prim.CreateBody1Rel().SetTargets([pxr.Sdf.Path(child)])
@@ -391,9 +386,19 @@ def _define_joint(pxr: Any, stage: Any, path: str, joint: JointDescription) -> A
         return pxr.UsdPhysics.PrismaticJoint.Define(stage, path)
     if joint.type == "fixed":
         return pxr.UsdPhysics.FixedJoint.Define(stage, path)
-    # floating and planar have no UsdPhysics equivalent that matches URDF's semantics, and
-    # their pose comes from odometry rather than the model (see UrdfManager).
-    logger.debug(f"joint {joint.name!r} of type {joint.type!r} is left out of the USD")
+    if joint.type in _MULTI_DOF_JOINT_TYPES:
+        # The base PhysicsJoint is the generic one: with nothing locked it is free in all six
+        # degrees, which is a URDF floating joint. A planar joint is the same with the axes out
+        # of its plane locked, which is what PhysicsLimitAPI is for. Both are standard, so
+        # nothing downstream has to read metadata of ours to recognise them.
+        prim = pxr.UsdPhysics.Joint.Define(stage, path)
+        if joint.type == "planar":
+            for axis in _OUT_OF_PLANE:
+                locked = pxr.UsdPhysics.LimitAPI.Apply(prim.GetPrim(), axis)
+                locked.CreateLowAttr(0.0)
+                locked.CreateHighAttr(0.0)
+        return prim
+    logger.warning(f"joint {joint.name!r} of type {joint.type!r} has no USD equivalent; left out")
     return None
 
 
@@ -403,13 +408,16 @@ def _set_joint_frames(pxr: Any, prim: Any, joint: JointDescription) -> None:
     ``physics:axis`` is only ever X, Y or Z, so a URDF axis that is none of those is folded
     into both local rotations: the joint is authored about z with the bodies turned instead.
     """
-    to_z = _rotation_to_z(joint.axis) if joint.type != "fixed" else Rotation.identity()
+    # A joint with no single axis -- fixed, or free in several degrees -- is not turned onto z.
+    single_axis = joint.type not in {"fixed", *_MULTI_DOF_JOINT_TYPES}
+    to_z = _rotation_to_z(joint.axis) if single_axis else Rotation.identity()
     origin = Rotation.from_euler("xyz", joint.origin_rpy)
     prim.CreateLocalPos0Attr(pxr.Gf.Vec3f(*joint.origin_xyz))
     prim.CreateLocalRot0Attr(_quat(pxr, origin * to_z))
     prim.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     prim.CreateLocalRot1Attr(_quat(pxr, to_z))
-    if joint.type != "fixed":
+    if single_axis:
+        # Only the single-axis joint schemas have an axis; the generic PhysicsJoint has none.
         prim.CreateAxisAttr(pxr.UsdPhysics.Tokens.z)
 
 
@@ -618,22 +626,6 @@ def require_asset_hashes(usd: str, *, what: str) -> None:
         f"{what} references {len(missing)} asset(s) with no hash. Every asset needs one: a "
         f"path alone cannot say whether the file fetched is the file meant. Set "
         f'assetInfo["version"] on each prim below (urdf_to_usd does this for you):\n{listed}'
-    )
-
-
-def _set_free_joint(pxr: Any, prim: Any, joint: JointDescription) -> None:
-    """Record the joint that was deliberately not written, on the link it moves."""
-    if not prim:
-        return
-    prim.SetCustomDataByKey(
-        FREE_JOINT_KEY,
-        {
-            "name": joint.name,
-            "type": joint.type,
-            "parent": joint.parent_link,
-            "xyz": pxr.Vt.DoubleArray([float(value) for value in joint.origin_xyz]),
-            "rpy": pxr.Vt.DoubleArray([float(value) for value in joint.origin_rpy]),
-        },
     )
 
 

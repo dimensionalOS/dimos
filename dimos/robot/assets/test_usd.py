@@ -401,11 +401,40 @@ def test_a_floating_joints_child_sits_at_the_joint_origin(floater: Any) -> None:
     np.testing.assert_allclose(tuple(transform.ExtractTranslation()), (0, 0, 0.8), atol=1e-9)
 
 
-def test_a_floating_joint_gets_no_joint_prim(floater: Any) -> None:
-    # UsdPhysics has no equivalent matching URDF's semantics, so it is left out deliberately.
+def test_a_floating_joint_is_the_generic_joint(floater: Any) -> None:
+    """The base PhysicsJoint is free in all six degrees, which is what a URDF floating joint is.
+
+    Standard, so a reader does not need metadata of ours to recognise one -- and a prim means a
+    layer read back can tell a free base from a body that is merely nested inside another.
+    """
     stage = _stage(urdf_to_usd(floater))
 
-    assert not stage.GetPrimAtPath("/floater/joints/floating_base_joint")
+    prim = stage.GetPrimAtPath("/floater/joints/floating_base_joint")
+    assert prim, [p.GetName() for p in stage.Traverse()]
+    assert str(prim.GetTypeName()) == "PhysicsJoint"
+    # Nothing locked, and no axis: the generic joint has none.
+    assert not prim.GetAttribute("physics:axis")
+
+
+def test_a_planar_joint_locks_the_axes_out_of_its_plane(tmp_path: Path) -> None:
+    """A URDF planar joint moves in its own xy and turns about z, so the other three are locked.
+
+    PhysicsLimitAPI is the standard way to say that, which keeps it apart from a floating joint
+    without either of them needing a custom field.
+    """
+    source = tmp_path / "cart.urdf"
+    source.write_text(
+        '<robot name="cart"><link name="world"/><link name="body"/>'
+        '<joint name="planar_base" type="planar"><parent link="world"/>'
+        '<child link="body"/></joint></robot>'
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(source).load()))
+
+    prim = stage.GetPrimAtPath("/cart/joints/planar_base")
+    assert prim
+    applied = {str(name) for name in prim.GetAppliedSchemas()}
+    assert {"PhysicsLimitAPI:transZ", "PhysicsLimitAPI:rotX", "PhysicsLimitAPI:rotY"} <= applied
+    assert prim.GetAttribute("limit:transZ:physics:high").Get() == 0.0
 
 
 _HASHED_URDF = """<?xml version="1.0"?>
