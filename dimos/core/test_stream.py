@@ -193,14 +193,14 @@ def test_subscription(dimos, subscriber_class) -> None:
 
     robot.start()
     subscriber.sub1()
-    subscriber.wait_for_sub1_msg()
+    assert subscriber.wait_for_sub1_msg(), "no odometry reached sub1 within its wait"
 
     assert subscriber.sub1_msgs_len() > 0
     assert subscriber.sub2_msgs_len() == 0
     assert subscriber.active_subscribers() == 1
 
     subscriber.sub2()
-    subscriber.wait_for_sub2_msg()
+    assert subscriber.wait_for_sub2_msg(), "no odometry reached sub2 within its wait"
 
     subscriber.unsub_all()
 
@@ -233,8 +233,8 @@ def test_get_next(dimos, odometry_publisher) -> None:
     subscriber = dimos.deploy(RXPYSubscriber)
     subscriber.odom.connect(odometry_publisher.odometry)
 
-    # Replay also loads/converts LiDAR between odometry messages, which can
-    # exceed get_next's timeout on a cold worker. Publish only what we test.
+    # The replay thread imports open3d between odometry samples, which exceeded
+    # get_next's timeout on a loaded runner. Publish only what we test.
     with ThreadPoolExecutor(max_workers=1) as executor:
         for x in (1.0, 2.0):
             expected = Odometry(position=[x, 0.0, 0.0], ts=x, frame_id="world")
