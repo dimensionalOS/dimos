@@ -113,7 +113,7 @@ def test_the_chest_stacks_calibrate_a_fixed_camera_against_the_held_plate() -> N
 
 def test_the_shipped_wrist_result_is_a_passed_link6_mount() -> None:
     from dimos.manipulation.calibration.store import load_hand_eye_file
-    from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_CALIBRATION_DIR
+    from dimos.robot.manipulators.xarm.cameras import XARM_CALIBRATION_DIR
 
     mount = load_hand_eye_file(XARM_CALIBRATION_DIR / "xarm6_wrist_camera.json")
     assert mount is not None
