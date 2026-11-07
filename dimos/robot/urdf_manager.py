@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One URDF and the live joint state: every joint on tf, and the URDF and its files for renderers."""
+"""One URDF and the live joint state: every joint on tf, and the robot as USD for renderers."""
 
 from __future__ import annotations
 
@@ -48,6 +48,10 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 # The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
 
+# What a renderer asks for to get the scene itself. The URDF is this module's input, not its
+# output: what it serves is USD.
+USD_SUFFIXES = (".usd", ".usda")
+
 # get_scene waits forever, so say so periodically rather than hang silently.
 _WAITING_LOG_EVERY = 20
 
@@ -70,15 +74,15 @@ class UrdfManagerConfig(ModuleConfig):
 
 
 class UrdfManager(Module):
-    """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
+    """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
     config: UrdfManagerConfig
 
     # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
-    # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
-    # gets that file. Either goes out on file_info named as requested.
+    # A request for a *.usd or *.usda gets the scene as a USD layer; one for a file that layer
+    # names (mesh, texture, splat, ...) gets that file. Either goes out on file_info as requested.
     render_file_request: In[String]
     file_info: Out[File]
 
@@ -94,6 +98,9 @@ class UrdfManager(Module):
         self._usd: str | None = None
         # Its own lock: baking meshes into a USD takes seconds, and self._lock is on the tf path.
         self._usd_lock = RLock()
+        # The last scene get_scene assembled. A renderer wants the whole tree, not just this
+        # robot, and only get_scene knows what is mounted.
+        self._scene: str | None = None
         self._subtree_clients: dict[type[Module], RPCClient] = {}
         try:
             self._check_mounts()
@@ -151,7 +158,8 @@ class UrdfManager(Module):
         """
         subtrees = await self._subtrees()
         root = self.get_usd()
-        return graft_usd(root, subtrees) if subtrees else root
+        self._scene = graft_usd(root, subtrees) if subtrees else root
+        return self._scene
 
     async def _subtrees(self) -> dict[str, str]:
         mounts = self.config.mounts
@@ -209,8 +217,9 @@ class UrdfManager(Module):
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
-        if name.endswith(".urdf"):
-            self.file_info.publish(File(name, self._description.xml.encode()))
+        if name.endswith(USD_SUFFIXES):
+            usd = self._scene if self._scene is not None else self.get_usd()
+            self.file_info.publish(File(name, usd.encode()))
             return
         # Only files the URDF names: a request is never an arbitrary path into the filesystem.
         if name not in self._file_paths:

@@ -343,7 +343,7 @@ def test_no_tf_edge_is_published(make_filter, overrides):
     assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None
 
 
-def test_render_file_request_serves_the_urdf_and_only_files_it_names(
+def test_render_file_request_serves_the_usd_and_only_files_it_names(
     make_filter, tmp_path, monkeypatch
 ):
     package = tmp_path / "box_description"
@@ -367,18 +367,20 @@ def test_render_file_request_serves_the_urdf_and_only_files_it_names(
     cube = str((package / "meshes" / "cube.stl").resolve())
     texture = str((package / "textures" / "skin.png").resolve())
 
-    # the URDF and the files by the full paths it names; anything else on disk gets nothing
+    # the scene and the files by the full paths it names; the URDF and anything else gets nothing
+    pytest.importorskip("pxr")
     for request in (
-        str(urdf),
+        "robot.usda",
         cube,
         texture,
+        str(urdf),
         str(package / "meshes"),
         "package://box/meshes/cube.stl",
     ):
         asyncio.run(module.handle_render_file_request(String(request)))
 
-    assert [file.uri for file in sent] == [str(urdf), cube, texture]
-    assert f'filename="{cube}"' in sent[0].data.decode()
+    assert [file.uri for file in sent] == ["robot.usda", cube, texture]
+    assert sent[0].data.decode().startswith("#usda")
     assert File.lcm_decode(sent[1].lcm_encode()).data == Path(cube).read_bytes()
     assert sent[2].data == b"png bytes"
 
@@ -604,3 +606,19 @@ def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="no @rpc get_usd"):
         make_manager(mounts={"arm": _NoUsd})
+
+
+def test_render_file_request_serves_the_whole_scene_once_one_is_assembled(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """A renderer wants the tree it is drawing, not just the robot at the root of it."""
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(_SUBTREE_USD))
+    sent: list[File] = []
+    module.file_info.publish = sent.append  # type: ignore[method-assign]
+
+    asyncio.run(cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)())
+    asyncio.run(module.handle_render_file_request(String("scene.usd")))
+
+    assert "fake_arm" in sent[0].data.decode()
