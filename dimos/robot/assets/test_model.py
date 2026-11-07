@@ -867,7 +867,7 @@ def test_a_missing_usd_file_says_so_when_the_layer_is_asked_for(tmp_path: Path) 
     model = robot_model.UsdModel.from_file(tmp_path / "gone.usda")
 
     with pytest.raises(FileNotFoundError, match="no USD file at"):
-        _ = model.usd
+        model.usd  # noqa: B018 - reading the property is what reads the file
 
 
 def test_a_binary_usd_layer_is_refused_with_what_to_do(tmp_path: Path) -> None:
@@ -877,4 +877,4 @@ def test_a_binary_usd_layer_is_refused_with_what_to_do(tmp_path: Path) -> None:
     model = robot_model.UsdModel.from_file(crate)
 
     with pytest.raises(ValueError, match="export it as .usda"):
-        _ = model.usd
+        model.usd  # noqa: B018 - reading the property is what reads the file
