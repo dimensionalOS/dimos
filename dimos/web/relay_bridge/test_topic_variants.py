@@ -253,19 +253,32 @@ async def test_closing_a_variant_frees_its_writer_and_the_route_drops_the_rest(
         "v1": normalize_settings(PROFILE, {}),
         "v2": normalize_settings(PROFILE, {"maxHz": 10, "quality": 40}),
     }
-    # A rate change keeps the writer; new encode settings on the slot swap it.
+    # A rate change keeps the writer; an id never takes other encode settings.
     route.set_variant("v2", {"maxHz": 20, "quality": 40})
     assert harness.client.writers == [first, second]
-    route.set_variant("v2", {"maxHz": 20, "quality": 30})
-    assert second._closed
-    assert len(harness.client.writers) == 3
+    with pytest.raises(ValueError, match="variant_settings_changed"):
+        route.set_variant("v2", {"maxHz": 20, "quality": 30})
+    assert route.variants["v2"]["quality"] == 40
     await route.close_variant("v2")
-    assert harness.client.writers[2]._closed
+    assert second._closed
     assert list(route.variants) == ["v1"]
     assert not first._closed
     await route.close()
     assert first._closed
     assert harness.zenoh.subscribers[0].undeclared
+
+
+async def test_ids_grow_without_bound_but_the_open_variants_do_not(harness: Harness) -> None:
+    route = harness.make(normalize_settings(PROFILE, {"maxHz": 30}))
+    await route.start()
+    for quality, name in zip((10, 20, 30), ("v2", "v3", "v4"), strict=True):
+        route.set_variant(name, {"quality": quality})
+    with pytest.raises(ValueError, match="variant_limit"):
+        route.set_variant("v5", {"quality": 40})
+    await route.close_variant("v4")
+    assert route.set_variant("v5", {"quality": 40})["quality"] == 40
+    assert list(route.variants) == ["v1", "v2", "v3", "v5"]
+    await route.close()
 
 
 async def test_an_older_relay_drives_the_only_variant_through_activation(

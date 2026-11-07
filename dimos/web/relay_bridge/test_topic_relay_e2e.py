@@ -16,14 +16,18 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+import itertools
 import json
 from pathlib import Path
 import sys
 import threading
+import time
 from typing import Any
 
+from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from dimos_lcm.sensor_msgs import Image
+import numpy as np
 import pytest
 import zenoh
 
@@ -56,6 +60,9 @@ from dimos.web.relay_bridge.topic_protocol import (
     TopicPage,
     TopicPubResult,
     TopicReady,
+    TopicRtcAnswer,
+    TopicRtcClose,
+    TopicRtcOffer,
     TopicSettings,
     TopicSettingsRequest,
     TopicSources,
@@ -1321,3 +1328,229 @@ async def test_a_raw_rate_update_is_acknowledged_by_the_relay_and_reliable_event
         viewer.send_control(TopicUpdate(id="events", revision=2, options=TopicOptions(quality=1)))
         error = await next_message(viewer, TopicError)
         assert (error.revision, error.code) == (2, "unsupported_option")
+
+
+# Direct video (PLAN_2b): an aiortc viewer stands in for the browser.
+
+
+def camera_frame(seq: int, width: int = 320, height: int = 240) -> bytes:
+    """An rgb8 Image whose picture moves with ``seq``, so the encoder has work."""
+    message = Image.lcm_decode(bytes.fromhex(boxed_vector()["lcm"]))
+    message.header.seq = seq
+    shape = (height, width)
+    rows = np.broadcast_to((np.arange(height)[:, None] * 2 + seq * 7) % 256, shape)
+    cols = np.broadcast_to((np.arange(width)[None, :] * 3 + seq * 5) % 256, shape)
+    picture = np.stack([(rows + cols) % 256, rows, cols], axis=2).astype(np.uint8)
+    message.height, message.width, message.encoding = height, width, "rgb8"
+    message.is_bigendian, message.step = False, width * 3
+    message.data = picture.tobytes()
+    message.data_length = len(message.data)
+    return message.lcm_encode()
+
+
+class VideoViewer:
+    """One relay viewer with one direct peer: the browser's half in Python."""
+
+    def __init__(self, client: RelayClient, ready: TopicReady) -> None:
+        self.client = client
+        self.ready = ready
+        self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
+        self.track: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self.pc.on("track", lambda track: self.track.set_result(track))
+        self.closes: list[TopicRtcClose] = []
+
+    async def offer(self) -> None:
+        self.pc.addTransceiver("video", direction="recvonly")
+        await self.pc.setLocalDescription(await self.pc.createOffer())
+        self.client.send_control(
+            TopicRtcOffer(
+                id=self.ready.id,
+                route=self.ready.route,
+                gen=self.ready.gen,
+                sdp=self.pc.localDescription.sdp,
+            )
+        )
+        async with timeout(10):
+            while True:
+                msg = await self.client._session.control_msgs.get()
+                if isinstance(msg, TopicRtcAnswer):
+                    break
+                if isinstance(msg, TopicRtcClose):
+                    raise AssertionError(f"peer closed: {msg.reason}")
+        assert (msg.id, msg.route, msg.gen) == (self.ready.id, self.ready.route, self.ready.gen)
+        await self.pc.setRemoteDescription(RTCSessionDescription(sdp=msg.sdp, type="answer"))
+
+    async def frames(self, count: int, limit: float = 15) -> list[Any]:
+        async with timeout(limit):
+            track = await self.track
+            return [await track.recv() for _ in range(count)]
+
+    async def close(self) -> None:
+        await self.pc.close()
+
+
+@asynccontextmanager
+async def video_viewer(
+    relay: RelayReadyInfo,
+    key: str,
+    settings: TopicSettingsRequest | None = None,
+    max_hz: float = 30,
+) -> AsyncIterator[VideoViewer]:
+    async with await RelayClient.connect(relay.wt_url, "viewer") as client:
+        await client.hello(topics=True)
+        sources = await next_message(client, TopicSources)
+        assert "video.h264.v1" in sources.sources[0].profiles
+        ready = await subscribe_camera(
+            client, key, profile="video.h264.v1", settings=settings, max_hz=max_hz
+        )
+        viewer = VideoViewer(client, ready)
+        try:
+            yield viewer
+        finally:
+            await viewer.close()
+
+
+@contextmanager
+def publish_camera(
+    source: zenoh.Session, key: str, count: int, hz: float = 30
+) -> Iterator[threading.Thread]:
+    """Publish up to ``count`` synthetic frames at ``hz`` from a thread that
+    stops with the block, so a failing test never leaves it putting into a
+    closing session."""
+    stop = threading.Event()
+
+    def run() -> None:
+        # Absolute schedule: building a frame never lowers the rate.
+        period = 1 / hz
+        next_at = time.monotonic()
+        for seq in range(count):
+            if stop.is_set():
+                return
+            source.put(key, camera_frame(seq))
+            next_at += period
+            stop.wait(max(0.0, next_at - time.monotonic()))
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    try:
+        yield thread
+    finally:
+        stop.set()
+        thread.join(5)
+
+
+async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
+    relay: RelayReadyInfo, mocker
+) -> None:
+    from dimos.web.relay_bridge import topic_video
+
+    encode = mocker.spy(topic_video.SharedEncoder, "encode")
+    with local_session() as session:
+        async with (
+            provider_connection(relay, session, video=True) as provider,
+            video_viewer(relay, "sensor/video") as first,
+            video_viewer(relay, "sensor/video") as second,
+        ):
+            await first.offer()
+            await second.offer()
+            assert provider._video is not None
+            assert provider._video.encoders() == 1
+            assert len(provider._video.peers) == 2
+            with publish_camera(session, "sensor/video", 60):
+                frames = await asyncio.gather(first.frames(10), second.frames(10))
+            for received in frames:
+                assert {(frame.width, frame.height) for frame in received} == {(320, 240)}
+                # A viewer starts from an IDR: the first picture decodes whole.
+                assert received[0].key_frame
+            assert encode.call_count >= 10
+            encoder = next(iter(next(iter(provider._video._routes.values())).encoders.values()))
+            assert encoder.frames == encode.call_count
+            assert encoder.keyframes >= 1
+
+
+async def test_direct_video_viewers_receive_the_rate_each_requested(relay: RelayReadyInfo) -> None:
+    def gaps(frames: list[Any]) -> list[float]:
+        return [float((b.pts - a.pts) * a.time_base) for a, b in itertools.pairwise(frames)]
+
+    def rate(frames: list[Any]) -> float:
+        return (len(frames) - 1) / sum(gaps(frames))
+
+    with local_session() as session:
+        async with (
+            provider_connection(relay, session, video=True) as provider,
+            video_viewer(relay, "sensor/rates", max_hz=5) as slow,
+            video_viewer(relay, "sensor/rates", max_hz=30) as fast,
+        ):
+            assert slow.ready.settings is not None and slow.ready.settings.maxHz == 5
+            assert fast.ready.settings is not None and fast.ready.settings.maxHz == 30
+            await slow.offer()
+            await fast.offer()
+            assert provider._video is not None
+            assert provider._video.encoders() == 2
+            with publish_camera(session, "sensor/rates", 120):
+                slow_frames, fast_frames = await asyncio.gather(slow.frames(8), fast.frames(30))
+            # Each viewer runs on its own gate: the slow one holds its 5 Hz
+            # while the fast one is free to go well under the slow period.
+            # The absolute cadence is the benchmark's business
+            # (docs/web/benchmarks/topic-video.md); a slow runner encodes
+            # fewer frames a second, and the counters below say where.
+            route = next(iter(provider._routes.values()))
+            assert route.video is not None
+            detail = (
+                f"mailbox replaced {route._mailbox.dropped}, encoders "
+                f"{ {n: (e.frames, e.keyframes, e.dropped) for n, e in route.video.encoders.items()} }, "
+                f"slow gaps {[round(g, 3) for g in gaps(slow_frames)]}, "
+                f"fast gaps {[round(g, 3) for g in gaps(fast_frames)]}"
+            )
+            assert 3.5 <= rate(slow_frames) <= 6.5, detail
+            assert min(gaps(slow_frames)) >= 0.15, detail
+            assert min(gaps(fast_frames)) <= 0.1, detail
+            assert rate(fast_frames) > rate(slow_frames), detail
+
+
+async def test_direct_video_last_viewer_closing_releases_the_encoder_within_a_second(
+    relay: RelayReadyInfo, mocker
+) -> None:
+    from dimos.web.relay_bridge import topic_video
+
+    encode = mocker.spy(topic_video.SharedEncoder, "encode")
+    with local_session() as session:
+        async with provider_connection(relay, session, video=True) as provider:
+            assert provider._video is not None
+            with publish_camera(session, "sensor/leaving", 150):
+                async with video_viewer(relay, "sensor/leaving") as viewer:
+                    await viewer.offer()
+                    await viewer.frames(5)
+                    assert provider._video.encoders() == 1
+                # The viewer connection is gone: the relay closes the route and
+                # the peer, and the frames still arriving encode nothing.
+                async with timeout(1):
+                    while provider._video.encoders() or provider._video.peers or provider._routes:
+                        await asyncio.sleep(0.02)
+                assert not provider._video._routes
+                settled = encode.call_count
+                await asyncio.sleep(0.3)
+                assert encode.call_count == settled
+
+
+async def test_direct_video_provider_shutdown_ends_the_track(relay: RelayReadyInfo) -> None:
+    with local_session() as session:
+        provider = AsyncExitStack()
+        await provider.enter_async_context(provider_connection(relay, session, video=True))
+        async with video_viewer(relay, "sensor/ending") as viewer:
+            await viewer.offer()
+            with publish_camera(session, "sensor/ending", 30):
+                await viewer.frames(3)
+            ended: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+
+            @viewer.pc.on("connectionstatechange")  # type: ignore[untyped-decorator]
+            def _state() -> None:
+                state = viewer.pc.connectionState
+                if not ended.done() and state not in ("connected", "connecting"):
+                    ended.set_result(state)
+
+            await provider.aclose()
+            # The provider closed its peer; the relay reports the source gone.
+            async with timeout(10):
+                assert await ended in ("closed", "failed")
+            assert (await next_message(viewer.client, TopicError)).code == "source_offline"

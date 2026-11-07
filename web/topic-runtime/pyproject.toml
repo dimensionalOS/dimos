@@ -16,6 +16,10 @@ dependencies = [
     "structlog==25.5.0",
     "numpy==2.3.5",
     "pillow==12.2.0",
+    # Direct WebRTC video (video.h264.v1); imported only with video enabled.
+    "aiortc==1.14.0",
+    "aioice==0.10.2",
+    "av==16.1.0",
     # Upstream cryptography 49+ no longer publishes Intel macOS wheels.
     # Keep an explicit compatible pair for this still-supported Desktop target.
     "cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
@@ -31,7 +35,8 @@ dimos-topic-service = "dimos.web.relay_bridge.topic_service:main"
 # Build the low-level modules from their canonical sources. Desktop installs
 # this wheel only into its own versioned runtime environment, never alongside
 # the full dimos distribution. No coordinator, typed messages, or robot modules
-# are shipped. NumPy/Pillow load lazily for explicitly requested media only.
+# are shipped. NumPy/Pillow load lazily for explicitly requested media only;
+# aiortc/PyAV only for a provider with video enabled.
 [tool.hatch.build.targets.wheel]
 only-include = []
 
@@ -56,3 +61,4 @@ only-include = []
 "../../dimos/web/relay_bridge/topic_profiles.py" = "dimos/web/relay_bridge/topic_profiles.py"
 "../../dimos/web/relay_bridge/topic_transform.py" = "dimos/web/relay_bridge/topic_transform.py"
 "../../dimos/web/relay_bridge/topic_media.py" = "dimos/web/relay_bridge/topic_media.py"
+"../../dimos/web/relay_bridge/topic_video.py" = "dimos/web/relay_bridge/topic_video.py"
