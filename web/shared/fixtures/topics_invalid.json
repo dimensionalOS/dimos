@@ -1,0 +1,504 @@
+{
+  "vectors": [
+    {
+      "name": "invalid_rate_update_0",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": null
+      }
+    },
+    {
+      "name": "invalid_rate_update_1",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": true
+      }
+    },
+    {
+      "name": "invalid_rate_update_2",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": 0
+      }
+    },
+    {
+      "name": "invalid_rate_update_3",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": -1
+      }
+    },
+    {
+      "name": "invalid_rate_update_4",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": 1001
+      }
+    },
+    {
+      "name": "invalid_rate_update_5",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": "30"
+      }
+    },
+    {
+      "name": "invalid_guard_handle",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@t:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "guard_handle_newline",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1\n",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "boolean_guard_ticket",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": true,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "zero_guard_ticket",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 0,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "fractional_guard_timeout",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400.5
+      }
+    },
+    {
+      "name": "unbounded_guard_timeout",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 1001
+      }
+    },
+    {
+      "name": "invalid_capabilities_0",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": null
+      }
+    },
+    {
+      "name": "invalid_capabilities_1",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": 1,
+          "write": false,
+          "profiles": [
+            "raw"
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid_capabilities_2",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw"
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid_capabilities_3",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "boolean_version",
+      "message": {
+        "t": "topic_sources",
+        "v": true,
+        "sources": []
+      }
+    },
+    {
+      "name": "boolean_hello_version",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "viewer",
+        "topicsVersion": true
+      }
+    },
+    {
+      "name": "null_hello_source",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "topicSource": null
+      }
+    },
+    {
+      "name": "empty_key",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "long_unicode_key",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "βββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββ",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "bad_source",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "../workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "source_cr",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace\r",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "source_lf",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace\n",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "source_unicode_line_end",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace ",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "negative_rate",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": -1
+      }
+    },
+    {
+      "name": "boolean_rate",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": true
+      }
+    },
+    {
+      "name": "unknown_delivery",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "datagram",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "empty_profile",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "long_id",
+      "message": {
+        "t": "topic_sub",
+        "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "literal_key_route",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "demo/a",
+        "gen": 3
+      }
+    },
+    {
+      "name": "route_cr",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2\r",
+        "gen": 3
+      }
+    },
+    {
+      "name": "route_unicode_line_end",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2 ",
+        "gen": 3
+      }
+    },
+    {
+      "name": "negative_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": -1
+      }
+    },
+    {
+      "name": "fractional_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 1.5
+      }
+    },
+    {
+      "name": "boolean_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": true
+      }
+    },
+    {
+      "name": "unsafe_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 9007199254740992
+      }
+    },
+    {
+      "name": "oversized_page",
+      "message": {
+        "t": "topic_list",
+        "id": "l1",
+        "source": "workspace",
+        "prefix": "demo/",
+        "cursor": "",
+        "limit": 33
+      }
+    },
+    {
+      "name": "fractional_limit",
+      "message": {
+        "t": "topic_list",
+        "id": "l1",
+        "source": "workspace",
+        "prefix": "demo/",
+        "cursor": "",
+        "limit": 1.5
+      }
+    },
+    {
+      "name": "negative_credit",
+      "message": {
+        "t": "topic_credit",
+        "route": "@t:v2",
+        "gen": 3,
+        "frames": 40,
+        "bytes": -1
+      }
+    },
+    {
+      "name": "boolean_credit",
+      "message": {
+        "t": "topic_credit",
+        "route": "@t:v2",
+        "gen": 3,
+        "frames": true,
+        "bytes": 13000
+      }
+    },
+    {
+      "name": "unknown_outcome",
+      "message": {
+        "t": "topic_error",
+        "id": "s1",
+        "code": "source_offline",
+        "message": "Source interrupted",
+        "outcome": "probably"
+      }
+    },
+    {
+      "name": "bad_descriptors",
+      "message": {
+        "t": "topic_page",
+        "id": "l1",
+        "source": "workspace",
+        "gen": 3,
+        "entries": [
+          {
+            "key": "a",
+            "type": "",
+            "encoding": "",
+            "availability": "live"
+          }
+        ],
+        "cursor": ""
+      }
+    }
+  ]
+}
