@@ -17,7 +17,9 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Iterator
 from pathlib import Path
+import threading
 from typing import Any, cast
+from unittest.mock import patch
 
 import numpy as np
 from open3d.core import Tensor
@@ -1627,3 +1629,33 @@ def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
 
     assert transform.child_frame_id == "gripper"
     assert module._file_paths == set()
+
+
+def test_the_usd_layer_is_built_off_the_event_loop_thread(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """Building it imports usd-core and converts the URDF: ~150 ms on a real robot.
+
+    That has to happen on a worker thread, or a renderer's first request stalls tf and
+    every other handler for as long as it takes.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager()
+    loop_thread: list[int] = []
+    built_on: list[int] = []
+    real = UrdfManager.get_usd
+
+    def record(self: UrdfManager) -> str:
+        built_on.append(threading.get_ident())
+        return real(self)
+
+    async def ask() -> None:
+        loop_thread.append(threading.get_ident())
+        await module.handle_render_file_request(String("scene.usda"))
+
+    module.file_info.publish = lambda *_: None  # type: ignore[method-assign]
+    with patch.object(UrdfManager, "get_usd", record):
+        asyncio.run(ask())
+
+    assert built_on, "get_usd was never called"
+    assert built_on[0] != loop_thread[0]
