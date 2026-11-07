@@ -26,7 +26,10 @@ from dimos.robot.manipulators.makermods_metal.blueprints.learning_collection_sim
 )
 from dimos.robot.manipulators.makermods_metal.blueprints.sim import metal_sim
 from dimos.robot.urdf_manager import UrdfManager
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.urdf_manager_point_clearing import (
+    UrdfManagerPointClearing,
+    UrdfManagerPointClearingConfig,
+)
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -75,3 +78,5 @@ def test_the_sim_cloud_becomes_the_planner_map_through_the_self_and_box_filters(
     assert mapping.voxel_size == planning.voxel_map_resolution
     # About one cell, so a voxel the camera now sees through just above the bench clears.
     assert mapping.grace_depth < 2 * mapping.voxel_size
+    # Wide enough that bench cells beside the base go with the arm's own points.
+    assert UrdfManagerPointClearingConfig.model_validate(urdf.kwargs).padding_m >= 0.015

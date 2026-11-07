@@ -196,6 +196,7 @@ def manipulation_mapping(
     voxel_size: float,
     world_frame: str = "world",
     grace_depth: float | None = None,
+    self_filter_padding: float | None = None,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
@@ -215,8 +216,12 @@ def manipulation_mapping(
         grace_depth: How close to a ray's end, metres, the mapper never clears a
             voxel; None keeps the mapper's room-scale 0.2 m. A voxel that close
             to the table, such as an object that has since moved, never clears.
+        self_filter_padding: How far around the robot's links, metres, the self
+            filter also drops points; None keeps its 0.01 m. Raise it when table
+            cells beside the base stay in the map and the base collides with them.
     """
     mapper_overrides = {} if grace_depth is None else {"grace_depth": grace_depth}
+    filter_overrides = {} if self_filter_padding is None else {"padding_m": self_filter_padding}
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
             # ManipulationModule already publishes the arm's frames.
@@ -229,6 +234,7 @@ def manipulation_mapping(
             # while scanning, so a transform a period old describes the same pose.
             tf_tolerance_s=0.1,
             tf_forward_tolerance_s=0.1,
+            **filter_overrides,
         ),
         # Tabletop reach, not a room-scale lidar sweep.
         RayTracingVoxelMap.blueprint(

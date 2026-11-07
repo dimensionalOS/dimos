@@ -28,6 +28,7 @@ from dimos.robot.manipulators.makermods_metal.config import (
     METAL_HEURISTIC_AIM,
     METAL_SIM_HOME,
     METAL_SIM_MAP_GRACE,
+    METAL_SIM_SELF_FILTER_PADDING,
     METAL_SIM_VOXEL_SIZE,
     METAL_TF_LINKS,
     make_metal_model_config,
@@ -69,6 +70,7 @@ metal_sim = autoconnect(
         self_filter_model=_MODEL.model,
         voxel_size=METAL_SIM_VOXEL_SIZE,
         grace_depth=METAL_SIM_MAP_GRACE,
+        self_filter_padding=METAL_SIM_SELF_FILTER_PADDING,
     ),
 )
 

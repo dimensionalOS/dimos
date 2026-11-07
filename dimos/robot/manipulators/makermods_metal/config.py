@@ -87,6 +87,11 @@ METAL_SIM_VOXEL_SIZE = 0.025
 #: How close to the bench, metres along a camera ray, the map never clears a
 #: voxel: just over one cell, so a cube that moved off a spot clears from it.
 METAL_SIM_MAP_GRACE = 0.03
+#: How far around the arm's links, metres, the map's self filter drops points.
+#: The bench top lies on a cell boundary, so bench cells beside the base can sit
+#: just above it, where the base collides with them; this drops them with the
+#: arm's own points.
+METAL_SIM_SELF_FILTER_PADDING = 0.015
 # Custom firmware profiles: the stock DM scaling does not match these motors.
 METAL_PROFILE_LOW = DamiaoProfile(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
 METAL_PROFILE_SHOULDER = DamiaoProfile(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)
