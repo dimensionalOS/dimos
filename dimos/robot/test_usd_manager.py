@@ -1424,3 +1424,21 @@ def test_a_trivialized_robot_names_no_assets_to_serve(
 
     assert unhashed_assets(module.get_usd()[USD]) == {}
     assert "cube.stl" not in module.get_usd()[USD]
+
+
+def test_trivialize_leaves_a_mounted_subtree_alone(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """Only this robot's own layer is trivialized: what a mounted module answers is its own say."""
+    pytest.importorskip("pxr")
+    module = make_manager(trivialize=True, mounts={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(_subtree_usd("fake_arm", "fake_arm_base", mesh="/opt/arm/arm.stl"))
+    )
+
+    scene = _scene(module)
+
+    # The root's own box went; the arm's mesh stayed and is served under a published name.
+    assert "Cube" not in scene
+    assert "Mesh" in scene
+    assert list(module._published_assets.values()) == ["/opt/arm/arm.stl"]
