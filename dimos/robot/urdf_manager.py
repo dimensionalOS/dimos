@@ -179,30 +179,18 @@ class UrdfManagerConfig(ModuleConfig):
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
-    # What is physically bolted to this robot: a frame of its URDF -> the module owning the subtree that hangs off
-    # that frame. get_scene asks each of them for its own USD and grafts the result onto the root URDF, so every
-    # module named here must answer the get_usd RPC. Nothing else reads this yet; the manager's tf and file serving
-    # are unchanged by it, which is what keeps the empty default backwards compatible.
-    # Keys are links of this robot's own URDF, unprefixed: the user writes them against the URDF
-    # they passed in, and frame_id_prefix is applied on the way out to tf, not here.
+    # What is bolted to this robot: a frame of its URDF -> the module owning the subtree there.
+    # Keys are the names as they end up in the scene, so a frame inside a mounted subtree
+    # carries that subtree's prefix.
     mounts: dict[str, Mount] = Field(default_factory=dict)
-    # Frame renames for the subtrees get_scene collects, old name -> new name, reaching joints
-    # as well as links (a joint name is what a JointState keys on). A vendor description names
-    # its frames whatever it names them, which is rarely what the robot they are bolted to calls
-    # them, and these are where that is said.
-    #
-    # ..._pre_namespace is in each subtree's own names, as its own description spells them, which
-    # is what is in front of you when reading a vendor URDF. ..._post_namespace is in the names
-    # after the namespace prefix has gone on, and is the only way to reach a name that does not
-    # start with the namespace. Both apply to every subtree, so a key only has to match one of
-    # them -- but a key matching none of them at all is an error, since a misspelt frame would
-    # otherwise be a silent no-op.
-    tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
+    # Frame renames for the subtrees get_scene collects, old -> new, reaching joints too.
+    # tf_renames is in the names after the namespace prefix has gone on, which is the usual
+    # place to work; tf_renames_pre_namespace runs first, in each subtree's own names. Both
+    # apply to every subtree, and a key matching none of them at all is an error.
     tf_renames: dict[str, str] = Field(default_factory=dict)
-    # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
-    # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
-    # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
-    # named a module that has to be there.
+    tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
+    # How often to re-ask a module that is not up yet. There is no deadline: a scene missing an
+    # arm is not a scene, so a mount that never comes up hangs the caller.
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
     @field_validator("mounts", mode="before")
@@ -289,13 +277,9 @@ class UrdfManager(Module):
     def get_usd(self) -> list[str]:
         """``[asset_root, usd]``: this robot's own URDF as a USD layer, nothing attached.
 
-        Every module that can be mounted on another answers this, UrdfManager included, so one
-        bolted to another robot's frame needs no special case.
-
-        The root is the URDF's own directory. RobotModel.load() has already rewritten the
-        description's relative asset paths to absolute ones, so in practice nothing in this
-        layer needs it -- but a mounted module whose paths are relative does, and the asker
-        cannot tell the two apart.
+        Anything mountable answers this, UrdfManager included, so a robot on a robot is no
+        special case. The root is the URDF's own directory: a mounted module whose asset paths
+        are relative needs one, and the asker cannot tell which kind it got.
         """
         with self._usd_lock:
             if self._usd is None:
@@ -311,9 +295,8 @@ class UrdfManager(Module):
     async def get_scene(self, visited: list[str] | None = None) -> list[str]:
         """``[asset_root, usd]``: this URDF with every mounted subtree grafted on.
 
-        Async and meant to be called before start(): it waits for every module in the map, with no
-        deadline, because a scene missing an arm is not a scene. A mount that never answers hangs
-        the caller rather than handing back half a robot.
+        Async and meant to be called before start(). It waits with no deadline: half a scene is
+        a robot with no arm, so a mount that never answers hangs the caller instead.
 
         Each subtree is rebased onto the root its own module reported before it is grafted, so
         the one root this answers with covers the whole scene.
@@ -399,8 +382,8 @@ class UrdfManager(Module):
     def _subtree_client(self, mount: Mount) -> RPCClient:
         """The client for one mount, keyed by remote name so two of one class stay apart.
 
-        Hand-rolled rather than a declared module ref: a ref is one annotated attribute resolved
-        by type, and this is a mapping whose keys are only known per robot.
+        Hand-rolled rather than a module ref: a ref is one annotated attribute resolved by type,
+        and this is a mapping.
         """
         client = self._subtree_clients.get(mount.remote_name)
         if client is None:
@@ -413,11 +396,7 @@ class UrdfManager(Module):
         return client
 
     async def _subtree(self, frame_id: str, mount: Mount, chain: list[str]) -> tuple[str, set[str]]:
-        """The mounted module's USD, rebased and renamed, retried until it answers.
-
-        No deadline: a mount is a module the blueprint says is physically there, so not
-        answering is a thing to wait out rather than to give up on.
-        """
+        """The mounted module's USD, rebased and renamed, retried; no deadline (see get_scene)."""
         client = self._subtree_client(mount)
         name = mount.remote_name
         attempts = 0
