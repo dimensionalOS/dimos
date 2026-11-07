@@ -36,7 +36,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import graft_usd, urdf_to_usd
+from dimos.robot.assets.usd import graft_usd, require_asset_hashes, urdf_to_usd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -188,6 +188,14 @@ class UrdfManager(Module):
             if usd:
                 logger.info(
                     f"subtree for {frame_id} from {module.__name__} after {attempts} ask(s)"
+                )
+                # Refused rather than retried: a subtree whose assets are not identified by
+                # content will not become identified by asking again, and the error carries
+                # the hashes it should have had.
+                await asyncio.to_thread(
+                    require_asset_hashes,
+                    usd,
+                    what=f"the subtree {module.__name__} answered for frame {frame_id!r}",
                 )
                 return usd
             if attempts % _WAITING_LOG_EVERY == 0:
