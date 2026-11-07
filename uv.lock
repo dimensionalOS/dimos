@@ -2537,7 +2537,7 @@ docs = ">=3.11"
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", marker = "extra == 'webrtc'", specifier = ">=3.9.0" },
-    { name = "aioquic", marker = "extra == 'web'", specifier = ">=1.2.0" },
+    { name = "aioquic", marker = "extra == 'web'", specifier = "==1.3.0" },
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "attrs", specifier = ">=25.4" },
