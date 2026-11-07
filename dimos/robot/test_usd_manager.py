@@ -1599,10 +1599,28 @@ def test_a_usd_model_is_still_trivialized_and_renamed(scene_file: Path) -> None:
         module.dispose()
 
 
-def test_point_clearing_refuses_a_usd_model(scene_file: Path) -> None:
-    """Its filter is built from the URDF's collision geometry, which a USD layer has none of."""
-    with pytest.raises(ValueError, match="needs a RobotModel"):
-        UsdManagerPointClearing(model=UsdModel.from_file(scene_file))
+def test_point_clearing_converts_a_usd_model_back_to_urdf(scene_file: Path) -> None:
+    """RoboPlan only reads URDF, so a USD-native robot is converted on the way in."""
+    pytest.importorskip("pxr")
+    module = UsdManagerPointClearing(model=UsdModel.from_file(scene_file))
+    try:
+        description = module._filter_description()
+
+        assert "<robot" in description.xml
+        assert 'name="room"' in description.xml
+    finally:
+        module.dispose()
+
+
+def test_point_clearing_hands_over_the_urdf_it_already_has(tmp_path: Path) -> None:
+    """No round trip when the model came from a URDF: the original is still there."""
+    source = tmp_path / "robot.urdf"
+    source.write_text(_URDF)
+    module = UsdManagerPointClearing(model=RobotModel.from_file(source))
+    try:
+        assert module._filter_description().xml == RobotModel.from_file(source).load().xml
+    finally:
+        module.dispose()
 
 
 def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
@@ -1659,3 +1677,29 @@ def test_the_usd_layer_is_built_off_the_event_loop_thread(
 
     assert built_on, "get_usd was never called"
     assert built_on[0] != loop_thread[0]
+
+
+def test_a_usd_native_robot_cuts_itself_out_of_its_own_cloud(tmp_path: Path) -> None:
+    """The whole point of the converter: masking on a robot described only in USD.
+
+    Nothing about the filter reads USD, so this works only because the layer is converted
+    back to the URDF RoboPlan wants.
+    """
+    pytest.importorskip("pxr")
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(_URDF)
+    scene = tmp_path / "robot.usda"
+    scene.write_text(RobotModel.from_file(urdf).to_usd().usd)
+
+    module = UsdManagerPointClearing(model=UsdModel.from_file(scene), tf_tolerance_s=0.0)
+    try:
+        cast("dict[str, Any]", module.__dict__)["_tf"] = TF()
+        _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+
+        result = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [0.05, 0.0, 0.0], [2.0, 0.0, 0.0]]))
+
+        # The 20cm cube on `arm` swallows the first two; the far point survives.
+        assert result is not None
+        np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
+    finally:
+        module.dispose()
