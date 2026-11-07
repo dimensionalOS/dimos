@@ -20,6 +20,7 @@ import asyncio
 from pathlib import Path
 from threading import RLock
 import time
+from typing import Any
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -27,6 +28,7 @@ from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -34,6 +36,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.usd import graft_usd, require_asset_hashes, urdf_to_usd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -41,6 +44,12 @@ logger = setup_logger()
 
 # Their pose comes from tf (odometry, a planar base), so they are read from tf, never published to it.
 MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
+
+# The RPC every mounted module answers with its own subtree as a USD string.
+SUBTREE_RPC = "get_usd"
+
+# get_scene waits forever, so say so periodically rather than hang silently.
+_WAITING_LOG_EVERY = 20
 
 
 class UrdfManagerConfig(ModuleConfig):
@@ -52,6 +61,16 @@ class UrdfManagerConfig(ModuleConfig):
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
+    # What is physically bolted to this robot: a frame of its URDF -> the module owning the subtree that hangs off
+    # that frame. get_scene asks each of them for its own USD and grafts the result onto the root URDF, so every
+    # module named here must answer the get_usd RPC. Nothing else reads this yet; the manager's tf and file serving
+    # are unchanged by it, which is what keeps the empty default backwards compatible.
+    mounts: dict[str, type[Module]] = Field(default_factory=dict)
+    # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
+    # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
+    # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
+    # named a module that has to be there.
+    scene_retry_s: float = Field(default=0.5, gt=0.0)
 
 
 class UrdfManager(Module):
@@ -76,11 +95,127 @@ class UrdfManager(Module):
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
+        self._usd: str | None = None
+        # Its own lock: baking meshes into a USD takes seconds, and self._lock is on the tf path.
+        self._usd_lock = RLock()
+        self._subtree_clients: dict[type[Module], RPCClient] = {}
+        try:
+            self._check_mounts()
+        except Exception:
+            # super().__init__ already took a loop thread and an RPC session; hand them back
+            # rather than leave a half-built module behind for the caller to notice.
+            self.dispose()
+            raise
+
+    def _check_mounts(self) -> None:
+        """Fail here rather than at get_scene time, which is a blueprint's last step before start."""
+        links = {self._description.root_link, *(j.child_link for j in self._description.joints)}
+        for frame_id, module in self.config.mounts.items():
+            if frame_id not in links:
+                raise ValueError(
+                    f"mounts names frame {frame_id!r}, which is not a link of this "
+                    f"URDF (it has {sorted(links)})"
+                )
+            if SUBTREE_RPC not in module.rpcs:
+                raise ValueError(
+                    f"mounts attaches {module.__name__} at {frame_id!r}, but it has "
+                    f"no @rpc {SUBTREE_RPC}() to ask for its subtree"
+                )
 
     @rpc
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
+
+    @rpc
+    def stop(self) -> None:
+        for client in self._subtree_clients.values():
+            client.stop_rpc_client()
+        self._subtree_clients.clear()
+        super().stop()
+
+    @rpc
+    def get_usd(self) -> str:
+        """This robot's own URDF as a USD layer, with nothing attached to it.
+
+        Every module that can be mounted on another answers this, UrdfManager included,
+        so one bolted to another robot's frame needs no special case.
+        """
+        with self._usd_lock:
+            if self._usd is None:
+                self._usd = urdf_to_usd(self._description)
+            return self._usd
+
+    @rpc
+    async def get_scene(self) -> str:
+        """The whole tree as one USD layer: this URDF with every mounted subtree on it.
+
+        Async and meant to be called before start(): it waits for every module in the map, with no
+        deadline, because a scene missing an arm is not a scene. A mount that never answers hangs
+        the caller rather than handing back half a robot.
+        """
+        subtrees = await self._subtrees()
+        root = self.get_usd()
+        return graft_usd(root, subtrees) if subtrees else root
+
+    async def _subtrees(self) -> dict[str, str]:
+        mounts = self.config.mounts
+        if not mounts:
+            return {}
+        results = await asyncio.gather(
+            *(self._subtree(frame_id, module) for frame_id, module in mounts.items())
+        )
+        return dict(zip(mounts, results, strict=True))
+
+    async def _subtree(self, frame_id: str, module: type[Module]) -> str:
+        """``module``'s USD, retried until it answers.
+
+        No deadline: a mount is a module the blueprint says is physically there, so not
+        answering is a thing to wait out rather than to give up on.
+        """
+        client = self._subtree_clients.setdefault(
+            # Hand-rolled rather than a declared module ref: a ref is one annotated attribute
+            # resolved by type, and this is a mapping whose keys are only known per robot. The
+            # remote name is the class name, so a module deployed under an instance_name (the same
+            # class twice in one blueprint) is not reachable this way yet.
+            module,
+            RPCClient.remote(module, rpc=self.rpc),
+        )
+        attempts = 0
+        while True:
+            attempts += 1
+            usd = await asyncio.to_thread(self._ask_for_usd, client, frame_id)
+            if usd:
+                logger.info(
+                    f"subtree for {frame_id} from {module.__name__} after {attempts} ask(s)"
+                )
+                # Refused rather than retried: a subtree whose assets are not identified by
+                # content will not become identified by asking again, and the error carries
+                # the hashes it should have had.
+                await asyncio.to_thread(
+                    require_asset_hashes,
+                    usd,
+                    what=f"the subtree {module.__name__} answered for frame {frame_id!r}",
+                )
+                return usd
+            if attempts % _WAITING_LOG_EVERY == 0:
+                logger.warning(
+                    f"still waiting on {module.__name__} for {SUBTREE_RPC}() at frame "
+                    f"{frame_id!r} after {attempts} asks"
+                )
+            await asyncio.sleep(self.config.scene_retry_s)
+
+    def _ask_for_usd(self, client: Any, frame_id: str) -> str | None:
+        """One RPC attempt; a module that is not serving yet is a retry, not a failure."""
+        try:
+            usd = getattr(client, SUBTREE_RPC)()
+        except Exception as exc:
+            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} did not answer yet: {exc}")
+            return None
+        if not isinstance(usd, str) or not usd:
+            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} answered {usd!r}, retrying")
+            return None
+        return usd
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data

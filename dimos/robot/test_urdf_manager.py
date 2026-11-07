@@ -25,6 +25,8 @@ import pinocchio as pin
 import pytest
 import trimesh
 
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -435,3 +437,170 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
             ),
             atol=1e-9,
         )
+
+
+class _FakeArm(Module):
+    """Stands in for a module bolted to the robot: all a mounted module owes is get_usd."""
+
+    config: ModuleConfig
+
+    @rpc
+    def get_usd(self) -> str:
+        return _SUBTREE_USD
+
+
+class _NoUsd(Module):
+    config: ModuleConfig
+
+
+_SUBTREE_USD = """#usda 1.0
+(
+    defaultPrim = "fake_arm"
+)
+
+def Xform "fake_arm"
+{
+    custom string dimos:link = "fake_arm_base"
+}
+"""
+
+
+class _FakeClient:
+    """An RPC client that answers get_usd with a scripted sequence; an Exception means 'not up yet'."""
+
+    def __init__(self, *answers: Any) -> None:
+        self.answers = list(answers)
+        self.asked = 0
+
+    def get_usd(self) -> Any:
+        self.asked += 1
+        answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    def stop_rpc_client(self) -> None: ...
+
+
+@pytest.fixture
+def make_manager(tmp_path: Path) -> Iterator[Callable[..., UrdfManager]]:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(_URDF)
+    modules: list[UrdfManager] = []
+
+    def make(**overrides: Any) -> UrdfManager:
+        settings: dict[str, Any] = {"model": RobotModel.from_file(urdf)}
+        settings.update(overrides)
+        module = UrdfManager(**settings)
+        modules.append(module)
+        return module
+
+    yield make
+    for module in modules:
+        module.dispose()
+
+
+def _usd_stage(usd: str) -> Any:
+    from pxr import Sdf, Usd
+
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    return Usd.Stage.Open(layer)
+
+
+def _scene(module: UrdfManager) -> str:
+    """get_scene on a loop of this test's own, so its to_thread executor is torn down with it."""
+    coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+    return cast("str", asyncio.run(coroutine()))
+
+
+def test_get_usd_is_this_robots_own_urdf_with_nothing_attached(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager()
+
+    stage = _usd_stage(module.get_usd())
+
+    assert stage.GetDefaultPrim().GetName() == "box_robot"
+    assert stage.GetPrimAtPath("/box_robot/base/arm")
+
+
+def test_get_usd_is_built_once_and_reused(make_manager: Callable[..., UrdfManager]) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager()
+
+    assert module.get_usd() is module.get_usd()
+
+
+def test_get_scene_without_mounts_is_just_the_robot(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # The empty default is what keeps every existing blueprint working untouched.
+    pytest.importorskip("pxr")
+    module = make_manager()
+
+    assert _scene(module) == module.get_usd()
+
+
+def test_get_scene_grafts_each_subtree_onto_the_frame_it_is_bolted_to(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients[_FakeArm] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
+
+
+def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
+    client = _FakeClient(RuntimeError("no reply"), None, _SUBTREE_USD)
+    module._subtree_clients[_FakeArm] = cast("Any", client)
+
+    stage = _usd_stage(_scene(module))
+
+    assert client.asked == 3
+    assert stage.GetPrimAtPath("/box_robot/base/arm/fake_arm")
+
+
+def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """Half a scene would hand a renderer a robot with no arm, so there is no partial answer.
+
+    There is no deadline and so no error to assert; assert instead that it is still waiting.
+    wait_for cancels it, which is also what keeps this test from leaking the retry loop.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
+    client = _FakeClient(RuntimeError("never"))
+    module._subtree_clients[_FakeArm] = cast("Any", client)
+
+    async def wait_a_moment() -> None:
+        coroutine = cast("Any", UrdfManager.get_scene).aio.__get__(module, UrdfManager)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(coroutine(), 0.2)
+
+    asyncio.run(wait_a_moment())
+
+    assert client.asked > 1, "it should have kept asking rather than giving up or answering"
+
+
+def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    with pytest.raises(ValueError, match="not a link of this URDF"):
+        make_manager(mounts={"elbow": _FakeArm})
+
+
+def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    with pytest.raises(ValueError, match="no @rpc get_usd"):
+        make_manager(mounts={"arm": _NoUsd})
