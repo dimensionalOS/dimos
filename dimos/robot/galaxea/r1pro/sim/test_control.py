@@ -112,3 +112,13 @@ def test_stopped_steering_keeps_commands_legal_after_soft_stop_overshoot(
     action = controller.compute(JointState(name=list(JOINTS), position=positions, ts=0))
     assert action.joint_commands[0].values[18:21] == [expected] * 3
     assert action.joint_commands[1].values[-3:] == [0.0] * 3
+
+
+async def test_arm_teleop_does_not_recapture_torso_sag(controller, mocker):
+    mocker.patch.object(controller.config, "upper_command_joints", UPPER_JOINTS[4:])
+    await controller.handle_upper_command(
+        JointState(name=list(UPPER_JOINTS), position=[0.2] * len(UPPER_JOINTS))
+    )
+    action = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
+    assert action.joint_commands[0].values[:4] == [0.0] * 4
+    assert action.joint_commands[0].values[4:18] == [0.01] * 14

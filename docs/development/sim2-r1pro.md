@@ -35,33 +35,46 @@ Stop with `dimos-desktop dimos stop`. The camera module also stops its owned
 Unreal process. Initial office compilation can take tens of seconds; the
 blueprint gives startup 120 seconds.
 
-## Headset teleoperation
+## Spatial Desktop and headset teleoperation
 
-The same blueprint starts the shared DimOS WebXR page. On a Quest on the same
-network, open `https://<laptop-wifi-ip>:8443/teleop`, accept the local server's
-certificate, and tap **Connect**. On macOS, `ipconfig getifaddr en0` reports the
-usual Wi-Fi interface's current address. The network must allow device-to-device
-connections. Only one headset control connection is accepted at a time.
+Open [Spatial Workspace in Desktop](http://127.0.0.1:5555/?app=dim-spatial-workspace).
+This ports the OpenYAM spatial viewer: robot meshes, the observed textured RGB-D
+surface, the accumulated global map, camera strip, arm selection/jogs, and shared
+Hold/Enable controls. It never sends office asset meshes to the browser.
+The static Desktop app discovers `get_web_views` through the gateway. Its local
+source is `../dim-spatial-workspace`; install that repository's
+`feat/spatial-workspace` branch as `dim-spatial-workspace`.
 
-- Hold a controller's middle-finger **grip** to move its corresponding arm.
-  Movement is relative to the hand and arm poses captured when grip engages.
-  Release grip to hold the arm; reposition your hand and grip again to re-clutch.
-- **Left stick** drives forward/backward and strafes. **Right stick X** turns.
-  Headset speed is capped at 0.2 m/s translation and 0.3 rad/s yaw.
-- Releasing the sticks stops driving. Disconnect and stale input also stop the
-  base; arm tasks stop following stale poses after 0.3 seconds.
-- The headset displays the **Unreal head-left camera on a video panel**. It does
-  not load an immersive office model. Desktop continues showing robot + map.
-- Fingers remain fixed. Triggers do not actuate grippers in this simulation.
+Use **Headset** for the current LAN URL, `https://<laptop-wifi-ip>:8443/spatial`.
+The headset needs a trusted HTTPS connection and a WebXR browser on the same
+reachable network. Opening the view only observes. Enable control explicitly,
+enter XR, release the grips, then grip again to engage.
 
-This reuses OpenYAM's WebXR controller protocol, independent grip/clutch sessions,
-Pink IK tasks and control coordinator. It uses the standard **Connect** page,
-without the OpenYAM learning app's recording or policy controls. Arm targets flow
-from the coordinator's connection ports to the existing sim2 upper-body servo;
-thumbsticks feed its base velocity input. The torso holds its pose, and each IK
-task controls only its own seven arm joints in chassis coordinates. Planning
-uses a 2 rad/s² default acceleration limit, matching the existing R1 planning
-configuration, and teleop commands are capped at 0.5 rad/s. These are demo settings.
+- Controllers: grip clutches the corresponding arm; release holds it. Left stick
+  drives/strafes and right stick turns, capped at 0.2 m/s and 0.3 rad/s.
+- Hand tracking: pinch a tool handle to move that arm. Two free-space pinches
+  reposition/scale the workspace; camera and control panels can be moved/pinned.
+- Desktop joint jogs pause headset input and command the existing upper servo.
+  Hold clears control; resume requires release and re-grip. Base buttons drive
+  only while pressed. Lost input stops the base after 0.3 s.
+- R1 gripper joints remain fixed in this model; no gripper controls are advertised.
+  Recording and home planning controls require optional providers and are hidden
+  or disabled when absent.
+
+Robot geometry, joints, tool/base frames and camera labels are configured in the
+blueprint. Shared code lives under `dimos/teleop/spatial`; R1-specific base driving,
+frame conversion and servo jogging live in `r1pro/sim/spatial.py`. This version has
+two operator arm slots (`left`/`right`) and three optional camera slots
+(`workspace`/`left`/`right`), whose stream inputs can be remapped. It supports zero,
+one or two arms with arbitrary joint names; it is not yet an unlimited-group or
+arbitrary-camera-count UI. Real robot controllers still need their own bindings.
+
+Arm targets pass through Pink IK and the control coordinator to sim2's upper-body
+servo. The chassis transform is captured on grip engagement so driving carries
+held arms with the base. The torso holds its pose; each task owns seven arm joints.
+The shared protocol validates sessions/epochs and requires a fresh release after
+input loss. Joint feedback freshness uses receipt time, so simulation timestamps
+are not compared against the wall clock.
 
 ## Sensors and display
 
@@ -75,10 +88,37 @@ configuration, and teleop commands are capped at 0.5 rad/s. These are demo setti
 | `joint_state` | 24 motor encoders | 50 Hz |
 | `tf` | Actual simulated body poses, through UrdfManager | 30 Hz |
 
-The camera is 640x480 with approximate demo pinhole intrinsics. It does not use
-factory stereo calibration. Head-right and wrist camera streams are not yet
-instantiated. Camera throughput is measured separately from the 15 Hz request;
-the existing Unreal performance limitation remains.
+The simulated head-left image is 640×512, preserving the physical 1920×1536
+aspect ratio. Its approximate 118° horizontal / 92° vertical FOV comes from the
+2026 vendor specification. The vendor URDF gives approximately 120 mm stereo
+baseline and 20° downward optical pitch. `head_camera(rectified_info=...)` can use
+scaled rectified calibration instead of approximate intrinsics; it rejects raw
+distorted calibration because Unreal renders an ideal pinhole camera.
+
+The 2026 hardware uses two synchronized GMSL2 Sony ISX031 RGB cameras
+(SENSING SG3S-ISX031C-GMSL2F), not a ZED. The local native capture module documents
+1920×1536 at 30 Hz and reads factory intrinsics/distortion from
+`/opt/galaxea/body/stereo.yaml`. The hardware blueprint disables vendor head-camera
+capture in favor of that native driver. Neither this capture path nor the camera
+specification establishes a working depth stream: vendor driver documentation
+lists registered head depth only **if available**. Optional wrist depth cameras
+are separate devices.
+
+Unreal currently supplies **ideal, registered axial depth in metres**, aligned to
+head-left RGB. The surface encoder pairs timestamps, uses CameraInfo and optical
+TF, and leaves holes at invalid depths/discontinuities. This is sensor-shaped
+simulation output, not a stereo matcher. Physical deployment needs either a
+verified registered depth publisher or synchronized stereo rectification and a
+validated disparity/depth pipeline with factory extrinsics. No physical stereo
+depth pipeline is implemented by this change. Head-right and wrist cameras are
+not instantiated in the demo, and factory calibration was not available locally.
+The request remains a 15 Hz ceiling; this change does not resolve Unreal's
+previous throughput limit.
+
+Sources: [Galaxea 2026 R1 Pro](https://docs.galaxea-dynamics.com/R1Pro/en/docs/2026/),
+[driver interfaces](https://docs.galaxea-dynamics.com/R1Pro/en/docs/2026/software_interface/r1pro_driver/),
+[SENSING camera](https://sensing-world.com/en/h-pd-286.html), and
+`dimos/robot/galaxea/r1pro/head_cameras.py`.
 
 The lidar retains timed Mid-360 scan rays at 1/50 density for this desktop demo.
 It intersects the office and the moving robot. The sensor's own link is excluded
@@ -103,10 +143,10 @@ Wheel limits and servo gains are simulation assumptions, not hardware tuning.
 Known structural overlaps use the existing R1 Pro collision exclusions.
 
 Base driving uses motor commands and wheel contact, with no root-pose override.
-Upper-body commands use `upper_command`. With the headset coordinator running,
-it owns and holds those targets; standalone `R1ProSimControl.set_joint` calls
-would be overwritten. Desktop's arm-planning panel and gripper actuation are
-not implemented by this blueprint.
+Upper-body commands use `upper_command`. The spatial joint-jog route pauses the coordinator before calling the servo;
+standalone `R1ProSimControl.set_joint` calls while the coordinator owns those
+targets can be overwritten. Collision-aware arm planning and gripper actuation
+are not implemented by this blueprint.
 
 ## Validation
 
@@ -126,7 +166,7 @@ URDF and accumulated global map. Unit tests cover steering, command timeout,
 limits, collision exclusions and render requests. The blueprint registry, Ruff and targeted mypy
 checks are also run.
 
-The headset protocol smoke test exercised the live HTTPS/WebSocket endpoint:
+The earlier generic headset protocol smoke test exercised the live HTTPS/WebSocket endpoint:
 each arm moved independently (maximum joint changes 0.083 and 0.068 rad for
 4 cm hand motions), the base drove 0.133 m, and its speed fell below 0.001 m/s
 after disconnect. The headset socket delivered 128 decoded 640x480 JPEG frames.
@@ -140,3 +180,15 @@ The controller can replay an action in response to a repeated lockstep
 observation. SimModule counts rejected duplicates; these are distinct from
 controller deadline faults. Extreme manual poses can still collide or tip the
 robot: joint teleoperation is not collision-aware planning.
+
+The spatial protocol smoke test (`demo_spatial.py` / `spatial_results.json` in the
+validation directory) moved both arms through 4 cm hand targets, with maximum
+joint changes of 0.072 and 0.066 rad. The base moved 0.133 m, then slowed below
+0.004 m/s after disconnect; RGB-D surface payloads were approximately 122 kB.
+Focused tests cover calibration scaling, distortion rejection, depth units,
+synchronization, input expiry, stale epochs and release-before-grab. A physical
+headset tracking/comfort check still requires an operator.
+
+The torso remains owned by the sim servo; repeated Hold/Enable does not replace
+its posture target with measured gravity sag. The Desktop joint-jog endpoint was
+also exercised against the running simulation, including automatic headset hold.

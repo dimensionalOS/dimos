@@ -21,13 +21,15 @@ from dataclasses import replace
 from functools import partial
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.robot.galaxea.r1pro.sim.cameras import head_camera
 from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, MODEL, SCENE as ROBOT_SCENE
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
+from dimos.robot.galaxea.r1pro.sim.spatial import R1ProSpatialTeleop
 from dimos.robot.galaxea.r1pro.sim.teleop import (
     TELEOP_MODEL,
     R1ProTeleopCoordinator,
-    R1ProWebXR,
     arm_tasks,
 )
 from dimos.robot.urdf_manager import UrdfManager
@@ -35,7 +37,6 @@ from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.scenes.sf555.config import OFFICE_MODEL, OFFICE_RENDERER
-from dimos.sim2.sensors.camera.config import CameraConfig
 from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
@@ -43,6 +44,7 @@ from dimos.sim2.sensors.lidar.config import LidarConfig
 from dimos.sim2.sensors.lidar.mid360 import Mid360Returns, Mid360Scan
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
+from dimos.teleop.spatial.model import SpatialGroup
 from dimos.utils.data import LfsPath
 
 MODELS = {"r1pro": MODEL, "office": OFFICE_MODEL}
@@ -50,17 +52,7 @@ SCENE = SceneConfig(
     instances=(replace(ROBOT_SCENE.instances[0], xyz=(16, 1, 0.005)), Instance("office")),
     ground_plane=False,
 )
-# Use the vendor optical frame. Intrinsics are the existing office demo's
-# pinhole approximation, not the hardware stereo calibration.
-CAMERA = CameraConfig(
-    "r1pro/camera_head_left_link",
-    width=640,
-    height=480,
-    fx=376.72,
-    fy=376.72,
-    cx=320,
-    cy=240,
-)
+CAMERA = head_camera()
 LIDAR = LidarConfig(
     "r1pro/lidar_chassis_left_link",
     # Preserve rolling acquisition times with 1/50 of the hardware rays.
@@ -97,8 +89,32 @@ r1pro_sim2 = (
         VoxelGridMapper.blueprint(
             device="CPU:0", carve_columns=False, block_count=100_000, emit_every=5
         ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
-        R1ProSimControl.blueprint(),
-        R1ProWebXR.blueprint(),
+        R1ProSimControl.blueprint(
+            upper_command_joints=tuple(
+                f"r1pro/{side}_arm_joint{i}" for side in ("left", "right") for i in range(1, 8)
+            )
+        ),
+        R1ProSpatialTeleop.blueprint(
+            title="R1 Pro · SF555",
+            environment="Simulation",
+            joint_jog_available=True,
+            robot_model=RobotModelConfig(
+                model=MODEL, joint_names=list(JOINTS), base_link="r1pro/base_link"
+            ),
+            groups={
+                side: SpatialGroup(
+                    label=f"{side.title()} arm",
+                    joint_names=tuple(f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)),
+                    tip_frame=f"r1pro/{side}_gripper_link",
+                    base_frame="r1pro/base_link",
+                )
+                for side in ("left", "right")
+            },
+            cameras={"workspace": "Head · RGB-D"},
+            base_drive=True,
+            max_depth_m=12.0,
+            max_edge_m=0.25,
+        ),
         R1ProTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=TELEOP_MODEL,
@@ -109,9 +125,10 @@ r1pro_sim2 = (
     )
     .remappings(
         [
-            (R1ProWebXR, "left_controller_output", "left_cartesian_command"),
-            (R1ProWebXR, "right_controller_output", "right_cartesian_command"),
+            (R1ProSpatialTeleop, "left_controller_output", "left_cartesian_command"),
+            (R1ProSpatialTeleop, "right_controller_output", "right_cartesian_command"),
             (R1ProTeleopCoordinator, "r1pro_joint_state", "joint_state"),
+            (R1ProSpatialTeleop, "coordinator_joint_state", "joint_state"),
             (R1ProTeleopCoordinator, "r1pro_position_command", "upper_command"),
         ]
     )

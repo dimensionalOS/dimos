@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Robot workspace</title>
+    <link rel="stylesheet" href="static/workspace.css">
+  </head>
+  <body>
+    <header>
+      <strong id="title">Robot workspace</strong><span
+        class="badge"
+        id="environment"
+      ></span><span id="connection">Connecting</span><nav>
+        <button id="headset">Headset ↗</button>
+        <button id="resume">Enable headset control</button>
+        <button id="hold">Ⅱ Hold all <kbd>Space</kbd></button>
+      </nav>
+    </header>
+    <div id="error" role="alert" hidden></div>
+    <section id="headset-links" hidden>
+      <p>
+        Open this station on your headset’s network. Enter XR, then hold a grip
+        to control an arm.
+      </p>
+      <div id="links"></div><label>Station hostname or IP <input
+          id="host"
+          placeholder="Laptop Wi-Fi address"
+        ></label><a id="headset-url" target="_blank" rel="noreferrer"
+      >Open headset view ↗</a>
+    </section>
+    <main>
+      <section class="visuals">
+        <div class="scene">
+          <iframe
+            id="scene"
+            title="Live robot workspace"
+            allow="fullscreen"
+          ></iframe><div class="scene-toolbar">
+            <span>● Live workspace</span><div>
+              <label><input type="checkbox" id="surface" checked> RGB-D
+                surface</label><label><input type="checkbox" id="map" checked>
+                Global map</label><button data-view="fit">Fit view</button>
+              <button data-view="top">Top</button>
+              <button data-view="front">Front</button>
+            </div>
+          </div>
+          <div class="scene-help">
+            Drag to orbit · Scroll to zoom · Click an arm to select
+          </div>
+        </div>
+        <div id="cameras" class="cameras"></div>
+      </section>
+      <aside>
+        <div class="tabs">Operate</div>
+        <h2>Arm controls</h2>
+        <div id="arms" class="selector"></div>
+        <p class="muted" id="gripper"></p>
+        <section id="joint-controls">
+          <div class="joint-header">
+            <h3>Joint jog</h3>
+            <select id="step">
+              <option value="0.017453292519943295">1° steps</option>
+              <option value="0.08726646259971647">5° steps</option>
+            </select>
+          </div>
+          <div id="joints"></div>
+          <p class="muted">
+            Manual controls pause headset input. The other arm holds its
+            position.
+          </p>
+        </section>
+        <section id="drive-panel" hidden>
+          <h3>Base driving</h3>
+          <p class="muted">
+            In XR: left stick drives and strafes, right stick turns.
+          </p>
+          <div class="drive-pad">
+            <button data-drive="0,0,1">↶</button>
+            <button data-drive="1,0,0">↑</button>
+            <button data-drive="0,0,-1">↷</button>
+            <button data-drive="0,1,0">←</button>
+            <button id="drive-stop">Stop</button>
+            <button data-drive="0,-1,0">→</button><span></span><button
+              data-drive="-1,0,0"
+            >
+              ↓
+            </button>
+          </div>
+          <p class="muted">
+            Hold a button to drive. Releasing or leaving the page stops motion.
+          </p>
+        </section>
+      </aside>
+    </main>
+    <footer>
+      <span id="surface-state">Waiting for camera observations</span><span
+        id="control-state"
+      >Held</span>
+    </footer>
+    <script type="module" src="static/workspace.js"></script>
+  </body>
+</html>

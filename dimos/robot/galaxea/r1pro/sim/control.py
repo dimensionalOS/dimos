@@ -28,6 +28,7 @@ from dimos_lcm.control_msgs import ActionCommand, JointCommand
 import numpy as np
 
 from dimos.core.core import rpc
+from dimos.core.module import ModuleConfig
 from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -52,7 +53,12 @@ def steer_targets(
     return target, velocity
 
 
+class R1ProSimControlConfig(ModuleConfig):
+    upper_command_joints: tuple[str, ...] = UPPER_JOINTS
+
+
 class R1ProSimControl(SharedConfigModule):
+    config: R1ProSimControlConfig
     joint_state: In[JointState]
     cmd_vel: In[Twist]
     upper_command: In[JointState]
@@ -136,7 +142,10 @@ class R1ProSimControl(SharedConfigModule):
                 ):
                     raise ValueError("upper-body joint target outside model limits")
             for name, position in zip(command.name, command.position, strict=True):
-                self._targets[UPPER_JOINTS.index(name)] = position
+                # The arm coordinator also emits passive torso holds. The demo
+                # keeps torso ownership here so re-clutching cannot accumulate sag.
+                if name in self.config.upper_command_joints:
+                    self._targets[UPPER_JOINTS.index(name)] = position
 
     def compute(self, sample: JointState) -> ActionCommand | None:
         period = CONTROL.period_ns

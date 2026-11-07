@@ -1,0 +1,324 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1215;
+  --surface: #141c20;
+  --fg: #e6eeec;
+  --muted-fg: #92a5a8;
+  --border: #2b393e;
+  --primary: #9ee3ce;
+  --sans: system-ui;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px var(--sans);
+}
+button, input, select {
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 12px;
+}
+button {
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--primary);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+header {
+  height: 68px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
+header strong {
+  font-size: 17px;
+}
+nav {
+  margin-left: auto;
+  display: flex;
+  gap: 9px;
+}
+.badge {
+  font-size: 12px;
+  background: var(--surface);
+  padding: 5px 9px;
+  border-radius: 4px;
+}
+#connection {
+  color: var(--primary);
+  font-size: 12px;
+}
+#hold {
+  color: #ffbbaa;
+  border-color: #765045;
+}
+kbd {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 8px;
+}
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  min-height: 0;
+  flex: 1;
+}
+.visuals {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.scene {
+  position: relative;
+  flex: 1;
+  min-height: 300px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.scene-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.scene-toolbar > div {
+  pointer-events: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.scene-toolbar button {
+  font-size: 11px;
+  padding: 6px 8px;
+}
+.scene-toolbar label {
+  font-size: 11px;
+  background: var(--surface);
+  padding: 5px;
+}
+.scene-help {
+  position: absolute;
+  bottom: 14px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  color: var(--muted-fg);
+  font-size: 11px;
+  pointer-events: none;
+}
+.cameras {
+  display: flex;
+  gap: 12px;
+  height: 190px;
+  flex-shrink: 0;
+}
+.camera {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  background: var(--surface);
+}
+.camera img {
+  width: 100%;
+  height: 160px;
+  object-fit: contain;
+}
+.camera figcaption {
+  padding: 6px 12px;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+}
+.camera figure {
+  margin: 0;
+}
+.camera-status {
+  color: var(--primary);
+}
+aside {
+  border-left: 1px solid var(--border);
+  padding: 0 24px 24px;
+  overflow: auto;
+}
+.tabs {
+  height: 60px;
+  padding-top: 24px;
+  border-bottom: 1px solid var(--border);
+  color: var(--primary);
+}
+h2 {
+  font-size: 16px;
+  margin-top: 28px;
+}
+h3 {
+  font-size: 13px;
+}
+.selector {
+  display: flex;
+  gap: 8px;
+}
+.selector button {
+  flex: 1;
+}
+.selector button.selected {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.muted {
+  color: var(--muted-fg);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.joint-header {
+  border-top: 1px solid var(--border);
+  margin-top: 25px;
+  padding-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.joint-header select {
+  font-size: 11px;
+  padding: 6px;
+}
+.joint {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+}
+.joint label {
+  flex: 1;
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+.joint output {
+  font-variant-numeric: tabular-nums;
+  width: 62px;
+  text-align: right;
+}
+.joint button {
+  padding: 4px 9px;
+  font-size: 18px;
+}
+.drive-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.drive-pad button {
+  touch-action: none;
+  user-select: none;
+}
+footer {
+  height: 48px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 24px;
+  font-size: 12px;
+  color: var(--muted-fg);
+}
+#headset-links {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+#headset-links p {
+  margin: 0 0 8px;
+}
+a {
+  color: var(--primary);
+}
+#error {
+  padding: 12px 24px;
+  background: #4b2525;
+}
+#drive-panel {
+  border-top: 1px solid var(--border);
+  margin-top: 24px;
+  padding-top: 12px;
+}
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+  aside {
+    padding: 0 12px 12px;
+  }
+  .scene-toolbar label {
+    display: none;
+  }
+  .cameras {
+    height: 150px;
+  }
+  .camera img {
+    height: 120px;
+  }
+  header {
+    padding: 10px;
+    gap: 8px;
+  }
+  .badge {
+    display: none;
+  }
+}
+@media (max-width: 650px) {
+  main {
+    display: block;
+    overflow: auto;
+  }
+  .visuals {
+    height: 75vh;
+  }
+  aside {
+    border-left: 0;
+  }
+  .scene-toolbar {
+    left: 8px;
+    right: 8px;
+  }
+  .scene-toolbar > span {
+    display: none;
+  }
+  header strong {
+    font-size: 13px;
+  }
+  nav button {
+    font-size: 11px;
+    padding: 7px;
+  }
+}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot · Spatial teleoperation</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#11181d;color:#edf5f4;font:14px system-ui}canvas{display:block}header{position:fixed;top:20px;left:24px;right:24px;display:flex;align-items:center;gap:16px;pointer-events:none}h1{font-size:18px;margin:0}header span{color:#a7bfbd;font-size:12px}#panel{position:fixed;bottom:24px;left:24px;max-width:520px;padding:18px 22px;background:#17232bea;border:1px solid #36484d;border-radius:12px}p{line-height:1.5;margin:8px 0}button{background:#76e2c1;border:0;padding:11px 16px;border-radius:7px;font:600 14px system-ui;cursor:pointer;margin:6px 7px 6px 0}button:disabled{opacity:.4;cursor:default}#status{color:#f3bf77}#cameras{position:fixed;right:24px;bottom:24px;display:flex;gap:12px}figure{margin:0;background:#17232b;border-radius:9px;overflow:hidden;width:190px}figure img{width:190px;height:142px;object-fit:contain}figcaption{padding:8px;color:#b9cecf;font-size:12px}.muted{color:#9db0b8;font-size:12px}@media(max-width:800px){#cameras{top:70px;bottom:auto}figure,figure img{width:120px}figure img{height:90px}#panel{right:24px}}
+.embedded header,.embedded #cameras,.embedded #panel>:not(#status){display:none}.embedded #panel{bottom:12px;left:12px;padding:8px 12px;max-width:calc(100% - 24px);font-size:12px;pointer-events:none}</style>
+<style>
+#episode-controls{margin-top:12px;border-top:1px solid #36484d;padding-top:12px}
+#task{display:block;width:100%;margin:6px 0 10px;padding:9px;background:#0c141b;color:#edf5f4;border:1px solid #526771;border-radius:6px;font:inherit}
+#episode-state{font-weight:700;color:#76e2c1}#episode-hint{font-size:12px;color:#b9cecf}
+#cameras{gap:8px}figure,figure img{width:160px}figure img{height:120px}
+select{background:#0c141b;color:#edf5f4;border:1px solid #526771;border-radius:6px;padding:8px;font:inherit;margin:6px 6px 6px 0}#panel{max-height:calc(100vh - 90px);overflow:auto}a{color:#76e2c1}
+figure{min-height:150px}#panel{max-width:490px;padding:14px 18px}
+@media(max-width:1000px){#cameras{top:70px;bottom:auto}figure,figure img{width:110px}figure img{height:82px}figure{min-height:115px}}
+</style>
+<script>if(new URLSearchParams(location.search).has('embedded'))document.documentElement.classList.add('embedded');</script>
+<script>if(new URLSearchParams(location.search).has('desktop'))document.documentElement.classList.add('desktop');</script>
+<style>.desktop #panel>p,.desktop #panel>label,.desktop #enter,.desktop #place,.desktop header{display:none}.desktop #panel #episode-controls{display:block}.desktop #panel{min-width:300px;pointer-events:auto}.desktop #cameras{top:16px;bottom:auto}</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"}}</script>
+</head>
+<body>
+<style>.embedded #panel,.embedded #cameras,.embedded header{display:none}</style>
+<header><h1>Robot</h1><span>SPATIAL TELEOP</span></header>
+<div id="panel">
+<div id="status">Connecting to the station…</div>
+<p>Use either hand: pinch thumb and index finger at a round tool handle to move that arm. Pinch its opening control and slide toward OPEN or CLOSE to adjust the jaws; the other hand can keep moving the arm. Release to hold.</p>
+<p class="muted">Solid markers show measured opening; the white outline shows your request. Point at the scene, pinch and release to select an observed surface. Surfaces come from RGB-D; arms follow joint feedback.</p>
+<label>Control <select id="interaction-mode"><option value="auto">Auto: hands / controllers</option><option value="tools">Tool handles</option><option value="clutch">Classic teleop</option></select></label>
+<p class="muted">Controllers: hold the grip to move your corresponding arm, trigger closes its jaws. Release grip to hold. Tool mode uses trigger near handles and sliders. Point and trigger to use menus. Classic hands: index pinch moves; middle pinch closes.</p>
+<label>View <select id="xr-mode"><option value="immersive-vr">Virtual reality</option><option value="immersive-ar">Mixed reality</option></select></label>
+<button id="enter" disabled>Enter XR</button><button id="place">Place workspace / set forward</button>
+<p id="entry-hint" class="muted"></p>
+<p class="muted">Drag a panel's title bar with pinch or trigger. HUD pins it to your view; Unpin returns it to the workspace. Dragging a pinned panel also unpins it.</p>
+<p class="muted">Pinch with both hands in free space to grab the workspace. Move, spread or turn your hands; release one to keep dragging, both to park. Turn an open palm upward for “Bring workspace here”, then point and pinch with the other hand.</p>
+<div id="episode-controls">
+<label for="task">Demonstration task</label><input id="task" maxlength="256" value="Pick up the bottle and place it in the tray">
+<div id="episode-state">Connecting to recorder…</div><p id="episode-hint"></p>
+<button data-action="home" disabled>Home</button><button data-action="record" disabled>Record</button><button data-action="save" disabled>Stop &amp; save</button><button data-action="discard" disabled>Discard</button><button data-action="hold" disabled>Hold</button><button data-action="resume" disabled>Resume</button>
+<p class="muted">These controls work here and in the headset. Home uses each arm's configured home pose and leaves teleop paused. Stop &amp; save keeps the episode; Discard deletes the take.</p>
+</div>
+<p id="perception" class="muted">Object recognition: no detector connected.</p>
+<p id="model-note" class="muted" hidden></p>
+<p class="muted">Desktop: drag to orbit, scroll to zoom. Motion control uses tracked hands or controllers.</p>
+</div>
+<div id="cameras"></div>
+<script type="module" src="./static/spatial.js"></script>
+</body></html>
