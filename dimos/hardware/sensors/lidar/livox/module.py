@@ -23,10 +23,17 @@ Usage::
         Mid360.blueprint(lidar_ip="192.168.1.155"),  # host_ip auto-detected
         SomeConsumer.blueprint(),
     )).loop()
+
+The sensor also describes itself as USD over the ``get_usd`` RPC, so a UrdfManager can take it
+as a ``mounts`` value and graft it onto whatever frame it is bolted to. That layer is baked
+into ``_MID360_USD`` rather than converted on the fly, because usd-core has no linux-aarch64
+wheel and this module runs on a Jetson. The constant is the whole artifact -- there is no
+checked-in description beside it -- so its provenance is written above it.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -109,6 +116,124 @@ class Mid360Config(NativeModuleConfig):
         return config
 
 
+# The MID-360 as a USD layer, baked rather than converted at runtime: usd-core has no
+# linux-aarch64 wheel, and this module's whole job happens on a Jetson.
+#
+# This constant is the artifact. It was produced one-off by writing the sensor as a URDF and
+# running it through dimos.robot.assets.usd.urdf_to_usd; that URDF is deliberately not checked
+# in, so what follows is the only description of this sensor and the numbers in it are the
+# record. To change it, write the URDF again from these notes, convert, and re-insert the
+# @LIDAR@ / @IMU@ placeholders into the displayName lines.
+#
+# Where the numbers come from:
+#   * the 65 x 65 x 60 mm shell, from the Livox MID-360 specs (265 g, four M3 holes in the base)
+#   * the lidar_link_to_imu_link offset (0.011, 0.02329, -0.04412) m, which is
+#     PointLioConfig.extrinsic_t -- the lidar origin in the IMU frame -- negated. That default
+#     is the in-repo source of truth for this extrinsic; keep the two in step.
+#   * the -0.020 m shell offset is a PLACEHOLDER. Livox publishes the point cloud origin only
+#     inside a dimensioned drawing, so it is inferred from the IMU sitting 44.12 mm below the
+#     origin and the body being 60 mm tall, which puts the origin near the top of the shell.
+#     It moves the drawn box and nothing measured.
+#
+# The root link is the point cloud origin -- the frame the driver stamps its cloud with -- not
+# the mounting face. So a mount transform onto this points at the optical origin.
+#
+# @LIDAR@ / @IMU@ stand in for the configured frame names. They appear only in displayName,
+# which is the name that travels (graft_usd matches a mount frame on it); prim names stay
+# fixed USD identifiers, so no sanitising is needed here and none of this depends on pxr.
+_LIDAR_TOKEN = "@LIDAR@"
+_IMU_TOKEN = "@IMU@"
+
+_MID360_USD = """\
+#usda 1.0
+(
+    defaultPrim = "mid360"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "mid360"
+{
+    def Xform "lidar_link" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "@LIDAR@"
+    )
+    {
+        def Xform "lidar_link_body" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            displayName = "@LIDAR@_body"
+        )
+        {
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, -0.02, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Cube "visual_0"
+            {
+                color3f[] primvars:displayColor = [(0.25, 0.25, 0.27)]
+                double size = 1
+                float3 xformOp:scale = (0.065, 0.065, 0.06)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
+            }
+
+            def Cube "collision_1" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 1
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.065, 0.065, 0.06)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
+            }
+        }
+
+        def Xform "imu_link" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            displayName = "@IMU@"
+        )
+        {
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.011, 0.02329, -0.04412, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+    }
+
+    def Scope "joints"
+    {
+        def PhysicsFixedJoint "lidar_link_to_body" (
+            displayName = "@LIDAR@_to_body"
+        )
+        {
+            rel physics:body0 = </mid360/lidar_link>
+            rel physics:body1 = </mid360/lidar_link/lidar_link_body>
+            point3f physics:localPos0 = (0, 0, -0.02)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "lidar_link_to_imu_link" (
+            displayName = "@LIDAR@_to_@IMU@"
+        )
+        {
+            rel physics:body0 = </mid360/lidar_link>
+            rel physics:body1 = </mid360/lidar_link/imu_link>
+            point3f physics:localPos0 = (0.011, 0.02329, -0.04412)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+    }
+}
+
+"""
+
+
+def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
+    """The baked MID-360 layer with its frame names filled in."""
+    return _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame).replace(_IMU_TOKEN, imu_frame)
+
+
 def _resolved_host_ip(config: Mid360Config) -> str | None:
     """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
@@ -135,6 +260,24 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: this sensor, in the frames this instance is configured to stamp.
+
+        A UrdfManager asks for this when the MID-360 is one of its ``mounts``, and grafts the
+        answer onto the frame the sensor is bolted to.
+
+        The root is this module's own directory: the only one this driver can point at and be
+        right about wherever it is installed. Today the layer names no files at all, so the
+        root buys nothing -- but it is the honest answer, and it stays right if the description
+        ever grows a mesh. It is deliberately not baked into the constant: that is written on a
+        build machine, whose paths mean nothing on the robot.
+        """
+        return [
+            str(Path(__file__).parent),
+            mid360_usd(self.config.frame_id, self.config.imu_frame_id),
+        ]
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
