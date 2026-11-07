@@ -1,7 +1,7 @@
 # R1 Pro in the SF555 office
 
 `r1pro-sim2` runs a mobile R1 Pro in the existing SF555 office, with MuJoCo
-physics, native Unreal RGB-D, Mid-360 lidar, chassis and torso IMUs, and joint
+physics, selectable MuJoCo/Unreal RGB-D, Mid-360 lidar, chassis and torso IMUs, and joint
 encoders. DimOS Desktop displays and controls the robot through the standard
 streams. The standalone Viser demo has been removed.
 
@@ -30,6 +30,13 @@ and drive topic `/cmd_vel`. With the view focused: W/S drives, A/D turns,
 Q/E strafes, and Space stops. The simulation controller caps translation at
 0.4 m/s and yaw at 0.5 rad/s and brakes if commands stop arriving for 0.3 s.
 The robot starts at `(16, 1, 0.005)` in the office's metric Z-up frame.
+
+Camera rendering currently defaults to **MuJoCo for testing**. It uses the same
+office visual geometry, three camera calibrations, streams and Desktop/headset
+views, with basic shading rather than Unreal materials and lighting. To opt
+back into Unreal, set `DIMOS_R1PRO_CAMERA_RENDERER=unreal` in this checkout's
+`.env` (or the launching process environment) and restart the blueprint. The
+accepted choices are `mujoco` and `unreal`.
 
 Stop with `dimos-desktop dimos stop`. The camera module also stops its owned
 Unreal process. Initial office compilation can take tens of seconds; the
@@ -80,9 +87,9 @@ are not compared against the wall clock.
 
 | Streams | Source | Requested rate |
 |---|---|---|
-| `color_image`, `depth_image`, `camera_info` | Head-left optical frame, native Unreal | 15 Hz ceiling |
-| `left_wrist`, `left_wrist_depth`, `left_wrist_info` | Left D405 mount, shared native Unreal | 15 Hz ceiling |
-| `right_wrist`, `right_wrist_depth`, `right_wrist_info` | Right D405 mount, shared native Unreal | 15 Hz ceiling |
+| `color_image`, `depth_image`, `camera_info` | Head-left optical frame, selected renderer | 15 Hz ceiling |
+| `left_wrist`, `left_wrist_depth`, `left_wrist_info` | Left D405 mount, shared renderer | 15 Hz ceiling |
+| `right_wrist`, `right_wrist_depth`, `right_wrist_info` | Right D405 mount, shared renderer | 15 Hz ceiling |
 | `lidar_raw` | Chassis Mid-360 frame, rolling ray acquisition | 10 Hz |
 | `pointcloud` | Truth-registered lidar for visualization | 10 Hz |
 | `global_map` | VoxelGridMapper accumulating registered lidar | Every 5 scans |
@@ -117,7 +124,9 @@ The generator removes the alternative GMSL wrist housings, collisions and masses
 while preserving their fixed frames. Upstream includes both alternatives in
 nearly the same location, which otherwise occludes the D405 views.
 
-`R1ProSimCameras` shares one Unreal process/world across all three cameras. Its
+`R1ProSimCameras` accepts the shared `CameraRigRenderer` protocol. MuJoCo shares
+one compiled geometry scene and caches image contexts by resolution; Unreal
+shares one external process/world across all three cameras. The module's
 single worker captures one latest pose at a time, round-robin, with independent
 rate ceilings; 15 Hz is requested **per camera**, not measured throughput.
 Unreal reuses up to three target resolutions and resets temporal history when
@@ -237,3 +246,13 @@ and targeted mypy checks passed. The new live motion smoke attempt was refused
 because a control client was already connected; the earlier motion results above
 are not a rerun of this camera configuration. Physical headset validation remains
 outstanding.
+
+The MuJoCo testing renderer measured 5.84 / 5.79 / 5.84 captures/s over 20 seconds
+at the same camera resolutions, with 1.000× simulation speed, zero additional
+late steps and p95 surface receipt ages below 0.17 seconds. Unreal was stopped.
+Evidence is under `mujoco_results.json` and `mujoco_{workspace,left,right}.jpg`
+in the validation directory. The office is recognizable with grey shading but
+has visual artifacts and none of Unreal's authored materials/lighting. This is
+still below the requested 15 Hz per camera. An actual offscreen-render test
+verifies unequal focal lengths, principal-point offsets, axial depth and switching
+between image sizes without retaining another camera's calibration.

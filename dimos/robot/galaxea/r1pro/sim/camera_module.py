@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Three RGB-D views sharing one Unreal world and a bounded capture worker."""
+"""Three RGB-D views sharing one renderer scene and a bounded capture worker."""
 
 from collections.abc import Callable
 from typing import Any
@@ -26,8 +26,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.galaxea.r1pro.sim.cameras import WRIST_MAX_DEPTH_M, WRIST_MIN_DEPTH_M
 from dimos.sim2.description import SceneConfig
 from dimos.sim2.geometry.poses import poses_by_id
-from dimos.sim2.sensors.camera.config import CameraConfig
-from dimos.sim2.sensors.camera.renderers.unreal.renderer import UnrealRenderer
+from dimos.sim2.sensors.camera.config import CameraConfig, CameraRigRenderer
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
 from dimos.sim2.sensors.sampling import Acquisition
 
@@ -36,7 +35,7 @@ class R1ProCamerasConfig(PoseSensorConfig):
     head: CameraConfig
     left: CameraConfig
     right: CameraConfig
-    renderer: Callable[[], UnrealRenderer]
+    renderer: Callable[[], CameraRigRenderer]
 
 
 class R1ProSimCameras(_PoseSensorModule):
@@ -61,9 +60,6 @@ class R1ProSimCameras(_PoseSensorModule):
 
     def open_sensor(self, scene: SceneConfig) -> None:
         self.renderer.load(scene, self.config.head)
-        if any(c.frame_id not in self.renderer.bodies for c in self._cameras):
-            self.renderer.close()
-            raise ValueError("Camera mount missing from the loaded scene")
         self._sampling = [Acquisition(c.hz) for c in self._cameras]
 
     def acquire(self, sample: WorldState, *, latest: bool = True) -> None:

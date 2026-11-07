@@ -19,6 +19,7 @@ Prepare the R1 Pro model and office assets; see docs/development/sim2-r1pro.md.
 
 from dataclasses import replace
 from functools import partial
+import os
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -43,6 +44,7 @@ from dimos.sim2.description import Instance, SceneConfig
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.sim2.scenes.sf555.config import OFFICE_MODEL, OFFICE_RENDERER
+from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
 from dimos.sim2.sensors.lidar.config import LidarConfig
@@ -57,6 +59,9 @@ SCENE = SceneConfig(
     instances=(replace(ROBOT_SCENE.instances[0], xyz=(16, 1, 0.005)), Instance("office")),
     ground_plane=False,
 )
+# Testing default; opt back into the native office renderer without rewiring streams.
+CAMERA_RENDERERS = {"mujoco": MujocoRenderer, "unreal": OFFICE_RENDERER}
+CAMERA_RENDERER = CAMERA_RENDERERS[os.environ.get("DIMOS_R1PRO_CAMERA_RENDERER", "mujoco")]
 CAMERA = head_camera()
 LIDAR = LidarConfig(
     "r1pro/lidar_chassis_left_link",
@@ -92,7 +97,7 @@ r1pro_sim2 = (
             head=CAMERA,
             left=wrist_camera("left"),
             right=wrist_camera("right"),
-            renderer=OFFICE_RENDERER,
+            renderer=CAMERA_RENDERER,
         ),
         SimLidarModule.blueprint(scene=SCENE, sensor=LIDAR, raycaster=MujocoRaycaster).remappings(
             [(SimLidarModule, "lidar", "lidar_raw")]
