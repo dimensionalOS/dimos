@@ -28,6 +28,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.agents.llm_trace import request_path, response_path
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.evals.agents import pi
 from dimos.evals.agents.blind import Blind
 from dimos.evals.agents.lib.pi_config import Provider, RunPaths, RuntimeConfig
@@ -356,6 +357,23 @@ def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
     )
     assert "--append-system-prompt" in command
     assert "--system-prompt" not in command
+
+
+def test_python_guide_replaces_the_mcp_tool_listing(tmp_path: Path, mocker: MockerFixture) -> None:
+    listing = mocker.patch("dimos.evals.agents.pi.tool_listing")
+    guide = tmp_path / "python_api.md"
+    guide.write_text("[arm](/docs/capabilities/manipulation/python_api.md) [cbor](/dimos/cbor.py)")
+    run_dir = tmp_path / "case"
+    run_dir.mkdir()
+    adapter = PiAdapter()
+    env = RunningEnvironment(mcp_url="", streams=(), artifacts={}, python_guide=guide)
+    prompt = adapter._prepare_case(env, run_dir)
+    arm_guide = DIMOS_PROJECT_ROOT / "docs" / "capabilities" / "manipulation" / "python_api.md"
+    cbor = DIMOS_PROJECT_ROOT / "dimos" / "cbor.py"
+    assert (run_dir / "DIMOS.md").read_text() == f"[arm]({arm_guide}) [cbor]({cbor})"
+    assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt
+    assert "dimos mcp call" not in prompt
+    listing.assert_not_called()
 
 
 @pytest.mark.parametrize(
