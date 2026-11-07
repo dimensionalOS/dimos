@@ -1,0 +1,2141 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "MuJoCo USD Converter v0.9.0"
+    }
+    defaultPrim = "M20"
+    doc = """Generated from Composed Stage of root layer /tmp/tmp6a72o6b4/M20.usdc
+
+
+Generated from Composed Stage of root layer /tmp/claude-1000/converted_m20/M20.usdc
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "Flattened_Prototype_4"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_4.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_4.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_4.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_4.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_4.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_4.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_4.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_4.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_5"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_5.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_5.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_5.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_5.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_5.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_5.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_5.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_5.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_6"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_6.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_6.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_6.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_6.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_6.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_6.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_6.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_6.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_1"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_1.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_1.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_1.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_1.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_1.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_1.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_1.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_1.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_2"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_2.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_2.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_2.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_2.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_2.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_2.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_2.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_2.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_3"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_3.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_3.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_3.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_3.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_3.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_3.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_3.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_3.inputs:roughness>
+        token outputs:out
+    }
+}
+
+def Xform "M20" (
+    apiSchemas = ["GeomModelAPI"]
+    assetInfo = {
+        string name = "M20"
+    }
+    kind = "component"
+)
+{
+    float3[] extentsHint = [(-100, -100, 0), (100, 100, 1.0852411), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (-0.005, -0.031799998, 0.995), (0.0682, 0.005, 1.0485)]
+
+    def Scope "Geometry"
+    {
+        def Plane "floor" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            float3[] extent = [(-100, -100, -0), (100, 100, 0)]
+            double length = 200
+            rel material:binding = </M20/Materials/MatPlane>
+            rel material:binding:physics = </M20/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double width = 200
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Xform "base_link" (
+            apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI", "PhysicsFilteredPairsAPI"]
+        )
+        {
+            uniform bool newton:jointsAddMobility = 1
+            point3f physics:centerOfMass = (0.0035510587, 0.001650758, -0.0034646215)
+            float3 physics:diagonalInertia = (0.087919, 0.533522, 0.563492)
+            rel physics:filteredPairs = [
+                </M20/Geometry/base_link/fl_hipx>,
+                </M20/Geometry/base_link/fr_hipx>,
+                </M20/Geometry/base_link/hl_hipx>,
+                </M20/Geometry/base_link/hr_hipx>,
+            ]
+            float physics:mass = 15.882
+            quatf physics:principalAxes = (1, 0, 0, 0)
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, 1)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "base_link" (
+                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                assetInfo = {
+                    asset identifier = @meshes/base_link.STL@
+                    string version = "sha256:a7984137d06782f513858fd699111109978301a9dff53ff37abf5413b922247f"
+                }
+                prepend references = @meshes/base_link.usdc@
+            )
+            {
+                rel material:binding = </M20/Materials/default_material>
+                uniform int mjc:group = 2
+                uniform token orientation = "rightHanded"
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Cube "Box" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+            )
+            {
+                float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                rel material:binding = </M20/Materials/collision_material>
+                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                uniform int mjc:group = 1
+                uniform double[] mjc:solref = [0.005, 1]
+                float newton:contactGap = 0
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                double size = 2
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (0.375, 0.045, 0.07)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Cylinder "Cylinder" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                float3[] extent = [(-0.07, -0.07, -0.375), (0.07, 0.07, 0.375)]
+                double height = 0.75
+                rel material:binding = </M20/Materials/collision_material>
+                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                uniform int mjc:group = 1
+                uniform double[] mjc:solref = [0.005, 1]
+                float newton:contactGap = 0
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                double radius = 0.07
+                quatf xformOp:orient = (0.7071068, 0, 0.7071067, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0.045, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Cylinder "Cylinder_1" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                displayName = "Cylinder"
+                uiHints = {
+                    string displayName = "Cylinder"
+                }
+            )
+            {
+                uniform token axis = "Z"
+                float3[] extent = [(-0.07, -0.07, -0.375), (0.07, 0.07, 0.375)]
+                double height = 0.75
+                rel material:binding = </M20/Materials/collision_material>
+                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                uniform int mjc:group = 1
+                uniform double[] mjc:solref = [0.005, 1]
+                float newton:contactGap = 0
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                double radius = 0.07
+                quatf xformOp:orient = (0.7071068, 0, 0.7071067, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, -0.045, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Sphere "imu_site" (
+                apiSchemas = ["MjcSiteAPI", "NewtonSiteAPI"]
+            )
+            {
+                float3[] extent = [(-0.005, -0.005, -0.005), (0.005, 0.005, 0.005)]
+                color3f[] primvars:displayColor = [(1, 0, 0)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                uniform token purpose = "guide"
+                double radius = 0.005
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.0632, -0.0268, 0.0435)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Sphere "base_site" (
+                apiSchemas = ["MjcSiteAPI", "NewtonSiteAPI"]
+            )
+            {
+                float3[] extent = [(-0.005, -0.005, -0.005), (0.005, 0.005, 0.005)]
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                uniform token purpose = "guide"
+                double radius = 0.005
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Xform "fl_hipx" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (-0.0111893, 0.00891693, 0.000405666)
+                float3 physics:diagonalInertia = (0.000374402, 0.000286289, 0.000179309)
+                rel physics:filteredPairs = </M20/Geometry/base_link/fl_hipx/fl_hipy>
+                float physics:mass = 0.259964
+                quatf physics:principalAxes = (0.58162785, 0.48170683, 0.4656068, 0.46138683)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.3141, 0.0685, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "fl_hipx" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/fl_hipx.STL@
+                        string version = "sha256:179c634929072ae0ccf1dcdab1b005ac49b54e3225e78377afcff65951841aeb"
+                    }
+                    prepend references = @meshes/fl_hipx.usdc@
+                )
+                {
+                    rel material:binding = </M20/Materials/default_material>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.048, -0.048, -0.07), (0.048, 0.048, 0.07)]
+                    double height = 0.14
+                    rel material:binding = </M20/Materials/collision_material>
+                    rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                    uniform int mjc:group = 1
+                    uniform double[] mjc:solref = [0.005, 1]
+                    float newton:contactGap = 0
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    double radius = 0.048
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0.055, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "fl_hipy" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.00199375, 0.098439, -0.130664)
+                    float3 physics:diagonalInertia = (0.0410181, 0.0408067, 0.00297328)
+                    rel physics:filteredPairs = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee>
+                    float physics:mass = 2.618
+                    quatf physics:principalAxes = (0.67540014, -0.05658871, 0.06221561, 0.73264015)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "fl_hipy" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/fl_hipy.STL@
+                            string version = "sha256:c895052a02ccbb21111815a20676a8dbef82aca62edf4cb0289afc68d54034ef"
+                        }
+                        prepend references = @meshes/fl_hipy.usdc@
+                    )
+                    {
+                        rel material:binding = </M20/Materials/default_material>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double size = 2
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (0.035, 0.01, 0.125)
+                        double3 xformOp:translate = (-0.01, 0.11, -0.125)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cylinder "Cylinder" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        uniform token axis = "Z"
+                        float3[] extent = [(-0.05, -0.05, -0.045), (0.05, 0.05, 0.045)]
+                        double height = 0.09
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double radius = 0.05
+                        quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0.11, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "fl_knee" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.00341917, 0.00269124, -0.181265)
+                        float3 physics:diagonalInertia = (0.0121304, 0.0117245, 0.000948105)
+                        rel physics:filteredPairs = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee/fl_wheel>
+                        float physics:mass = 1.145
+                        quatf physics:principalAxes = (0.63340485, -0.050855488, 0.047588687, 0.77067983)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0.0984, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "fl_knee" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/fl_knee.STL@
+                                string version = "sha256:c2ac2f2c9664d847646efed234f35f47c30b28f35083abb470193eb0535c3154"
+                            }
+                            prepend references = @meshes/fl_knee.usdc@
+                        )
+                        {
+                            rel material:binding = </M20/Materials/default_material>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, 0)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cube "Box" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double size = 2
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (0.03, 0.0125, 0.125)
+                            double3 xformOp:translate = (0.015, -0.015, -0.125)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.04, -0.04, -0.05), (0.04, 0.04, 0.05)]
+                            double height = 0.1
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double radius = 0.04
+                            quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0.02, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Xform "fl_wheel" (
+                            apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                        )
+                        {
+                            point3f physics:centerOfMass = (-3.11398e-7, 0.000279002, 5.70329e-7)
+                            float3 physics:diagonalInertia = (0.002853, 0.001535, 0.001535)
+                            float physics:mass = 0.638
+                            quatf physics:principalAxes = (0.7071068, 0, 0, 0.7071068)
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0.059676, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                            def Mesh "fl_wheel" (
+                                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                                assetInfo = {
+                                    asset identifier = @meshes/fl_wheel.STL@
+                                    string version = "sha256:bcfca68aeeb8e5f118d4623a384cb040f611c32c1115b8574aed4c546e64685d"
+                                }
+                                prepend references = @meshes/fl_wheel.usdc@
+                            )
+                            {
+                                rel material:binding = </M20/Materials/default_material>
+                                uniform int mjc:group = 2
+                                uniform token orientation = "rightHanded"
+                                uniform token subdivisionScheme = "none"
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def Cylinder "Cylinder" (
+                                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                            )
+                            {
+                                uniform token axis = "Z"
+                                float3[] extent = [(-0.09, -0.09, -0.027), (0.09, 0.09, 0.027)]
+                                double height = 0.054
+                                rel material:binding = </M20/Materials/collision_material>
+                                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                                uniform int mjc:group = 1
+                                uniform double[] mjc:solref = [0.005, 1]
+                                float newton:contactGap = 0
+                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayColor:indices = None
+                                float[] primvars:displayOpacity = [1] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayOpacity:indices = None
+                                double radius = 0.09
+                                quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def PhysicsRevoluteJoint "fl_wheel_joint" (
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            )
+                            {
+                                uniform double mjc:actuatorfrcrange:max = 21.6
+                                uniform double mjc:actuatorfrcrange:min = -21.6
+                                uniform token physics:axis = "Y"
+                                rel physics:body0 = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee>
+                                rel physics:body1 = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee/fl_wheel>
+                                point3f physics:localPos0 = (0, 0.059676, -0.25)
+                                point3f physics:localPos1 = (0, 0, 0)
+                                quatf physics:localRot0 = (0, -1, 0, 0)
+                                quatf physics:localRot1 = (0, -1, 0, 0)
+                            }
+                        }
+
+                        def PhysicsRevoluteJoint "fl_knee_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        )
+                        {
+                            uniform double mjc:actuatorfrcrange:max = 76.4
+                            uniform double mjc:actuatorfrcrange:min = -76.4
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </M20/Geometry/base_link/fl_hipx/fl_hipy>
+                            rel physics:body1 = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee>
+                            point3f physics:localPos0 = (0, 0.0984, -0.25)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (0, -1, 0, 0)
+                            quatf physics:localRot1 = (0, -1, 0, 0)
+                            float physics:lowerLimit = -160.94385
+                            float physics:upperLimit = 159.96982
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "fl_hipy_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    )
+                    {
+                        uniform double mjc:actuatorfrcrange:max = 76.4
+                        uniform double mjc:actuatorfrcrange:min = -76.4
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </M20/Geometry/base_link/fl_hipx>
+                        rel physics:body1 = </M20/Geometry/base_link/fl_hipx/fl_hipy>
+                        point3f physics:localPos0 = (0, 0, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (0, -1, 0, 0)
+                        quatf physics:localRot1 = (0, -1, 0, 0)
+                        float physics:lowerLimit = -130.97815
+                        float physics:upperLimit = 147.995
+                    }
+                }
+
+                def PhysicsRevoluteJoint "fl_hipx_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                )
+                {
+                    uniform double mjc:actuatorfrcrange:max = 76.4
+                    uniform double mjc:actuatorfrcrange:min = -76.4
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </M20/Geometry/base_link>
+                    rel physics:body1 = </M20/Geometry/base_link/fl_hipx>
+                    point3f physics:localPos0 = (0.3141, 0.0685, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (0, 0, -1, 0)
+                    quatf physics:localRot1 = (0, 0, -1, 0)
+                    float physics:lowerLimit = -24.980959
+                    float physics:upperLimit = 35.00772
+                }
+            }
+
+            def Xform "fr_hipx" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (-0.0110901, -0.00875035, 0.000521421)
+                float3 physics:diagonalInertia = (0.000374402, 0.000286289, 0.000179309)
+                rel physics:filteredPairs = </M20/Geometry/base_link/fr_hipx/fr_hipy>
+                float physics:mass = 0.259964
+                quatf physics:principalAxes = (0.4613869, 0.46560687, 0.4817069, 0.5816279)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.3141, -0.0685, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "fr_hipx" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/fr_hipx.STL@
+                        string version = "sha256:350a5bca1df65250de995636583a5415d24625add5a5da447e9a09fb4661540b"
+                    }
+                    prepend references = @meshes/fr_hipx.usdc@
+                )
+                {
+                    rel material:binding = </M20/Materials/default_material>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.048, -0.048, -0.07), (0.048, 0.048, 0.07)]
+                    double height = 0.14
+                    rel material:binding = </M20/Materials/collision_material>
+                    rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                    uniform int mjc:group = 1
+                    uniform double[] mjc:solref = [0.005, 1]
+                    float newton:contactGap = 0
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    double radius = 0.048
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, -0.055, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "fr_hipy" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.00229992, -0.0989709, -0.130925)
+                    float3 physics:diagonalInertia = (0.0407542, 0.040538, 0.00301281)
+                    rel physics:filteredPairs = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee>
+                    float physics:mass = 2.618
+                    quatf physics:principalAxes = (0.69640034, 0.05866883, -0.05878863, 0.7128314)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "fr_hipy" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/fr_hipy.STL@
+                            string version = "sha256:6a776a1637c7676a3220aa51df6f2a59ebb7b8a94da10305940653902116e9ee"
+                        }
+                        prepend references = @meshes/fr_hipy.usdc@
+                    )
+                    {
+                        rel material:binding = </M20/Materials/default_material>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double size = 2
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (0.035, 0.01, 0.125)
+                        double3 xformOp:translate = (-0.01, -0.11, -0.125)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cylinder "Cylinder" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        uniform token axis = "Z"
+                        float3[] extent = [(-0.05, -0.05, -0.045), (0.05, 0.05, 0.045)]
+                        double height = 0.09
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double radius = 0.05
+                        quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, -0.11, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "fr_knee" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.00354945, -0.00247884, -0.180089)
+                        float3 physics:diagonalInertia = (0.0122564, 0.0118448, 0.000951718)
+                        rel physics:filteredPairs = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee/fr_wheel>
+                        float physics:mass = 1.145
+                        quatf physics:principalAxes = (0.7691938, 0.04729819, -0.05047109, 0.6352608)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, -0.0984, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "fr_knee" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/fr_knee.STL@
+                                string version = "sha256:e158a0ca5a5ef08862714d546576d23706b096576a3e20e3d7a88184d72e4743"
+                            }
+                            prepend references = @meshes/fr_knee.usdc@
+                        )
+                        {
+                            rel material:binding = </M20/Materials/default_material>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, 0)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cube "Box" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double size = 2
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (0.03, 0.0125, 0.125)
+                            double3 xformOp:translate = (0.015, 0.015, -0.125)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.04, -0.04, -0.05), (0.04, 0.04, 0.05)]
+                            double height = 0.1
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double radius = 0.04
+                            quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, -0.02, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Xform "fr_wheel" (
+                            apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                        )
+                        {
+                            point3f physics:centerOfMass = (-6.47327e-7, -0.000279012, -4.6242e-8)
+                            float3 physics:diagonalInertia = (0.002853, 0.001535, 0.001535)
+                            float physics:mass = 0.638
+                            quatf physics:principalAxes = (0.7071068, 0, 0, 0.7071068)
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, -0.059676, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                            def Mesh "fr_wheel" (
+                                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                                assetInfo = {
+                                    asset identifier = @meshes/fr_wheel.STL@
+                                    string version = "sha256:2773ffcac685b1e288b09d13b80991987d722f386a645cd99b88de01eb02706b"
+                                }
+                                prepend references = @meshes/fr_wheel.usdc@
+                            )
+                            {
+                                rel material:binding = </M20/Materials/default_material>
+                                uniform int mjc:group = 2
+                                uniform token orientation = "rightHanded"
+                                uniform token subdivisionScheme = "none"
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def Cylinder "Cylinder" (
+                                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                            )
+                            {
+                                uniform token axis = "Z"
+                                float3[] extent = [(-0.09, -0.09, -0.027), (0.09, 0.09, 0.027)]
+                                double height = 0.054
+                                rel material:binding = </M20/Materials/collision_material>
+                                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                                uniform int mjc:group = 1
+                                uniform double[] mjc:solref = [0.005, 1]
+                                float newton:contactGap = 0
+                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayColor:indices = None
+                                float[] primvars:displayOpacity = [1] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayOpacity:indices = None
+                                double radius = 0.09
+                                quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def PhysicsRevoluteJoint "fr_wheel_joint" (
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            )
+                            {
+                                uniform double mjc:actuatorfrcrange:max = 21.6
+                                uniform double mjc:actuatorfrcrange:min = -21.6
+                                uniform token physics:axis = "Y"
+                                rel physics:body0 = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee>
+                                rel physics:body1 = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee/fr_wheel>
+                                point3f physics:localPos0 = (0, -0.059676, -0.25)
+                                point3f physics:localPos1 = (0, 0, 0)
+                                quatf physics:localRot0 = (0, -1, 0, 0)
+                                quatf physics:localRot1 = (0, -1, 0, 0)
+                            }
+                        }
+
+                        def PhysicsRevoluteJoint "fr_knee_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        )
+                        {
+                            uniform double mjc:actuatorfrcrange:max = 76.4
+                            uniform double mjc:actuatorfrcrange:min = -76.4
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </M20/Geometry/base_link/fr_hipx/fr_hipy>
+                            rel physics:body1 = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee>
+                            point3f physics:localPos0 = (0, -0.0984, -0.25)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (0, -1, 0, 0)
+                            quatf physics:localRot1 = (0, -1, 0, 0)
+                            float physics:lowerLimit = -160.94385
+                            float physics:upperLimit = 159.96982
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "fr_hipy_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    )
+                    {
+                        uniform double mjc:actuatorfrcrange:max = 76.4
+                        uniform double mjc:actuatorfrcrange:min = -76.4
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </M20/Geometry/base_link/fr_hipx>
+                        rel physics:body1 = </M20/Geometry/base_link/fr_hipx/fr_hipy>
+                        point3f physics:localPos0 = (0, 0, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (0, -1, 0, 0)
+                        quatf physics:localRot1 = (0, -1, 0, 0)
+                        float physics:lowerLimit = -130.97815
+                        float physics:upperLimit = 147.995
+                    }
+                }
+
+                def PhysicsRevoluteJoint "fr_hipx_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                )
+                {
+                    uniform double mjc:actuatorfrcrange:max = 76.4
+                    uniform double mjc:actuatorfrcrange:min = -76.4
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </M20/Geometry/base_link>
+                    rel physics:body1 = </M20/Geometry/base_link/fr_hipx>
+                    point3f physics:localPos0 = (0.3141, -0.0685, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (0, 0, -1, 0)
+                    quatf physics:localRot1 = (0, 0, -1, 0)
+                    float physics:lowerLimit = -35.00772
+                    float physics:upperLimit = 24.980959
+                }
+            }
+
+            def Xform "hl_hipx" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (0.0110901, 0.00875014, 0.000524884)
+                float3 physics:diagonalInertia = (0.000374402, 0.000286289, 0.000179309)
+                rel physics:filteredPairs = </M20/Geometry/base_link/hl_hipx/hl_hipy>
+                float physics:mass = 0.259964
+                quatf physics:principalAxes = (0.4656068, 0.46138683, 0.58162785, 0.48170683)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-0.3141, 0.0685, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "hl_hipx" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hl_hipx.STL@
+                        string version = "sha256:3c20e792611b5142b4237f381a300079bb3d5d71e59c0d0a38335ff67988cf3a"
+                    }
+                    prepend references = @meshes/hl_hipx.usdc@
+                )
+                {
+                    rel material:binding = </M20/Materials/default_material>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.048, -0.048, -0.07), (0.048, 0.048, 0.07)]
+                    double height = 0.14
+                    rel material:binding = </M20/Materials/collision_material>
+                    rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                    uniform int mjc:group = 1
+                    uniform double[] mjc:solref = [0.005, 1]
+                    float newton:contactGap = 0
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    double radius = 0.048
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0.055, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "hl_hipy" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (0.00204343, 0.0990227, -0.130697)
+                    float3 physics:diagonalInertia = (0.0408376, 0.0406211, 0.00299727)
+                    rel physics:filteredPairs = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee>
+                    float physics:mass = 2.618
+                    quatf physics:principalAxes = (0.75035936, -0.06285843, 0.054650627, 0.6557613)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "hl_hipy" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/hl_hipy.STL@
+                            string version = "sha256:d2c9efec9bfc31fef034617879fab4b731ac22d67a8f1d5f89ba4ca6d3a375ac"
+                        }
+                        prepend references = @meshes/hl_hipy.usdc@
+                    )
+                    {
+                        rel material:binding = </M20/Materials/default_material>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double size = 2
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (0.035, 0.01, 0.125)
+                        double3 xformOp:translate = (0.01, 0.11, -0.125)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cylinder "Cylinder" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        uniform token axis = "Z"
+                        float3[] extent = [(-0.05, -0.05, -0.045), (0.05, 0.05, 0.045)]
+                        double height = 0.09
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double radius = 0.05
+                        quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0.11, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "hl_knee" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (-0.00354945, 0.00247885, -0.180089)
+                        float3 physics:diagonalInertia = (0.0122564, 0.0118448, 0.000951718)
+                        rel physics:filteredPairs = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee/hl_wheel>
+                        float physics:mass = 1.145
+                        quatf physics:principalAxes = (0.7691938, -0.04729819, 0.05047109, 0.6352608)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0.0984, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "hl_knee" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/hl_knee.STL@
+                                string version = "sha256:f6897fb23e4f1fe0943952f36f756d93ef6de88f48ac1ede294a7ca852ab82a1"
+                            }
+                            prepend references = @meshes/hl_knee.usdc@
+                        )
+                        {
+                            rel material:binding = </M20/Materials/default_material>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, 0)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cube "Box" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double size = 2
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (0.03, 0.0125, 0.125)
+                            double3 xformOp:translate = (-0.015, 0.015, -0.125)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.04, -0.04, -0.05), (0.04, 0.04, 0.05)]
+                            double height = 0.1
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double radius = 0.04
+                            quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0.02, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Xform "hl_wheel" (
+                            apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                        )
+                        {
+                            point3f physics:centerOfMass = (-6.07889e-7, 0.000279009, 2.1049e-7)
+                            float3 physics:diagonalInertia = (0.002853, 0.001535, 0.001535)
+                            float physics:mass = 0.638
+                            quatf physics:principalAxes = (0.7071068, 0, 0, 0.7071068)
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0.059676, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                            def Mesh "hl_wheel" (
+                                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                                assetInfo = {
+                                    asset identifier = @meshes/hl_wheel.STL@
+                                    string version = "sha256:d61d98f986e989484d37ac15700f43c409b1205ff649b4ba14f6ac3ee0f7e7c2"
+                                }
+                                prepend references = @meshes/hl_wheel.usdc@
+                            )
+                            {
+                                rel material:binding = </M20/Materials/default_material>
+                                uniform int mjc:group = 2
+                                uniform token orientation = "rightHanded"
+                                uniform token subdivisionScheme = "none"
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def Cylinder "Cylinder" (
+                                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                            )
+                            {
+                                uniform token axis = "Z"
+                                float3[] extent = [(-0.09, -0.09, -0.027), (0.09, 0.09, 0.027)]
+                                double height = 0.054
+                                rel material:binding = </M20/Materials/collision_material>
+                                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                                uniform int mjc:group = 1
+                                uniform double[] mjc:solref = [0.005, 1]
+                                float newton:contactGap = 0
+                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayColor:indices = None
+                                float[] primvars:displayOpacity = [1] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayOpacity:indices = None
+                                double radius = 0.09
+                                quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def PhysicsRevoluteJoint "hl_wheel_joint" (
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            )
+                            {
+                                uniform double mjc:actuatorfrcrange:max = 21.6
+                                uniform double mjc:actuatorfrcrange:min = -21.6
+                                uniform token physics:axis = "Y"
+                                rel physics:body0 = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee>
+                                rel physics:body1 = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee/hl_wheel>
+                                point3f physics:localPos0 = (0, 0.059676, -0.25)
+                                point3f physics:localPos1 = (0, 0, 0)
+                                quatf physics:localRot0 = (0, -1, 0, 0)
+                                quatf physics:localRot1 = (0, -1, 0, 0)
+                            }
+                        }
+
+                        def PhysicsRevoluteJoint "hl_knee_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        )
+                        {
+                            uniform double mjc:actuatorfrcrange:max = 76.4
+                            uniform double mjc:actuatorfrcrange:min = -76.4
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </M20/Geometry/base_link/hl_hipx/hl_hipy>
+                            rel physics:body1 = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee>
+                            point3f physics:localPos0 = (0, 0.0984, -0.25)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (0, -1, 0, 0)
+                            quatf physics:localRot1 = (0, -1, 0, 0)
+                            float physics:lowerLimit = -159.96982
+                            float physics:upperLimit = 160.94385
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "hl_hipy_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    )
+                    {
+                        uniform double mjc:actuatorfrcrange:max = 76.4
+                        uniform double mjc:actuatorfrcrange:min = -76.4
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </M20/Geometry/base_link/hl_hipx>
+                        rel physics:body1 = </M20/Geometry/base_link/hl_hipx/hl_hipy>
+                        point3f physics:localPos0 = (0, 0, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (0, -1, 0, 0)
+                        quatf physics:localRot1 = (0, -1, 0, 0)
+                        float physics:lowerLimit = -147.995
+                        float physics:upperLimit = 130.97815
+                    }
+                }
+
+                def PhysicsRevoluteJoint "hl_hipx_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                )
+                {
+                    uniform double mjc:actuatorfrcrange:max = 76.4
+                    uniform double mjc:actuatorfrcrange:min = -76.4
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </M20/Geometry/base_link>
+                    rel physics:body1 = </M20/Geometry/base_link/hl_hipx>
+                    point3f physics:localPos0 = (-0.3141, 0.0685, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (0, 0, -1, 0)
+                    quatf physics:localRot1 = (0, 0, -1, 0)
+                    float physics:lowerLimit = -24.980959
+                    float physics:upperLimit = 35.00772
+                }
+            }
+
+            def Xform "hr_hipx" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (0.0110902, -0.00875012, 0.000524937)
+                float3 physics:diagonalInertia = (0.000374402, 0.000286289, 0.000179309)
+                rel physics:filteredPairs = </M20/Geometry/base_link/hr_hipx/hr_hipy>
+                float physics:mass = 0.259964
+                quatf physics:principalAxes = (0.4817069, 0.5816279, 0.4613869, 0.46560687)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-0.3141, -0.0685, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "hr_hipx" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hr_hipx.STL@
+                        string version = "sha256:b49f8992cc84058e6009b804e4d68137059636175c5ba32816d36611d5b5b98a"
+                    }
+                    prepend references = @meshes/hr_hipx.usdc@
+                )
+                {
+                    rel material:binding = </M20/Materials/default_material>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.048, -0.048, -0.07), (0.048, 0.048, 0.07)]
+                    double height = 0.14
+                    rel material:binding = </M20/Materials/collision_material>
+                    rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                    uniform int mjc:group = 1
+                    uniform double[] mjc:solref = [0.005, 1]
+                    float newton:contactGap = 0
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    double radius = 0.048
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, -0.055, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "hr_hipy" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (0.001992, -0.0983704, -0.130561)
+                    float3 physics:diagonalInertia = (0.0410109, 0.0408028, 0.00297526)
+                    rel physics:filteredPairs = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee>
+                    float physics:mass = 2.618
+                    quatf physics:principalAxes = (0.676694, 0.0567616, -0.0621797, 0.731435)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "hr_hipy" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/hr_hipy.STL@
+                            string version = "sha256:70332110c7bc92d4498834cb37260c32de3e2d4b44e821bcf14a71ddf73d3e72"
+                        }
+                        prepend references = @meshes/hr_hipy.usdc@
+                    )
+                    {
+                        rel material:binding = </M20/Materials/default_material>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double size = 2
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (0.035, 0.01, 0.125)
+                        double3 xformOp:translate = (0.01, -0.11, -0.125)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cylinder "Cylinder" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        uniform token axis = "Z"
+                        float3[] extent = [(-0.05, -0.05, -0.045), (0.05, 0.05, 0.045)]
+                        double height = 0.09
+                        rel material:binding = </M20/Materials/collision_material>
+                        rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                        uniform int mjc:group = 1
+                        uniform double[] mjc:solref = [0.005, 1]
+                        float newton:contactGap = 0
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        double radius = 0.05
+                        quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, -0.11, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "hr_knee" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (-0.00341053, -0.00270202, -0.181287)
+                        float3 physics:diagonalInertia = (0.0121352, 0.0117289, 0.000948904)
+                        rel physics:filteredPairs = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee/hr_wheel>
+                        float physics:mass = 1.145
+                        quatf physics:principalAxes = (0.63448006, 0.050937008, -0.04753031, 0.7697931)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, -0.0984, -0.25)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "hr_knee" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/hr_knee.STL@
+                                string version = "sha256:2fcf688c30596b3640e528defa92b58fe7804586586a681677115ea6d93f60e3"
+                            }
+                            prepend references = @meshes/hr_knee.usdc@
+                        )
+                        {
+                            rel material:binding = </M20/Materials/default_material>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, 0)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cube "Box" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double size = 2
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (0.03, 0.0125, 0.125)
+                            double3 xformOp:translate = (-0.015, 0.015, -0.125)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.04, -0.04, -0.05), (0.04, 0.04, 0.05)]
+                            double height = 0.1
+                            rel material:binding = </M20/Materials/collision_material>
+                            rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                            uniform int mjc:group = 1
+                            uniform double[] mjc:solref = [0.005, 1]
+                            float newton:contactGap = 0
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            double radius = 0.04
+                            quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, -0.02, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Xform "hr_wheel" (
+                            apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                        )
+                        {
+                            point3f physics:centerOfMass = (6.09746e-7, -0.000279009, 2.01314e-7)
+                            float3 physics:diagonalInertia = (0.002853, 0.001535, 0.001535)
+                            float physics:mass = 0.638
+                            quatf physics:principalAxes = (0.7071068, 0, 0, 0.7071068)
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, -0.059676, -0.25)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                            def Mesh "hr_wheel" (
+                                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                                assetInfo = {
+                                    asset identifier = @meshes/hr_wheel.STL@
+                                    string version = "sha256:88b2fca83119f36b156520ae4c7a4334baa6a2ad71da90e1a529e10114a16641"
+                                }
+                                prepend references = @meshes/hr_wheel.usdc@
+                            )
+                            {
+                                rel material:binding = </M20/Materials/default_material>
+                                uniform int mjc:group = 2
+                                uniform token orientation = "rightHanded"
+                                uniform token subdivisionScheme = "none"
+                                quatf xformOp:orient = (1, 0, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def Cylinder "Cylinder" (
+                                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "MaterialBindingAPI"]
+                            )
+                            {
+                                uniform token axis = "Z"
+                                float3[] extent = [(-0.09, -0.09, -0.027), (0.09, 0.09, 0.027)]
+                                double height = 0.054
+                                rel material:binding = </M20/Materials/collision_material>
+                                rel material:binding:physics = </M20/Physics/PhysicsMaterial_1>
+                                uniform int mjc:group = 1
+                                uniform double[] mjc:solref = [0.005, 1]
+                                float newton:contactGap = 0
+                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayColor:indices = None
+                                float[] primvars:displayOpacity = [1] (
+                                    interpolation = "constant"
+                                )
+                                int[] primvars:displayOpacity:indices = None
+                                double radius = 0.09
+                                quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                                float3 xformOp:scale = (1, 1, 1)
+                                double3 xformOp:translate = (0, 0, 0)
+                                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                            }
+
+                            def PhysicsRevoluteJoint "hr_wheel_joint" (
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            )
+                            {
+                                uniform double mjc:actuatorfrcrange:max = 21.6
+                                uniform double mjc:actuatorfrcrange:min = -21.6
+                                uniform token physics:axis = "Y"
+                                rel physics:body0 = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee>
+                                rel physics:body1 = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee/hr_wheel>
+                                point3f physics:localPos0 = (0, -0.059676, -0.25)
+                                point3f physics:localPos1 = (0, 0, 0)
+                                quatf physics:localRot0 = (0, -1, 0, 0)
+                                quatf physics:localRot1 = (0, -1, 0, 0)
+                            }
+                        }
+
+                        def PhysicsRevoluteJoint "hr_knee_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        )
+                        {
+                            uniform double mjc:actuatorfrcrange:max = 76.4
+                            uniform double mjc:actuatorfrcrange:min = -76.4
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </M20/Geometry/base_link/hr_hipx/hr_hipy>
+                            rel physics:body1 = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee>
+                            point3f physics:localPos0 = (0, -0.0984, -0.25)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (0, -1, 0, 0)
+                            quatf physics:localRot1 = (0, -1, 0, 0)
+                            float physics:lowerLimit = -159.96982
+                            float physics:upperLimit = 160.94385
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "hr_hipy_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    )
+                    {
+                        uniform double mjc:actuatorfrcrange:max = 76.4
+                        uniform double mjc:actuatorfrcrange:min = -76.4
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </M20/Geometry/base_link/hr_hipx>
+                        rel physics:body1 = </M20/Geometry/base_link/hr_hipx/hr_hipy>
+                        point3f physics:localPos0 = (0, 0, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (0, -1, 0, 0)
+                        quatf physics:localRot1 = (0, -1, 0, 0)
+                        float physics:lowerLimit = -147.995
+                        float physics:upperLimit = 130.97815
+                    }
+                }
+
+                def PhysicsRevoluteJoint "hr_hipx_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                )
+                {
+                    uniform double mjc:actuatorfrcrange:max = 76.4
+                    uniform double mjc:actuatorfrcrange:min = -76.4
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </M20/Geometry/base_link>
+                    rel physics:body1 = </M20/Geometry/base_link/hr_hipx>
+                    point3f physics:localPos0 = (-0.3141, -0.0685, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (0, 0, -1, 0)
+                    quatf physics:localRot1 = (0, 0, -1, 0)
+                    float physics:lowerLimit = -35.00772
+                    float physics:upperLimit = 24.980959
+                }
+            }
+        }
+    }
+
+    def Scope "Materials"
+    {
+        def Material "MatPlane" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_5>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0.99999994, 1, 0.9999999) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </M20/Materials/MatPlane/OpenPBR.outputs:out>
+            token outputs:surface.connect = </M20/Materials/MatPlane/PreviewSurface.outputs:surface>
+        }
+
+        def Material "default_material" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_6>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0.4479884, 0.44798842, 0.44798836) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </M20/Materials/default_material/OpenPBR.outputs:out>
+            token outputs:surface.connect = </M20/Materials/default_material/PreviewSurface.outputs:surface>
+        }
+
+        def Material "collision_material" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_4>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (-1.1384381e-8, 0.13286833, 0.60382736) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 0.2 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </M20/Materials/collision_material/OpenPBR.outputs:out>
+            token outputs:surface.connect = </M20/Materials/collision_material/PreviewSurface.outputs:surface>
+        }
+    }
+
+    def Scope "Physics"
+    {
+        def Material "PhysicsMaterial" (
+            apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+        )
+        {
+            float newton:contactDamping = 100
+            float newton:contactStiffness = 2500
+            float newton:rollingFriction = 0.01
+            float newton:torsionalFriction = 0.01
+            float physics:dynamicFriction = 1
+            float physics:staticFriction = 1
+        }
+
+        def Material "PhysicsMaterial_1" (
+            apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+        )
+        {
+            float newton:contactDamping = 400
+            float newton:contactStiffness = 40000
+            float newton:rollingFriction = 0.001
+            float newton:torsionalFriction = 0.01
+            float physics:dynamicFriction = 1
+            float physics:staticFriction = 1
+        }
+
+        def MjcActuator "fl_hipx_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/fl_hipx/fl_hipx_joint>
+        }
+
+        def MjcActuator "fl_hipy_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_hipy_joint>
+        }
+
+        def MjcActuator "fl_knee_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee/fl_knee_joint>
+        }
+
+        def MjcActuator "fl_wheel_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 21.6
+            uniform double mjc:ctrlRange:min = -21.6
+            rel mjc:target = </M20/Geometry/base_link/fl_hipx/fl_hipy/fl_knee/fl_wheel/fl_wheel_joint>
+        }
+
+        def MjcActuator "fr_hipx_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/fr_hipx/fr_hipx_joint>
+        }
+
+        def MjcActuator "fr_hipy_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_hipy_joint>
+        }
+
+        def MjcActuator "fr_knee_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee/fr_knee_joint>
+        }
+
+        def MjcActuator "fr_wheel_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 21.6
+            uniform double mjc:ctrlRange:min = -21.6
+            rel mjc:target = </M20/Geometry/base_link/fr_hipx/fr_hipy/fr_knee/fr_wheel/fr_wheel_joint>
+        }
+
+        def MjcActuator "hl_hipx_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/hl_hipx/hl_hipx_joint>
+        }
+
+        def MjcActuator "hl_hipy_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_hipy_joint>
+        }
+
+        def MjcActuator "hl_knee_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee/hl_knee_joint>
+        }
+
+        def MjcActuator "hl_wheel_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 21.6
+            uniform double mjc:ctrlRange:min = -21.6
+            rel mjc:target = </M20/Geometry/base_link/hl_hipx/hl_hipy/hl_knee/hl_wheel/hl_wheel_joint>
+        }
+
+        def MjcActuator "hr_hipx_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/hr_hipx/hr_hipx_joint>
+        }
+
+        def MjcActuator "hr_hipy_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_hipy_joint>
+        }
+
+        def MjcActuator "hr_knee_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 76.4
+            uniform double mjc:ctrlRange:min = -76.4
+            rel mjc:target = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee/hr_knee_joint>
+        }
+
+        def MjcActuator "hr_wheel_joint"
+        {
+            uniform token mjc:ctrlLimited = "true"
+            uniform double mjc:ctrlRange:max = 21.6
+            uniform double mjc:ctrlRange:min = -21.6
+            rel mjc:target = </M20/Geometry/base_link/hr_hipx/hr_hipy/hr_knee/hr_wheel/hr_wheel_joint>
+        }
+    }
+}
+
+def PhysicsScene "PhysicsScene" (
+    apiSchemas = ["NewtonSceneAPI", "MjcSceneAPI"]
+)
+{
+    uniform token mjc:compiler:angle = "radian"
+    uniform int newton:maxSolverIterations = 100
+    uniform int newton:timeStepsPerSecond = 500
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+}

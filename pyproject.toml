@@ -873,4 +873,8 @@ ignore = [
     "misc/DimSim/src/engine.js",
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
+    # A vendored robot description, converted once by scripts/mjcf_to_usd.py. It stays a text
+    # layer and out of LFS: a scene travels as one string, so this file has to be readable on
+    # a clone that has not run `git lfs pull`.
+    "dimos/robot/*/*/assets/*.usda",
 ]
