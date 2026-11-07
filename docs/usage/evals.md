@@ -587,8 +587,10 @@ CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.168.1.185"}' dimos evals run dimos.e
 
 ## Running
 
-- **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`.
-  The exit status is 1 when a case errored or no case matched the selection.
+- **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5] [--timeout-s 120]`.
+  `--timeout-s` replaces every selected case's wall-clock budget (the agent's run plus
+  settling), for example to check a two-hour suite's launch and shutdown in minutes; the
+  manifest records it. The exit status is 1 when a case errored or no case matched the selection.
   A case that scored below its threshold is a measurement, not an error, and
   leaves the status at 0.
 - **Docker**: add `--docker` to run that eval in a fresh, detached container

@@ -314,3 +314,28 @@ def test_run_cli_exit_status(
     assert [line.split()[0] for line in lines[: len(statuses)]] == statuses
     assert lines[-1].endswith(str(run_dir)), "the summary is printed before the exit status"
     assert json.loads((run_dir / "summary.json").read_text())["n"] == len(statuses)
+
+
+def test_timeout_cli_reaches_case_and_manifest(
+    monkeypatch: pytest.MonkeyPatch, cli_out_dir: Path
+) -> None:
+    seen: list[float] = []
+
+    class RecordingAgent(StaticAgent):
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            seen.append(timeout_s)
+            return super().run(inputs, env, run_dir, timeout_s=timeout_s)
+
+    monkeypatch.setattr(cli, "agent_class", lambda _: RecordingAgent)
+    monkeypatch.setattr(examples, "SUITE", [_scored("case-a", 1.0)])
+
+    result = CliRunner().invoke(
+        app, ["evals", "run", SUITE_MODULE, "--agent", AGENT_MODULE, "--timeout-s", "7"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == [7.0]
+    run_dir = next(cli_out_dir.glob("run-*"))
+    assert json.loads((run_dir / "manifest.json").read_text())["runner"]["timeout_s"] == 7.0
