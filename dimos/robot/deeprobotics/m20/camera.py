@@ -69,8 +69,7 @@ _REAR_CAMERA_INFO = CameraInfo.from_intrinsics(
 
 
 class M20CameraRelayConfig(ModuleConfig):
-    # Publish only keyframes (~1 Hz on the M20, each decodable alone) instead of every frame (30 Hz)
-    keyframes_only: bool = False
+    pass
 
 
 class M20CameraRelay(Module):
@@ -184,8 +183,6 @@ class M20CameraRelay(Module):
                             return
                         # The vendor RTSP stream is Annex-B at 30 fps with an IDR once a second
                         if not packet.size or packet.is_corrupt:
-                            continue
-                        if self.config.keyframes_only and not packet.is_keyframe:
                             continue
                         output.publish(
                             CompressedVideo(
