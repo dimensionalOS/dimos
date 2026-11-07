@@ -69,6 +69,30 @@ left/right gripper streams. `ManipulationModuleConfig.gripper_tasks` explicitly
 binds `left_arm` and `right_arm` to those task names for both commands and
 feedback. The single-Metal planner binds `arm` to `metal_gripper`.
 
+## Quest teleop and collection
+
+`teleop-webxr-metal` drives the arm from the right Quest controller: hold the
+grip to engage, the trigger closes the jaw, B plans back to the zero pose. The
+IK target is `gripper_base`, the jaw mount; the URDF has no fingertip frame.
+`metal-quest-collection` adds the episode monitor, a wrist webcam and the
+recorder. It records `observation.images.wrist` (480x640 RGB),
+`observation.state` from `coordinator_joint_state` and `action` from
+`coordinator_joint_command`, both over `arm/joint1` to `arm/joint6` and
+`arm/joint7`.
+
+```bash
+dimos run teleop-webxr-metal --can-port can0
+dimos run metal-quest-collection --can-port can0 \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cube"
+dimos imitation control
+```
+
+`--wrist.hardware.camera-index /dev/video2` selects another camera.
+`--simulation` swaps the connection for the echo mock; the camera is still a
+real device. There is no hand-guided teaching entry: the Metal runs without
+gravity compensation, so a zero-stiffness arm drops.
+
 ## Validation scope
 
 Software tests cover required selectors, mounted models, independent gripper
