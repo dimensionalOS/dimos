@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from itertools import chain
 from threading import Event, Thread
 import time
 from typing import Any
@@ -46,6 +47,10 @@ class MockRobotClient(Module):
     def start(self) -> None:
         super().start()
 
+        self._stop_event.clear()
+        lidar = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar).iterate()
+        # The first scan's decode imports open3d, seconds that would otherwise stall odometry.
+        self._lidar = chain([next(lidar)], lidar)
         self._thread = Thread(target=self.odomloop)  # type: ignore[assignment]
         self._thread.start()  # type: ignore[attr-defined]
         self.mov.subscribe(self.mov_callback)
@@ -60,10 +65,6 @@ class MockRobotClient(Module):
 
     def odomloop(self) -> None:
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
-        lidardata = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
-
-        lidariter = lidardata.iterate()
-        self._stop_event.clear()
         while not self._stop_event.is_set():
             for odom in odomdata.iterate():
                 if self._stop_event.is_set():
@@ -71,6 +72,6 @@ class MockRobotClient(Module):
                 print(odom)
                 self.odometry.publish(odom)
 
-                lidarmsg = next(lidariter)
+                lidarmsg = next(self._lidar)
                 self.lidar.publish(lidarmsg)
                 time.sleep(0.1)
