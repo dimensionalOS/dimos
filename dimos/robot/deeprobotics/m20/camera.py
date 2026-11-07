@@ -22,7 +22,7 @@ import av
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -68,9 +68,14 @@ _REAR_CAMERA_INFO = CameraInfo.from_intrinsics(
 )
 
 
+class M20CameraRelayConfig(ModuleConfig):
+    pass
+
+
 class M20CameraRelay(Module):
     """Relay both vendor RTSP cameras as compressed H.265 streams."""
 
+    config: M20CameraRelayConfig
     front_camera: Out[CompressedVideo]
     rear_camera: Out[CompressedVideo]
     front_camera_info: Out[CameraInfo]
@@ -81,34 +86,41 @@ class M20CameraRelay(Module):
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
+        # start and stop RPCs run on separate threads, so the already-running check and the launch hold this together
+        self._lifecycle_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
-        super().start()
-        self._stop_event.clear()
-        streams = (
-            (FRONT_CAMERA_RTSP_URL, self.front_camera, "m20_front_camera"),
-            (REAR_CAMERA_RTSP_URL, self.rear_camera, "m20_rear_camera"),
-        )
-        relay_threads = [
-            threading.Thread(
-                target=self._relay,
-                args=stream,
-                name=f"{stream[2]}-rtsp",
-                daemon=True,
+        with self._lifecycle_lock:
+            # a second start (e.g. a second `dimos run` reaching this module's start RPC) would open every RTSP stream again
+            if any(thread.is_alive() for thread in self._threads):
+                logger.warning("M20 camera relay already running")
+                return
+            super().start()
+            self._stop_event.clear()
+            streams = (
+                (FRONT_CAMERA_RTSP_URL, self.front_camera, "m20_front_camera"),
+                (REAR_CAMERA_RTSP_URL, self.rear_camera, "m20_rear_camera"),
             )
-            for stream in streams
-        ]
-        self._threads = [
-            threading.Thread(
-                target=self._publish_camera_metadata,
-                name="m20-camera-metadata",
-                daemon=True,
-            ),
-            *relay_threads,
-        ]
-        for thread in self._threads:
-            thread.start()
+            relay_threads = [
+                threading.Thread(
+                    target=self._relay,
+                    args=stream,
+                    name=f"{stream[2]}-rtsp",
+                    daemon=True,
+                )
+                for stream in streams
+            ]
+            self._threads = [
+                threading.Thread(
+                    target=self._publish_camera_metadata,
+                    name="m20-camera-metadata",
+                    daemon=True,
+                ),
+                *relay_threads,
+            ]
+            for thread in self._threads:
+                thread.start()
 
     def _publish_camera_metadata(self) -> None:
         while not self._stop_event.is_set():
@@ -158,17 +170,23 @@ class M20CameraRelay(Module):
                     if video.codec_context.name != "hevc":
                         raise ValueError(f"expected H.265, got {video.codec_context.name}")
                     logger.info("M20 camera stream connected", camera=camera_name)
+                    # RTSP carries the VPS/SPS/PPS out of band (ffmpeg's extradata, Annex-B from the SDP):
+                    # each published keyframe carries them so it decodes on its own
+                    extradata = bytes(video.codec_context.extradata or b"")
+                    parameter_sets = (
+                        extradata
+                        if extradata.startswith((b"\x00\x00\x01", b"\x00\x00\x00\x01"))
+                        else b""
+                    )
                     for packet in container.demux(video):
                         if self._stop_event.is_set():
                             return
-                        # The vendor RTSP stream already contains Annex-B access
-                        # units and emits an IDR about every other frame. Publishing
-                        # only IDRs makes every Zenoh sample independently decodable.
-                        if not packet.size or packet.is_corrupt or not packet.is_keyframe:
+                        # The vendor RTSP stream is Annex-B at 30 fps with an IDR once a second
+                        if not packet.size or packet.is_corrupt:
                             continue
                         output.publish(
                             CompressedVideo(
-                                bytes(packet),
+                                (parameter_sets if packet.is_keyframe else b"") + bytes(packet),
                                 format="h265",
                                 frame_id="",
                                 ts=time.time(),
@@ -184,8 +202,9 @@ class M20CameraRelay(Module):
 
     @rpc
     def stop(self) -> None:
-        self._stop_event.set()
-        for thread in self._threads:
-            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        self._threads.clear()
-        super().stop()
+        with self._lifecycle_lock:
+            self._stop_event.set()
+            for thread in self._threads:
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            self._threads.clear()
+            super().stop()
