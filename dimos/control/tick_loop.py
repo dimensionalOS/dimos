@@ -569,7 +569,18 @@ class TickLoop:
         )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
-        """Publish aggregated JointState for external consumers."""
+        """Publish an aggregate only after every connection's initial readings are complete."""
+        if any(source.unreported() for source in self._connections.values()):
+            return
+        reported = (
+            snapshot.joint_positions.keys()
+            | snapshot.joint_velocities.keys()
+            | snapshot.joint_efforts.keys()
+        )
+        if any(
+            not reported.issuperset(source.joint_names) for source in self._connections.values()
+        ):
+            return
         names = list(snapshot.joint_positions.keys())
         msg = JointState(
             ts=snapshot.timestamp,

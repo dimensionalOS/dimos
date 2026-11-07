@@ -12,21 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One bimanual ManipulationModule, two Metal adapters, and Viser."""
+"""The main bimanual Metal planning setup over a direct connection."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.robot.manipulators.dual_makermods_metal.config import ALL_ARM_JOINTS, SIDES
-from dimos.robot.manipulators.dual_makermods_metal.coordinator import DualMetalCoordinator
-from dimos.robot.manipulators.dual_makermods_metal.model import (
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
+from dimos.robot.manipulators.dual_makermods_metal.config import (
+    ALL_ARM_JOINTS,
     DEFAULT_LEFT_XYZ,
     DEFAULT_RIGHT_XYZ,
+    SIDES,
     ZERO_RPY,
     Vector3,
     dual_metal_model_config,
 )
+from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
+
+_MODEL = dual_metal_model_config(robot="arm")
 
 
 class DualMetalManipulationConfig(ManipulationModuleConfig):
@@ -37,7 +45,7 @@ class DualMetalManipulationConfig(ManipulationModuleConfig):
 
 
 class DualMetalManipulationModule(ManipulationModule):
-    """Resolve configured rig geometry at startup, before opening the planning world."""
+    """Apply the configured mount geometry before creating the planning world."""
 
     config: DualMetalManipulationConfig
 
@@ -47,29 +55,41 @@ class DualMetalManipulationModule(ManipulationModule):
             right_xyz=self.config.right_base_xyz,
             left_rpy=self.config.left_base_rpy,
             right_rpy=self.config.right_base_rpy,
+            robot="arm",
         )
         super()._initialize_planning()
 
 
-dual_makermods_metal_planner_coordinator = autoconnect(
-    DualMetalCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[
-            joint_trajectory_task(list(ALL_ARM_JOINTS)),
-            *[
-                TaskConfig(
-                    name=f"{side}_arm_gripper",
-                    type="gripper",
-                    joint_names=[f"{side}_arm/gripper"],
-                    priority=20,
-                    stream_bind={"gripper_command": f"{side}_gripper_command"},
-                )
-                for side in SIDES
+def dual_metal_control() -> Blueprint:
+    """Trajectories and both jaws over the two-bus connection."""
+    return autoconnect(
+        DamiaoCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=DualMetalConnection.control_model("arm"),
+            tasks=[
+                joint_trajectory_task([f"arm/{name}" for name in ALL_ARM_JOINTS]),
+                *[
+                    TaskConfig(
+                        name=f"{side}_arm_gripper",
+                        type="gripper",
+                        joint_names=[f"arm/{side}_gripper"],
+                        priority=20,
+                        stream_bind={"gripper_command": f"{side}_gripper_command"},
+                    )
+                    for side in SIDES
+                ],
             ],
-        ],
-    ),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(DualMetalConnection),
+    ).remappings(arm_remaps(DualMetalConnection, DamiaoCoordinator))
+
+
+dual_makermods_metal_planner_coordinator = autoconnect(
+    dual_metal_control(),
     DualMetalManipulationModule.blueprint(
-        model=dual_metal_model_config(),
+        gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
+        model=_MODEL,
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),

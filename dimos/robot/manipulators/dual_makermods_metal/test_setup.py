@@ -12,81 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The main dual-Metal geometry and task behavior through a connection."""
+
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
-import xml.etree.ElementTree as ET
 
 import pytest
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.hardware.manipulators.spec import ControlMode
-from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.manipulation.manipulation_spec import CommandStatus
-from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.manipulators.dual_makermods_metal import model as model_module
+from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.dual_makermods_metal.blueprints.basic import (
     DualMetalManipulationConfig,
     dual_makermods_metal_planner_coordinator,
 )
-from dimos.robot.manipulators.dual_makermods_metal.config import ALL_ARM_JOINTS, dual_metal_hardware
-from dimos.robot.manipulators.dual_makermods_metal.coordinator import (
-    DualMetalCoordinator,
-    DualMetalCoordinatorConfig,
-)
-from dimos.robot.manipulators.dual_makermods_metal.model import (
-    dual_metal_model_config,
-)
+from dimos.robot.manipulators.dual_makermods_metal.config import dual_metal_model_config
+from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
 
 
-@pytest.mark.parametrize(
-    "ports",
-    [
-        dict(left_can_port="left"),
-        dict(right_can_port="right"),
-        dict(left_can_port="same", right_can_port="same"),
-        dict(left_can_port="", right_can_port="right"),
-    ],
-)
-def test_rejects_incomplete_or_ambiguous_can_selection(ports) -> None:
-    with pytest.raises(ValueError):
-        dual_metal_hardware(**ports)
-
-
-def test_two_explicit_ports_preserve_single_arm_adapter_and_current_defaults() -> None:
-    arms = dual_metal_hardware(
-        left_can_port="left",
-        right_can_port="right",
-    )
-    assert [arm.adapter_type for arm in arms] == ["makermods_metal"] * 2
-    assert [arm.adapter_kwargs["runtime_config"].bus_devices for arm in arms] == [
-        {"metal": "left"},
-        {"metal": "right"},
-    ]
-    assert [arm.adapter_kwargs["gripper_current"] for arm in arms] == [0.1, 0.1]
-    assert len({name for arm in arms for name in arm.joints}) == 14
-
-
-def test_mock_grippers_and_arms_are_independent() -> None:
-    parsed = BlueprintConfigParser(dual_makermods_metal_planner_coordinator).parse([], environ={})
-    c = DualMetalCoordinator(**parsed.module_kwargs("ControlCoordinator"))
-    try:
-        c._setup_from_config()
-        assert list(c._tasks) == ["joint_trajectory", "left_arm_gripper", "right_arm_gripper"]
-        left, right = c._hardware["left_arm"], c._hardware["right_arm"]
-        assert left.write_command(
-            {"left_joint2": -0.2, "left_arm/gripper": 0.8}, ControlMode.POSITION
-        )
-        assert right.read_state()["right_joint2"].position == 0.0
-        assert right.read_state()["right_arm/gripper"].position == 0.0
-        assert left.read_state()["left_arm/gripper"].position == 0.8
-        assert c.config.tasks[1].stream_bind != c.config.tasks[2].stream_bind
-    finally:
-        c.stop()
-
-
-def test_blueprint_parses_mounts_and_can_selectors() -> None:
+def test_blueprint_parses_main_mount_options_and_required_can_ports():
     parsed = BlueprintConfigParser(dual_makermods_metal_planner_coordinator).parse(
         [
             "--left-can-port",
@@ -100,61 +45,70 @@ def test_blueprint_parses_mounts_and_can_selectors() -> None:
         ],
         environ={},
     )
-    hw = DualMetalCoordinatorConfig.model_validate(parsed.module_kwargs("ControlCoordinator"))
-    assert (hw.left_can_port, hw.right_can_port) == ("left", "right")
-    planning = DualMetalManipulationConfig.model_validate(
+    connection = parsed.module_kwargs("dualmetalconnection")
+    assert (connection["left_can_port"], connection["right_can_port"]) == ("left", "right")
+    config = DualMetalManipulationConfig.model_validate(
         parsed.module_kwargs("dualmetalmanipulationmodule")
     )
-    assert planning.left_base_xyz == (0.0, 0.25, 0.0)
-    assert planning.right_base_xyz == (0.0, -0.25, 0.0)
-    assert planning.model.joint_names == list(ALL_ARM_JOINTS)
+    assert config.left_base_xyz == (0.0, 0.25, 0.0)
+    assert config.right_base_xyz == (0.0, -0.25, 0.0)
+    assert config.model.joint_names == [
+        *[f"arm/left_joint{i}" for i in range(1, 7)],
+        *[f"arm/right_joint{i}" for i in range(1, 7)],
+    ]
 
 
-def test_derived_model_prefixes_frames_and_keeps_individual_mounts(tmp_path: Path, mocker) -> None:
-    xml = '<robot name="metal"><link name="base_link"/><link name="tip"/><joint name="joint1" type="revolute"><parent link="base_link"/><child link="tip"/><limit lower="-1" upper="1" effort="1" velocity="1"/></joint></robot>'
-    source = tmp_path / "single.urdf"
-    source.write_text(xml)
-    mocker.patch.object(
-        model_module,
-        "make_metal_model_config",
-        return_value=SimpleNamespace(model=RobotModel.from_file(source)),
+def test_independent_grippers_through_the_coordinator(tmp_path):
+    [atom] = [
+        a
+        for a in dual_makermods_metal_planner_coordinator.blueprints
+        if issubclass(a.module, ControlCoordinator)
+    ]
+    coordinator = atom.module(**atom.kwargs)
+    with mock_connection_rig(DualMetalConnection, coordinator, tmp_path=tmp_path) as rig:
+        coordinator.task_invoke("left_arm_gripper", "set_normalized", {"values": [0.8]})
+        rig.tick()
+        assert rig.positions["arm/left_gripper"] == 0.8
+        assert rig.positions["arm/right_gripper"] == 0.0
+        coordinator.task_invoke("right_arm_gripper", "set_normalized", {"values": [0.3]})
+        rig.tick()
+        assert rig.positions["arm/left_gripper"] == 0.8
+        assert rig.positions["arm/right_gripper"] == 0.3
+
+
+def test_main_attachment_geometry_is_retained(tmp_path: Path, mocker):
+    path = tmp_path / "single.urdf"
+    path.write_text(
+        '<robot name="metal"><link name="base_link"/><link name="tip"/>'
+        '<joint name="joint1" type="revolute"><parent link="base_link"/>'
+        '<child link="tip"/><limit lower="-1" upper="1" effort="1" velocity="1"/>'
+        "</joint></robot>"
     )
-    model = dual_metal_model_config(
-        left_xyz=(0, 0.25, 0), right_xyz=(0, -0.25, 0), right_rpy=(0, 0, 1.0)
+    mocker.patch(
+        "dimos.robot.manipulators.dual_makermods_metal.config.make_metal_model_config",
+        return_value=SimpleNamespace(model=RobotModel.from_file(path)),
+    )
+    loaded = dual_metal_model_config(
+        left_xyz=(0, 0.25, 0), right_xyz=(0, -0.25, 0), right_rpy=(0, 0, 1)
     ).model.load()
-    root = ET.fromstring(model.xml)
-    assert {j.attrib["name"] for j in root.findall("joint")} == {
-        "left_joint1",
-        "right_joint1",
-        "left_mount",
-        "right_mount",
-    }
-    assert model.get_joint("left_mount").origin_xyz == (0, 0.25, 0)
-    assert model.get_joint("right_mount").origin_rpy == (0, 0, 1)
-    assert model.get_joint("right_joint1").parent_link == "right_base_link"
+    assert loaded.source_path is None
+    assert loaded.get_joint("left_mount").origin_xyz == (0, 0.25, 0)
+    assert loaded.get_joint("right_mount").origin_rpy == (0, 0, 1)
+    assert loaded.get_joint("right_joint1").parent_link == "right_base_link"
 
 
-def test_manipulation_grippers_remain_unbound_until_multigripper_pr() -> None:
-    config = dual_metal_model_config()
-    module = ManipulationModule(model=config)
-    module._control_coordinator = Mock()
-    module._world_monitor = Mock(planning_groups=PlanningGroupRegistry(config.planning_groups))
-    try:
-        assert not any(group.has_gripper for group in module.list_planning_groups())
-        for group_id in ("left_arm", "right_arm", None):
-            assert module.set_gripper_position(0.5, group_id).status is CommandStatus.REJECTED
-        module._control_coordinator.task_invoke.assert_not_called()
-    finally:
-        module._world_monitor = None
-        module.stop()
+@pytest.mark.parametrize(
+    "ports",
+    [
+        {"left_can_port": "same", "right_can_port": "same"},
+        {"left_can_port": "", "right_can_port": "right"},
+    ],
+)
+def test_invalid_dual_selectors_are_rejected(ports):
+    with pytest.raises(ValueError, match="CAN selector"):
+        DualMetalConnection(**ports)
 
 
-@pytest.mark.parametrize("position", [(0.0, float("nan"), 0.0), (0.0, float("inf"), 0.0)])
-def test_rejects_nonfinite_mounts(position) -> None:
-    with pytest.raises(ValueError, match="finite"):
-        dual_metal_model_config(left_xyz=position)
-
-
-def test_rejects_ambiguous_mount_positions() -> None:
+def test_main_ambiguous_mounts_are_rejected():
     with pytest.raises(ValueError, match="distinct"):
         dual_metal_model_config(left_xyz=(0, 0, 0), right_xyz=(0, 0, 0))

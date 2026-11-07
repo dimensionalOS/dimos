@@ -335,6 +335,55 @@ def rig(mocker: Any) -> Iterator[Callable[..., Rig]]:
         each.stop()
 
 
+def test_aggregate_state_waits_for_complete_initial_readings(rig: Callable[..., Rig]) -> None:
+    r = rig(publish_joint_state=True)
+    published: list[tuple[str, Any]] = []
+    r.coordinator.set_transport("coordinator_joint_state", Recorder("state", published))
+
+    r.tick()
+    assert published == []
+    r.report_arm(0.1, 0.2)
+    r.tick()
+    assert published == []
+    r.report(
+        "mock_joint_state",
+        JointState(name=MOCK_JOINTS[2:], position=[0.3] * (len(MOCK_JOINTS) - 2)),
+    )
+    r.tick()
+    assert published == []
+    r.report_base()
+    r.tick()
+
+    assert len(published) == 1
+    assert published[0][1].name == MOCK_JOINTS
+    assert published[0][1].position == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2))]
+    assert r.positions_sent()[-1] == published[0][1].position
+
+
+def test_a_reading_arriving_after_the_snapshot_waits_for_the_next_tick(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    r = rig(ArmCoordinator, publish_joint_state=True)
+    published: list[tuple[str, Any]] = []
+    r.coordinator.set_transport("coordinator_joint_state", Recorder("state", published))
+    loop = r.coordinator._tick_loop
+    assert loop is not None
+    read_all = loop._read_all_hardware
+
+    def report_after_snapshot():
+        snapshot = read_all()
+        r.report_arm(*([0.2] * len(MOCK_JOINTS)))
+        return snapshot
+
+    mocker.patch.object(loop, "_read_all_hardware", side_effect=report_after_snapshot)
+    r.tick()
+    assert published == []
+    r.tick()
+    assert len(published) == 1
+    assert published[0][1].name == MOCK_JOINTS
+    assert published[0][1].position == [0.2] * len(MOCK_JOINTS)
+
+
 def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
     rig: Callable[..., Rig],
 ) -> None:
