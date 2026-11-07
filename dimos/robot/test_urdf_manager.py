@@ -921,9 +921,7 @@ def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
 ) -> None:
     # Written in the prefixed names, and the only way to reach a name without the namespace.
     pytest.importorskip("pxr")
-    module = _namespaced_arm(
-        make_manager, tf_renames_post_namespace={"left/fake_arm_base": "left_arm"}
-    )
+    module = _namespaced_arm(make_manager, tf_renames={"left/fake_arm_base": "left_arm"})
 
     stage = _usd_stage(_scene(module))
 
@@ -937,7 +935,7 @@ def test_both_renames_apply_around_the_prefix(
     module = _namespaced_arm(
         make_manager,
         tf_renames_pre_namespace={"fake_arm_base": "arm_base"},
-        tf_renames_post_namespace={"left/arm_base": "the_left_arm"},
+        tf_renames={"left/arm_base": "the_left_arm"},
     )
 
     stage = _usd_stage(_scene(module))
@@ -959,7 +957,7 @@ def test_a_rename_meant_for_one_subtree_does_not_upset_the_others(
             "left_mount": _FakeArm.blueprint().namespace("left"),
             "right_mount": _FakeArm.blueprint().namespace("right"),
         },
-        tf_renames_post_namespace={"left/fake_arm_base": "the_left_one"},
+        tf_renames={"left/fake_arm_base": "the_left_one"},
     )
     module._subtree_clients.update(
         cast(
@@ -993,7 +991,7 @@ def test_a_rename_with_no_mounts_at_all_still_fails(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
     pytest.importorskip("pxr")
-    module = make_manager(tf_renames_post_namespace={"nothing": "here"})
+    module = make_manager(tf_renames={"nothing": "here"})
 
     with pytest.raises(ValueError, match="which no mounted subtree has"):
         _scene(module)
