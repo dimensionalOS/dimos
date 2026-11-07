@@ -142,3 +142,23 @@ simulator's true poses so no detector is needed. The lab publishes an
 `AutoresearchStatus` document (`status.py`) on `autoresearch_status`, and
 `session.json` goes idle, running, frozen, scored with the held-out rate.
 The blueprint is `autoresearch-metal-sim`.
+
+## Run the actor from the lab
+
+`start_actor(model=None, provider=None)` is an RPC on the lab, not a skill, so
+the actor never sees it: it runs the coding agent on a thread of the lab
+itself, and a Desktop app button can run a whole session with no terminal.
+The agent is Pi (`dimos.evals.agents.pi`) with the prompt in `prompt.py`,
+pointed at this stack's MCP server, on the config's `model` and
+`actor_provider` unless the call names others; `actor_max_steps` and
+`actor_timeout_s` bound the run. The provider's key must be in the lab's
+environment: put it in the `.env` of the dimos directory, which `dimos run`
+loads. `anthropic` reads `ANTHROPIC_API_KEY`, `openai` reads
+`OPENAI_API_KEY`, `google` reads `GEMINI_API_KEY`. Without the key, or
+without `pi` or `dimos` on PATH, the actor fails at once and the status says
+why. `stop_actor()` kills the Pi process; the session stays as it is, so a
+trial loop the actor started runs on. In the status document `actor` goes
+idle, running, then done (the actor returned; freeze from the app if it did
+not) or failed with `actor_error`, beside `actor_model` and `actor_provider`.
+The trajectory (`trajectory.json`, the ATIF document), Pi's raw requests, its
+system prompt and its stderr land under `<session>/actor/`.

@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.autoresearch.prompt import EXCLUDED_KEYWORDS
 from dimos.autoresearch.session import Budget, Session, Split, TrialRecord
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
@@ -31,7 +32,6 @@ from dimos.evals.environments.autoresearch import AutoresearchEnvironment
 from dimos.evals.runner import forbidden_call
 from dimos.evals.suites.autoresearch_metal import (
     BUDGET,
-    EXCLUDED_KEYWORDS,
     REPORT_NAME,
     SUITE,
     TOOLS,

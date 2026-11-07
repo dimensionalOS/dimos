@@ -33,6 +33,7 @@ import pytest_mock
 from dimos.autoresearch.module import AutoresearchModule
 from dimos.autoresearch.session import Budget, Session
 from dimos.autoresearch.status import AutoresearchStatus
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
 from dimos.manipulation.manipulation_spec import (
@@ -170,6 +171,11 @@ class FakeMonitor:
         return self.get_status()
 
 
+class FakeMcp:
+    def mcp_url(self) -> str:
+        return "http://lab/mcp"
+
+
 class FakeScene:
     def scan_scene(self, text: list[str] | None = None) -> Detection3DArray:
         detection = Detection3D()
@@ -218,6 +224,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     module._arm = FakeArm(bench)
     module._episodes = monitor
     module._scene = FakeScene()
+    module._mcp_server = FakeMcp()
     mocker.patch.object(module, "start_tool")
     mocker.patch.object(module, "stop_tool")
     poses: LocalTransport[TFMessage] = LocalTransport()
@@ -345,3 +352,75 @@ def test_freeze_runs_the_heldout_trials_and_scores_the_session(lab: Lab) -> None
     assert lab.module.stop_tool.call_args_list == [call("run")]  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="scored"):
         lab.module.submit(PROGRAM, "too late")
+
+
+def test_start_actor_runs_it_on_a_thread_and_reports_how_it_ended(
+    lab: Lab, mocker: pytest_mock.MockerFixture
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(
+        mcp_url: str,
+        session: Session,
+        model: str,
+        provider: str,
+        max_steps: int,
+        *,
+        timeout_s: float,
+        run_dir: Path,
+        stop: threading.Event,
+    ) -> object:
+        seen.update(mcp_url=mcp_url, model=model, provider=provider, run_dir=run_dir)
+        return TrajectoryBuilder("go", name="t", model=model).build("answer")
+
+    mocker.patch("dimos.autoresearch.module.run_actor", fake)
+    status = lab.module.start_actor()
+    assert (status.actor, status.actor_model, status.actor_provider) == (
+        "running",
+        "claude-sonnet-4-5",
+        "anthropic",
+    )
+    wait_until(lambda: lab.module.get_status().actor == "done", timeout=5.0)
+    assert seen == {
+        "mcp_url": "http://lab/mcp",
+        "model": "claude-sonnet-4-5",
+        "provider": "anthropic",
+        "run_dir": lab.dir / "actor",
+    }
+    assert [(s.actor, s.actor_error) for s in lab.statuses[1:]] == [
+        ("running", None),
+        ("done", None),
+    ]
+    assert lab.session.info().status == "idle"
+
+    mocker.patch(
+        "dimos.autoresearch.module.run_actor",
+        side_effect=RuntimeError("OPENAI_API_KEY is not set"),
+    )
+    lab.module.start_actor("gpt-5.6-luna", "openai")
+    wait_until(lambda: lab.module.get_status().actor == "failed", timeout=5.0)
+    status = lab.module.get_status()
+    assert (status.actor_model, status.actor_provider, status.actor_error) == (
+        "gpt-5.6-luna",
+        "openai",
+        "RuntimeError: OPENAI_API_KEY is not set",
+    )
+    with pytest.raises(ValueError, match="provider"):
+        lab.module.start_actor(provider="mistral")
+
+
+def test_stop_actor_ends_a_running_actor(lab: Lab, mocker: pytest_mock.MockerFixture) -> None:
+    def fake(*args: object, stop: threading.Event, **kwargs: object) -> object:
+        stop.wait(10.0)
+        return TrajectoryBuilder("go", name="t", model="m").build("error", error="killed")
+
+    mocker.patch("dimos.autoresearch.module.run_actor", fake)
+    lab.module.start_actor()
+    with pytest.raises(RuntimeError, match="running"):
+        lab.module.start_actor()
+
+    status = lab.module.stop_actor()
+
+    assert (status.actor, status.actor_error) == ("idle", None)
+    assert lab.module._actor_thread is None
+    assert lab.module.stop_actor().actor == "idle"

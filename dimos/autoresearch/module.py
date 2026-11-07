@@ -26,15 +26,17 @@ import threading
 import time
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.mcp.spec import McpServerSpec
+from dimos.autoresearch.actor import provider_key, run_actor
 from dimos.autoresearch.judge import Judge, LiftJudge, PlaceAtJudge
 from dimos.autoresearch.program import RunStoppedError
 from dimos.autoresearch.session import Budget, Session, SessionStatus, Split
-from dimos.autoresearch.status import AutoresearchStatus
+from dimos.autoresearch.status import ActorState, AutoresearchStatus
 from dimos.autoresearch.trial import run_trial
 from dimos.autoresearch.world import MujocoWorld, PlacementBounds
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -61,6 +63,8 @@ logger = setup_logger()
 _TOOL = "run"
 # How long start() waits for the planner, which starts in parallel, to list the arm.
 PLANNER_TIMEOUT_S = 120.0
+# How long stop_actor waits for the Pi process to die and the actor thread to end.
+ACTOR_STOP_TIMEOUT_S = 10.0
 # GlobalConfig fields a client process needs to join this stack's bus.
 _ZENOH_FIELDS = (
     "zenoh_mode",
@@ -120,12 +124,17 @@ class AutoresearchModuleConfig(ModuleConfig):
     """One session's settings. ``session_dir`` must not hold a session yet.
     ``judge`` decides a trial from ``judge_body``: lifted 5 cm, or placed within
     5 cm of ``place_body``. ``program_timeout_s`` kills a candidate run.
-    ``backend_factory`` is what the program drives, ``"package.module:function"``."""
+    ``backend_factory`` is what the program drives, ``"package.module:function"``.
+    ``model`` at ``actor_provider`` is what ``start_actor`` runs unless told
+    otherwise, for at most ``actor_max_steps`` model calls in ``actor_timeout_s``."""
 
     session_dir: Path
     task: str
     budget: Budget = Field(default_factory=Budget)
-    model: str = ""
+    model: str = "claude-sonnet-4-5"
+    actor_provider: str = "anthropic"
+    actor_max_steps: int = Field(default=600, gt=0)
+    actor_timeout_s: float = Field(default=2 * 3600.0, gt=0)
     program_timeout_s: float = 120.0
     judge: Literal["lift", "place"] = "lift"
     judge_body: str = "cube"
@@ -133,12 +142,19 @@ class AutoresearchModuleConfig(ModuleConfig):
     placement_bounds: PlacementBounds = Field(default_factory=PlacementBounds)
     backend_factory: str = "dimos.autoresearch.live:backend"
 
+    @field_validator("actor_provider")
+    @classmethod
+    def _known_provider(cls, provider: str) -> str:
+        provider_key(provider)
+        return provider
+
 
 class AutoresearchModule(Module):
     """The lab. ``start`` opens the session and homes the arm; the skills are
     the actor's tools. ``run`` and ``freeze`` move the arm on a background
-    thread and return at once; ``stop_run`` ends that thread. The status
-    stream and ``get_status`` carry an ``AutoresearchStatus``."""
+    thread and return at once; ``stop_run`` ends that thread. ``start_actor``
+    runs the coding agent itself, on a thread, against this stack's MCP
+    server. The status stream and ``get_status`` carry an ``AutoresearchStatus``."""
 
     config: AutoresearchModuleConfig
 
@@ -152,6 +168,7 @@ class AutoresearchModule(Module):
     _arm: ManipulationSpec
     _episodes: EpisodeControlSpec
     _scene: ObjectSceneRegistrationSpec
+    _mcp_server: McpServerSpec
 
     _session: Session
     _world: MujocoWorld
@@ -163,6 +180,9 @@ class AutoresearchModule(Module):
         self._status_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._actor_lock = threading.Lock()
+        self._actor_stop = threading.Event()
+        self._actor_thread: threading.Thread | None = None
         self._frame: Image | None = None
         self._frames = 0
         self._status = AutoresearchStatus(
@@ -195,6 +215,7 @@ class AutoresearchModule(Module):
 
     @rpc
     def stop(self) -> None:
+        self._stop_actor()
         self._stop.set()
         try:
             self._halt()
@@ -206,6 +227,38 @@ class AutoresearchModule(Module):
         """The lab's current status document."""
         with self._status_lock:
             return self._status
+
+    @rpc
+    def start_actor(
+        self, model: str | None = None, provider: str | None = None
+    ) -> AutoresearchStatus:
+        """Start the coding agent that drives this lab over MCP, on a thread,
+        and return the status at once; ``model`` and ``provider`` override the
+        config. Refused while an actor runs or once the session is scored."""
+        model = model or self.config.model
+        provider = provider or self.config.actor_provider
+        provider_key(provider)
+        with self._actor_lock:
+            if self._actor_thread is not None:
+                raise RuntimeError("an actor is running; call stop_actor first")
+            if self._session.info().status == "scored":
+                raise RuntimeError("the session is scored; there is nothing left for an actor")
+            self._actor_stop.clear()
+            self._actor_thread = threading.Thread(
+                target=self._actor, args=(model, provider), name="autoresearch-actor"
+            )
+            self._publish(
+                actor="running", actor_model=model, actor_provider=provider, actor_error=None
+            )
+            self._actor_thread.start()
+        return self.get_status()
+
+    @rpc
+    def stop_actor(self) -> AutoresearchStatus:
+        """Stop the actor: its Pi process is killed and the status goes idle.
+        The session stays as it is; a trial loop the actor started runs on."""
+        self._stop_actor()
+        return self.get_status()
 
     @skill
     def task(self) -> str:
@@ -465,6 +518,41 @@ class AutoresearchModule(Module):
                 heldout_rate=self._session.info().heldout_rate,
                 **_tally(self._session, candidate),
             )
+
+    def _actor(self, model: str, provider: str) -> None:
+        actor: ActorState = "done"
+        error: str | None = None
+        try:
+            trajectory = run_actor(
+                self._mcp_server.mcp_url(),
+                self._session,
+                model,
+                provider,
+                self.config.actor_max_steps,
+                timeout_s=self.config.actor_timeout_s,
+                run_dir=self.config.session_dir / "actor",
+                stop=self._actor_stop,
+            )
+            logger.info("autoresearch: actor ended", ended_by=trajectory.extra.ended_by)
+            if trajectory.extra.ended_by == "error":
+                actor, error = "failed", trajectory.extra.error
+        except Exception as exc:
+            logger.exception("autoresearch: actor failed", model=model, provider=provider)
+            actor, error = "failed", f"{type(exc).__name__}: {exc}"
+        finally:
+            if self._actor_stop.is_set():
+                actor, error = "idle", None
+            with self._actor_lock:
+                self._actor_thread = None
+            self._publish(actor=actor, actor_error=error)
+
+    def _stop_actor(self) -> None:
+        with self._actor_lock:
+            thread = self._actor_thread
+        if thread is None:
+            return
+        self._actor_stop.set()
+        thread.join(ACTOR_STOP_TIMEOUT_S)
 
     def _finish(self, candidate: int, split: Split) -> SessionStatus:
         """Settle session.json when a loop ends: scored once every held-out trial is in."""
