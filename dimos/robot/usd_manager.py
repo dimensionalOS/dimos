@@ -44,7 +44,6 @@ from dimos.robot.assets.usd import (
     require_asset_hashes,
     resolve_usd_assets,
     trivialize_usd,
-    urdf_to_usd,
     usd_frame_names,
 )
 from dimos.utils.logging_config import setup_logger
@@ -73,6 +72,11 @@ class CircularMountError(ValueError):
 def _world_model() -> RobotModel:
     """The stand-in description for a manager given no model: one link, called "world"."""
     return RobotModel.from_root_link(WORLD_LINK, name=WORLD_LINK)
+
+
+def _as_usd(model: RobotModel | UsdModel) -> UsdModel:
+    """Whatever was configured, as the one USD description the manager works from."""
+    return model if isinstance(model, UsdModel) else model.to_usd()
 
 
 # What get_usd and get_scene answer with: [asset_root, usd].
@@ -235,7 +239,8 @@ class UsdManager(Module):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._description = (self.config.model or _world_model()).load()
+        # Converted here and once: everything below works on the USD, whatever it came from.
+        self._description = _as_usd(self.config.model or _world_model())
         self._file_paths = self._description.referenced_files()
         self._joints = {joint.name: joint for joint in self._description.joints}
         # tf_renames reach this robot's own frames too, so every name it emits goes through here.
@@ -269,14 +274,8 @@ class UsdManager(Module):
             raise
 
     def _own_frame_names(self) -> set[str]:
-        """Every link and joint name of this robot's own description, before any rename."""
-        if isinstance(self._description, UsdModel):
-            # No joints to walk: a USD layer's frames are the prims it declares.
-            return usd_frame_names(self._description.usd)
-        names = {self._description.root_link}
-        for joint in self._joints.values():
-            names |= {joint.name, joint.parent_link, joint.child_link}
-        return names
+        """Every link and joint name this robot's own layer carries, before any rename."""
+        return self._description.frame_names()
 
     def _renamed_own_frames(self) -> dict[str, str]:
         """This robot's renamed frames, old -> new; only the ones that actually change.
@@ -343,11 +342,7 @@ class UsdManager(Module):
         """
         with self._usd_lock:
             if self._usd is None:
-                usd = (
-                    self._description.usd
-                    if isinstance(self._description, UsdModel)
-                    else urdf_to_usd(self._description)
-                )
+                usd = self._description.usd
                 if self.config.trivialize:
                     usd = trivialize_usd(usd)
                 # Renamed here as well as on tf, or the layer would name frames that no

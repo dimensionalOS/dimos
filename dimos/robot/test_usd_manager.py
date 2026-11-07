@@ -1606,3 +1606,24 @@ def test_point_clearing_refuses_a_usd_model(scene_file: Path) -> None:
 def test_a_usd_model_wants_a_usd_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="RobotModel.from_file"):
         UsdModel.from_file(tmp_path / "robot.urdf")
+
+
+def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
+    make_manager: Callable[..., UsdManager], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Converting needs usd-core, which has no linux-aarch64 wheel.
+
+    A robot that only poses itself on tf must still come up on a Jetson, so the layer is built
+    on demand rather than at __init__.
+    """
+
+    def refuse(*args: Any, **kwargs: Any) -> str:
+        raise AssertionError("the layer was built before anything asked for it")
+
+    monkeypatch.setattr("dimos.robot.assets.usd.urdf_to_usd", refuse)
+    module = make_manager(tf_renames={"arm": "gripper"})
+
+    (transform,) = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.0]))
+
+    assert transform.child_frame_id == "gripper"
+    assert module._file_paths == set()
