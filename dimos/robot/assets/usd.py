@@ -337,18 +337,27 @@ def _define_gprim(
 def _define_mesh(
     pxr: Any, stage: Any, path: str, geometry: _Geometry, base_dir: Path | None
 ) -> Any:
-    """A reference to the file the URDF named, plus its hash. Nothing is converted here.
+    """The file the URDF named, in assetInfo, plus its hash. Nothing is converted here.
 
-    A reference is USD's own "this geometry lives over there", so the mesh needs no attribute
-    of ours and no triangles of ours. Resolving it is the consumer's job.
+    Named in ``assetInfo`` and **not** by a reference arc. A reference composes another USD
+    layer; it is not "this geometry lives over there" for an arbitrary file. Pointing one at an
+    STL makes the layer invalid -- every standard consumer reports
+
+        Cannot determine file format for @.../arm.stl:SDF_FORMAT_ARGS:target=usd@
+
+    and composes the mesh to nothing, which is a robot with no geometry in usdview, in Isaac and
+    in MuJoCo. dimos never noticed because it reads the authored path itself and serves the file
+    over its own bus rather than composing the stage.
+
+    assetInfo is the right place for it: it is USD's own metadata for "which asset is this prim",
+    it travels through grafting and publishing unchanged, and a consumer that cannot fetch the
+    file sees an empty mesh rather than a broken layer.
     """
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
     mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
     # The path the URDF named, kept verbatim: those are the names UsdManager answers for.
-    prim = mesh.GetPrim()
-    prim.GetReferences().AddReference(geometry.filename)
-    _set_asset_info(pxr, prim, geometry.filename, base_dir)
+    _set_asset_info(pxr, mesh.GetPrim(), geometry.filename, base_dir)
     return mesh
 
 
@@ -592,11 +601,19 @@ def unhashed_assets(usd: str) -> dict[str, str]:
 
 
 def _referenced_assets(pxr: Any, prim: Any) -> list[str]:
-    """The asset paths this prim references, as authored."""
+    """The asset paths this prim names, as authored.
+
+    Both ways a prim can name one: a reference arc, for a prim that really does compose another
+    USD layer, and assetInfo, which is how a mesh names the file it is. Reading only arcs would
+    make the hash check below pass vacuously on every mesh.
+    """
     assets = []
     for spec in prim.GetPrimStack():
         items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
         assets += [ref.assetPath for ref in items if ref.assetPath]
+    identifier = (prim.GetAssetInfo() or {}).get("identifier")
+    if identifier is not None and str(identifier.path):
+        assets.append(str(identifier.path))
     assert pxr  # the pxr bundle is what opened the stage these specs came from
     return assets
 

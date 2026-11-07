@@ -220,13 +220,33 @@ def _references(prim: Any) -> list[str]:
     return items
 
 
-def test_a_mesh_becomes_a_reference_to_the_path_the_urdf_named(meshy: Any) -> None:
-    # A reference is USD's own "this geometry lives over there", so no attribute of ours and
-    # no triangles of ours. UsdManager already serves exactly these paths.
+def test_a_mesh_names_the_path_the_urdf_named(meshy: Any) -> None:
+    # assetInfo is USD's own "which asset is this prim", so no attribute of ours and no
+    # triangles of ours. UsdManager already serves exactly these paths.
     stage = _stage(urdf_to_usd(meshy))
     mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
 
-    assert _references(mesh) == ["meshes/box.stl"]
+    assert str(mesh.GetAssetInfo()["identifier"].path) == "meshes/box.stl"
+
+
+def test_a_mesh_file_is_not_referenced_as_though_it_were_a_usd_layer(meshy: Any) -> None:
+    """A reference arc composes another USD layer; an STL is not one.
+
+    Authoring one anyway makes the layer invalid: every standard consumer reports "Cannot
+    determine file format ... target=usd" and composes the mesh away, so the robot has no
+    geometry in usdview, in Isaac or in MuJoCo. dimos could not see it because it reads the
+    path out of the layer and serves the file itself instead of composing the stage.
+    """
+    stage = _stage(urdf_to_usd(meshy))
+
+    offenders = {
+        str(prim.GetPath()): path
+        for prim in stage.Traverse()
+        for path in _references(prim)
+        if not path.endswith((".usd", ".usda", ".usdc", ".usdz"))
+    }
+
+    assert offenders == {}
 
 
 def test_a_mesh_carries_no_geometry_of_its_own(meshy: Any) -> None:
