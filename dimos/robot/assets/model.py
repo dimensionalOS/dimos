@@ -827,6 +827,12 @@ def _set_mimic_joints(xml: str, mimics: tuple[tuple[str, str, float, float], ...
         element = joints[follower]
         if element.find("mimic") is not None:
             raise ValueError(f"Joint already mimics another: {follower}")
+        # No chains: a leader that mimics, or a follower that leads, could close a loop
+        # where every joint is a follower and none is left to command.
+        if joints[leader].find("mimic") is not None:
+            raise ValueError(f"Joint mimics another and cannot be mimicked: {leader}")
+        if any(mimic.get("joint") == follower for mimic in root.iter("mimic")):
+            raise ValueError(f"Joint is mimicked and cannot mimic another: {follower}")
         ET.SubElement(
             element, "mimic", joint=leader, multiplier=str(multiplier), offset=str(offset)
         )

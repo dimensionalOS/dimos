@@ -600,6 +600,10 @@ def test_with_mimic_joint_makes_one_finger_copy_the_other(tmp_path: Path) -> Non
 
     assert loaded.get_joint("arm/left_finger").mimic is None
     assert loaded.get_joint("arm/right_finger").mimic == ("arm/left_finger", -1.0, 0.01)
+    with pytest.raises(ValueError, match="mimic"):
+        robot_model.RobotModel.from_file(urdf).with_mimic_joint(
+            "right_finger", "left_finger"
+        ).with_mimic_joint("left_finger", "right_finger").load()
 
 
 def test_with_renamed_joints_updates_model_references(tmp_path: Path) -> None:
