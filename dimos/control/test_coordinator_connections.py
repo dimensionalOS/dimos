@@ -673,12 +673,84 @@ def test_two_tasks_arbitrate_the_base_by_priority(rig: Callable[..., Rig]) -> No
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.1, 0.0, 0.0)
 
 
+@pytest.mark.parametrize("configured_hold", [False, True])
+def test_connection_base_hold_is_not_a_virtual_joint_claim(
+    rig: Callable[..., Rig], configured_hold: bool
+) -> None:
+    """Gate all base axes at output, independent of positional task priority."""
+    tasks = (
+        [TaskConfig(name=OPERATOR_HOLD_TASK_NAME, type="operator_hold", priority=100)]
+        if configured_hold
+        else []
+    )
+    r = rig(tasks=tasks)
+    if not configured_hold:
+        r.coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
+    hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
+    assert isinstance(hold, OperatorHoldTask)
+    velocity = base_task("fast_base", priority=10000)
+    r.coordinator.add_task(velocity)
+    commanded = [0.4, -0.2, 0.3]
+    r.report_base()
+    velocity.set_velocities(commanded, t_now=time.perf_counter())
+    r.tick()
+    assert r.twists_sent()[-1].linear.x == 0.4
+
+    hold.request("manual")
+    for _ in range(3):
+        r.report_base()
+        velocity.set_velocities(commanded, t_now=time.perf_counter())
+        before = len(r.twists_sent())
+        r.tick()
+        assert not hold.claim().joints.intersection(GO2_BASE_AXES)
+        assert len(r.twists_sent()) == before + 1
+        twist = r.twists_sent()[-1]
+        assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+    hold.acknowledge()
+    r.report_base()
+    velocity.set_velocities(commanded, t_now=time.perf_counter())
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == tuple(commanded)
+
+
+def test_hold_preserves_same_robot_arm_commands_while_gating_its_base(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig(WholeRobot)
+    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
+    velocity = JointVelocityTask("vel_base", JointVelocityTaskConfig(MOCK_BASE_AXES))
+    velocity.start()
+    r.coordinator.add_task(velocity)
+    hold = OperatorHoldTask()
+    r.coordinator.add_task(hold, task_type="operator_hold")
+    measured = [0.2, *AT_REST[1:]]
+    r.report_arm(*measured)
+    r.report_base("mock")
+    hold.request("manual")
+    velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
+    r.tick()
+    assert r.positions_sent()[-1] == measured
+    assert hold.claim().joints == frozenset(MOCK_JOINTS)
+    twist = dict(r.sent)["mock_cmd_vel"]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+    hold.acknowledge()
+    r.report_arm(*measured)
+    r.report_base("mock")
+    velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
+    r.tick()
+    assert r.positions_sent()[-1] == [0.5, *AT_REST[1:]]
+    twist = dict(r.sent)["mock_cmd_vel"]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, -0.2, 0.3)
+
+
 def test_the_operator_hold_zeroes_a_running_base_and_keeps_it_after_an_estop_clear(
     rig: Callable[..., Rig],
 ) -> None:
-    """The hold claims a connection robot's base axes even though they never
-    appear in the joint-state snapshot: a running velocity task loses them,
-    and clearing an e-stop does not hand them back."""
+    """A positional hold gates base output without claiming velocity axes;
+    clearing an e-stop does not bypass the hold until acknowledgement."""
     r = rig()
     task = base_task("vel_base", priority=10)
     r.coordinator.add_task(task)
