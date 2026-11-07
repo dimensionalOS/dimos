@@ -29,11 +29,11 @@ import mujoco
 import numpy as np
 
 from dimos.robot.manipulators.makermods_metal.config import (
+    METAL,
     METAL_ARM_JOINTS,
     METAL_BENCH_OBJECTS,
     METAL_BENCH_PATH,
     METAL_FINGER_JOINTS,
-    METAL_GRIPPER_RANGE,
     METAL_JOINT3_LIMITS,
     METAL_KD,
     METAL_KP,
@@ -52,8 +52,9 @@ METAL_ARMATURE = (0.032, 0.032, 0.032, 0.0018, 0.0018, 0.0018)
 METAL_GRIPPER_KP = 400.0
 METAL_GRIPPER_KV = 10.0
 METAL_TIMESTEP = 0.002
-#: Where the wrist camera sits on gripper_base, metres, and how far it leans
-#: from the finger axis toward the gripper's own axis, degrees.
+#: The wrist camera's MJCF name, where it sits on gripper_base, metres, and how
+#: far it leans from the finger axis toward the gripper's own axis, degrees.
+METAL_CAMERA_NAME = "wrist_camera"
 METAL_CAMERA_POS = (0.07, 0.0, -0.03)
 METAL_CAMERA_TILT_DEG = 20.0
 METAL_CAMERA_FOVY_DEG = 60.0
@@ -89,11 +90,11 @@ def metal_mjcf_spec() -> mujoco.MjSpec:
     spec.option.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST  # type: ignore[attr-defined]
     spec.option.timestep = METAL_TIMESTEP
     spec.joint("joint3").range = list(METAL_JOINT3_LIMITS)
-    # The motors hold against gravity, so the arm tracks its targets instead
-    # of sagging by the gravity torque over kp.
+    # Gravity compensation follows the hardware: with it off, the sim arm sags
+    # under its own weight by the gravity torque over kp, as the real arm does.
     for body in spec.bodies:
         if body.name != "base_link":
-            body.gravcomp = 1.0
+            body.gravcomp = float(METAL.gravity)
     for name, armature, kp, kd in zip(
         METAL_ARM_JOINTS, METAL_ARMATURE, METAL_KP, METAL_KD, strict=True
     ):
@@ -101,7 +102,12 @@ def metal_mjcf_spec() -> mujoco.MjSpec:
         _add_position_actuator(spec, name, name, kp, kd, tuple(spec.joint(name).range))
     driven, follower = METAL_FINGER_JOINTS
     _add_position_actuator(
-        spec, "gripper", driven, METAL_GRIPPER_KP, METAL_GRIPPER_KV, METAL_GRIPPER_RANGE
+        spec,
+        "gripper",
+        driven,
+        METAL_GRIPPER_KP,
+        METAL_GRIPPER_KV,
+        tuple(spec.joint(driven).range),
     )
     mimics = _urdf_mimics(urdf)
     if follower not in mimics:
@@ -144,7 +150,7 @@ def make_metal_sim_module_kwargs() -> dict[str, Any]:
         "scene_xml": METAL_BENCH_PATH,
         "robot_sim_spec": METAL_SIM_SPEC,
         "dof": len(METAL_ARM_JOINTS),
-        "camera_name": "wrist_camera",
+        "camera_name": METAL_CAMERA_NAME,
         # The sim knows the camera's world pose exactly, so its frames hang off world.
         "base_frame_id": "world",
         "reset_joint_positions": list(METAL_SIM_HOME),
@@ -196,7 +202,7 @@ def _add_wrist_camera(gripper_base: mujoco.MjsBody) -> None:  # type: ignore[nam
     quat = np.zeros(4)
     mujoco.mju_mat2Quat(quat, axes.flatten())  # type: ignore[attr-defined]
     gripper_base.add_camera(
-        name="wrist_camera",
+        name=METAL_CAMERA_NAME,
         pos=list(METAL_CAMERA_POS),
         quat=quat.tolist(),
         fovy=METAL_CAMERA_FOVY_DEG,

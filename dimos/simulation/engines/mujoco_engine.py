@@ -209,9 +209,12 @@ class MujocoEngine(SimulationEngine):
             self._joint_mappings = list(self._robot_binding.joint_mappings)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
-        self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
-        self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
-        if self._root_qpos_adr is None:
+        # A bound robot's root is whatever its spec names, which may be nothing
+        # for a fixed arm; only a model without a spec takes the first free joint.
+        if self._robot_binding is not None:
+            self._root_qpos_adr = self._robot_binding.root_qpos_adr
+            self._root_qvel_adr = self._robot_binding.root_qvel_adr
+        else:
             self._root_qpos_adr, self._root_qvel_adr = self._find_first_freejoint_adrs()
         timestep = float(self._model.opt.timestep)
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0

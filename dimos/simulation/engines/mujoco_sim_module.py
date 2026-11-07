@@ -229,11 +229,11 @@ class _WholeBodySimHooks:
     # own control units (the xArm's tendon, 0..255 against a 0..0.85 rad joint)
     # runs the other way: commands and readings are reflected about the joint
     # range.
-    def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
+    def _gripper_joint_to_ctrl(self, command: float) -> float:
         """The actuator control for a gripper command."""
         jlo, jhi = self._gripper_joint_range
         clo, chi = self._gripper_ctrl_range
-        clamped = max(jlo, min(jhi, joint_position))
+        clamped = max(jlo, min(jhi, command))
         if self._gripper_ctrl_range == self._gripper_joint_range:
             return clamped
         if jhi == jlo:

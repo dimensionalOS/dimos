@@ -57,10 +57,11 @@ METAL_GRIPPER_RANGE = (-0.05, 0.0)
 METAL_KP = [100.0, 100.0, 100.0, 50.0, 20.0, 20.0]
 METAL_KD = [5.0, 5.0, 5.0, 5.0, 0.6, 0.6]
 # Where the jaw's parts sit along its approach, measured from the planning tip
-# (gripper_base, the mount), metres, for heuristic grasps: the pads' centre and
-# the gripper body's front face are ahead of it, so "behind" is negative.
+# (gripper_base, the mount), metres, for heuristic grasps. The pads are the last
+# 2.7 cm of the fingers, the faces that meet when the jaw closes; they and the
+# gripper body's front face are ahead of the tip, so "behind" is negative.
 METAL_HEURISTIC_AIM = {
-    "pad_behind_tcp": -0.047,
+    "pad_behind_tcp": -0.078,
     "fingertip_reach": 0.092,
     "palm_behind_tcp": -0.009,
 }
@@ -69,9 +70,11 @@ METAL_MJCF_PATH = Path(__file__).parent / "assets" / "metal.xml"
 METAL_BENCH_PATH = Path(__file__).parent / "assets" / "bench.xml"
 #: Free bodies on the bench, by MJCF body name; the sim reports their poses.
 METAL_BENCH_OBJECTS = ("cube", "cylinder", "bowl")
-#: Arm joints, rad: the jaw points straight down 0.25 m above the bench, 0.24 m
-#: out from the base, with the wrist camera looking at the objects.
-METAL_SIM_HOME = [0.0, -1.6, 1.45, -1.4, 0.0, 0.0]
+#: Arm joints, rad, as commanded: the jaw points straight down with its mount
+#: about 0.33 m above the bench and 0.28 m out from the base, where the wrist
+#: camera sees all three objects. Without gravity torque the arm settles a
+#: little below this.
+METAL_SIM_HOME = [0.0, -1.87, 2.15, -1.85, 0.0, 0.0]
 # Custom firmware profiles: the stock DM scaling does not match these motors.
 METAL_PROFILE_LOW = DamiaoProfile(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
 METAL_PROFILE_SHOULDER = DamiaoProfile(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)

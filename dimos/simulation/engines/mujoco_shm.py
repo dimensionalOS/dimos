@@ -71,8 +71,9 @@ _shm_sizes = {
     "pos_t": _joint_array_size,
     "vel_t": _joint_array_size,
     # [gripper_state, gripper_target, range_lo, range_hi]. State and target are
-    # both in the coordinate commands use; the sim module maps the MJCF joint
-    # to it (see MujocoSimModule._gripper_joint_to_command).
+    # both in the coordinate commands use; the sim maps the MJCF joint to it
+    # (_WholeBodySimHooks._gripper_joint_to_command in
+    # dimos.simulation.engines.mujoco_sim_module).
     "grp": _GRP_SLOTS * _FLOAT_BYTES,
     # Whole-body additions (unused by manipulator path).
     "imu": _IMU_FLOATS * _FLOAT_BYTES,  # [w,x,y,z, gx,gy,gz, ax,ay,az]
