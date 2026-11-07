@@ -19,7 +19,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.control._control_test_helpers import FAKE_ARM_JOINTS, fake_arm_model
 from dimos.control.components import HardwareComponent, HardwareType, JointState as JointReading
+from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.convert import motor_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop
@@ -97,6 +100,54 @@ def test_non_position_unready_and_empty_updates_do_not_publish(mode, ready, kind
     tick._write_all_hardware({"arm": (values, mode)})
     assert messages == []
     assert hardware.write_command.call_count == int(ready)
+
+
+#: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
+MOCK_JOINTS = motor_joints(fake_arm_model(), "mock")
+
+
+def make_connection_loop(callback):
+    """A tick loop driving the fake arm through a connection module, its joints reported at rest."""
+    model = fake_arm_model().with_renamed_joints(
+        dict(zip(FAKE_ARM_JOINTS, MOCK_JOINTS, strict=True))
+    )
+    source = ConnectionSource(
+        "mock", ["position_command", "velocity_command"], ["joint_state"], model, 10.0
+    )
+    source.on_message(
+        "joint_state", JointState(name=MOCK_JOINTS, position=[0.0] * len(MOCK_JOINTS))
+    )
+    sent = []
+    loop = TickLoop(
+        tick_rate=100,
+        hardware={},
+        hardware_lock=threading.Lock(),
+        tasks={},
+        task_lock=threading.Lock(),
+        joint_to_hardware=dict.fromkeys(MOCK_JOINTS, "mock"),
+        publish_command_callback=callback,
+        frame_id="robot",
+        connections={"mock": source},
+        connection_command_callback=lambda name, values: sent.append((name, values)),
+    )
+    return loop, sent
+
+
+@pytest.mark.parametrize("mode", [ControlMode.POSITION, ControlMode.SERVO_POSITION])
+def test_connection_position_winners_are_published_and_other_ticks_are_not(mode):
+    messages = []
+    tick, sent = make_connection_loop(messages.append)
+    with patch("dimos.control.tick_loop.time.time", return_value=123.25):
+        tick._write_all_connections({})
+        tick._write_all_connections({"mock": ({"mock/joint3": 0.4, "mock/joint1": 1.2}, mode)})
+        tick._write_all_connections({"mock": ({"mock/joint1": 0.1}, ControlMode.VELOCITY)})
+    # The robot got its keep-alive command on every tick regardless.
+    assert [name for name, _ in sent] == ["mock"] * 3
+    (message,) = messages
+    assert message.name == ["mock/joint1", "mock/joint3"]
+    assert message.position == [1.2, 0.4]
+    assert message.velocity == message.effort == []
+    assert (message.ts, message.frame_id) == (123.25, "robot")
 
 
 def test_subscriber_failure_does_not_suppress_measured_state():
