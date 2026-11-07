@@ -1,0 +1,60 @@
+{
+  "topics": {
+    "front_camera": "dimos/front_camera/foxglove_msgs.CompressedVideo",
+    "rear_camera": "dimos/rear_camera/foxglove_msgs.CompressedVideo",
+    "front_camera_info": "dimos/front_camera_info/sensor_msgs.CameraInfo",
+    "rear_camera_info": "dimos/rear_camera_info/sensor_msgs.CameraInfo",
+    "tf": "dimos/tf/tf2_msgs.TFMessage"
+  },
+  "config": {
+    "front_device": "/dev/video0",
+    "rear_device": "/dev/video2",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "bitrate_bps": 4000000,
+    "gop": 30,
+    "front_camera_xyz": [
+      0.37646,
+      0.0,
+      0.03738
+    ],
+    "front_camera_yaw_rad": 0.0,
+    "rear_camera_xyz": [
+      -0.37646,
+      0.0,
+      0.03738
+    ],
+    "rear_camera_yaw_rad": 3.141592653589793,
+    "focal_length_px": 607.0,
+    "focal_length_width_px": 1280,
+    "retry_s": 2.0,
+    "stall_timeout_s": 2.0,
+    "metadata_period_s": 1.0,
+    "stats_period_s": 5.0
+  },
+  "session": {
+    "mode": "client",
+    "connect": [
+      "tcp/10.21.31.106:7447"
+    ],
+    "listen": [
+      "tcp/127.0.0.1:0"
+    ],
+    "multicast": false,
+    "scout_addr": "",
+    "gossip": true,
+    "interface": "lo",
+    "connect_timeout_ms": 5000
+  },
+  "qos": {
+    "dimos/front_camera/foxglove_msgs.CompressedVideo": {
+      "reliability": "reliable",
+      "congestion_control": "block"
+    },
+    "dimos/rear_camera/foxglove_msgs.CompressedVideo": {
+      "reliability": "reliable",
+      "congestion_control": "block"
+    }
+  }
+}
