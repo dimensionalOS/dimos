@@ -84,6 +84,9 @@ METAL_SIM_HOME = [0.0, -1.87, 2.15, -1.85, 0.0, 0.0]
 #: Edge of one cell of the simulated bench's voxel map, metres; the mapper and
 #: the planner's octree share it.
 METAL_SIM_VOXEL_SIZE = 0.025
+#: How close to the bench, metres along a camera ray, the map never clears a
+#: voxel: just over one cell, so a cube that moved off a spot clears from it.
+METAL_SIM_MAP_GRACE = 0.03
 # Custom firmware profiles: the stock DM scaling does not match these motors.
 METAL_PROFILE_LOW = DamiaoProfile(0x8000, p_max=6.28, v_max=10.0, t_max=30.0)
 METAL_PROFILE_SHOULDER = DamiaoProfile(0x8001, p_max=6.28, v_max=10.0, t_max=120.0)

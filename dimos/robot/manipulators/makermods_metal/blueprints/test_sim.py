@@ -73,3 +73,5 @@ def test_the_sim_cloud_becomes_the_planner_map_through_the_self_and_box_filters(
     planning = ManipulationModuleConfig.model_validate(planner.kwargs)
     assert mapping.world_frame == planning.world_frame
     assert mapping.voxel_size == planning.voxel_map_resolution
+    # About one cell, so a voxel the camera now sees through just above the bench clears.
+    assert mapping.grace_depth < 2 * mapping.voxel_size

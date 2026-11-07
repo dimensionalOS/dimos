@@ -37,6 +37,7 @@ from dimos.robot.manipulators.makermods_metal.blueprints.teleop import (
     metal_quest_tasks,
 )
 from dimos.robot.manipulators.makermods_metal.config import (
+    METAL_SIM_MAP_GRACE,
     METAL_SIM_VOXEL_SIZE,
     METAL_TF_LINKS,
     make_metal_sim_hardware,
@@ -80,7 +81,11 @@ metal_quest_collection_sim = autoconnect(
         voxel_map_resolution=METAL_SIM_VOXEL_SIZE,
     ),
     # The map's self filter is the UrdfManager that serves the URDF to viewers.
-    manipulation_mapping(self_filter_model=_MODEL.model, voxel_size=METAL_SIM_VOXEL_SIZE),
+    manipulation_mapping(
+        self_filter_model=_MODEL.model,
+        voxel_size=METAL_SIM_VOXEL_SIZE,
+        grace_depth=METAL_SIM_MAP_GRACE,
+    ),
 ).remappings(
     [
         (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
