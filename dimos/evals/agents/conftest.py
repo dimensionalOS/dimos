@@ -224,8 +224,9 @@ class NativeHarness:
         )
 
     def run(self, agent: PiAdapter) -> Trajectory:
+        # A hang guard only: dimcode's cold start alone took 8-10 s on a slow macOS runner.
         result = agent.run(
-            "Inspect selected observations.", self.environment, self.root, timeout_s=10
+            "Inspect selected observations.", self.environment, self.root, timeout_s=60
         )
         if result.extra.ended_by == "timeout":
             stderr_path = self.root / "pi-stderr.txt"
