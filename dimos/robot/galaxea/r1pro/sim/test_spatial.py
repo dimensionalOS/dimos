@@ -33,7 +33,11 @@ def station(mocker):
         ),
         groups={
             "left": SpatialGroup(
-                label="Arm", joint_names=("shoulder",), tip_frame="tool", base_frame="base"
+                label="Arm",
+                joint_names=("shoulder",),
+                tip_frame="tool",
+                base_frame="base",
+                gripper_joint="finger",
             )
         },
         base_drive=True,
@@ -121,3 +125,33 @@ def test_arm_requires_release_before_grab_and_disconnect_releases(station):
     module._reset_controller_state()
     assert module._owner(Hand.LEFT, "move") is None
     assert velocity(module) == (0, 0, 0)
+
+
+def test_clutched_trigger_publishes_normalized_gripper_opening_and_release_holds(station, mocker):
+    module, _ = station
+    publish = mocker.patch.object(module.left_gripper_command, "publish")
+    mocker.patch.object(module.right_gripper_command, "publish")
+    hand = dict(
+        position=[0, 0, 1],
+        orientation=[0, 0, 0, 1],
+        pinched=False,
+        action="move",
+        arm="left",
+        trigger=0.75,
+    )
+
+    def send(sequence):
+        data = json.loads(packet(module, sequence, drive=(0, 0, 0), hands={"left": hand}))
+        data["mode"] = "clutch"
+        return module._dispatch_text_message(json.dumps(data))
+
+    assert not send(0)  # mode change clears all claims
+    assert send(0)  # release before clutch
+    hand["pinched"] = True
+    assert send(1)
+    module._publish_button_state(module._controllers[Hand.LEFT], module._controllers[Hand.RIGHT])
+    assert publish.call_args.args[0].data == 0.25
+    hand["pinched"] = False
+    assert send(2)
+    module._publish_button_state(module._controllers[Hand.LEFT], module._controllers[Hand.RIGHT])
+    assert publish.call_count == 1

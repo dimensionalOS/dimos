@@ -17,15 +17,21 @@
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_COLLISION_EXCLUSIONS
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
-from dimos.robot.galaxea.r1pro.sim.model import MODEL_PATH, STEER_JOINTS, WHEEL_JOINTS
+from dimos.robot.galaxea.r1pro.sim.model import (
+    FINGER_JOINTS,
+    MODEL_PATH,
+    STEER_JOINTS,
+    WHEEL_JOINTS,
+)
 from dimos.sim2.description import Drive, Instance, SceneConfig
 from dimos.sim2.module import ControllerConfig
 
 UPPER_JOINTS = tuple(f"r1pro/{name}" for name in UPPER_BODY_JOINTS)
-JOINTS = (*UPPER_JOINTS, *STEER_JOINTS, *WHEEL_JOINTS)
+SERVO_JOINTS = (*UPPER_JOINTS, *FINGER_JOINTS)
+JOINTS = (*SERVO_JOINTS, *STEER_JOINTS, *WHEEL_JOINTS)
 HOME = (0.0,) * 18
-KP = (800.0,) * 4 + (180.0,) * 14 + (120.0,) * 3 + (0.0,) * 3
-KD = (60.0,) * 4 + (12.0,) * 14 + (12.0,) * 3 + (3.0,) * 3
+KP = (800.0,) * 4 + (180.0,) * 14 + (1000.0,) * 4 + (120.0,) * 3 + (0.0,) * 3
+KD = (60.0,) * 4 + (12.0,) * 14 + (10.0,) * 4 + (12.0,) * 3 + (3.0,) * 3
 CONTROL = ControllerConfig("r1pro/servo", 20_000_000, JOINTS)
 MODEL = RobotModel.from_file(MODEL_PATH)
 SCENE = SceneConfig(

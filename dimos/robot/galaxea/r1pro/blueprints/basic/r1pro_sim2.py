@@ -33,6 +33,7 @@ from dimos.robot.galaxea.r1pro.sim.cameras import (
 )
 from dimos.robot.galaxea.r1pro.sim.config import CONTROL, JOINTS, MODEL, SCENE as ROBOT_SCENE
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl
+from dimos.robot.galaxea.r1pro.sim.model import FINGER_TRAVEL_M
 from dimos.robot.galaxea.r1pro.sim.spatial import R1ProSpatialTeleop
 from dimos.robot.galaxea.r1pro.sim.teleop import (
     TELEOP_MODEL,
@@ -127,7 +128,9 @@ r1pro_sim2 = (
                     label=f"{side.title()} arm",
                     joint_names=tuple(f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)),
                     tip_frame=f"r1pro/{side}_gripper_link",
-                    base_frame="r1pro/base_link",
+                    base_frame=f"r1pro/{side}_arm_base_link",
+                    gripper_joint=f"r1pro/{side}_gripper_finger_joint1",
+                    gripper_open_position=FINGER_TRAVEL_M,
                 )
                 for side in ("left", "right")
             },

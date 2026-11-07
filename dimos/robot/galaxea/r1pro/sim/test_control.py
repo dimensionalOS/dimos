@@ -21,10 +21,17 @@ import pytest
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.assets.model import LoadedRobotModel
-from dimos.robot.galaxea.r1pro.sim.config import JOINTS, UPPER_JOINTS
+from dimos.robot.galaxea.r1pro.sim.config import JOINTS, SERVO_JOINTS, UPPER_JOINTS
 from dimos.robot.galaxea.r1pro.sim.control import R1ProSimControl, steer_targets
-from dimos.robot.galaxea.r1pro.sim.model import STEER_JOINTS, WHEEL_RADIUS
+from dimos.robot.galaxea.r1pro.sim.model import (
+    FINGER_JOINTS,
+    FINGER_SPEED_M_S,
+    FINGER_TRAVEL_M,
+    STEER_JOINTS,
+    WHEEL_RADIUS,
+)
 
 
 @pytest.mark.parametrize(
@@ -57,7 +64,7 @@ def test_unaligned_wheel_waits_for_steering():
 def controller():
     root = ET.Element("robot", name="controller_fixture")
     ET.SubElement(root, "link", name="base")
-    for index, name in enumerate((*UPPER_JOINTS, *STEER_JOINTS)):
+    for index, name in enumerate((*SERVO_JOINTS, *STEER_JOINTS)):
         child = f"link{index}"
         ET.SubElement(root, "link", name=child)
         joint = ET.SubElement(root, "joint", name=name, type="revolute")
@@ -110,7 +117,7 @@ def test_stopped_steering_keeps_commands_legal_after_soft_stop_overshoot(
 ):
     positions = [measured if name in STEER_JOINTS else 0.0 for name in JOINTS]
     action = controller.compute(JointState(name=list(JOINTS), position=positions, ts=0))
-    assert action.joint_commands[0].values[18:21] == [expected] * 3
+    assert action.joint_commands[0].values[-6:-3] == [expected] * 3
     assert action.joint_commands[1].values[-3:] == [0.0] * 3
 
 
@@ -122,3 +129,36 @@ async def test_arm_teleop_does_not_recapture_torso_sag(controller, mocker):
     action = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
     assert action.joint_commands[0].values[:4] == [0.0] * 4
     assert action.joint_commands[0].values[4:18] == [0.01] * 14
+
+
+async def test_grippers_move_opposite_fingers_independently_and_ignore_arm_holds(controller):
+    await controller.handle_left_gripper_command(Float32(data=1))
+    await controller.handle_right_gripper_command(Float32(data=0.5))
+    # A coordinator's passive joint hold must never overwrite the gripper target.
+    await controller.handle_upper_command(JointState(name=list(FINGER_JOINTS), position=[0] * 4))
+    first = controller.compute(JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=0))
+    assert first.joint_commands[0].values[18:22] == pytest.approx(
+        [FINGER_SPEED_M_S * 0.02, -FINGER_SPEED_M_S * 0.02] * 2
+    )
+    for i in range(1, 60):
+        action = controller.compute(
+            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+        )
+    assert action.joint_commands[0].values[18:22] == pytest.approx(
+        [FINGER_TRAVEL_M, -FINGER_TRAVEL_M, FINGER_TRAVEL_M / 2, -FINGER_TRAVEL_M / 2]
+    )
+    assert action.joint_commands[0].values[:18] == [0] * 18
+    await controller.handle_left_gripper_command(Float32(data=0))
+    for i in range(60, 120):
+        action = controller.compute(
+            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+        )
+    assert action.joint_commands[0].values[18:22] == pytest.approx(
+        [0, 0, FINGER_TRAVEL_M / 2, -FINGER_TRAVEL_M / 2]
+    )
+
+
+@pytest.mark.parametrize("opening", [float("nan"), -0.1, 1.1])
+async def test_invalid_gripper_command_is_rejected(controller, opening):
+    with pytest.raises(ValueError, match="gripper opening"):
+        await controller.handle_left_gripper_command(Float32(data=opening))

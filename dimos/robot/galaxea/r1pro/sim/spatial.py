@@ -94,8 +94,9 @@ class R1ProSpatialTeleop(SpatialTeleopModule):
         return True
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
-        # Capture orientation at clutch engagement. Base driving then carries the
-        # held arms with the chassis instead of changing the operator reference.
+        # Capture the configured shoulder frame at clutch engagement. This
+        # matches the arm-subtree IK, including the actual torso posture. Base
+        # driving then carries the arms instead of moving the operator reference.
         side = "left" if hand == Hand.LEFT else "right"
         group = self.config.groups.get(side)
         if group is None:

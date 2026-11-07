@@ -19,7 +19,7 @@ from io import BytesIO
 from typing import Any
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from scipy.spatial.transform import Rotation
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
@@ -32,6 +32,7 @@ class SpatialGroup(BaseModel):
     tip_frame: str
     base_frame: str
     gripper_joint: str | None = None
+    gripper_open_position: float = Field(default=1.0, gt=0)
 
 
 class SpatialRobot:
@@ -98,7 +99,11 @@ class SpatialRobot:
                 ],
                 "grasp": tip[:3, 3].tolist(),
                 "orientation": Rotation.from_matrix(tip[:3, :3]).as_quat().tolist(),
-                "opening": float(positions.get(group.gripper_joint, 0.0))
+                "opening": float(
+                    np.clip(
+                        positions.get(group.gripper_joint, 0.0) / group.gripper_open_position, 0, 1
+                    )
+                )
                 if group.gripper_joint
                 else 0.0,
             }

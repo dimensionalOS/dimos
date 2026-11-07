@@ -23,21 +23,16 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.galaxea.r1pro.sim.config import MODEL, UPPER_JOINTS
-from dimos.robot.galaxea.r1pro.sim.model import STEER_JOINTS, WHEEL_JOINTS
+from dimos.robot.galaxea.r1pro.sim.config import MODEL
+from dimos.robot.galaxea.r1pro.sim.model import FINGER_JOINTS, STEER_JOINTS, WHEEL_JOINTS
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.extensions import VideoArmTeleopConfig, VideoArmTeleopModule
 
-# IK is expressed relative to the mobile chassis. Wheels remain controlled by
-# the simulation's base servo; the coordinator only owns the upper body.
+# The coordinator owns the upper body; per-arm IK below uses shoulder subtrees
+# so a nonzero torso pose cannot be silently replaced with a neutral torso.
 TELEOP_MODEL = MODEL.with_fixed_joints(
-    *STEER_JOINTS, *WHEEL_JOINTS
+    *STEER_JOINTS, *WHEEL_JOINTS, *FINGER_JOINTS
 ).with_default_joint_acceleration_limit(2.0)
-TELEOP_ROBOT = RobotModelConfig(
-    model=TELEOP_MODEL,
-    joint_names=list(UPPER_JOINTS),
-    base_link="r1pro/base_link",
-)
 
 
 def arm_tasks() -> list[TaskConfig]:
@@ -49,7 +44,13 @@ def arm_tasks() -> list[TaskConfig]:
             joint_names=[f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)],
             priority=20,
             params={
-                "robot_model": TELEOP_ROBOT,
+                "robot_model": RobotModelConfig(
+                    model=MODEL.with_subtree_rooted_at(f"r1pro/{side}_arm_base_link")
+                    .with_fixed_joints(*(f"r1pro/{side}_gripper_finger_joint{i}" for i in (1, 2)))
+                    .with_default_joint_acceleration_limit(2.0),
+                    joint_names=[f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)],
+                    base_link=f"r1pro/{side}_arm_base_link",
+                ),
                 "bindings": [{"hand": side, "target_frame": f"r1pro/{side}_gripper_link"}],
                 "pink": PinkKinematicsConfig(
                     dt=0.02,
@@ -63,6 +64,10 @@ def arm_tasks() -> list[TaskConfig]:
                 "timeout": 0.3,
                 "max_joint_velocity_rad_s": 0.5,
                 "max_command_tracking_error_deg": 10.0,
+                # MuJoCo soft stops can overshoot by a few milliradians. Permit
+                # recovery, while commanding 0.03 rad inside physical limits.
+                "feedback_limit_tolerance": 0.01,
+                "command_limit_margin": 0.03,
                 "joint_command_filter_cutoff_hz": 10.0,
             },
         )

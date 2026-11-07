@@ -61,11 +61,11 @@ enter XR, release the grips, then grip again to engage.
   drives/strafes and right stick turns, capped at 0.2 m/s and 0.3 rad/s.
 - Hand tracking: pinch a tool handle to move that arm. Two free-space pinches
   reposition/scale the workspace; camera and control panels can be moved/pinned.
-- In Classic teleop with controllers, release both grips, point away from panels,
-  then hold both triggers together and spread/close your hands to resize the scene.
-  Arrangement holds the arms and sends zero base drive. Release before returning
-  to arm control. Classic hand tracking reserves pinches for arm clutching; use
-  the HUD's −/+ buttons or Tool handles mode for scene resizing.
+- Controller triggers never resize the scene. Use the HUD's −/+ and Actual size
+  buttons. In Classic teleop, hold the corresponding grip and squeeze its trigger
+  to close the gripper; release the trigger to open it. Tool handles mode provides
+  independent opening sliders. Two free hand-tracking pinches still arrange the
+  scene in Tool handles mode; arm and base commands are held during arrangement.
 - The session HUD starts pinned in front of your view. **Bring here** also
   restores the HUD and camera panels relative to the headset, independent of the
   robot's world position. **UNPIN** parks the HUD in the scene; **HUD** pins it again.
@@ -74,7 +74,7 @@ enter XR, release the grips, then grip again to engage.
 - Desktop joint jogs pause headset input and command the existing upper servo.
   Hold clears control; resume requires release and re-grip. Base buttons drive
   only while pressed. Lost input stops the base after 0.3 s.
-- R1 gripper joints remain fixed in this model; no gripper controls are advertised.
+- Both G1Z grippers are driven in simulation, with normalized opening feedback.
   Recording and home planning controls require optional providers and are hidden
   or disabled when absent.
 
@@ -87,7 +87,7 @@ one or two arms with arbitrary joint names; it is not yet an unlimited-group or
 arbitrary-camera-count UI. Real robot controllers still need their own bindings.
 
 Arm targets pass through Pink IK and the control coordinator to sim2's upper-body
-servo. The chassis transform is captured on grip engagement so driving carries
+servo. Each measured shoulder transform is captured on grip engagement so driving carries
 held arms with the base. The torso holds its pose; each task owns seven arm joints.
 The shared protocol validates sessions/epochs and requires a fresh release after
 input loss. Joint feedback freshness uses receipt time, so simulation timestamps
@@ -104,7 +104,7 @@ are not compared against the wall clock.
 | `pointcloud` | Truth-registered lidar for visualization | 10 Hz |
 | `global_map` | VoxelGridMapper accumulating registered lidar | Every 5 scans |
 | `imu_chassis`, `imu_torso` | Independent vendor IMU frames | 200 Hz |
-| `joint_state` | 24 motor encoders | 50 Hz |
+| `joint_state` | 28 joint encoders, including four coupled finger coordinates | 50 Hz |
 | `tf` | Actual simulated body poses, through UrdfManager | 30 Hz |
 
 The simulated head-left image is 640×512, preserving the physical 1920×1536
@@ -185,16 +185,50 @@ As in the G1 blueprint, robot returns can accumulate in this preview map.
 ## Robot assumptions
 
 The model generator preserves vendor frames, visuals and inertias. It replaces
-wheel collision meshes with cylinders measured from those meshes and fixes the
-four gripper joints because their vendor effort and travel limits are zero.
+wheel collision meshes with cylinders measured from those meshes. The vendor
+finger limits are zero placeholders. The simulation uses equal/opposite 52 mm
+finger travel, matching the G1Z's [104 mm aperture and 108 mm/s aperture speed](https://galaxea-dynamics.com/products/galaxea-g1z-gripper).
+Finger origins, axes and meshes are preserved; measured fingertip geometry fixes
+the opening signs. Each finger is limited to 30 N in this simulation. This is
+conservative demo tuning, not a calibrated reproduction of the rated grip force.
 Wheel limits and servo gains are simulation assumptions, not hardware tuning.
 Known structural overlaps use the existing R1 Pro collision exclusions.
 
 Base driving uses motor commands and wheel contact, with no root-pose override.
 Upper-body commands use `upper_command`. The spatial joint-jog route pauses the coordinator before calling the servo;
 standalone `R1ProSimControl.set_joint` calls while the coordinator owns those
-targets can be overwritten. Collision-aware arm planning and gripper actuation
-are not implemented by this blueprint.
+targets can be overwritten. Collision-aware arm planning is not implemented by
+this blueprint. Arm IK uses a shoulder-rooted subtree and the measured shoulder
+frame at clutch engagement, so torso sag is not replaced with a zero posture.
+The R1 simulation accepts up to 0.01 rad of soft-stop feedback overshoot, while
+commanding 0.03 rad inside the physical limits. Larger overshoot still rejects
+control. This addresses a captured limit-rejection freeze, not every possible
+singularity or collision.
+
+## JoyLo findings and interface direction
+
+[JoyLo](https://behavior-robot-suite.github.io/docs/sections/brs_ctrl/run_joylo.html)
+uses kinematic leader arms and joint-angle commands, with optional bilateral
+feedback. Its documented six-joint examples differ from this seven-joint R1 Pro.
+The project also publishes a [seven-joint leader design](https://behavior-robot-suite.github.io/docs/sections/joylo/joylo_7dof.html).
+Headset hand poses do not provide that joint correspondence or haptic feedback;
+our interface still needs IK, sensible limits, clutching and visible reach errors.
+
+The [Joy-Con implementation](https://github.com/behavior-robot-suite/brs-ctrl/blob/main/brs_ctrl/joylo/joycon/joycon_interface.py)
+separates four command channels: arm joints, grippers, torso and chassis. Its left
+stick translates the base, or turns it when clicked; the right stick changes torso
+pitch/yaw, up/down buttons stand/squat, and ZL/ZR close the grippers. It supports
+held or toggled gripper input. These mappings are useful design references; its
+old torso presets and joint limits must not be copied to the 2026 URDF.
+
+The current model's torso has two folding pitch joints, a third pitch joint and
+a yaw joint. Coordinating the folding joints changes shoulder height; it is not
+a vertical prismatic lift. Torso input remains unimplemented in this demo. A
+bounded next interface change is an explicit **Torso** mode with height, lean
+and yaw controls, leaving arm targets held while those controls own the sticks.
+Keep the existing base mappings in normal mode and scene controls on the HUD.
+Height commands need a model-specific coordinated joint trajectory and limits,
+not direct reuse of JoyLo's older stand/squat angles.
 
 ## Validation
 
@@ -266,3 +300,21 @@ has visual artifacts and none of Unreal's authored materials/lighting. This is
 still below the requested 15 Hz per camera. An actual offscreen-render test
 verifies unequal focal lengths, principal-point offsets, axial depth and switching
 between image sizes without retaining another camera's calibration.
+
+The subsequent teleop fix reproduced the captured left joint-3 soft-stop
+overshoot: the old 0.001 rad feedback tolerance rejected it, while the revised
+R1 configuration moved it inward at the existing velocity limit and converged
+inside the command margin. Separate real-Pink checks verify both shoulder-frame
+models against full-body FK with a non-neutral torso. The log also recorded the
+same limit rejection on the right arm.
+
+An isolated MuJoCo run using the actual mobile model and servo opened both G1Z
+grippers to approximately ±0.052 m per finger, closed the left while the right
+stayed open, then closed both to within 0.001 mm of zero. Evidence is in
+`demo_gripper_physics.py` and `gripper_physics_results.json` in the validation
+directory. Protocol tests verify trigger-to-opening publication and release,
+and JavaScript tests verify simultaneous controller triggers cannot resize.
+This checks free-space actuation, not grasp force or object retention. The
+office blueprint restarted with 28 joint feedback coordinates and three fresh
+camera streams. A live WebSocket motion test was refused because the headset
+had already reconnected; no new live arm-motion result is claimed.

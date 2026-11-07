@@ -20,7 +20,14 @@ positive wheel speed rolls toward +X at zero steering. Steering is about +Z.
 Wheel collision cylinders use the measured vendor mesh bounds: radius .070 m,
 Y extent [-.03785, .04220] m. Visuals remain the vendor meshes. Other mesh
 collisions are MuJoCo convex hulls, with known structural overlaps excluded by
-scene configuration. Gripper joints are fixed: vendor limits/efforts are zero.
+scene configuration. The G1Z fingers keep the vendor origins and +Y axes:
+finger 1 opens toward +Y, finger 2 toward -Y (verified on the fingertip meshes).
+Zero is closed. Replace the vendor's zero limits with symmetric 52 mm travel
+per finger: G1Z's published aperture is 104 mm and aperture speed 108 mm/s.
+Source: https://galaxea-dynamics.com/products/galaxea-g1z-gripper
+Use two driven fingers with equal/opposite targets, not an unsupported mimic.
+The 30 N per-finger effort cap and PD gains are conservative simulation tuning,
+not a calibrated model of the published 150 N clamping force.
 The vendor omits wheel effort/speed limits; the demo assumptions below are NOT
 hardware specifications. Servo gains likewise are simulation tuning only.
 Wrist variant: retain the vendor D405 mount, mesh and inertia unchanged. The
@@ -48,18 +55,32 @@ ASSUMED_WHEEL_EFFORT = 30.0
 ASSUMED_WHEEL_SPEED = 20.0
 STEER_JOINTS = tuple(f"r1pro/steer_motor_joint{i}" for i in range(1, 4))
 WHEEL_JOINTS = tuple(f"r1pro/wheel_motor_joint{i}" for i in range(1, 4))
+FINGER_TRAVEL_M = 0.052
+FINGER_SPEED_M_S = 0.054
+ASSUMED_FINGER_EFFORT_N = 30.0
+FINGER_JOINTS = tuple(
+    f"r1pro/{side}_gripper_finger_joint{i}" for side in ("left", "right") for i in (1, 2)
+)
 
 
 def gen_urdf() -> str:
     source = (
         RobotModel.from_file(R1PRO_MODEL_PATH, package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT})
-        .with_fixed_joints(
-            *(f"{side}_gripper_finger_joint{i}" for side in ("left", "right") for i in (1, 2))
-        )
         .with_prefix("r1pro/")
         .load()
     )
     root = ET.fromstring(source.xml)
+    for index, name in enumerate(FINGER_JOINTS):
+        joint = root.find(f"joint[@name='{name}']")
+        assert joint is not None
+        limit = joint.find("limit")
+        assert limit is not None
+        limit.attrib.update(
+            lower=str(0 if index % 2 == 0 else -FINGER_TRAVEL_M),
+            upper=str(FINGER_TRAVEL_M if index % 2 == 0 else 0),
+            effort=str(ASSUMED_FINGER_EFFORT_N),
+            velocity=str(FINGER_SPEED_M_S),
+        )
     for side in ("left", "right"):
         link = root.find(f"link[@name='r1pro/{side}_gmsl_link']")
         assert link is not None

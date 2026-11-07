@@ -12,21 +12,17 @@ const grab = (w, pivot = [0, 0, -3]) => {
   assert.equal(feed(w, pair(), 100, pivot), true);
 };
 
-test('classic controllers resize with triggers only after both arm grips are released', () => {
-  const w = new WorkspaceTransform();
+test('closing both controller triggers never resizes the scene in either control mode', () => {
   const samples = closed => Object.fromEntries(Object.entries(pair(undefined, undefined, closed))
     .map(([side, sample]) => [side, {...sample, target: null, kind: 'controller', clutchDistance: .05}]));
-  const held = samples(false); held.left.clutchDistance = .01;
-  feed(w, workspaceHands(held, 'clutch'), 0);
-  held.left.distance = held.right.distance = .01;
-  assert.equal(feed(w, workspaceHands(held, 'clutch'), 100), false);
-  // Releasing a grip with triggers still held cannot silently start arrangement.
-  assert.equal(feed(w, workspaceHands(samples(true), 'clutch'), 150), false);
-  feed(w, workspaceHands(samples(false), 'clutch'), 200);
-  assert.equal(feed(w, workspaceHands(samples(true), 'clutch'), 300), true);
-  const spread = samples(true); spread.left.position[0] = -1; spread.right.position[0] = 1;
-  feed(w, workspaceHands(spread, 'clutch'), 320);
-  assert.equal(w.scale, 2);
+  for(const mode of ['clutch','tools']) {
+    const w = new WorkspaceTransform();
+    feed(w, workspaceHands(samples(false), mode), 0);
+    assert.equal(feed(w, workspaceHands(samples(true), mode), 100), false);
+    const spread = samples(true); spread.left.position[0] = -1; spread.right.position[0] = 1;
+    feed(w, workspaceHands(spread, mode), 120);
+    assert.equal(w.scale, 1);
+  }
 });
 
 test('UI targets and classic hand clutches keep priority over scene arrangement', () => {

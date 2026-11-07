@@ -230,7 +230,7 @@ export class SpatialUI {
     c.fillStyle='#b9cecf'; c.font='24px system-ui'; wrapped(c,hint,24,239,976,32);
     c.font='21px system-ui'; c.fillStyle='#76e2c1';
     c.fillText(`${mode==='clutch'?'Classic teleop':'Tool handles'} · Workspace ${Math.round(workspaceScale*100)}%`,24,440);
-    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Release grips · hold both triggers apart from UI to resize':'Pinch / trigger at a tool · two free pinches arrange workspace',24,480);
+    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Grip: move arm · trigger: jaws · use −/+ for scene scale':'Pinch / trigger at a tool · free hand pinches arrange workspace',24,480);
     for(const button of [...this.buttons,...this.workspaceButtons,...this.navigationButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);

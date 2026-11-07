@@ -33,8 +33,23 @@ from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.galaxea.r1pro.sim.config import CONTROL, HOME, JOINTS, KD, KP, UPPER_JOINTS
-from dimos.robot.galaxea.r1pro.sim.model import STEER_JOINTS, WHEEL_RADIUS
+from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.galaxea.r1pro.sim.config import (
+    CONTROL,
+    HOME,
+    JOINTS,
+    KD,
+    KP,
+    SERVO_JOINTS,
+    UPPER_JOINTS,
+)
+from dimos.robot.galaxea.r1pro.sim.model import (
+    FINGER_JOINTS,
+    FINGER_SPEED_M_S,
+    FINGER_TRAVEL_M,
+    STEER_JOINTS,
+    WHEEL_RADIUS,
+)
 
 
 def steer_targets(
@@ -62,6 +77,8 @@ class R1ProSimControl(SharedConfigModule):
     joint_state: In[JointState]
     cmd_vel: In[Twist]
     upper_command: In[JointState]
+    left_gripper_command: In[Float32]
+    right_gripper_command: In[Float32]
     actions: Out[ActionCommand]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -73,8 +90,9 @@ class R1ProSimControl(SharedConfigModule):
         self._velocity = np.zeros(3)
         self._ramped_velocity = np.zeros(3)
         self._until = 0.0
-        self._targets = np.array(HOME)
-        self._ramped_targets = np.array(HOME)
+        self._targets = np.array((*HOME, 0.0, 0.0, 0.0, 0.0))
+        self._ramped_targets = self._targets.copy()
+        self._target_rates = np.array((0.5,) * len(UPPER_JOINTS) + (FINGER_SPEED_M_S,) * 4)
         self._limits: dict[str, tuple[float, float]] = {}
         self._wheel_positions: list[tuple[float, float]] = []
         self._steer_limits: dict[str, tuple[float, float]] = {}
@@ -92,7 +110,7 @@ class R1ProSimControl(SharedConfigModule):
             for model in config.get("robot_models", {}).values()
             for joint in model.joints
         }
-        for name in UPPER_JOINTS:
+        for name in SERVO_JOINTS:
             joint = joints[name]
             assert joint.lower is not None and joint.upper is not None
             self._limits[name] = (joint.lower, joint.upper)
@@ -119,17 +137,31 @@ class R1ProSimControl(SharedConfigModule):
         ):
             raise ValueError("upper-body joint target outside model limits")
         with self._lock:
-            self._targets[UPPER_JOINTS.index(name)] = position
+            self._targets[SERVO_JOINTS.index(name)] = position
 
     @rpc
     def home(self) -> None:
         with self._lock:
-            self._targets[:] = HOME
+            self._targets[: len(UPPER_JOINTS)] = HOME
             self._velocity[:] = 0
             self._until = 0
 
     async def handle_cmd_vel(self, command: Twist) -> None:
         self.move(command)
+
+    def _set_gripper(self, side: str, opening: float) -> None:
+        if not math.isfinite(opening) or not 0 <= opening <= 1:
+            raise ValueError("gripper opening must be in [0, 1]")
+        with self._lock:
+            for finger, sign in ((1, 1), (2, -1)):
+                name = f"r1pro/{side}_gripper_finger_joint{finger}"
+                self._targets[SERVO_JOINTS.index(name)] = sign * opening * FINGER_TRAVEL_M
+
+    async def handle_left_gripper_command(self, command: Float32) -> None:
+        self._set_gripper("left", command.data)
+
+    async def handle_right_gripper_command(self, command: Float32) -> None:
+        self._set_gripper("right", command.data)
 
     async def handle_upper_command(self, command: JointState) -> None:
         if len(command.name) != len(command.position):
@@ -144,8 +176,8 @@ class R1ProSimControl(SharedConfigModule):
             for name, position in zip(command.name, command.position, strict=True):
                 # The arm coordinator also emits passive torso holds. The demo
                 # keeps torso ownership here so re-clutching cannot accumulate sag.
-                if name in self.config.upper_command_joints:
-                    self._targets[UPPER_JOINTS.index(name)] = position
+                if name in self.config.upper_command_joints and name not in FINGER_JOINTS:
+                    self._targets[SERVO_JOINTS.index(name)] = position
 
     def compute(self, sample: JointState) -> ActionCommand | None:
         period = CONTROL.period_ns
@@ -164,7 +196,9 @@ class R1ProSimControl(SharedConfigModule):
             desired = self._velocity if time.monotonic() < self._until else np.zeros(3)
             self._ramped_velocity += np.clip(desired - self._ramped_velocity, -0.4 * dt, 0.4 * dt)
             self._ramped_targets += np.clip(
-                self._targets - self._ramped_targets, -0.5 * dt, 0.5 * dt
+                self._targets - self._ramped_targets,
+                -self._target_rates * dt,
+                self._target_rates * dt,
             )
             steering, wheels = [], []
             for name, (x, y) in zip(STEER_JOINTS, self._wheel_positions, strict=True):
@@ -182,7 +216,7 @@ class R1ProSimControl(SharedConfigModule):
                 steering.append(min(upper, max(lower, target)))
                 wheels.append(velocity)
             positions = [*self._ramped_targets, *steering, 0.0, 0.0, 0.0]
-            velocities = [0.0] * 21 + wheels
+            velocities = [0.0] * (len(JOINTS) - len(wheels)) + wheels
             rows = [
                 ("position", positions),
                 ("velocity", velocities),
