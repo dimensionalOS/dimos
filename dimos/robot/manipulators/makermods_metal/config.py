@@ -33,7 +33,7 @@ METAL_SOURCE = RobotDescriptionSource(
 )
 # The vendor URDF puts joint3's lower stop at exactly 0 rad, while the encoder
 # reports -0.05050 rad when the arm rests on that stop. Widen the stop so the
-# measured pose is inside the model instead of clamping feedback.
+# measured pose is inside the model, and a hold there does not push to 0 rad.
 METAL_JOINT3_LIMITS = (-0.06, 3.14)
 METAL_MODEL = (
     RobotModel.from_file(

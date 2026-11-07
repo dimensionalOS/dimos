@@ -89,10 +89,10 @@ The arm velocity profile is `(1, 1, 1, 1, 2, 2, 2)` rad/s per side, with a
 5 Hz joint-command filter. OpenArm retains its Pink position, orientation, and
 posture objectives.
 
-The connection derives angular limits from the physical model. It clamps
-feedback up to `0.05 rad` beyond a limit. Larger excursions latch a fault,
-disable the motors, and require a new connection. Missing commands trigger a
-hold at measured positions. These software checks do not establish physical
+The connection publishes feedback as measured, even past a limit; the
+coordinator holds such a joint inside its limit. Feedback that is not a finite
+number latches a fault, disables the motors, and requires a new connection.
+Missing commands trigger a hold at measured positions. These software checks do not establish physical
 firmware behavior or confirm that every motor supplied fresh feedback.
 
 ## Files

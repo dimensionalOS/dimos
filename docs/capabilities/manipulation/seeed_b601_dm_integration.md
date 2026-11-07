@@ -63,8 +63,9 @@ the planner.
   stops. The motors return to their stored mode on power-up.
 - **Control** sends MIT position targets with Seeed's SDK gains and gravity
   compensation from the vendor URDF.
-- **Feedback outside the URDF limits** by more than 0.05 rad latches a fault and
-  disables the motors. Smaller excursions are clamped.
+- **Feedback** is published as measured, even past a URDF limit; the
+  coordinator holds such a joint inside its limit. Feedback that is not a
+  finite number latches a fault and disables the motors.
 
 ## Units and model
 

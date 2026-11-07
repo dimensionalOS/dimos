@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Canonical control model, strict physical limits and gravity."""
+"""Canonical control model, joint order and gravity."""
 
 from __future__ import annotations
 
@@ -59,21 +59,10 @@ def test_control_model_without_source_keeps_vendor_names(connection_class):
     ]
 
 
-def test_physical_limits_are_strict(make_physical):
-    physical = make_physical()
-    upper = float(physical._upper[0])
-    assert physical.validate([upper - 0.01, 0.2, 0.2]) == [upper - 0.01, 0.2, 0.2]
-    assert physical.validate([upper, 0.2, 0.2]) == [upper, 0.2, 0.2]
-    with pytest.raises(RuntimeError, match="outside"):
-        physical.validate([upper + 0.0001, 0.2, 0.2])
-
-
 def test_metal_joint3_limit_is_widened_for_the_measured_stop():
-    physical = PhysicalModel(METAL.gravity_model, METAL.arm_joint_names, gravity_comp=False)
-    stop = -0.05050
-    assert physical.validate([0.0, 0.0, stop, 0.0, 0.0, 0.0])[2] == pytest.approx(stop)
-    with pytest.raises(RuntimeError, match="joint3"):
-        physical.validate([0.0, 0.0, -0.0601, 0.0, 0.0, 0.0])
+    joint3 = METAL.model.load().get_joint("joint3")
+    assert joint3 is not None
+    assert joint3.lower is not None and joint3.lower < -0.05050
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
@@ -98,28 +87,13 @@ def test_physical_model_reduces_joints_outside_the_arm():
 
     model = fake_arm_model(("joint1", "joint2", "joint3", "extra"))
     physical = PhysicalModel(model, ["joint1", "joint2", "joint3"], gravity_comp=False)
-    assert float(physical._upper[0]) == pytest.approx(np.pi)
+    assert physical._model.nq == 3
 
 
-@pytest.mark.parametrize("invalid", ["dimensions", "lower", "upper", "inverted"])
-def test_physical_model_rejects_invalid_ranges_and_dimensions(make_physical, mocker, invalid):
-    model = SimpleNamespace(
-        nq=3,
-        nv=3,
-        names=("universe", "joint1", "joint2", "joint3"),
-        lowerPositionLimit=np.array([-1.0, -1.0, -1.0]),
-        upperPositionLimit=np.array([1.0, 1.0, 1.0]),
-    )
-    if invalid == "dimensions":
-        model.nq = 4
-    elif invalid == "lower":
-        model.lowerPositionLimit[0] = float("nan")
-    elif invalid == "upper":
-        model.upperPositionLimit = np.array([1.0, 1.0])
-    else:
-        model.lowerPositionLimit[0] = 2.0
+def test_physical_model_rejects_mismatched_dimensions(make_physical, mocker):
+    model = SimpleNamespace(nq=4, nv=3, names=("universe", "joint1", "joint2", "joint3"))
     mocker.patch.object(pinocchio, "buildModelFromXML", return_value=model)
-    with pytest.raises(ValueError, match="dimensions|position limits"):
+    with pytest.raises(ValueError, match="dimensions"):
         make_physical()
 
 
