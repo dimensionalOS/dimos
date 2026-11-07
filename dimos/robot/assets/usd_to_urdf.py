@@ -341,7 +341,16 @@ def _shape_of(pxr: Any, prim: Any) -> ET.Element | None:
 
 
 def _referenced_path(prim: Any) -> str | None:
-    """The asset path a mesh prim references, which is the filename the URDF named."""
+    """The asset path a mesh prim names, which is the filename the URDF named.
+
+    assetInfo first, because that is where a mesh written by urdf_to_usd names its file: a
+    reference arc composes another USD layer and an STL is not one. A reference is still read
+    after it, for a mesh that genuinely does reference a USD layer, or for a layer authored by
+    something else.
+    """
+    identifier = (prim.GetAssetInfo() or {}).get("identifier")
+    if identifier is not None and str(identifier.path):
+        return str(identifier.path)
     for spec in prim.GetPrimStack():
         items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
         for reference in items:
