@@ -138,7 +138,8 @@ class HandEyeCalibrationConfig(ModuleConfig):
     speed_scale: float = Field(default=0.25, gt=0.0, le=1.0)
     # How long to wait for the arm to come to rest after the planner reports the move complete.
     settle_timeout_s: float = Field(default=5.0, gt=0.0)
-    # Policy limits in front of the planner.
+    # Policy limits in front of the planner. The cap is per draw; the one approach to the home
+    # from wherever the arm is parked is exempt.
     max_joint_step_rad: float = Field(default=1.2, gt=0.0)
     max_moves: int = Field(default=120, gt=0)
     # The operator releases each of the first N moves with approve(); 0 runs unattended.
@@ -269,6 +270,7 @@ class HandEyeCalibrationModule(Module):
             obstacles = self._add_obstacles()
             try:
                 try:
+                    self.approach_home()
                     result = solve_hand_eye(
                         _Robot(self),
                         _Camera(self),
@@ -398,8 +400,21 @@ class HandEyeCalibrationModule(Module):
         matrix: FloatArray = np.asarray(t.to_matrix(), dtype=float)
         return matrix
 
-    def move_to(self, q: list[float]) -> bool:
-        """One target through the planner. False means the arm did not move."""
+    def approach_home(self) -> None:
+        """The arm may be parked anywhere; one move outside the per-move cap brings it to the
+        home before the draws, which the cap then governs. It is the first move the operator
+        approves. Nothing happens when the arm already stands within the cap of the home."""
+        home = [float(v) for v in self.config.home_joints]
+        step = float(np.max(np.abs(np.asarray(home) - self.read_joints())))
+        if step <= self.config.max_joint_step_rad:
+            return
+        logger.info("Hand-eye approach to home", step_rad=round(step, 3))
+        self.move_to(home, capped=False)
+
+    def move_to(self, q: list[float], *, capped: bool = True) -> bool:
+        """One target through the planner. False means the arm did not move.
+
+        ``capped`` applies ``max_joint_step_rad``; only the approach to home turns it off."""
         run = self._run
         assert run is not None, "move outside a run"
         if self._abort.is_set():
@@ -410,8 +425,11 @@ class HandEyeCalibrationModule(Module):
         now = self.read_joints()
         step = float(np.max(np.abs(np.asarray(q) - now)))
         record: dict[str, Any] = {"joints": [round(v, 4) for v in q], "step_rad": round(step, 4)}
+        if not capped:
+            record["approach_home"] = True
         run.targets.append(record)
-        if not all(math.isfinite(v) for v in q) or step > self.config.max_joint_step_rad:
+        too_far = capped and step > self.config.max_joint_step_rad
+        if not all(math.isfinite(v) for v in q) or too_far:
             run.refused += 1
             record["outcome"] = "refused_step"
             logger.warning("Hand-eye target refused", step_rad=round(step, 3), target=q)
