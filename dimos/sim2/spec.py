@@ -33,6 +33,8 @@ class SimulatedRobot:
     xyz: Vector = (0.0, 0.0, 0.0)
     rpy: Vector = (0.0, 0.0, 0.0)
     floating: bool = True
+    # Its controller acts every this many sim seconds: the world sets "act" on it then, and waits for its actions.
+    control_period: float | None = None
 
 
 @dataclass(frozen=True)
@@ -54,10 +56,17 @@ Simulated = SimulatedRobot | SimulatedSensor
 def resolve(simulated: Iterable[Simulated]) -> list[Simulated]:
     """Each sensor with the robot whose model names its frame; one named by no robot's model is the scene's."""
     descriptions = list(simulated)
+    sensed = {d.frame_id for d in descriptions if isinstance(d, SimulatedSensor)}
     frames: dict[str, str] = {}
     for robot in descriptions:
-        if isinstance(robot, SimulatedRobot):
-            frames.update(dict.fromkeys(frame_names(robot.model), robot.robot_id))
+        if not isinstance(robot, SimulatedRobot):
+            continue
+        for frame in sensed & frame_names(robot.model):
+            if frame in frames:
+                raise ValueError(
+                    f"frame {frame!r} is in both {frames[frame]}'s and {robot.robot_id}'s model"
+                )
+            frames[frame] = robot.robot_id
     return [
         replace(d, robot_id=frames.get(d.frame_id)) if isinstance(d, SimulatedSensor) else d
         for d in descriptions
