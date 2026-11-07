@@ -17,8 +17,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 import time
@@ -44,6 +43,7 @@ from dimos.robot.assets.usd import (
     rename_usd_frames,
     resolve_usd_assets,
     urdf_to_usd,
+    usd_frame_names,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -89,27 +89,6 @@ class Mount:
     # remote_name: namespace() sets the two together but keeps a frame_id_prefix the user set
     # by hand, and that override is the answer to "what are this module's frames called".
     frame_prefix: str = ""
-    # Frame renames, on either side of the namespace prefix. ``pre`` is in the subtree's own
-    # names, as its description spells them, which is what you want when a vendor calls its root
-    # "base_link" and this robot calls that mount "arm_base". ``post`` is in the prefixed names,
-    # for the cases where the prefix is not the shape you wanted. Both are mappings of old -> new
-    # and both apply to links and joints alike. Set them with ``.renaming(...)``.
-    rename_pre: Mapping[str, str] = field(default_factory=dict)
-    rename_post: Mapping[str, str] = field(default_factory=dict)
-
-    def renaming(
-        self, pre: Mapping[str, str] | None = None, post: Mapping[str, str] | None = None
-    ) -> Mount:
-        """This mount with frames renamed before and/or after the namespace prefix goes on.
-
-        Mount.of(arm).renaming(pre={"base_link": "arm_base"})       -> left/arm_base
-        Mount.of(arm).renaming(post={"left/base_link": "left_arm"}) -> left_arm
-        """
-        return replace(
-            self,
-            rename_pre={**self.rename_pre, **(pre or {})},
-            rename_post={**self.rename_post, **(post or {})},
-        )
 
     @classmethod
     def of(cls, value: object) -> Mount:
@@ -174,6 +153,19 @@ class UrdfManagerConfig(ModuleConfig):
     # Keys are links of this robot's own URDF, unprefixed: the user writes them against the URDF
     # they passed in, and frame_id_prefix is applied on the way out to tf, not here.
     mounts: dict[str, Mount] = Field(default_factory=dict)
+    # Frame renames for the subtrees get_scene collects, old name -> new name, reaching joints
+    # as well as links (a joint name is what a JointState keys on). A vendor description names
+    # its frames whatever it names them, which is rarely what the robot they are bolted to calls
+    # them, and these are where that is said.
+    #
+    # ..._pre_namespace is in each subtree's own names, as its own description spells them, which
+    # is what is in front of you when reading a vendor URDF. ..._post_namespace is in the names
+    # after the namespace prefix has gone on, and is the only way to reach a name that does not
+    # start with the namespace. Both apply to every subtree, so a key only has to match one of
+    # them -- but a key matching none of them at all is an error, since a misspelt frame would
+    # otherwise be a silent no-op.
+    tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
+    tf_renames_post_namespace: dict[str, str] = Field(default_factory=dict)
     # A module that is not up yet answers nothing, so retry it this often. There is no deadline:
     # get_scene has every subtree or it has nothing, and a scene missing an arm is not a scene.
     # A mount that never comes up hangs the caller, which is the honest failure -- the blueprint
@@ -295,11 +287,26 @@ class UrdfManager(Module):
     async def _subtrees(self) -> dict[str, str]:
         mounts = self.config.mounts
         if not mounts:
+            self._check_renames_matched(set())
             return {}
         results = await asyncio.gather(
             *(self._subtree(frame_id, mount) for frame_id, mount in mounts.items())
         )
-        return dict(zip(mounts, results, strict=True))
+        self._check_renames_matched({name for _, matched in results for name in matched})
+        return {frame_id: usd for frame_id, (usd, _) in zip(mounts, results, strict=True)}
+
+    def _check_renames_matched(self, matched: set[str]) -> None:
+        """A rename key that matched no subtree at all is a typo, not a no-op."""
+        wanted = set(self.config.tf_renames_pre_namespace) | set(
+            self.config.tf_renames_post_namespace
+        )
+        missing = sorted(wanted - matched)
+        if missing:
+            raise ValueError(
+                f"tf_renames named {missing}, which no mounted subtree has as a link or joint "
+                f"(pre-namespace names are the subtree's own; post-namespace names carry the "
+                f"namespace prefix)"
+            )
 
     def _subtree_client(self, mount: Mount) -> RPCClient:
         """The client for one mount, keyed by remote name so two of one class stay apart.
@@ -317,7 +324,7 @@ class UrdfManager(Module):
             self._subtree_clients[mount.remote_name] = client
         return client
 
-    async def _subtree(self, frame_id: str, mount: Mount) -> str:
+    async def _subtree(self, frame_id: str, mount: Mount) -> tuple[str, set[str]]:
         """The mounted module's USD, rebased and renamed, retried until it answers.
 
         No deadline: a mount is a module the blueprint says is physically there, so not
@@ -339,21 +346,28 @@ class UrdfManager(Module):
                 )
             await asyncio.sleep(self.config.scene_retry_s)
 
-    def _adopt(self, answer: list[str], mount: Mount) -> str:
+    def _adopt(self, answer: list[str], mount: Mount) -> tuple[str, set[str]]:
         """One subtree, made fit to graft onto this robot.
+
+        Returns it with the rename keys it matched, so the caller can tell a key that was meant
+        for another subtree from one that matches nothing at all.
 
         Its asset paths are rebased onto the root it reported, because it is leaving the only
         process that knew that root. Its frames are renamed here rather than at its end: a
         module holds one description and does not know which copy of itself it is, while the
         name it was deployed under says exactly that.
 
-        The order is rename, prefix, rename again, so a mount can work in the subtree's own
-        names or in the prefixed ones, whichever the rename is easier to express in.
+        The order is rename, prefix, rename again, so a rename can be written in the subtree's
+        own names or in the prefixed ones, whichever is easier to express it in.
         """
+        pre = self.config.tf_renames_pre_namespace
+        post = self.config.tf_renames_post_namespace
         usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
-        usd = rename_usd_frames(usd, mount.rename_pre)
-        usd = prefix_usd_frames(usd, mount.frame_prefix)
-        return rename_usd_frames(usd, mount.rename_post)
+        matched = usd_frame_names(usd) & set(pre) if pre else set()
+        usd = prefix_usd_frames(rename_usd_frames(usd, pre), mount.frame_prefix)
+        if post:
+            matched |= usd_frame_names(usd) & set(post)
+        return rename_usd_frames(usd, post), matched
 
     def _ask_for_usd(self, client: Any, frame_id: str) -> list[str] | None:
         """One RPC attempt; a module that is not serving yet is a retry, not a failure."""
