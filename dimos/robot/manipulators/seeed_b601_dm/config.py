@@ -36,6 +36,9 @@ from dimos.robot.manipulators.seeed_b601_dm.joints import (
 
 B601_DM_HARDWARE_ID = "b601_dm"
 B601_DM_GRIPPER_NAME = "gripper"
+#: The jaw's finger joints, in m: finger_left is driven and the URDF has
+#: finger_right copy it. finger_left is closed at 0 and fully open at its upper end.
+B601_DM_FINGER_JOINTS = ("finger_left", "finger_right")
 # Measured on the arm: the gripper motor travels 6.39 rad between its stops,
 # and opening moves it toward more negative positions. Calibration drives
 # past the full stroke so it reaches both stops from any start.
@@ -55,7 +58,6 @@ B601_DM_VELOCITY_LIMITS = dict(zip(B601_DM_ARM_JOINTS, (0.2, 0.2, 0.2, 0.8, 0.8,
 # Lazy: the description repository is fetched on first load, not on import.
 B601_DM_MODEL = (
     RobotModel.from_file(B601_DM_SOURCE / "Rebot_Arm_description/DM/urdf/ReBot_Arm_DM.urdf")
-    .with_fixed_joints("finger_left", "finger_right")
     .with_joint_position_limits(
         "joint2", lower=B601_DM_JOINT2_LIMITS[0], upper=B601_DM_JOINT2_LIMITS[1]
     )
@@ -65,12 +67,13 @@ B601_DM_MODEL = (
 
 
 def b601_dm_gripper_task() -> TaskConfig:
-    """Normalized open/close control of the gripper joint (0.0 closed, 1.0 open)."""
+    """Open and close the jaw from 0.0 (closed) to 1.0 (open), on finger_left."""
     return TaskConfig(
         name=f"{B601_DM_HARDWARE_ID}_gripper",
         type="gripper",
         joint_names=[B601_DM_GRIPPER_JOINT],
         priority=20,
+        params={"open_at": "upper"},
     )
 
 
@@ -83,7 +86,8 @@ def b601_dm_model_config(
 
     Args:
         home_joints: The arm's home posture; defaults to all zeros.
-        robot: Name the moving joints under this robot, e.g. "arm".
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/joint1" and "arm/finger_left".
     """
     return named_for_robot(
         RobotModelConfig(
@@ -98,10 +102,13 @@ def b601_dm_model_config(
                     tip_link="end_link",
                 )
             ],
+            # The closed fingers touch each other.
+            collision_exclusion_pairs=[("finger_left_link", "finger_right_link")],
             auto_convert_meshes=True,
             home_joints=list(home_joints or [0.0] * B601_DM_DOF),
         ),
         robot,
+        fingers=B601_DM_FINGER_JOINTS,
     )
 
 
@@ -126,6 +133,8 @@ B601_DM = DamiaoRobot(
             kd=[5.0, 5.0, 5.0, 2.0, 2.0, 2.0],
             gripper=DamiaoGripper(
                 name=B601_DM_GRIPPER_NAME,
+                joint=B601_DM_FINGER_JOINTS[0],
+                open_at="upper",
                 motor=DamiaoMotor("gripper_motor", "DM4310", 0x07, 0x17),
                 opening="decreasing_position",
                 current=GRIPPER_CURRENT,
@@ -137,7 +146,7 @@ B601_DM = DamiaoRobot(
     model=b601_dm_model_config().model,
     gravity_model=B601_DM_MODEL,
     base_link="base_link",
-    joint_names=[*B601_DM_ARM_JOINTS, B601_DM_GRIPPER_NAME],
+    joint_names=[*B601_DM_ARM_JOINTS, B601_DM_FINGER_JOINTS[0]],
     gravity=True,
     home_joints=[0.0] * B601_DM_DOF,
 )

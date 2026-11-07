@@ -16,6 +16,7 @@ from typing import Any, get_origin, get_type_hints
 
 import pytest
 
+from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprints import Blueprint
@@ -45,7 +46,7 @@ _JOINTS = [
     *[f"arm/{name}" for name in OpenYamConnection.robot.gripper_joints.values()],
 ]
 _ARM_JOINTS = list(_MODEL.joint_names)
-_GRIPPER_JOINT = "arm/gripper"
+_GRIPPER_JOINT = "arm/joint7"
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -87,7 +88,24 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     )
     assert {
         joint.name: joint.type for joint in model.joints if joint.name in {"joint7", "joint8"}
-    } == {"joint7": "fixed", "joint8": "fixed"}
+    } == {"joint7": "prismatic", "joint8": "prismatic"}
+
+
+@pytest.mark.self_hosted
+def test_openyam_jaw_is_joint7_and_joint8_copies_it() -> None:
+    loaded = make_openyam_model_config(robot="arm").model.load()
+
+    assert [
+        joint.name for joint in movable_joints(make_openyam_model_config(robot="arm").model)
+    ] == [
+        *_ARM_JOINTS,
+        _GRIPPER_JOINT,
+    ]
+    finger = loaded.get_joint("arm/joint7")
+    follower = loaded.get_joint("arm/joint8")
+    assert finger is not None and follower is not None
+    assert (finger.type, finger.lower, finger.upper) == ("prismatic", -0.04695, pytest.approx(0.0))
+    assert follower.mimic == ("arm/joint7", 1.0, 0.0)
 
 
 def test_make_openyam_model_config_preserves_explicit_home() -> None:
@@ -210,12 +228,12 @@ def test_keyboard_teleop_openyam_overrides_planner_trajectory() -> None:
     assert eef_twist.priority > trajectory.priority
 
 
-def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
+def test_keyboard_teleop_openyam_gripper_opens_toward_joint7_lower_end() -> None:
     tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
     gripper = next(task for task in tasks if task.name == "arm_gripper")
 
     assert gripper.joint_names == [_GRIPPER_JOINT]
-    assert gripper.params == {}
+    assert gripper.params == {"open_at": "lower"}
 
 
 def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:

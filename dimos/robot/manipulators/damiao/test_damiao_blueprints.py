@@ -67,7 +67,7 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam_planner,
     teleop_webxr_openyam,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM
+from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 
 CASES = [
@@ -125,9 +125,13 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
     )
     coordinator = atom.module(publish_joint_state=False, **atom.kwargs)
     with mock_connection_rig(MetalConnection, coordinator, tmp_path=tmp_path) as rig:
+        # joint7 is closed at 0 m and fully open at -0.05 m.
         assert coordinator.task_invoke("arm_gripper", "set_normalized", {"values": [0.6]})
         rig.tick()
-        assert rig.positions == {**{f"arm/joint{i}": 0.0 for i in range(1, 7)}, "arm/gripper": 0.6}
+        assert rig.positions == {
+            **{f"arm/joint{i}": 0.0 for i in range(1, 7)},
+            "arm/joint7": pytest.approx(-0.03),
+        }
         request = JointTrajectory(
             joint_names=["arm/joint2"],
             points=[
@@ -140,9 +144,10 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         clock.return_value = 101.0
         rig.tick()
         assert rig.positions["arm/joint2"] == pytest.approx(-0.02)
-        assert rig.positions["arm/gripper"] == pytest.approx(0.6)
+        assert rig.positions["arm/joint7"] == pytest.approx(-0.03)
 
 
+@pytest.mark.self_hosted
 def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     mocker.patch.object(global_config, "simulation", "mujoco")
     blueprint = dual_openyam_control()
@@ -171,7 +176,7 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
     ]
     assert connection.module is OpenYamConnection
     assert connection.kwargs == {"source": "arm", "teach": False}
-    assert coordinator.kwargs["model"] == OpenYamConnection.control_model("arm")
+    assert coordinator.kwargs["model"] == make_openyam_model_config(robot="arm").model
     assert coordinator.kwargs["zero_stiffness_joints"] == []
     assert blueprint.remapping_map == {
         (connection.name, "position_command"): "arm_position_command",

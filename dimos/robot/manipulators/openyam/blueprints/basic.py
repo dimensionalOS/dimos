@@ -26,20 +26,28 @@ from dimos.robot.manipulators.openyam.config import (
 )
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
+from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 
 _openyam = make_openyam_model_config(robot="arm")
 
 
 def _trajectory_task(*, priority: int = 10) -> TaskConfig:
-    return joint_trajectory_task([*_openyam.joint_names, "arm/gripper"], priority=priority)
+    return joint_trajectory_task([*_openyam.joint_names, OPENYAM_GRIPPER_JOINT], priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
-    return TaskConfig(name="arm_gripper", type="gripper", joint_names=["arm/gripper"], priority=20)
+    # joint7 is open at its lower end.
+    return TaskConfig(
+        name="arm_gripper",
+        type="gripper",
+        joint_names=[OPENYAM_GRIPPER_JOINT],
+        priority=20,
+        params={"open_at": "lower"},
+    )
 
 
 def openyam_control(*, teach: bool = False) -> Blueprint:
-    """Trajectories and normalized grippers, through the OpenYAM connection.
+    """Trajectories and the gripper, through the OpenYAM connection.
 
     Args:
         teach: Run with zero stiffness and teaching damping, gravity
@@ -48,7 +56,7 @@ def openyam_control(*, teach: bool = False) -> Blueprint:
     return autoconnect(
         OpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenYamConnection.control_model("arm"),
+            model=_openyam.model,
             tasks=[_trajectory_task(), _gripper_task()],
             zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=teach),
         ),

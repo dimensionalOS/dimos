@@ -38,7 +38,7 @@ class OpenYamConnectionConfig(DamiaoConnectionConfig):
         if not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
-            self.model = OpenYamConnection.control_model()
+            self.model = OPENYAM.model
         return self
 
 

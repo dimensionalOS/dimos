@@ -31,6 +31,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
 from dimos.robot.manipulators.openyam.blueprints.basic import _gripper_task, _trajectory_task
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.webxr.extensions import ArmTeleopModule
@@ -53,7 +54,7 @@ def _twist_control(tasks: list[TaskConfig]) -> Blueprint:
     return autoconnect(
         DamiaoTwistCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenYamConnection.control_model("arm"),
+            model=_openyam_model.model,
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -66,7 +67,7 @@ def _teleop_control(tasks: list[TaskConfig]) -> Blueprint:
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenYamConnection.control_model("arm"),
+            model=_openyam_model.model,
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
@@ -117,12 +118,13 @@ def openyam_quest_tasks() -> list[TaskConfig]:
     """Build fresh canonical Quest tasks, including policy takeover priorities."""
     return [
         deepcopy(_openyam_webxr_task),
+        # joint7 is open at its lower end.
         TaskConfig(
             name="arm_gripper",
             type="gripper",
-            joint_names=["arm/gripper"],
+            joint_names=[OPENYAM_GRIPPER_JOINT],
             priority=20,
-            params={"hold_duration": 0.1},
+            params={"hold_duration": 0.1, "open_at": "lower"},
             stream_bind={"gripper_command": "right_gripper_command"},
         ),
         _trajectory_task(priority=10),

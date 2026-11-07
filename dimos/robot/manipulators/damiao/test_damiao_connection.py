@@ -52,10 +52,10 @@ def test_invalid_command_is_rejected_as_a_whole(make_rig, boundary, bad):
     assert module.status().last_rejection
 
 
-@pytest.mark.parametrize("bad", [-0.1, 1.01])
-def test_gripper_rejects_outside_normalized_range(make_rig, boundary, bad):
+@pytest.mark.parametrize("bad", [-0.01, 0.041])
+def test_gripper_rejects_targets_outside_its_finger_range(make_rig, boundary, bad):
     module, commands, _ = make_rig()
-    commands.publish(JointState(name=["arm/left_gripper"], position=[bad]))
+    commands.publish(JointState(name=["arm/left_finger"], position=[bad]))
     assert boundary[0].groups["left_gripper"].commands == []
     assert module.status().last_rejection
 
@@ -150,7 +150,7 @@ def test_connect_does_not_enable_or_accept_commands(connection_class, boundary):
 
 
 def test_topology_mismatch_fails_before_bus(connection_class, boundary):
-    module = connection_class(model=connection_class.robot.model)
+    module = connection_class(model=connection_class.robot.model.with_fixed_joints("left_finger"))
     with pytest.raises(ValueError, match="topology"):
         module.start()
     boundary[1].assert_not_called()
@@ -275,20 +275,20 @@ def test_passive_gripper_is_enabled_in_mit_and_never_positioned(connection_class
         assert set(gripper.mit_commands) == {(0.0, 0.0, 0.4, 0.0, 0.0)}
         assert right.modes == right.mit_commands == []
 
-        module.command({"arm/left_gripper/position": 0.9})
+        module.command({"arm/left_finger/position": 0.02})
         assert gripper.commands == []
         assert gripper.mit_commands[-1] == (0.0, 0.0, 0.4, 0.0, 0.0)
 
-        # A passive jaw follows the hand, so an opening target is ignored
-        # rather than validated as an opening.
-        module.write({"arm/left_gripper/position": 2.0})
+        # A passive jaw follows the hand, so a target is ignored rather than
+        # checked against the finger's range.
+        module.write({"arm/left_finger/position": 2.0})
         assert gripper.commands == []
         assert gripper.mit_commands[-1] == (0.0, 0.0, 0.4, 0.0, 0.0)
     finally:
         module.stop()
 
 
-def test_active_gripper_still_takes_normalized_openings(connection_class, boundary, mocker):
+def test_active_gripper_is_positioned_through_its_finger_joint(connection_class, boundary, mocker):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = connection_class(deadman_timeout_s=10)
@@ -297,8 +297,8 @@ def test_active_gripper_still_takes_normalized_openings(connection_class, bounda
     module.set_transport("joint_state", readings)
     try:
         module.start()
-        module.command({"arm/right_gripper/position": 0.75})
-        assert module._arm._grippers["right_gripper"].commands[-1] == 0.75
+        module.command({"arm/right_finger/position": -0.015})
+        assert module._arm._grippers["right_gripper"].commands[-1] == pytest.approx(0.75)
     finally:
         module.stop()
 

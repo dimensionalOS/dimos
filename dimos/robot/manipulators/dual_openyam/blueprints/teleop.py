@@ -31,6 +31,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_arm_joints,
+    dual_openyam_control_model,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
@@ -81,7 +82,7 @@ def build_dual_openyam_webxr(
         autoconnect(
             DamiaoTeleopCoordinator.blueprint(
                 instance_name="ControlCoordinator",
-                model=DualOpenYamConnection.control_model("arm"),
+                model=dual_openyam_control_model(robot="arm"),
                 tasks=[
                     *_dual_openyam_webxr_tasks.values(),
                     TaskConfig(

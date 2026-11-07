@@ -21,6 +21,7 @@ from dimos.robot.manipulators._modeling import named_for_robot
 from dimos.robot.manipulators.damiao.robot import DamiaoBus, DamiaoRobot
 from dimos.robot.manipulators.makermods_metal.config import (
     METAL_ARM_JOINTS,
+    METAL_FINGER_JOINTS,
     make_metal_model_config,
     metal_gripper,
     metal_motors,
@@ -29,6 +30,8 @@ from dimos.robot.manipulators.makermods_metal.config import (
 SIDES = ("left", "right")
 ARM_JOINTS = {side: tuple(f"{side}_{joint}" for joint in METAL_ARM_JOINTS) for side in SIDES}
 ALL_ARM_JOINTS = (*ARM_JOINTS["left"], *ARM_JOINTS["right"])
+#: Each jaw's finger joints, e.g. left_joint7 driven and left_joint8 copying it.
+FINGER_JOINTS = {side: tuple(f"{side}_{joint}" for joint in METAL_FINGER_JOINTS) for side in SIDES}
 
 DUAL_METAL_BASE = RobotModel.from_root_link("dual_metal_base", name="dual_makermods_metal")
 
@@ -54,7 +57,8 @@ def dual_metal_model_config(
         right_xyz: Position of the right arm's base in the shared frame.
         left_rpy: Orientation of the left arm's base.
         right_rpy: Orientation of the right arm's base.
-        robot: Name the moving joints under this robot, e.g. "arm".
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/left_joint1" and "arm/left_joint7".
     """
     if left_xyz == right_xyz:
         raise ValueError("Metal arm bases must have distinct positions")
@@ -87,9 +91,12 @@ def dual_metal_model_config(
                 )
                 for side in SIDES
             ],
+            # Each jaw's closed fingers touch each other.
+            collision_exclusion_pairs=[(f"{side}_link7", f"{side}_link8") for side in SIDES],
             auto_convert_meshes=True,
         ),
         robot,
+        fingers=[*FINGER_JOINTS["left"], *FINGER_JOINTS["right"]],
     )
 
 
@@ -98,7 +105,7 @@ def _bus(side: str) -> DamiaoBus:
         arm=metal_motors(prefix=f"{side}_"),
         kp=[100.0, 100.0, 100.0, 50.0, 20.0, 20.0],
         kd=[5.0, 5.0, 5.0, 5.0, 0.6, 0.6],
-        gripper=metal_gripper(f"{side}_gripper"),
+        gripper=metal_gripper(f"{side}_gripper", FINGER_JOINTS[side][0]),
         name=f"{side}_arm",
     )
 
@@ -110,6 +117,6 @@ DUAL_METAL = DamiaoRobot(
     model=_DUAL_METAL_MODEL,
     gravity_model=_DUAL_METAL_MODEL,
     base_link="dual_metal_base",
-    joint_names=[*ALL_ARM_JOINTS, "left_gripper", "right_gripper"],
+    joint_names=[*ALL_ARM_JOINTS, *(FINGER_JOINTS[side][0] for side in SIDES)],
     gravity=False,
 )

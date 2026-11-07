@@ -23,7 +23,10 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_connection,
     arm_remaps,
 )
-from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
+from dimos.robot.manipulators.dual_openyam.config import (
+    dual_openyam_control_model,
+    dual_openyam_model_config,
+)
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 _dual_openyam = dual_openyam_model_config(robot="arm")
@@ -56,7 +59,7 @@ def dual_openyam_control() -> Blueprint:
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=DualOpenYamConnection.control_model("arm"),
+            model=dual_openyam_control_model(robot="arm"),
             tasks=[dual_openyam_trajectory_task(), *_gripper_tasks()],
             zero_stiffness_joints=[],
         ),

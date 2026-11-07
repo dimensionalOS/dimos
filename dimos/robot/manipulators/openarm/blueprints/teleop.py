@@ -100,21 +100,24 @@ def openarm_teleop_control() -> Blueprint:
     return autoconnect(
         DamiaoTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=OpenArmConnection.control_model("arm"),
+            model=_MODEL.model,
             tasks=[
                 _openarm_webxr_task,
+                # The left jaw is open at its joint's upper end, the right at its lower end.
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",
-                    joint_names=["arm/left_gripper"],
+                    joint_names=["arm/openarm_left_finger_joint1"],
                     priority=20,
+                    params={"open_at": "upper"},
                     stream_bind={"gripper_command": "left_gripper_command"},
                 ),
                 TaskConfig(
                     name="right_arm_gripper",
                     type="gripper",
-                    joint_names=["arm/right_gripper"],
+                    joint_names=["arm/openarm_right_finger_joint1"],
                     priority=20,
+                    params={"open_at": "lower"},
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),
                 _trajectory_task(priority=10),

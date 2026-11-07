@@ -12,51 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Canonical control model, joint order and gravity."""
+"""The physical arm model: joint order, dimensions and gravity."""
 
 from __future__ import annotations
 
-from pickle import dumps as encode, loads as decode
 from types import SimpleNamespace
 
 import numpy as np
 import pinocchio
 import pytest
 
-from dimos.robot.manipulators.damiao import connection as connection_module
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.makermods_metal.config import METAL
-
-
-def test_control_model_is_lazy(connection_class, mocker):
-    load = mocker.patch.object(
-        connection_module.RobotModel, "load", side_effect=AssertionError("must stay lazy")
-    )
-    connection_class.control_model("other")
-    load.assert_not_called()
-
-
-def test_control_model_is_namespaced_and_portable(connection_class):
-    control = connection_class.control_model("other")
-    assert [joint.name for joint in control.load().joints] == [
-        "other/joint1",
-        "other/joint2",
-        "other/joint3",
-        "other/left_gripper",
-        "other/right_gripper",
-    ]
-    assert [(joint.lower, joint.upper) for joint in control.load().joints[-2:]] == [
-        (0.0, 1.0),
-        (0.0, 1.0),
-    ]
-    assert decode(encode(control)).load().xml == control.load().xml
-
-
-def test_control_model_without_source_keeps_vendor_names(connection_class):
-    control = connection_class.control_model()
-    assert [joint.name for joint in control.load().joints] == [
-        *connection_class.robot.joint_names,
-    ]
 
 
 def test_metal_joint3_limit_is_widened_for_the_measured_stop():
@@ -108,6 +75,5 @@ def test_gravity_rejects_nonfinite_calculation(make_physical, mocker):
         physical.gravity(np.array([0.2, 0.2, 0.2]))
 
 
-def test_model_views_preserve_the_framework_deployment(connection_class):
+def test_connections_deploy_in_python(connection_class):
     assert connection_class.deployment == "python"
-    assert connection_class.control_model("robot2").load().joints[0].name == "robot2/joint1"

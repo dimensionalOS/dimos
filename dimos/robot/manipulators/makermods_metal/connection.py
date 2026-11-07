@@ -35,7 +35,7 @@ class MetalConnectionConfig(DamiaoConnectionConfig):
         if not self.can_port.strip():
             raise ValueError("CAN selector must not be empty")
         if self.model is None:
-            self.model = MetalConnection.control_model()
+            self.model = METAL.model
         return self
 
 
