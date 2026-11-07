@@ -24,14 +24,14 @@ import math
 import random
 import threading
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
 from dimos.autoresearch.judge import BodyPose, Snapshot
 from dimos.autoresearch.program import RunStoppedError, program_box
 from dimos.control.tasks.trajectory_task.trajectory_task import (
-    TrajectoryExecutionResult,
+    JOINT_TRAJECTORY_TASK_NAME,
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.sdk import Arm
@@ -58,9 +58,11 @@ RESET_MAP_FRAMES = 6
 
 
 class TrajectoryControlSpec(Spec, Protocol):
-    """The controller's trajectory entry point, as the ControlCoordinator has it."""
+    """The controller's task command entry point, as the ControlCoordinator has it."""
 
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult: ...
+    def task_invoke(
+        self, task_name: str, method: str, kwargs: dict[str, Any] | None = None
+    ) -> Any: ...
 
 
 class PlacementBounds(BaseModel):
@@ -180,7 +182,9 @@ class MujocoWorld:
             joint_names=list(self._home.name),
             points=[TrajectoryPoint(positions=[float(value) for value in self._home.position])],
         )
-        result = self._control.execute_trajectory(trajectory)
+        result = self._control.task_invoke(
+            JOINT_TRAJECTORY_TASK_NAME, "execute", {"trajectory": trajectory}
+        )
         if result.status is not TrajectoryExecutionStatus.ACCEPTED:
             raise RuntimeError(
                 f"the controller refused the home trajectory: {result.message or result.status.name}"

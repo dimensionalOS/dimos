@@ -20,7 +20,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.module import PolicyModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
 from dimos.robot.manipulators.makermods_metal.blueprints.teleop import (
@@ -54,7 +54,7 @@ def build_metal_rollout(
         device: Torch device for the policy, e.g. "cuda"; None lets the runtime choose.
         quest_control: Also run the Quest teleop, which takes the arm over at a higher priority.
     """
-    policy = LeRobotPolicyModule.blueprint(
+    policy = PolicyModule.blueprint(
         instance_name="policy",
         **({"policy_path": checkpoint} if checkpoint is not None else {}),
         **({"task": task} if task is not None else {}),

@@ -18,7 +18,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.hardware.sensors.camera.module import WebcamModule
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.module import PolicyModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
     DamiaoCoordinator,
@@ -45,7 +45,7 @@ def test_default_rollout_is_quest_free() -> None:
     modules = [atom.module for atom in blueprint.active_blueprints]
     coordinator = _atom(blueprint, ControlCoordinator)
     [trajectory] = coordinator.kwargs["tasks"]
-    policy = _atom(blueprint, LeRobotPolicyModule).kwargs
+    policy = _atom(blueprint, PolicyModule).kwargs
 
     assert coordinator.module is DamiaoCoordinator
     assert ArmTeleopModule not in modules

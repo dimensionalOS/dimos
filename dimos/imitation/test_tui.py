@@ -13,18 +13,21 @@
 # limitations under the License.
 
 
-from threading import Thread
+import asyncio
+from threading import Event, Thread
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeControlSpec
-from dimos.imitation.policy.lerobot.module import RolloutControlSpec
+from dimos.imitation.collection.prompts import CollectionSpeech
+from dimos.imitation.policy.module import RolloutControlSpec
 from dimos.imitation.tui import ControlApp, ControlSession
 from dimos.porcelain.dimos import NoMatchingModuleError
+from dimos.stream.audio.tts.kokoro import KokoroTTSConfig
 
 
 @pytest.fixture
@@ -37,6 +40,9 @@ def controls(mocker):
     )
     policy.rollout_status.return_value = {
         "active": False,
+        "busy": False,
+        "dispatch_actions": False,
+        "policy_path": "dreamlabs/dream-1-beta",
         "task": "pick",
         "last_error": None,
         "policy_ready": True,
@@ -128,13 +134,13 @@ async def test_policy_start_preflights_and_stop_is_explicit(controls, mocker):
     mocker.patch.object(app, "set_interval")
     async with app.run_test(size=(100, 40)) as pilot:
         policy.preflight_rollout.assert_not_called()
-        await pilot.press("space")
         policy.start_rollout.assert_not_called()
         await pilot.click("#start-policy")
+        await app.workers.wait_for_complete()
         assert "ACTIVE" in str(app.query_one("#policy-status", Static).render())
         await pilot.click("#stop-policy")
     policy.preflight_rollout.assert_called_once_with()
-    policy.start_rollout.assert_called_once_with()
+    policy.start_rollout.assert_called_once_with(dispatch_actions=False, max_chunks=1)
     policy.stop_rollout.assert_called_once_with()
     coordinator.call.assert_not_called()
 
@@ -192,6 +198,7 @@ async def test_cancel_shutdown_and_connection_loss_never_stop_stack(controls, mo
         assert not app.query_one("#confirmation").display
         episode.get_status.side_effect = ConnectionError("lost")
         app._poll()
+        await app.workers.wait_for_complete()
         assert app.query_one("#start-policy", Button).disabled
         assert app.query_one("#stop-stack", Button).disabled
         assert "may still be running" in str(app.query_one("#message", Static).render())
@@ -213,3 +220,138 @@ def test_confirmed_shutdown_unblocks_loop_and_stops_modules(mocker):
     finally:
         coordinator.shutdown()
         loop.join(timeout=1)
+
+
+async def test_unified_control_speech_follows_confirmed_status_and_stops_on_detach(
+    controls, mocker
+):
+    _driver, episode, _policy, _coordinator = controls
+    engine = mocker.patch(
+        "dimos.imitation.collection.prompts.KokoroTTS", autospec=True
+    ).return_value
+    engine.synthesize.side_effect = lambda phrase: phrase.encode()
+    speech = CollectionSpeech(KokoroTTSConfig(enabled=True))
+    speech.prepare()
+    player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True).return_value
+    episode.get_status.return_value = EpisodeStatus(
+        ts=1,
+        state="recording",
+        last_event="start",
+        episodes_saved=0,
+        episodes_discarded=0,
+    )
+    app = ControlApp(session_for(controls), speech=speech)
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 40)) as pilot:
+        player.play.assert_not_called()
+        episode.command.return_value = EpisodeStatus(
+            ts=2,
+            state="idle",
+            last_event="save",
+            episodes_saved=1,
+            episodes_discarded=0,
+        )
+        await pilot.click("#save-episode")
+        player.play.assert_called_once_with(b"Episode saved")
+        episode.get_status.return_value = episode.command.return_value
+        app._poll()
+        await app.workers.wait_for_complete()
+        player.play.assert_called_once_with(b"Episode saved")
+        player.play.side_effect = RuntimeError("No output device")
+        episode.get_status.return_value = EpisodeStatus(
+            ts=3,
+            state="recording",
+            last_event="start",
+            episodes_saved=1,
+            episodes_discarded=0,
+        )
+        app._poll()
+        await app.workers.wait_for_complete()
+        assert not app._disconnected
+        assert "Audio unavailable" in str(app.query_one("#message", Static).render())
+    player.stop.assert_called_once_with()
+
+
+def test_unified_control_without_speech_does_not_open_audio(controls, mocker):
+    player = mocker.patch("dimos.imitation.tui.WavPlayer", autospec=True)
+    ControlApp(session_for(controls))
+    player.assert_not_called()
+
+
+@pytest.mark.parametrize("button,limit", [("execute-once", 1), ("execute-continuous", None)])
+async def test_execute_buttons_explicitly_dispatch(controls, mocker, button, limit):
+    _driver, _episode, policy, _coordinator = controls
+    app = ControlApp(session_for(controls, collection=False))
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 45)) as pilot:
+        await pilot.click(f"#{button}")
+        await app.workers.wait_for_complete()
+    policy.start_rollout.assert_called_once_with(dispatch_actions=True, max_chunks=limit)
+
+
+async def test_draining_keeps_stop_available_and_blocks_new_starts(controls, mocker):
+    _driver, _episode, policy, _coordinator = controls
+    policy.rollout_status.return_value.update(active=False, busy=True, phase="stopping")
+    app = ControlApp(session_for(controls, collection=False))
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 45)):
+        assert app.query_one("#start-policy", Button).disabled
+        assert app.query_one("#execute-once", Button).disabled
+        assert not app.query_one("#stop-policy", Button).disabled
+        assert app.query_one("#policy-task", Input).disabled
+
+
+async def test_edit_requires_apply_and_does_not_start_rollout(controls, mocker):
+    _driver, _episode, policy, _coordinator = controls
+    app = ControlApp(session_for(controls, collection=False))
+    mocker.patch.object(app, "set_interval")
+
+    def set_task(task):
+        policy.rollout_status.return_value["task"] = task
+        return policy.rollout_status.return_value
+
+    policy.set_task.side_effect = set_task
+    async with app.run_test(size=(100, 45)) as pilot:
+        app.query_one("#policy-task", Input).value = "put the pen down"
+        await pilot.pause()
+        assert app.query_one("#execute-once", Button).disabled
+        await pilot.click("#apply-policy")
+        await app.workers.wait_for_complete()
+        assert not app.query_one("#execute-once", Button).disabled
+    policy.set_task.assert_called_once_with("put the pen down")
+    policy.start_rollout.assert_not_called()
+
+
+async def test_slow_status_rpc_does_not_block_detach(controls, mocker):
+    _driver, _episode, policy, _coordinator = controls
+    session = session_for(controls, collection=False)
+    app = ControlApp(session)
+    mocker.patch.object(app, "set_interval")
+    entered, release = Event(), Event()
+
+    def slow_status():
+        entered.set()
+        assert release.wait(timeout=5)
+        return policy.rollout_status.return_value
+
+    async with app.run_test(size=(100, 45)) as pilot:
+        mocker.patch.object(session, "policy_status", side_effect=slow_status)
+        try:
+            app._poll()
+            assert await asyncio.to_thread(entered.wait, 1)
+            await pilot.click("#detach")
+            assert not app.is_running
+        finally:
+            release.set()
+    policy.stop_rollout.assert_not_called()
+
+
+async def test_stop_shortcut_works_while_prompt_input_has_focus(controls, mocker):
+    _driver, _episode, policy, _coordinator = controls
+    policy.rollout_status.return_value.update(active=True, busy=True)
+    app = ControlApp(session_for(controls, collection=False))
+    mocker.patch.object(app, "set_interval")
+    async with app.run_test(size=(100, 45)) as pilot:
+        await pilot.press("f8")
+        await app.workers.wait_for_complete()
+    policy.stop_rollout.assert_called_once_with()

@@ -643,6 +643,12 @@ robots:
         coordinator-makermods-metal:
           title: Metal coordinator
           description: Metal trajectory and gripper control through its connection module.
+        makermods-metal-learning-collection:
+          title: Metal demonstration recording
+          description: Record one Metal arm and an overhead camera with Quest episode controls.
+        dreamlabs-makermods-metal-eef:
+          title: Metal Dreamlabs EEF preview
+          description: One-camera policy preview; requires explicit TCP calibration before preflight.
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
@@ -657,6 +663,18 @@ robots:
         - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
         - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        dual-makermods-metal-learning-collection-2cam:
+          title: Dual Metal recording with wrist cameras
+          description: Record both arms and two wrist cameras.
+        dual-makermods-metal-learning-collection-3cam:
+          title: Dual Metal recording with three cameras
+          description: Record both arms, two wrist cameras, and an overhead camera.
+        dreamlabs-dual-makermods-metal-eef-2cam:
+          title: Dual Metal EEF preview with wrist cameras
+          description: Two-camera policy preview; requires measured mount geometry and TCP calibration.
+        dreamlabs-dual-makermods-metal-eef-3cam:
+          title: Dual Metal EEF preview with three cameras
+          description: Three-camera policy preview; requires measured mount geometry and TCP calibration.
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
           description: Coordinated motion planning, execution, and Viser for two Metal arms.
@@ -715,6 +733,18 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/dual_openyam]
       blueprints:
+        dual-openyam-dreamlabs-collection:
+          title: Dual YAM three-camera demonstration recording
+          description: Record overhead and both wrist views for the learning flow.
+        dreamlabs-dual-openyam-joint:
+          title: Dual YAM Dreamlabs joint preview
+          description: Three-camera policy rollout, idle at startup and preview by default.
+        dreamlabs-dual-openyam-eef:
+          title: Dual YAM Dreamlabs EEF preview
+          description: Three-camera EEF rollout using bounded Pink control, preview by default.
+        dual-openyam-quest-collection:
+          title: Dual OpenYAM demonstration recording
+          description: Teleoperate two OpenYAM arms in VR and record demonstrations.
         dual-openyam-planner-coordinator:
           title: Dual OpenYAM motion planning
           description: Motion planning for the two-arm OpenYAM.

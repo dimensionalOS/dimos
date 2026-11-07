@@ -232,9 +232,8 @@ def test_mock_coordinator_executes_trajectory_and_gripper_command(tmp_path, mock
                 TrajectoryPoint(positions=target, velocities=[0.0] * 6, time_from_start=0.3),
             ],
         )
-        assert coordinator.execute_trajectory(trajectory).status is (
-            TrajectoryExecutionStatus.ACCEPTED
-        )
+        result = coordinator.task_invoke("joint_trajectory", "execute", {"trajectory": trajectory})
+        assert result.status is TrajectoryExecutionStatus.ACCEPTED
         # The first tick after submission anchors the start point at now.
         rig.tick()
         clock.return_value = 101.0

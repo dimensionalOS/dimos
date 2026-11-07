@@ -23,7 +23,7 @@ is compute-only and relies on the coordinator for timing.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 import math
 from typing import TYPE_CHECKING, Annotated, Any
@@ -38,6 +38,7 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.tasks.trajectory_clock import TrajectoryClock
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
@@ -59,8 +60,7 @@ def joint_trajectory_task(
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
 ) -> TaskConfig:
-    """Build the coordinator's single canonical joint-trajectory task."""
-    # The coordinator imports this module to recognize the canonical JTT.
+    """Build the named joint-trajectory task configuration."""
     from dimos.control.coordinator import TaskConfig
 
     params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
@@ -79,7 +79,6 @@ class TrajectoryExecutionStatus(Enum):
     """Semantic outcome of a trajectory execution request."""
 
     ACCEPTED = auto()
-    NO_TRAJECTORY_TASK = auto()
     INVALID_TRAJECTORY = auto()
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
@@ -89,7 +88,7 @@ class TrajectoryExecutionStatus(Enum):
 
 @dataclass(frozen=True)
 class TrajectoryExecutionResult:
-    """Result returned by the coordinator trajectory execution RPC."""
+    """Result of a trajectory task execution command."""
 
     status: TrajectoryExecutionStatus
     message: str = ""
@@ -100,20 +99,19 @@ class TrajectoryCancellationStatus(Enum):
 
     CANCELLED = auto()
     ALREADY_STOPPED = auto()
-    NO_TRAJECTORY_TASK = auto()
     UNCERTAIN = auto()
 
 
 @dataclass(frozen=True)
 class TrajectoryCancellationResult:
-    """Result returned by the coordinator trajectory cancellation RPC."""
+    """Result of a trajectory task cancellation command."""
 
     status: TrajectoryCancellationStatus
     message: str = ""
 
     @property
     def safe(self) -> bool:
-        """Return whether cancellation reached a deterministic coordinator state."""
+        """Return whether cancellation reached a deterministic task state."""
         return self.status is not TrajectoryCancellationStatus.UNCERTAIN
 
     @property
@@ -158,7 +156,7 @@ class JointTrajectoryTaskConfig:
 @dataclass
 class _TrajectoryRun:
     trajectory: JointTrajectory
-    start_time: float | None = None
+    clock: TrajectoryClock = field(default_factory=TrajectoryClock)
 
 
 class JointTrajectoryTask(BaseControlTask):
@@ -182,7 +180,7 @@ class JointTrajectoryTask(BaseControlTask):
         ...     ),
         ... )
         >>> coordinator.add_task(task)
-        >>> task.execute(my_trajectory, current_positions)
+        >>> coordinator.task_invoke(task.name, "execute", {"trajectory": my_trajectory})
     """
 
     def __init__(self, config: JointTrajectoryTaskConfig) -> None:
@@ -204,8 +202,6 @@ class JointTrajectoryTask(BaseControlTask):
         # Opt-in streamed controller jogs expire on this robot-side clock.
         # RPC trajectories and ordinary finite position goals keep their semantics.
         self._stream_deadlines: dict[str, float] = {}
-        self._start_time: float = 0.0
-        self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
         self._last_elapsed: float = 0.0
         # While set, trajectories are refused. Set and cleared by set_estop.
@@ -258,7 +254,7 @@ class JointTrajectoryTask(BaseControlTask):
             joint_names=[name for name, _ in selected],
             points=[TrajectoryPoint(positions=[position for _, position in selected])],
         )
-        accepted = self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        accepted = self.execute(trajectory).status is TrajectoryExecutionStatus.ACCEPTED
         if accepted and guarded:
             self._stream_deadlines.update((name, t_now + 0.4) for name, _ in selected)
         return accepted
@@ -281,6 +277,19 @@ class JointTrajectoryTask(BaseControlTask):
         if not self._motions:
             return None
 
+        runs = {id(run): run for run, _ in self._motions.values()}.values()
+        for run in runs:
+            run.clock.update(state.t_now)
+            if run.clock.expired(state.t_now):
+                logger.warning(
+                    "Trajectory deadman expired",
+                    task_name=self._name,
+                    timeout=run.clock.deadman_timeout,
+                )
+                self._state = TrajectoryState.ABORTED
+                self._clear_active_trajectory()
+                return None
+
         output_names = [name for name in self._joint_names_list if name in self._motions]
         all_complete = bool(self._motions)
         for joint_name, (run, index) in list(self._motions.items()):
@@ -293,12 +302,7 @@ class JointTrajectoryTask(BaseControlTask):
                 del self._motions[joint_name]
                 del self._stream_deadlines[joint_name]
                 continue
-            if run.start_time is None:
-                run.start_time = state.t_now
-                if run.trajectory is self._trajectory:
-                    self._start_time = state.t_now
-                    self._pending_start = False
-            elapsed = max(0.0, state.t_now - run.start_time)
+            elapsed = run.clock.elapsed
             self._last_elapsed = max(self._last_elapsed, elapsed)
             desired = run.trajectory.sample(elapsed)[0][index]
             current = self._commanded_positions.get(joint_name)
@@ -324,7 +328,6 @@ class JointTrajectoryTask(BaseControlTask):
         if all_complete and not self._motions and self._state == TrajectoryState.EXECUTING:
             self._state = TrajectoryState.COMPLETED
             self._trajectory = None
-            self._pending_start = False
             logger.info("Trajectory completed", task_name=self._name)
 
         emitted_names = [name for name in output_names if name in self._commanded_positions]
@@ -363,8 +366,6 @@ class JointTrajectoryTask(BaseControlTask):
         self._motions.clear()
         self._stream_deadlines.clear()
         self._commanded_positions.clear()
-        self._pending_start = False
-        self._start_time = 0.0
 
     def _validate_trajectory(self, trajectory: JointTrajectory) -> bool:
         """Validate a trajectory before execution."""
@@ -416,17 +417,22 @@ class JointTrajectoryTask(BaseControlTask):
     def execute(
         self,
         trajectory: JointTrajectory,
-        current_positions: Mapping[str, float],
+        deadman_timeout: float | None = None,
     ) -> TrajectoryExecutionResult:
         """Start executing a trajectory.
 
         Args:
             trajectory: Trajectory to execute
-            current_positions: Authoritative positions from the coordinator.
+            deadman_timeout: Optional caller heartbeat timeout in coordinator seconds.
 
         Returns:
             Semantic execution acceptance result.
         """
+        try:
+            clock = TrajectoryClock(deadman_timeout=deadman_timeout)
+        except ValueError as exc:
+            return TrajectoryExecutionResult(TrajectoryExecutionStatus.INVALID_TRAJECTORY, str(exc))
+
         if self._state == TrajectoryState.FAULT:
             logger.warning(f"Cannot execute: {self._name} in FAULT state")
             return TrajectoryExecutionResult(
@@ -452,6 +458,11 @@ class JointTrajectoryTask(BaseControlTask):
                 TrajectoryExecutionStatus.INVALID_TRAJECTORY,
                 "Trajectory structure or joints are invalid",
             )
+
+        current_positions: Mapping[str, float] = {}
+        if len(trajectory.points) > 1:
+            state = self.context.get_state()
+            current_positions = state.joints.joint_positions if state is not None else {}
 
         first_positions = list(trajectory.points[0].positions)
         anchored = False
@@ -492,7 +503,7 @@ class JointTrajectoryTask(BaseControlTask):
                 timestamp=trajectory.timestamp,
             )
 
-        run = _TrajectoryRun(trajectory)
+        run = _TrajectoryRun(trajectory, clock)
         for index, joint_name in enumerate(trajectory.joint_names):
             self._stream_deadlines.pop(joint_name, None)
             self._motions[joint_name] = (run, index)
@@ -501,7 +512,6 @@ class JointTrajectoryTask(BaseControlTask):
         self._trajectory = trajectory
         self._last_duration = trajectory.duration
         self._last_elapsed = 0.0
-        self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
         logger.info(
@@ -537,6 +547,14 @@ class JointTrajectoryTask(BaseControlTask):
         if estopped:
             self.cancel()
 
+    def keepalive(self) -> TrajectoryStatus:
+        """Refresh the active runs' optional deadmen and return their status."""
+        if self.is_active():
+            runs = {id(run): run for run, _ in self._motions.values()}.values()
+            for run in runs:
+                run.clock.keepalive()
+        return self.get_status()
+
     def reset(self) -> bool:
         """Reset to idle state.
 
@@ -569,24 +587,22 @@ class JointTrajectoryTask(BaseControlTask):
         progress, _elapsed, _remaining = self._active_run_status(t_now)
         return progress
 
-    def _active_run_status(self, t_now: float) -> tuple[float, float, float]:
+    def _active_run_status(self, t_now: float | None) -> tuple[float, float, float]:
         """Aggregate timing conservatively across every active trajectory run."""
         runs = {id(run): run for run, _index in self._motions.values()}.values()
         progresses: list[float] = []
         elapsed_times: list[float] = []
         remaining_times: list[float] = []
         for run in runs:
-            elapsed = 0.0 if run.start_time is None else max(0.0, t_now - run.start_time)
-            duration = run.trajectory.duration
-            progress = 0.0 if duration <= 0.0 else min(1.0, elapsed / duration)
+            progress, elapsed, remaining = run.clock.sample(run.trajectory.duration, t_now)
             progresses.append(progress)
             elapsed_times.append(elapsed)
-            remaining_times.append(max(0.0, duration - elapsed))
+            remaining_times.append(remaining)
         if not progresses:
             return 0.0, 0.0, 0.0
         return min(progresses), max(elapsed_times), max(remaining_times)
 
-    def get_status(self, t_now: float) -> TrajectoryStatus:
+    def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
         """Return a non-destructive snapshot of the current execution state."""
 
         if self._state == TrajectoryState.EXECUTING:

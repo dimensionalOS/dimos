@@ -27,8 +27,10 @@ Use the t_now passed in CoordinatorState.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from weakref import ReferenceType, ref
 
 from dimos.control.components import JointName
 from dimos.hardware.manipulators.spec import ControlMode as ControlMode
@@ -135,6 +137,35 @@ class CoordinatorState:
     t_now: float = 0.0  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float = 0.0  # Time since last tick
     sensors: SensorStateSnapshot = field(default_factory=SensorStateSnapshot)
+
+
+@dataclass(frozen=True)
+class ControlTaskContext:
+    """Registration-scoped access to a detached copy of the latest complete tick.
+
+    The callback never reads hardware or acquires the coordinator task lock.
+    It returns None before a tick, after stop, and after runtime reset.
+    """
+
+    get_state: Callable[[], CoordinatorState | None]
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True)
+class _TaskRegistration:
+    """Coordinator-owned lease; tasks retain only a weak reference."""
+
+    context: ControlTaskContext
+
+    @classmethod
+    def acquire(cls, task: BaseControlTask, context: ControlTaskContext) -> _TaskRegistration:
+        existing = task._registration() if task._registration is not None else None
+        if existing is not None:
+            raise RuntimeError(
+                f"Control task {task.name!r} is already registered with a coordinator"
+            )
+        registration = cls(context)
+        task._registration = ref(registration)
+        return registration
 
 
 @dataclass
@@ -363,6 +394,15 @@ class BaseControlTask(ControlTask):
     """
 
     _name: str
+    _registration: ReferenceType[_TaskRegistration] | None = None
+
+    @property
+    def context(self) -> ControlTaskContext:
+        """Resolve services only while this task has a live coordinator registration."""
+        registration = self._registration() if self._registration is not None else None
+        if registration is None:
+            raise RuntimeError(f"Control task {self.name!r} is not registered with a coordinator")
+        return registration.context
 
     @property
     def name(self) -> str:

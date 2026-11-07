@@ -31,7 +31,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 
 HOME = JointState(name=["j"], position=[0.5])
@@ -57,7 +56,9 @@ class Bench:
     def cancel(self) -> None:
         self.events.append("cancel")
 
-    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+    def task_invoke(self, task_name: str, method: str, kwargs: dict) -> TrajectoryExecutionResult:
+        assert (task_name, method) == ("joint_trajectory", "execute")
+        trajectory = kwargs["trajectory"]
         self.trajectories.append((trajectory.joint_names, trajectory.points[-1].positions))
         self.events.append("home")
         return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)

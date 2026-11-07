@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.control._control_test_helpers import execute_with_state
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
@@ -150,7 +151,7 @@ def test_a_saved_hold_is_refused_once_the_arm_has_moved() -> None:
     )
     task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm/a", "arm/b"]))
 
-    result = task.execute(plan.trajectory, {"arm/a": 0.5, "arm/b": 0.0})
+    result = execute_with_state(task, plan.trajectory, {"arm/a": 0.5, "arm/b": 0.0})
 
     assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
     assert not task.is_active()

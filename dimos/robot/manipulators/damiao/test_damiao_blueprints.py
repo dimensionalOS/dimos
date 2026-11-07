@@ -139,7 +139,8 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
                 TrajectoryPoint(time_from_start=0.5, positions=[-0.02]),
             ],
         )
-        assert coordinator.execute_trajectory(request).status is TrajectoryExecutionStatus.ACCEPTED
+        result = coordinator.task_invoke("joint_trajectory", "execute", {"trajectory": request})
+        assert result.status is TrajectoryExecutionStatus.ACCEPTED
         rig.tick()
         clock.return_value = 101.0
         rig.tick()

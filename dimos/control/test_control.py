@@ -26,7 +26,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control._control_test_helpers import RecordingTask
+from dimos.control._control_test_helpers import RecordingTask, execute_with_state
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
@@ -529,14 +529,12 @@ class TestControlCoordinatorTrajectoryExecution:
         assert coordinator.add_task(second, task_type="trajectory")
         assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is second
 
-    def test_execute_and_cancel_without_trajectory_task_are_semantic(self, make_coordinator):
+    @pytest.mark.parametrize("method", ["execute", "cancel"])
+    def test_trajectory_dispatch_requires_registered_task(self, make_coordinator, method):
         coordinator = make_coordinator()
 
-        execute_result = coordinator.execute_trajectory(JointTrajectory())
-        cancel_result = coordinator.cancel_trajectory()
-
-        assert execute_result.status is TrajectoryExecutionStatus.NO_TRAJECTORY_TASK
-        assert cancel_result.status is TrajectoryCancellationStatus.NO_TRAJECTORY_TASK
+        with pytest.raises(KeyError, match="joint_trajectory"):
+            coordinator.task_invoke("joint_trajectory", method)
 
     def test_execute_uses_tick_snapshot_without_polling_hardware(
         self,
@@ -556,7 +554,9 @@ class TestControlCoordinatorTrajectoryExecution:
         coordinator.start()
         assert coordinator.get_joint_positions() == {}
         assert (
-            coordinator.execute_trajectory(simple_trajectory).status
+            coordinator.task_invoke(
+                "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+            ).status
             is TrajectoryExecutionStatus.START_STATE_UNAVAILABLE
         )
         coordinator._tick_loop._tick()
@@ -564,7 +564,9 @@ class TestControlCoordinatorTrajectoryExecution:
         mock_adapter.read_joint_positions.return_value = [0.0] * 6
 
         assert coordinator.get_joint_positions()["arm/joint1"] == 0.1
-        result = coordinator.execute_trajectory(simple_trajectory)
+        result = coordinator.task_invoke(
+            "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+        )
         mock_adapter.read_joint_positions.assert_not_called()
 
         assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
@@ -587,7 +589,9 @@ class TestControlCoordinatorTrajectoryExecution:
         coordinator.start()
         tick = coordinator._tick_loop._tick
         tick()
-        accepted = coordinator.execute_trajectory(simple_trajectory)
+        accepted = coordinator.task_invoke(
+            "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+        )
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
         tick()
         assert mock_adapter.write_joint_positions.called
@@ -596,7 +600,9 @@ class TestControlCoordinatorTrajectoryExecution:
         assert coordinator.set_estop(True)
         tick()
         mock_adapter.write_joint_positions.assert_not_called()
-        refused = coordinator.execute_trajectory(simple_trajectory)
+        refused = coordinator.task_invoke(
+            "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+        )
         assert refused.status is TrajectoryExecutionStatus.ESTOPPED
 
         # Clearing does not resume the cancelled trajectory.
@@ -620,12 +626,16 @@ class TestControlCoordinatorTrajectoryExecution:
 
         coordinator.add_task(trajectory_task, task_type="trajectory")
 
-        refused = coordinator.execute_trajectory(simple_trajectory)
+        refused = coordinator.task_invoke(
+            "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+        )
         assert refused.status is TrajectoryExecutionStatus.ESTOPPED
         assert coordinator.set_estop(False)
         coordinator.start()
         coordinator._tick_loop._tick()
-        accepted = coordinator.execute_trajectory(simple_trajectory)
+        accepted = coordinator.task_invoke(
+            "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+        )
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
 
     def test_cancel_waits_for_submission_and_leaves_no_active_trajectory(
@@ -639,16 +649,24 @@ class TestControlCoordinatorTrajectoryExecution:
         def delayed_positions():
             reading.set()
             assert release.wait(timeout=2)
-            return trajectory_start_positions(simple_trajectory)
+            return CoordinatorState(
+                joints=JointStateSnapshot(
+                    joint_positions=trajectory_start_positions(simple_trajectory)
+                )
+            )
 
         def cancel():
             cancelling.set()
-            cancellations.append(coordinator.cancel_trajectory())
+            cancellations.append(coordinator.task_invoke("joint_trajectory", "cancel"))
             cancelled.set()
 
-        mocker.patch.object(coordinator, "get_joint_positions", side_effect=delayed_positions)
+        mocker.patch.object(coordinator, "_get_latest_state", side_effect=delayed_positions)
         execution = Thread(
-            target=lambda: executions.append(coordinator.execute_trajectory(simple_trajectory))
+            target=lambda: executions.append(
+                coordinator.task_invoke(
+                    "joint_trajectory", "execute", {"trajectory": simple_trajectory}
+                )
+            )
         )
         cancellation = Thread(target=cancel)
         execution.start()
@@ -697,8 +715,8 @@ class TestJointTrajectoryTask:
         assert "arm/joint3" in claim.joints
 
     def test_execute_trajectory(self, trajectory_task, simple_trajectory):
-        result = trajectory_task.execute(
-            simple_trajectory, trajectory_start_positions(simple_trajectory)
+        result = execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
         )
         assert result.status is TrajectoryExecutionStatus.ACCEPTED
         assert trajectory_task.is_active()
@@ -731,7 +749,9 @@ class TestJointTrajectoryTask:
         assert trajectory_task._trajectory is None
 
     def test_status_snapshot_is_non_destructive(self, trajectory_task, simple_trajectory):
-        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
+        )
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
 
         active = trajectory_task.get_status(10.25)
@@ -754,7 +774,9 @@ class TestJointTrajectoryTask:
         )
 
         assert (
-            trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
+            execute_with_state(
+                trajectory_task, trajectory, trajectory_start_positions(trajectory)
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         assert trajectory_task.claim().joints == frozenset(
@@ -762,9 +784,8 @@ class TestJointTrajectoryTask:
         )
 
     def test_execute_rejects_missing_start_position(self, trajectory_task, simple_trajectory):
-        result = trajectory_task.execute(
-            simple_trajectory,
-            {"arm/joint1": 0.0, "arm/joint2": 0.0},
+        result = execute_with_state(
+            trajectory_task, simple_trajectory, {"arm/joint1": 0.0, "arm/joint2": 0.0}
         )
 
         assert result.status is TrajectoryExecutionStatus.START_STATE_UNAVAILABLE
@@ -777,7 +798,7 @@ class TestJointTrajectoryTask:
         current_positions = trajectory_start_positions(simple_trajectory)
         current_positions["arm/joint2"] = 0.051
 
-        result = trajectory_task.execute(simple_trajectory, current_positions)
+        result = execute_with_state(trajectory_task, simple_trajectory, current_positions)
 
         assert result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH
         assert "arm/joint2" in result.message
@@ -787,7 +808,7 @@ class TestJointTrajectoryTask:
         current_positions = trajectory_start_positions(simple_trajectory)
         current_positions["arm/joint2"] = 0.05
 
-        result = trajectory_task.execute(simple_trajectory, current_positions)
+        result = execute_with_state(trajectory_task, simple_trajectory, current_positions)
 
         assert result.status is TrajectoryExecutionStatus.ACCEPTED
 
@@ -837,7 +858,7 @@ class TestJointTrajectoryTask:
     def test_invalid_partial_inputs_reject_before_state_changes(self, trajectory_task, trajectory):
         assert trajectory_task.get_state() == TrajectoryState.IDLE
         assert (
-            trajectory_task.execute(trajectory, {}).status
+            execute_with_state(trajectory_task, trajectory, {}).status
             is TrajectoryExecutionStatus.INVALID_TRAJECTORY
         )
         assert trajectory_task.get_state() == TrajectoryState.IDLE
@@ -855,7 +876,9 @@ class TestJointTrajectoryTask:
             ],
         )
         assert (
-            trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
+            execute_with_state(
+                trajectory_task, trajectory, trajectory_start_positions(trajectory)
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=10.0, dt=0.01))
@@ -889,11 +912,11 @@ class TestJointTrajectoryTask:
             ],
         )
         assert (
-            trajectory_task.execute(first, trajectory_start_positions(first)).status
+            execute_with_state(trajectory_task, first, trajectory_start_positions(first)).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         assert (
-            trajectory_task.execute(second, trajectory_start_positions(second)).status
+            execute_with_state(trajectory_task, second, trajectory_start_positions(second)).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         trajectory_task.compute(CoordinatorState(joints=MagicMock(), t_now=1.0, dt=0.01))
@@ -912,7 +935,9 @@ class TestJointTrajectoryTask:
 
     def test_compute_during_trajectory(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
-        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
+        )
 
         # First compute sets start time (deferred start)
         state0 = CoordinatorState(
@@ -937,7 +962,9 @@ class TestJointTrajectoryTask:
 
     def test_trajectory_completes(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
-        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
+        )
 
         # First compute sets start time (deferred start)
         state0 = CoordinatorState(
@@ -974,7 +1001,7 @@ class TestJointTrajectoryTask:
         )
         state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0})
 
-        assert task.execute(target, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        assert execute_with_state(task, target, {}).status is TrajectoryExecutionStatus.ACCEPTED
         first = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
         second = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
 
@@ -1024,13 +1051,15 @@ class TestJointTrajectoryTask:
             points=[TrajectoryPoint(positions=[-1.0])],
         )
 
-        task.execute(first, {})
-        task.execute(other, {})
+        execute_with_state(task, first, {})
+        execute_with_state(task, other, {})
         before = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
         assert before is not None
         assert before.positions == [pytest.approx(0.1), pytest.approx(-0.1)]
 
-        assert task.execute(replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        assert (
+            execute_with_state(task, replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        )
         after = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
         assert after is not None
         assert after.positions == [pytest.approx(0.0), pytest.approx(-0.2)]
@@ -1063,12 +1092,14 @@ class TestJointTrajectoryTask:
         )
 
         assert (
-            task.execute(long_trajectory, state.joint_positions).status
+            execute_with_state(task, long_trajectory, state.joint_positions).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         task.compute(CoordinatorState(joints=state, t_now=10.0, dt=0.1))
         task.compute(CoordinatorState(joints=state, t_now=12.5, dt=0.1))
-        assert task.execute(replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        assert (
+            execute_with_state(task, replacement, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        )
         task.compute(CoordinatorState(joints=state, t_now=12.5, dt=0.1))
         task.compute(CoordinatorState(joints=state, t_now=13.5, dt=0.1))
 
@@ -1080,7 +1111,9 @@ class TestJointTrajectoryTask:
         assert status.time_remaining == pytest.approx(6.5)
 
     def test_cancel_trajectory(self, trajectory_task, simple_trajectory):
-        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
+        )
         assert trajectory_task.is_active()
 
         result = trajectory_task.cancel()
@@ -1093,13 +1126,13 @@ class TestJointTrajectoryTask:
         self, trajectory_task, simple_trajectory
     ):
         start = trajectory_start_positions(simple_trajectory)
-        trajectory_task.execute(simple_trajectory, start)
+        execute_with_state(trajectory_task, simple_trajectory, start)
 
         trajectory_task.set_estop(True)
 
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
-        refused = trajectory_task.execute(simple_trajectory, start)
+        refused = execute_with_state(trajectory_task, simple_trajectory, start)
         assert refused.status is TrajectoryExecutionStatus.ESTOPPED
         streamed = JointState(name=["arm/joint1"], position=[0.1])
         assert not trajectory_task.on_joint_command(streamed, t_now=0.0)
@@ -1108,7 +1141,7 @@ class TestJointTrajectoryTask:
 
         # Not resumed; a new trajectory is taken again.
         assert not trajectory_task.is_active()
-        accepted = trajectory_task.execute(simple_trajectory, start)
+        accepted = execute_with_state(trajectory_task, simple_trajectory, start)
         assert accepted.status is TrajectoryExecutionStatus.ACCEPTED
 
     def test_cancel_when_stopped_reports_already_stopped(self, trajectory_task):
@@ -1117,7 +1150,9 @@ class TestJointTrajectoryTask:
         assert result.status is TrajectoryCancellationStatus.ALREADY_STOPPED
 
     def test_preemption(self, trajectory_task, simple_trajectory):
-        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
+        )
 
         trajectory_task.on_preempted("safety_task", frozenset({"arm/joint1"}))
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
@@ -1125,7 +1160,9 @@ class TestJointTrajectoryTask:
 
     def test_progress(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
-        trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
+        execute_with_state(
+            trajectory_task, simple_trajectory, trajectory_start_positions(simple_trajectory)
+        )
 
         # First compute sets start time (deferred start)
         state0 = CoordinatorState(
@@ -1340,7 +1377,9 @@ class TestTickLoop:
         )
 
         assert (
-            trajectory_task.execute(trajectory, trajectory_start_positions(trajectory)).status
+            execute_with_state(
+                trajectory_task, trajectory, trajectory_start_positions(trajectory)
+            ).status
             is TrajectoryExecutionStatus.ACCEPTED
         )
         assert gripper_task.set_position([0.75])
@@ -1482,7 +1521,7 @@ class TestIntegration:
 
         tick_loop.start()
         try:
-            traj_task.execute(trajectory, trajectory_start_positions(trajectory))
+            execute_with_state(traj_task, trajectory, trajectory_start_positions(trajectory))
             wait_until(
                 lambda: traj_task.get_state() == TrajectoryState.COMPLETED,
                 timeout=5.0,
