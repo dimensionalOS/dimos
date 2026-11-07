@@ -521,6 +521,44 @@ with Pi and `--set no_dimos=true --set max_steps=120`.
 recorded body poses. See `data/robosuite/README.md` in the downloaded data
 package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
+### Autoresearch
+
+`AutoresearchEnvironment` launches the `autoresearch-metal-sim` lab (the Metal arm on a
+bench in MuJoCo, a truth scene, the collection recorder, the episode monitor, the
+`AutoresearchModule` and `McpServer`) on a fresh session directory and hands that directory
+to the agent instead of the recording. The case prompt is the actor loop
+(`dimos.evals.suites.autoresearch_metal`): read the task and the scene, `submit` immutable
+candidate programs, `run` them on dev trials, read the traces and keyframes, repair by
+failure mode, search with several candidates when stuck, `freeze` one. Settling waits until
+the lab has scored the frozen candidate on the held-out trials, and the grade is that
+held-out pass rate, passed at the budget's threshold. The keyword guard denies every way
+around the lab's tools:
+
+```bash skip
+dimos evals run dimos.evals.suites.autoresearch_metal --agent dimos.evals.agents.pi \
+    --set provider=anthropic --set model=<model> --set max_steps=600 \
+    --exclude shell,porcelain,sdk,topic,select,pick_object,place_at
+```
+
+One launch is one session under `~/.local/state/dimos/autoresearch/<task>-<time>-<id>/`
+(`session_root` on the environment):
+
+```
+session.json          task, budget, model, status (idle, running, frozen, scored), heldout_rate
+candidates/NN/        one directory per submitted program, never changed
+  program.py          the candidate
+  hypothesis.md       what the agent expected it to fix and where it may fail
+  results.json        one record per trial: split, index, success, stage, note, trace path
+  trials/<split>-<k>/ trace.jsonl, keyframes/*.png, program.log, outcome.json
+library/*.md          notes the agent kept for later sessions
+frozen                the number of the final candidate
+recording/            the collection recorder's dataset of the saved episodes
+report.json           written by the grader: leaderboard, iterations, tokens and seconds per candidate
+```
+
+The run's own `results.jsonl` and `trajectory.json` carry the actor's totals; `report.json`
+splits them per submitted candidate.
+
 ### Hardware
 
 `HardwareEnvironment` runs a real robot the same way: it launches `dimos --record
