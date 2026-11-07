@@ -136,10 +136,12 @@ creates the session and homes the arm. The actor's tools are its skills,
 served over MCP: `task`, `scene`, `submit`, `run`, `stop_run`, `results`,
 `leaderboard`, `freeze` and `note`. `run` and `freeze` run the trials on a
 background thread and return at once; `results` is polled. The world is
-`MujocoWorld` (`world.py`): a seeded reset puts back whatever the last
-program cleared from the obstacle map, places the cube through
-`SimSceneSpec`, re-homes the arm and waits for fresh poses; a snapshot stops
-the arm and waits for it to hold still. Programs run on `live.py:backend`,
+`MujocoWorld` (`world.py`): a seeded reset places the cube through
+`SimSceneSpec`, drives the arm home through the controller's trajectory task
+(no plan, so it works from any pose), waits for it to hold still and for an
+obstacle map of the new bench, then puts back whatever the last program
+cleared from that map and waits for fresh poses; a snapshot stops the arm and
+waits for it to hold still. Programs run on `live.py:backend`,
 which attaches to the stack and takes keyframes from its `color_image`
 stream. `TruthSceneModule` (`truth_scene.py`) answers scene scans from the
 simulator's true poses so no detector is needed. The lab publishes an

@@ -33,6 +33,10 @@ import pytest_mock
 from dimos.autoresearch.module import AutoresearchModule
 from dimos.autoresearch.session import Budget, Session
 from dimos.autoresearch.status import AutoresearchStatus
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.episode_monitor import EpisodeCommand
@@ -45,16 +49,15 @@ from dimos.manipulation.manipulation_spec import (
     OperationStatus,
     PlanningGroupInfo,
     PlanningGroupState,
-    PlanResult,
-    PlanStatus,
 )
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -73,8 +76,9 @@ ENDLESS = "def run(robot, task):\n    while True:\n        robot.arm.joints()\n"
 
 class FakeBench:
     """The bench's state: where the cube is, the arm's joints, and what the lab
-    asked of the sim and the arm. The cube rises 10 cm at the after-snapshot
-    (the second cancel) of every reset whose number is in ``lift_on``."""
+    asked of the sim, the arm and the controller. A reset puts the arm at home.
+    The cube rises 10 cm at the after-snapshot (the second cancel) of every
+    reset whose number is in ``lift_on``."""
 
     def __init__(self) -> None:
         self.cube = (0.26, 0.11, 0.02)
@@ -91,6 +95,7 @@ class FakeBench:
         self.resets.append(dict(placements))
         x, y, z, _ = placements["cube"]
         self.cube = (x, y, z)
+        self.joints[:6] = HOME
         self.cancels_since_reset = 0
         return True
 
@@ -103,11 +108,10 @@ class FakeBench:
 
 
 class FakeArm:
-    """The planner as the lab's Arm SDK sees it: every plan succeeds and lands at once."""
+    """The planner as the lab's Arm SDK sees it: its state, presets and gripper."""
 
     def __init__(self, bench: FakeBench) -> None:
         self.bench = bench
-        self.target: JointState | None = None
 
     def list_planning_groups(self) -> tuple[PlanningGroupInfo, ...]:
         return (PlanningGroupInfo("arm", tuple(JOINTS[:6]), "world", "gripper_base", True),)
@@ -129,20 +133,6 @@ class FakeArm:
             },
         )
 
-    def plan_to_joints(
-        self, targets: Mapping[PlanningGroupID, JointState], speed_scale: float | None = None
-    ) -> PlanResult:
-        self.target = targets["arm"]
-        return PlanResult(PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory()))
-
-    def execute(
-        self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
-    ) -> ExecutionResult:
-        assert self.target is not None
-        self.bench.joints[:6] = list(self.target.position)
-        self.bench.homes += 1
-        return ExecutionResult(ExecutionStatus.COMPLETED)
-
     def set_gripper_position(
         self, position: float, planning_group: PlanningGroupID | None = None
     ) -> CommandResult:
@@ -152,6 +142,19 @@ class FakeArm:
     def cancel(self) -> ExecutionResult:
         self.bench.lift_if_due()
         return ExecutionResult(ExecutionStatus.NO_EXECUTION)
+
+
+class FakeControl:
+    """The controller as the lab sees it: a trajectory lands at once."""
+
+    def __init__(self, bench: FakeBench) -> None:
+        self.bench = bench
+
+    def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
+        target = dict(zip(trajectory.joint_names, trajectory.points[-1].positions, strict=True))
+        self.bench.joints[:6] = [target[name] for name in JOINTS[:6]]
+        self.bench.homes += 1
+        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
 
 
 class FakeMonitor:
@@ -230,6 +233,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     )
     module._sim = bench
     module._arm = FakeArm(bench)
+    module._control = FakeControl(bench)
     module._box_filter = FakeBoxFilter()
     module._episodes = monitor
     module._scene = FakeScene()
@@ -238,9 +242,11 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
     mocker.patch.object(module, "stop_tool")
     poses: LocalTransport[TFMessage] = LocalTransport()
     joints: LocalTransport[JointState] = LocalTransport()
+    maps: LocalTransport[PointCloud2] = LocalTransport()
     frames: LocalTransport[Image] = LocalTransport()
     module.body_poses.transport = poses
     module.coordinator_joint_state.transport = joints
+    module.voxel_map.transport = maps
     module.color_image.transport = frames
     lab = Lab(module, bench, monitor, tmp_path / "lift")
     module.autoresearch_status.subscribe(
@@ -258,6 +264,7 @@ def lab(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> Iterator[Lab]:
                 )
             )
             joints.publish(JointState(name=JOINTS, position=list(bench.joints)))
+            maps.publish(PointCloud2())
             frames.publish(Image(data=np.zeros((4, 4, 3), np.uint8), format=ImageFormat.RGB))
             time.sleep(0.02)
 
@@ -310,7 +317,7 @@ def test_run_returns_at_once_then_records_every_dev_trial_and_releases_the_tool(
         ("idle", False, None),
     ]
     assert (lab.statuses[-1].dev_passed, lab.statuses[-1].dev_trials) == (1, 2)
-    # Each dev trial starts from its own seeded placement, after homing the arm.
+    # Each dev trial starts from its own seeded placement, with the arm sent home after it.
     assert [placement["cube"][:2] for placement in lab.bench.resets] == [
         lab.module.config.placement_bounds.sample(0)[:2],
         lab.module.config.placement_bounds.sample(1)[:2],

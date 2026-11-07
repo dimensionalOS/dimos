@@ -38,7 +38,7 @@ from dimos.autoresearch.program import RunStoppedError
 from dimos.autoresearch.session import Budget, Session, SessionStatus, Split
 from dimos.autoresearch.status import ActorState, AutoresearchStatus
 from dimos.autoresearch.trial import run_trial
-from dimos.autoresearch.world import MujocoWorld, PlacementBounds
+from dimos.autoresearch.world import MujocoWorld, PlacementBounds, TrajectoryControlSpec
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -50,6 +50,7 @@ from dimos.manipulation.sdk import Arm
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.perception.experimental.object_scene_registration_spec import (
@@ -121,6 +122,16 @@ def _wait_for_arm(rpc: ManipulationSpec, timeout_s: float) -> Arm:
         time.sleep(0.5)
 
 
+def _home_preset(arm: Arm) -> JointState:
+    """The arm's "home" joint preset, in the controller's joint names."""
+    presets = arm.state().joint_presets
+    if "home" not in presets:
+        raise RuntimeError(
+            f"the planner has no 'home' preset for {arm.info.id!r}; available: {sorted(presets)}"
+        )
+    return presets["home"]
+
+
 class AutoresearchModuleConfig(ModuleConfig):
     """One session's settings. ``session_dir`` must not hold a session yet.
     ``judge`` decides a trial from ``judge_body``: lifted 5 cm, or placed within
@@ -161,12 +172,14 @@ class AutoresearchModule(Module):
 
     body_poses: In[TFMessage]
     coordinator_joint_state: In[JointState]
+    voxel_map: In[PointCloud2]
     color_image: In[Image]
     # Not "status": the collection recorder records the episode monitor's stream of that name.
     autoresearch_status: Out[String]
 
     _sim: SimSceneSpec
     _arm: ManipulationSpec
+    _control: TrajectoryControlSpec
     _box_filter: PointCloudBoxFilterSpec
     _episodes: EpisodeControlSpec
     _scene: ObjectSceneRegistrationSpec
@@ -198,10 +211,13 @@ class AutoresearchModule(Module):
             self.config.session_dir, self.config.task, self.config.budget, self.config.model
         )
         self._env = bus_env(self.config.g)
+        arm = _wait_for_arm(self._arm, PLANNER_TIMEOUT_S)
         self._world = MujocoWorld(
             self._sim,
-            _wait_for_arm(self._arm, PLANNER_TIMEOUT_S),
+            arm,
+            self._control,
             self._box_filter,
+            _home_preset(arm),
             self.config.judge_body,
             self.config.placement_bounds,
             self._stop,
@@ -210,6 +226,7 @@ class AutoresearchModule(Module):
         self.register_disposable(
             Disposable(self.coordinator_joint_state.subscribe(self._world.on_joint_state))
         )
+        self.register_disposable(Disposable(self.voxel_map.subscribe(self._world.on_voxel_map)))
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_frame)))
         # Home and one gripper target before the first episode: the dataset
         # export seeds only joints that were commanded.
