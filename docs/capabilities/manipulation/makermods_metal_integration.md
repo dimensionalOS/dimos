@@ -7,6 +7,25 @@ strings. Mock operation uses a separate module selected by `--simulation`.
 
 ## Run without hardware
 
+One Metal in MuJoCo, standing on a bench with a cube, a cylinder and a bowl:
+
+```bash
+uv run dimos --simulation run metal-sim
+uv run dimos --simulation run metal-perception-sim   # + object detection and pick-and-place
+```
+
+`metal-sim` runs the coordinator on the `sim_mujoco` adapter, the planner and
+the URDF server. The wrist camera publishes `color_image`, `depth_image` and
+`camera_info`; the three objects' true poses come out on `body_poses`. The
+bench top is the world's z = 0 and the arm's base is at the origin. The arm MJCF
+is `makermods_metal/assets/metal.xml`, generated from the pinned URDF by
+`python -m dimos.robot.manipulators.makermods_metal.mjcf`; its meshes load from
+the pinned description at run time. Pass `--mujocosimmodule.headless true` to
+run without the MuJoCo window.
+
+The mock connection, which echoes accepted joint positions without dynamics,
+gripper contact or calibration:
+
 ```bash
 uv run dimos --simulation run makermods-metal-planner-coordinator
 uv run dimos --simulation run dual-makermods-metal-planner-coordinator
@@ -16,9 +35,7 @@ The existing main entry names are retained: `coordinator-makermods-metal`,
 `makermods-metal-planner-coordinator`, and
 `dual-makermods-metal-planner-coordinator`. Single-arm trajectory and gripper
 control without a planner is also available as `makermods-metal-connection-control`.
-
-Mock feedback echoes accepted joint positions. It does not simulate dynamics,
-gripper contact, or calibration. See the [connection test runbook](/docs/capabilities/manipulation/damiao-connections.md)
+See the [connection test runbook](/docs/capabilities/manipulation/damiao-connections.md)
 for repository setup, command checks, and deadman checks.
 
 ## Select native hardware
