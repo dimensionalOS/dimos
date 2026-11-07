@@ -113,6 +113,26 @@ dimos run dual-metal-quest-collection --left-can-port can0 --right-can-port can1
 dimos imitation control
 ```
 
+## Run a checkpoint
+
+`metal-lerobot-rollout` lets a trained LeRobot checkpoint drive the arm. The
+policy sees the wrist webcam and `coordinator_joint_state` over the same seven
+joints the collection recorded, and sends joint trajectories to the
+coordinator. `metal-lerobot-quest-rollout` adds the Quest teleop on top, so
+holding the grip takes the arm away from the policy.
+
+```bash
+dimos run metal-lerobot-rollout --can-port can0 \
+  --policy.policy-path outputs/metal-act/checkpoints/last/pretrained_model \
+  --policy.task "pick up the cube"
+dimos imitation control
+```
+
+Select **Start policy** in the panel; **Stop policy** halts the policy with the
+stack still running. `--policy.device cuda` runs it on the GPU. See the
+[run a checkpoint guide](/docs/capabilities/manipulation/learning/guides/run-a-checkpoint.md)
+for preflight and the panel's controls.
+
 ## Validation scope
 
 Software tests cover required selectors, mounted models, independent gripper

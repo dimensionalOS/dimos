@@ -16,7 +16,7 @@
 
 from copy import deepcopy
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
@@ -80,20 +80,23 @@ def metal_quest_tasks() -> list[TaskConfig]:
     ]
 
 
-def metal_teleop_control(tasks: list[TaskConfig]) -> Blueprint:
-    """The WebXR coordinator, named ControlCoordinator, over the Metal connection.
+def metal_teleop_control(
+    tasks: list[TaskConfig],
+    coordinator: type[ControlCoordinator] = DamiaoTeleopCoordinator,
+) -> Blueprint:
+    """A coordinator named ControlCoordinator over the Metal connection, WebXR by default.
 
     Under ``--simulation`` the connection is the echo mock instead.
     """
     return autoconnect(
-        DamiaoTeleopCoordinator.blueprint(
+        coordinator.blueprint(
             instance_name="ControlCoordinator",
             model=METAL_QUEST_MODEL.model,
             tasks=list(tasks),
             zero_stiffness_joints=[],
         ),
         arm_connection(MetalConnection),
-    ).remappings(arm_remaps(MetalConnection, DamiaoTeleopCoordinator))
+    ).remappings(arm_remaps(MetalConnection, coordinator))
 
 
 teleop_webxr_metal = autoconnect(

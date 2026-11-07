@@ -105,6 +105,8 @@ all_blueprints = {
     "m20-sim-nav-episode": "dimos.robot.deeprobotics.m20.blueprints.m20_sim_nav_episode:m20_sim_nav_episode",
     "makermods-metal-connection-control": "dimos.robot.manipulators.makermods_metal.blueprints.connection:makermods_metal_connection_control",
     "makermods-metal-planner-coordinator": "dimos.robot.manipulators.makermods_metal.blueprints.planning:makermods_metal_planner_coordinator",
+    "metal-lerobot-quest-rollout": "dimos.robot.manipulators.makermods_metal.blueprints.learning_rollout:metal_lerobot_quest_rollout",
+    "metal-lerobot-rollout": "dimos.robot.manipulators.makermods_metal.blueprints.learning_rollout:metal_lerobot_rollout",
     "metal-quest-collection": "dimos.robot.manipulators.makermods_metal.blueprints.learning_collection:metal_quest_collection",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-pointlio": "dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints:mid360_pointlio",
