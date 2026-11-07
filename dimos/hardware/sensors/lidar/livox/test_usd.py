@@ -119,24 +119,6 @@ def Xform "robot" (
     assert "lidar_link" in _links(stage)
 
 
-def test_the_baked_layer_still_matches_the_urdf_it_came_from() -> None:
-    """The constant is generated, so it can drift from its source without anyone noticing."""
-    pytest.importorskip("pxr")
-    from pathlib import Path
-
-    from dimos.robot.assets.model import RobotModel
-    from dimos.robot.assets.usd import urdf_to_usd
-
-    urdf = Path(__file__).parent / "mid360.urdf"
-
-    regenerated = urdf_to_usd(RobotModel.from_file(urdf).load())
-
-    # mid360.urdf uses the canonical frame names, which is what the placeholders default to.
-    assert mid360_usd("lidar_link", "imu_link") == regenerated, (
-        "mid360.urdf and _MID360_USD have diverged; regenerate the constant (see mid360.urdf)"
-    )
-
-
 def test_describing_itself_costs_no_usd_dependency() -> None:
     # usd-core has no linux-aarch64 wheel, so a Jetson running this driver must never need it.
     # That is the whole reason the layer is baked instead of converted here.
@@ -195,10 +177,9 @@ def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
 def test_get_usd_roots_its_assets_at_this_module_rather_than_the_build_machine() -> None:
     """The baked constant is written on a build machine, whose paths mean nothing on a robot.
 
-    So the root is resolved at call time from this module's own location, which is where
-    mid360.urdf and anything it might name live.
+    So the root is resolved at call time from this module's own location, which is the only
+    directory this driver can point at and be right about wherever it is installed.
     """
     root = _answer(Mid360Config())[0]
 
     assert Path(root) == Path(__file__).parent
-    assert (Path(root) / "mid360.urdf").exists()

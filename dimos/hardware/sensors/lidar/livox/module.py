@@ -26,9 +26,9 @@ Usage::
 
 The sensor also describes itself as USD over the ``get_usd`` RPC, so a UrdfManager can take it
 as a ``mounts`` value and graft it onto whatever frame it is bolted to. That layer is baked
-into ``_MID360_USD`` rather than converted on the fly, because usd-core has no
-linux-aarch64 wheel and this module runs on a Jetson. Its source is ``mid360.urdf`` next to
-this file, which carries the regeneration recipe.
+into ``_MID360_USD`` rather than converted on the fly, because usd-core has no linux-aarch64
+wheel and this module runs on a Jetson. The constant is the whole artifact -- there is no
+checked-in description beside it -- so its provenance is written above it.
 """
 
 from __future__ import annotations
@@ -117,9 +117,26 @@ class Mid360Config(NativeModuleConfig):
 
 
 # The MID-360 as a USD layer, baked rather than converted at runtime: usd-core has no
-# linux-aarch64 wheel, and this module's whole job happens on a Jetson. Produced one-off from
-# a hand-written URDF by dimos.robot.assets.usd.urdf_to_usd -- see the module docstring for
-# how to regenerate it.
+# linux-aarch64 wheel, and this module's whole job happens on a Jetson.
+#
+# This constant is the artifact. It was produced one-off by writing the sensor as a URDF and
+# running it through dimos.robot.assets.usd.urdf_to_usd; that URDF is deliberately not checked
+# in, so what follows is the only description of this sensor and the numbers in it are the
+# record. To change it, write the URDF again from these notes, convert, and re-insert the
+# @LIDAR@ / @IMU@ placeholders into the displayName lines.
+#
+# Where the numbers come from:
+#   * the 65 x 65 x 60 mm shell, from the Livox MID-360 specs (265 g, four M3 holes in the base)
+#   * the lidar_link_to_imu_link offset (0.011, 0.02329, -0.04412) m, which is
+#     PointLioConfig.extrinsic_t -- the lidar origin in the IMU frame -- negated. That default
+#     is the in-repo source of truth for this extrinsic; keep the two in step.
+#   * the -0.020 m shell offset is a PLACEHOLDER. Livox publishes the point cloud origin only
+#     inside a dimensioned drawing, so it is inferred from the IMU sitting 44.12 mm below the
+#     origin and the body being 60 mm tall, which puts the origin near the top of the shell.
+#     It moves the drawn box and nothing measured.
+#
+# The root link is the point cloud origin -- the frame the driver stamps its cloud with -- not
+# the mounting face. So a mount transform onto this points at the optical origin.
 #
 # @LIDAR@ / @IMU@ stand in for the configured frame names. They appear only in displayName,
 # which is the name that travels (graft_usd matches a mount frame on it); prim names stay
@@ -251,11 +268,11 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
         A UrdfManager asks for this when the MID-360 is one of its ``mounts``, and grafts the
         answer onto the frame the sensor is bolted to.
 
-        The root is this module's own directory, which is where mid360.urdf and anything it
-        might name live. Today the layer names no files at all, so the root buys nothing -- but
-        it is the honest answer, and it is the one that stays right if the description grows a
-        mesh. It is deliberately not baked into the constant: that is written on a build
-        machine, whose paths mean nothing on the robot.
+        The root is this module's own directory: the only one this driver can point at and be
+        right about wherever it is installed. Today the layer names no files at all, so the
+        root buys nothing -- but it is the honest answer, and it stays right if the description
+        ever grows a mesh. It is deliberately not baked into the constant: that is written on a
+        build machine, whose paths mean nothing on the robot.
         """
         return [
             str(Path(__file__).parent),
