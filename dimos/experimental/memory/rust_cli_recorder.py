@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import json
 import os
@@ -74,16 +75,22 @@ def prepare_rust_recorder() -> Path:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
+    output: deque[str] = deque(maxlen=20)
     for raw in process.stdout:
         line = raw.decode("utf-8", errors="replace").rstrip()
         if line:
+            output.append(line)
             logger.info(line, module="rust-recorder-build")
     returncode = process.wait()
     if returncode != 0:
-        raise RuntimeError(
+        message = (
             "Rust recorder build failed "
             f"after {time.perf_counter() - started:.2f}s (exit {returncode})"
         )
+        if output:
+            message += "\n" + "\n".join(output)
+        logger.error(message, module="rust-recorder-build")
+        raise RuntimeError(message)
     if not executable.exists():
         raise FileNotFoundError(f"Rust recorder build did not produce {executable}")
 
