@@ -467,6 +467,20 @@ class _FakeArm(Module):
         return ["", _SUBTREE_USD]
 
 
+class _FakeG1(Module):
+    """Stands in for a mounted module that is itself a manager: it answers get_scene.
+
+    Its answer already has its own lidar on it, which is what a nested UsdManager would hand
+    over, and the frame that lidar hangs from carries the g1's namespace prefix.
+    """
+
+    config: ModuleConfig
+
+    @rpc
+    def get_scene(self, visited: list[str] | None = None) -> list[str]:
+        return ["", _G1_WITH_HEAD_USD]
+
+
 class _NoUsd(Module):
     config: ModuleConfig
 
@@ -500,14 +514,37 @@ def Xform "{prim}" (
 
 _SUBTREE_USD = _subtree_usd("fake_arm", "fake_arm_base")
 
+# A g1-shaped subtree: a root plus a head frame to hang something else off. Its names are
+# already prefixed, the way a nested manager's scene arrives.
+_G1_WITH_HEAD_USD = """#usda 1.0
+(
+    defaultPrim = "g1"
+)
+
+def Xform "g1" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    displayName = "g1/pelvis"
+)
+{
+    def Xform "head_mount" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "g1/head_mount"
+    )
+    {
+    }
+}
+"""
+
 
 class _FakeClient:
-    """An RPC client that answers get_usd with a scripted sequence; an Exception means 'not up yet'."""
+    """An RPC client answering get_usd/get_scene from a script; an Exception means 'not up yet'."""
 
     def __init__(self, *answers: Any, asset_root: str = "") -> None:
         self.answers = list(answers)
         self.asked = 0
         self.asset_root = asset_root
+        # Every mount chain it was handed, so a test can assert the chain travels.
+        self.chains: list[list[str]] = []
 
     def get_usd(self) -> Any:
         self.asked += 1
@@ -517,6 +554,11 @@ class _FakeClient:
         # A bare string in a script means "that USD, rooted nowhere"; anything else goes
         # through as-is so a test can hand over a malformed answer on purpose.
         return [self.asset_root, answer] if isinstance(answer, str) else answer
+
+    def get_scene(self, visited: list[str] | None = None) -> Any:
+        """A mounted manager is asked for its whole scene, and handed the mount chain."""
+        self.chains.append(list(visited or []))
+        return self.get_usd()
 
     def stop_rpc_client(self) -> None: ...
 
@@ -643,17 +685,18 @@ def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
     assert client.asked > 1, "it should have kept asking rather than giving up or answering"
 
 
-def test_mounts_at_a_frame_the_urdf_does_not_have_is_rejected(
+def test_a_mount_frame_is_not_checked_until_the_scene_is_assembled(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    with pytest.raises(ValueError, match="not a link of this URDF"):
-        make_manager(mounts={"elbow": _FakeArm})
+    # It may name a frame another subtree brings, so there is nothing to check at __init__.
+    # _graft_in_waves catches it instead, where it can list every frame there is.
+    make_manager(mounts={"elbow": _FakeArm}).dispose()
 
 
 def test_mounts_to_a_module_that_cannot_be_asked_is_rejected(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    with pytest.raises(ValueError, match="no @rpc get_usd"):
+    with pytest.raises(ValueError, match="neither an @rpc get_usd"):
         make_manager(mounts={"arm": _NoUsd})
 
 
@@ -995,3 +1038,175 @@ def test_a_rename_with_no_mounts_at_all_still_fails(
 
     with pytest.raises(ValueError, match="which no mounted subtree has"):
         _scene(module)
+
+
+def test_a_lidar_mounts_onto_a_g1_that_is_itself_mounted_on_the_root(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """The nested case: root -> g1 -> lidar, named by where each ends up in the scene.
+
+    "g1/head_mount" is not a link of this URDF at all; it only exists once the g1's own scene
+    is grafted on. So the two mounts cannot both be grafted in one pass.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(
+        mounts={"arm": _FakeG1, "g1/head_mount": _FakeArm},
+    )
+    module._subtree_clients["_FakeG1"] = cast("Any", _FakeClient(_G1_WITH_HEAD_USD))
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    # The g1 went onto the robot, and the arm went onto the g1's head.
+    assert stage.GetPrimAtPath("/box_robot/base/arm/g1")
+    assert stage.GetPrimAtPath("/box_robot/base/arm/g1/head_mount/fake_arm")
+
+
+def test_a_mounted_manager_is_asked_for_its_whole_scene_not_just_its_own_layer(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # Otherwise a mounted g1 would arrive without the lidar that is mounted on it.
+    pytest.importorskip("pxr")
+
+    assert Mount.of(_FakeG1).subtree_rpc == "get_scene"
+    assert Mount.of(_FakeArm).subtree_rpc == "get_usd"
+
+
+def test_an_instance_name_on_its_own_is_asked_for_its_own_layer() -> None:
+    # No class to ask whether it has a get_scene, so the narrower rpc is the safe assumption.
+    assert Mount.of("left/xarm").subtree_rpc == "get_usd"
+
+
+def test_mounting_at_a_frame_nothing_will_ever_provide_lists_every_frame_there_is(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """The error has to be enough to find the frame you meant.
+
+    So it names what is missing, says mount frames are post-namespace names, and lists every
+    link and joint the scene ended up with.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm, "nowhere/at_all": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+    with pytest.raises(ValueError) as caught:
+        _scene(module)
+
+    message = str(caught.value)
+    assert "nowhere/at_all" in message
+    assert "g1/head_mount" in message or "namespace prefix" in message
+    # Every frame the scene has, so the right one can be picked out of the list.
+    assert "'base'" in message and "'arm'" in message and "'fake_arm_base'" in message
+
+
+def test_a_frame_that_only_a_later_wave_provides_is_not_reported_as_missing(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # The whole point of waves: "g1/head_mount" is absent on the first look and present later.
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"g1/head_mount": _FakeArm, "arm": _FakeG1})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+    module._subtree_clients["_FakeG1"] = cast("Any", _FakeClient(_G1_WITH_HEAD_USD))
+
+    stage = _usd_stage(_scene(module))
+
+    assert stage.GetPrimAtPath("/box_robot/base/arm/g1/head_mount/fake_arm")
+
+
+def test_a_circular_mount_is_refused_with_the_whole_chain(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """A manager assembling a scene that is waiting on itself cannot ever finish.
+
+    The chain travels with the request, so the manager that sees itself in it refuses rather
+    than asking back round forever.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeG1})
+
+    async def ask_as_if_from_itself() -> None:
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
+        with pytest.raises(ValueError, match="circular mount"):
+            await coroutine(["UsdManager", "SomeOther"])
+
+    asyncio.run(ask_as_if_from_itself())
+
+
+def test_the_circular_mount_error_names_every_manager_in_the_loop(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager()
+
+    async def ask() -> None:
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(module, UsdManager)
+        with pytest.raises(ValueError) as caught:
+            await coroutine(["A", "UsdManager", "B"])
+        assert "A -> UsdManager -> B -> UsdManager" in str(caught.value)
+
+    asyncio.run(ask())
+
+
+def test_the_mount_chain_travels_to_a_mounted_manager(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # Which is what lets the manager below refuse a cycle instead of asking back round.
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeG1})
+    client = _FakeClient(_G1_WITH_HEAD_USD)
+    module._subtree_clients["_FakeG1"] = cast("Any", client)
+
+    _scene(module)
+
+    assert client.chains == [["UsdManager"]]
+
+
+def test_a_manager_with_no_model_stands_on_a_world_link() -> None:
+    """A manager whose only job is to hold mounts needs somewhere to hang them from.
+
+    So no model gives a single link called "world" rather than refusing to start.
+    """
+    pytest.importorskip("pxr")
+    module = UsdManager()
+    try:
+        stage = _usd_stage(module.get_usd()[1])
+
+        assert module._description.root_link == "world"
+        assert stage.GetDefaultPrim().GetName() == "world"
+    finally:
+        module.dispose()
+
+
+def test_a_world_manager_has_no_asset_root_to_offer() -> None:
+    # There is no description file, so there is no directory its paths could resolve against.
+    module = UsdManager()
+    try:
+        assert module.get_usd()[0] == ""
+    finally:
+        module.dispose()
+
+
+def test_a_world_manager_still_publishes_no_joint_tf() -> None:
+    # One link and no joints, so there is nothing to pose.
+    module = UsdManager()
+    try:
+        assert module.joint_transforms(JointState()) == []
+    finally:
+        module.dispose()
+
+
+def test_mounts_hang_off_the_world_link_of_a_manager_with_no_model(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    # The point of the world root: a tree of sensors and arms with no robot of its own.
+    pytest.importorskip("pxr")
+    module = UsdManager(mounts={"world": _FakeG1, "g1/head_mount": _FakeArm})
+    try:
+        module._subtree_clients["_FakeG1"] = cast("Any", _FakeClient(_G1_WITH_HEAD_USD))
+        module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
+
+        stage = _usd_stage(_scene(module))
+
+        assert stage.GetPrimAtPath("/world/world/g1/head_mount/fake_arm")
+    finally:
+        module.dispose()
