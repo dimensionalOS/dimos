@@ -126,6 +126,7 @@ def test_sim_blueprint_wires_the_arm_the_jaw_and_the_bench() -> None:
     assert planner_config.gripper_tasks == {"arm": gripper.name}
     assert planner_config.model.home_joints == sim_config.reset_joint_positions
     assert planner_config.model.tf_extra_links == METAL_TF_LINKS
+    assert not {"link7", "link8"} & set(METAL_TF_LINKS)
 
 
 def _body_pose(engine: MujocoEngine, name: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
