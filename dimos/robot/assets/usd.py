@@ -43,6 +43,10 @@ logger = setup_logger()
 # Where a prim keeps the URDF that urdf_to_usd itself has no use for, and where the root prim
 # keeps the whole original document. customData is USD's own field for exactly this: data a
 # schema has no place for, readable by anything, and not an attribute of our invention.
+# Their pose comes from odometry rather than the model, so they have no single position and
+# no UsdPhysics equivalent matching URDF's semantics. Kept in step with UsdManager's own set.
+_MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
+
 PASSTHROUGH_KEY = "urdf:unconverted"
 SOURCE_KEY = "urdf:source"
 
@@ -365,7 +369,7 @@ def _write_link_tree(
     _set_passthrough(pxr, prim, extras.get(link))
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
     if joint is not None:
-        xform.AddTransformOp().Set(_matrix(pxr, joint.parent_from_child(0.0)))
+        xform.AddTransformOp().Set(_matrix(pxr, _zero_pose(joint)))
 
     for index, geometry in enumerate(links.get(link, ())):
         _write_geometry(
@@ -391,6 +395,19 @@ def _write_link_tree(
 
 def _geometry_name(geometry: _Geometry, index: int) -> str:
     return f"{'collision' if geometry.collision else 'visual'}_{index}"
+
+
+def _zero_pose(joint: JointDescription) -> NDArray[np.float64]:
+    """Where this joint puts its child before anything moves.
+
+    A floating or planar joint has no single position to be at -- that is the whole point of
+    it, its pose comes from odometry rather than from the model -- so asking it for one raises.
+    Its origin is the honest answer, and it is also what parent_from_child(0) gives for every
+    other joint type, so the tree is posed consistently either way.
+    """
+    if joint.type in _MULTI_DOF_JOINT_TYPES:
+        return joint.origin()
+    return joint.parent_from_child(0.0)
 
 
 def _write_geometry(pxr: Any, stage: Any, path: str, geometry: _Geometry) -> None:
