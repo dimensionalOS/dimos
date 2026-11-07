@@ -28,6 +28,7 @@ from dimos.robot.assets.usd import (
     prefix_usd_frames,
     rename_usd_frames,
     require_asset_hashes,
+    trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
     usd_frame_names,
@@ -626,3 +627,57 @@ def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
     missing = unhashed_assets(usd)
 
     assert list(missing.values()) == ["/hashy/base_link/visual_0"]
+
+
+def _type_names(stage: Any) -> set[str]:
+    return {prim.GetTypeName() for prim in stage.Traverse()}
+
+
+def test_trivialize_keeps_every_frame_and_its_pose(toy: Any) -> None:
+    from pxr import UsdGeom
+
+    full = urdf_to_usd(toy)
+
+    thin = trivialize_usd(full)
+
+    assert usd_frame_names(thin) == usd_frame_names(full)
+    # The stages stay in locals: a prim does not outlive the stage it came from.
+    thin_stage, full_stage = _stage(thin), _stage(full)
+    pose = UsdGeom.Xformable(_prim_by_link(thin_stage, "mount")).GetLocalTransformation()
+    was = UsdGeom.Xformable(_prim_by_link(full_stage, "mount")).GetLocalTransformation()
+    np.testing.assert_allclose(np.array(pose), np.array(was), atol=1e-12)
+
+
+def test_trivialize_drops_the_shapes(toy: Any) -> None:
+    full = urdf_to_usd(toy)
+    full_stage = _stage(full)
+    assert _type_names(full_stage) & {"Cube", "Cylinder"}
+
+    thin = trivialize_usd(full)
+
+    thin_stage = _stage(thin)
+    assert not _type_names(thin_stage) & {"Cube", "Cylinder", "Sphere", "Mesh"}
+
+
+def test_trivialize_drops_the_meshes_a_link_references(meshy: Any) -> None:
+    """The geometry prim goes, and the reference arc and asset hash go with it."""
+    thin = trivialize_usd(urdf_to_usd(meshy))
+
+    assert "meshes/box.stl" not in thin
+    assert "references" not in thin
+
+
+def test_trivialize_keeps_the_joints_and_their_limits(toy: Any) -> None:
+    """A mount point is a frame plus how it moves; only the shapes are expendable."""
+    thin = trivialize_usd(urdf_to_usd(toy))
+
+    stage = _stage(thin)
+    joint = stage.GetPrimAtPath("/toy/joints/mount_to_arm")
+    assert joint
+    assert joint.GetAttribute("physics:lowerLimit").Get() == pytest.approx(-90.0, abs=1e-3)
+
+
+def test_trivializing_a_layer_with_no_geometry_leaves_it_alone(toy: Any) -> None:
+    thin = trivialize_usd(urdf_to_usd(toy))
+
+    assert trivialize_usd(thin) == thin

@@ -216,6 +216,45 @@ def usd_frame_names(usd: str) -> set[str]:
     }
 
 
+def trivialize_usd(usd: str) -> str:
+    """``usd`` with every link and joint kept, and everything they carry dropped.
+
+    The same description serves a robot on real hardware and a simulated one, but only the sim
+    needs the shapes: on a real robot the geometry is the world itself. So this keeps the
+    skeleton -- the links, the joints between them and their poses, which is what tf and a
+    mount point are -- and removes the visuals, the collision shapes and the meshes they
+    reference. The frames come out identical either way, so one description can be the only
+    one rather than a trivial second copy that drifts from it.
+    """
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a layer")
+    stage = pxr.Usd.Stage.Open(layer)
+    # Whatever holds a frame stays, which keeps the robot prim and the Scope the joints sit in
+    # without naming either: it is the prims holding no frame at all that are geometry.
+    doomed = []
+    stack = list(stage.GetPseudoRoot().GetChildren())
+    while stack:
+        prim = stack.pop()
+        if _holds_a_frame(pxr, prim):
+            stack.extend(prim.GetChildren())
+        else:
+            doomed.append(prim.GetPath())
+    if not doomed:
+        return usd
+    for path in doomed:
+        spec = layer.GetPrimAtPath(path)
+        if spec is not None:
+            del spec.nameParent.nameChildren[spec.name]
+    return str(layer.ExportToString())
+
+
+def _holds_a_frame(pxr: Any, prim: Any) -> bool:
+    """True when ``prim`` or anything under it is a link or a joint."""
+    if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+        return True
+    return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
+
+
 def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
     """``usd`` with the named links and joints renamed; names it does not carry are ignored.
 

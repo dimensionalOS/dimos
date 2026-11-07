@@ -38,6 +38,7 @@ from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.usd import unhashed_assets, usd_frame_names
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
@@ -1383,3 +1384,43 @@ def test_the_published_scene_carries_no_asset_root_to_resolve_against(
     module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(_SUBTREE_USD))
 
     assert _scene_answer(module)[0] == ""
+
+
+def test_trivialize_leaves_the_frames_and_drops_the_geometry(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """Real hardware wants the mount points without the shapes; sim wants both."""
+    pytest.importorskip("pxr")
+    full = make_manager()
+    thin = make_manager(trivialize=True)
+
+    assert usd_frame_names(thin.get_usd()[USD]) == usd_frame_names(full.get_usd()[USD])
+    assert "Cube" in full.get_usd()[USD]
+    assert "Cube" not in thin.get_usd()[USD]
+
+
+def test_a_trivialized_robot_publishes_the_same_tf_as_a_full_one(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # The whole point: the same blueprint wiring works against either.
+    state = JointState(ts=1.0, name=["shoulder"], position=[0.0])
+    full = make_manager().joint_transforms(state)
+    thin = make_manager(trivialize=True).joint_transforms(state)
+
+    assert [(t.frame_id, t.child_frame_id) for t in thin] == [
+        (t.frame_id, t.child_frame_id) for t in full
+    ]
+
+
+def test_a_trivialized_robot_names_no_assets_to_serve(
+    make_manager: Callable[..., UrdfManager], tmp_path: Path
+) -> None:
+    """Nothing to hash and nothing to publish, since the meshes went with the shapes."""
+    pytest.importorskip("pxr")
+    mesh = tmp_path / "cube.stl"
+    trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(mesh)
+    urdf = _URDF.replace('<box size="0.2 0.2 0.2"/>', f'<mesh filename="{mesh}"/>')
+    module = make_manager(trivialize=True, urdf_xml=urdf)
+
+    assert unhashed_assets(module.get_usd()[USD]) == {}
+    assert "cube.stl" not in module.get_usd()[USD]

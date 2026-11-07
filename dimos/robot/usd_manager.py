@@ -44,6 +44,7 @@ from dimos.robot.assets.usd import (
     rename_usd_frames,
     require_asset_hashes,
     resolve_usd_assets,
+    trivialize_usd,
     urdf_to_usd,
     usd_frame_names,
 )
@@ -180,6 +181,10 @@ class UsdManagerConfig(ModuleConfig):
     # else, which is a scene with no robot of its own -- useful when all this manager does is
     # hold mounts, so a tree of sensors and arms has somewhere to hang from.
     model: RobotModel | None = None
+    # Keep the frames, drop the shapes: the links, joints and poses stay, the visuals and
+    # collision meshes go. The same description then serves a real robot and a simulated one,
+    # since only the sim needs the geometry, and the mount points stay identical either way.
+    trivialize: bool = False
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -333,9 +338,12 @@ class UsdManager(Module):
         """
         with self._usd_lock:
             if self._usd is None:
+                usd = urdf_to_usd(self._description)
+                if self.config.trivialize:
+                    usd = trivialize_usd(usd)
                 # Renamed here as well as on tf, or the layer would name frames that no
                 # transform ever arrives for.
-                self._usd = rename_usd_frames(urdf_to_usd(self._description), self._frames)
+                self._usd = rename_usd_frames(usd, self._frames)
             return [self._asset_root(), self._usd]
 
     def _asset_root(self) -> str:
