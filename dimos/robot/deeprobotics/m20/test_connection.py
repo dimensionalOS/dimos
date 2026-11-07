@@ -297,21 +297,26 @@ def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
 
 
 @pytest.mark.parametrize(
-    "prepare,reason",
+    "prepare,status,reason",
     [
-        (lambda m, s: setattr(s, "charge", CHARGE_CHARGING), "charge status is charging"),
-        (lambda m, s: setattr(m, "_motion_state", 4), "not standing"),
+        (
+            lambda m, s: setattr(s, "charge", CHARGE_CHARGING),
+            CHARGE_CHARGING,
+            "charge status is charging",
+        ),
+        (lambda m, s: setattr(m, "_motion_state", 4), CHARGE_IDLE, "not standing"),
     ],
 )
 def test_dock_refuses_from_a_bad_state(
     connection: M20Connection,
     server: FakeBasicServer,
     prepare: Callable[[M20Connection, FakeBasicServer], None],
+    status: int,
     reason: str,
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
     prepare(connection, server)
-    time.sleep(0.1)
+    _wait_for_status(connection, status)
 
     message = connection.dock()
 
