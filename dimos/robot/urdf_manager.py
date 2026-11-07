@@ -66,6 +66,10 @@ SCENE_RPC = "get_scene"
 WORLD_LINK = "world"
 
 
+class CircularMountError(ValueError):
+    """Two managers each waiting for the other's scene. Retrying cannot fix it."""
+
+
 def _world_model() -> RobotModel:
     """The stand-in description for a manager given no model: one link, called "world"."""
     return RobotModel.from_root_link(WORLD_LINK, name=WORLD_LINK)
@@ -183,10 +187,12 @@ class UrdfManagerConfig(ModuleConfig):
     # Keys are the names as they end up in the scene, so a frame inside a mounted subtree
     # carries that subtree's prefix.
     mounts: dict[str, Mount] = Field(default_factory=dict)
-    # Frame renames for the subtrees get_scene collects, old -> new, reaching joints too.
+    # Frame renames, old -> new, reaching joints as well as links. They apply to this robot's
+    # own frames -- on tf and in its USD -- and to every subtree get_scene collects.
     # tf_renames is in the names after the namespace prefix has gone on, which is the usual
-    # place to work; tf_renames_pre_namespace runs first, in each subtree's own names. Both
-    # apply to every subtree, and a key matching none of them at all is an error.
+    # place to work; tf_renames_pre_namespace runs first, in each subtree's own names. This
+    # robot takes no prefix, so for its frames the two differ only in order. A key matching
+    # nothing at all is an error.
     tf_renames: dict[str, str] = Field(default_factory=dict)
     tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
     # How often to re-ask a module that is not up yet. There is no deadline: a scene missing an
@@ -221,6 +227,8 @@ class UrdfManager(Module):
         self._description = (self.config.model or _world_model()).load()
         self._file_paths = _files_named_by(self._description.xml)
         self._joints = {joint.name: joint for joint in self._description.joints}
+        # tf_renames reach this robot's own frames too, so every name it emits goes through here.
+        self._frames = self._renamed_own_frames()
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
@@ -235,11 +243,46 @@ class UrdfManager(Module):
         self._published_assets: dict[str, str] = {}
         try:
             self._check_mounts()
+            if not self.config.mounts:
+                # With no subtrees coming, this robot's frames are every name there will be, so
+                # a rename that matches none of them is a typo and can be caught here. With
+                # mounts it has to wait for get_scene, which is where the other names arrive.
+                self._check_renames_matched(self._matched_own_renames())
         except Exception:
             # super().__init__ already took a loop thread and an RPC session; hand them back
             # rather than leave a half-built module behind for the caller to notice.
             self.dispose()
             raise
+
+    def _own_frame_names(self) -> set[str]:
+        """Every link and joint name of this robot's own description, before any rename."""
+        names = {self._description.root_link}
+        for joint in self._joints.values():
+            names |= {joint.name, joint.parent_link, joint.child_link}
+        return names
+
+    def _renamed_own_frames(self) -> dict[str, str]:
+        """This robot's renamed frames, old -> new; only the ones that actually change.
+
+        Pre-namespace then post: this robot takes no namespace prefix of its own, so the two
+        dicts are just applied in order, and one key can be written in either.
+        """
+        pre = self.config.tf_renames_pre_namespace
+        post = self.config.tf_renames
+        renamed = {}
+        for name in self._own_frame_names():
+            once = pre.get(name, name)
+            new = post.get(once, once)
+            if new != name:
+                renamed[name] = new
+        return renamed
+
+    def _matched_own_renames(self) -> set[str]:
+        """The rename keys this robot's own frames account for."""
+        names = self._own_frame_names()
+        pre = self.config.tf_renames_pre_namespace
+        after_pre = {pre.get(name, name) for name in names}
+        return (names & set(pre)) | (after_pre & set(self.config.tf_renames))
 
     def _check_mounts(self) -> None:
         """Fail here rather than at get_scene time, which is a blueprint's last step before start.
@@ -283,7 +326,9 @@ class UrdfManager(Module):
         """
         with self._usd_lock:
             if self._usd is None:
-                self._usd = urdf_to_usd(self._description)
+                # Renamed here as well as on tf, or the layer would name frames that no
+                # transform ever arrives for.
+                self._usd = rename_usd_frames(urdf_to_usd(self._description), self._frames)
             return [self._asset_root(), self._usd]
 
     def _asset_root(self) -> str:
@@ -311,7 +356,7 @@ class UrdfManager(Module):
         """
         chain = list(visited or [])
         if self._scene_identity in chain:
-            raise ValueError(
+            raise CircularMountError(
                 f"circular mount: {' -> '.join([*chain, self._scene_identity])}. One of these "
                 f"modules is mounted on a module that is mounted on it, directly or through the "
                 f"others, so neither scene can be built before the other. Break the cycle by "
@@ -360,23 +405,25 @@ class UrdfManager(Module):
     async def _subtrees(self, chain: list[str]) -> dict[str, str]:
         mounts = self.config.mounts
         if not mounts:
-            self._check_renames_matched(set())
+            self._check_renames_matched(self._matched_own_renames())
             return {}
         results = await asyncio.gather(
             *(self._subtree(frame_id, mount, chain) for frame_id, mount in mounts.items())
         )
-        self._check_renames_matched({name for _, matched in results for name in matched})
+        matched = self._matched_own_renames()
+        matched |= {name for _, subtree_matched in results for name in subtree_matched}
+        self._check_renames_matched(matched)
         return {frame_id: usd for frame_id, (usd, _) in zip(mounts, results, strict=True)}
 
     def _check_renames_matched(self, matched: set[str]) -> None:
-        """A rename key that matched no subtree at all is a typo, not a no-op."""
+        """A rename key that matched nothing in the scene is a typo, not a no-op."""
         wanted = set(self.config.tf_renames_pre_namespace) | set(self.config.tf_renames)
         missing = sorted(wanted - matched)
         if missing:
             raise ValueError(
-                f"tf_renames named {missing}, which no mounted subtree has as a link or joint "
-                f"(pre-namespace names are the subtree's own; post-namespace names carry the "
-                f"namespace prefix)"
+                f"tf_renames named {missing}, which is neither a link or joint of this robot "
+                f"nor of any mounted subtree (pre-namespace names are the subtree's own; "
+                f"post-namespace names carry the namespace prefix)"
             )
 
     def _subtree_client(self, mount: Mount) -> RPCClient:
@@ -460,7 +507,7 @@ class UrdfManager(Module):
         except Exception as exc:
             # A circular mount is the one failure worth stopping for: retrying cannot fix it,
             # and the manager below has already named the whole chain.
-            if "circular mount" in str(exc):
+            if _is_circular_mount(exc):
                 raise
             logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} did not answer yet: {exc}")
             return None
@@ -534,13 +581,35 @@ class UrdfManager(Module):
         return [
             Transform.from_matrix(
                 joint.parent_from_child(positions.get(joint.name, 0.0)),
-                frame_id=joint.parent_link,
-                child_frame_id=joint.child_link,
+                frame_id=self.frame(joint.parent_link),
+                child_frame_id=self.frame(joint.child_link),
                 ts=state.ts,
             )
             for joint in self._joints.values()
             if joint.type not in MULTI_DOF_JOINT_TYPES
         ]
+
+    def frame(self, link_or_joint: str) -> str:
+        """The name this manager publishes one of its own frames under, after tf_renames.
+
+        The description keeps its own names -- they are what the hardware speaks, and what a
+        JointState arrives keyed by. Only what goes out is renamed, so anything reading tf for
+        a frame of this robot has to ask through here.
+        """
+        return self._frames.get(link_or_joint, link_or_joint)
+
+
+def _is_circular_mount(exc: BaseException) -> bool:
+    """True for a CircularMountError raised here or by a manager in another process.
+
+    The RPC transport only rebuilds builtin exception types; anything else arrives as a
+    RemoteError that names the type it came from, so that is what identifies it across a
+    process boundary.
+    """
+    if isinstance(exc, CircularMountError):
+        return True
+    wanted = f"{CircularMountError.__module__}.{CircularMountError.__name__}"
+    return getattr(exc, "remote_type", None) == wanted
 
 
 def _files_named_by(xml: str) -> set[str]:
