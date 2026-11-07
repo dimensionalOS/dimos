@@ -92,6 +92,7 @@ let objectsTS=0, selectedObject=null;
 const keyboard=new KeyboardClutch();
 const bodyClutch=new BodyClutchFrame();
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
+  if(action==='toggle_map') { mapCloud.visible=!mapCloud.visible; return; }
   if(action==='hold'||action==='resume') bodyClutch.reset();
   if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
@@ -502,7 +503,7 @@ renderer.setAnimationLoop((time, frame) => {
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
     ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:Object.values(surfaces).some(surface=>surface.ts>0),connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
     workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode,
-    torsoHeightControl:geometry.torso_height_control});
+    torsoHeightControl:geometry.torso_height_control,mapVisible:mapCloud.visible});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
     const viewer = frame.getViewerPose(reference);

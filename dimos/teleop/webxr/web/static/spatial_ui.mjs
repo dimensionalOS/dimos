@@ -150,7 +150,7 @@ export class SpatialUI {
       this.onAction(action); this.hidePalm(); return;
     }
     if(![...this.buttons,...this.workspaceButtons,...this.navigationButtons].some(button=>button.action===action && button.enabled)) return;
-    if(['actual_size','scale_down','scale_up','exit_xr'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
+    if(['actual_size','scale_down','scale_up','exit_xr','toggle_map'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
     if(this.pending && action!=='hold') return;
     this.pending=action; const version=++this.version; this.error='';
     try {
@@ -171,7 +171,7 @@ export class SpatialUI {
     finally { if(version===this.version) this.pending=null; }
   }
 
-  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={},torsoHeightControl=false}) {
+  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={},torsoHeightControl=false,mapVisible=true}) {
     this.control=control;
     this.outline.visible=workspaceActive;
     this.workspaceButtons=[
@@ -180,8 +180,8 @@ export class SpatialUI {
       {action:'actual_size',label:'Actual size',x:780,w:220},
     ].map(button=>({...button,y:424,h:48,enabled:!preview&&!workspaceActive}));
     this.navigationButtons=[
-      ['mode:tools','Tool handles'],['mode:clutch','Classic teleop'],['bring_here','Bring here'],['exit_xr','Exit XR'],
-    ].map(([action,label],i)=>({action,label,x:24+i*250,y:512,w:232,h:48,enabled:!preview}));
+      ['mode:tools','Tool handles'],['mode:clutch','Classic teleop'],['toggle_map',mapVisible?'Hide voxel map':'Show voxel map'],['bring_here','Bring here'],['exit_xr','Exit XR'],
+    ].map(([action,label],i)=>({action,label,x:24+i*200,y:512,w:184,h:48,enabled:action==='toggle_map'||!preview}));
     for(const view of this.cameras.values()) {
       if(!view.stale && now-view.ts>0.5) this.cameraStatus(view,false);
     }
@@ -216,7 +216,9 @@ export class SpatialUI {
       const element=document.querySelector(`[data-action="${button.action}"]`);
       element.disabled=!button.enabled; element.textContent=button.label;
     }
-    const signature=JSON.stringify([controlLabel,summary,arms,hint,this.buttons,this.workspaceButtons,this.hovered,Math.round(workspaceScale*100),mode]);
+    const mapButton=document.querySelector('[data-action="toggle_map"]');
+    if(mapButton) mapButton.textContent=mapVisible?'Hide voxel map':'Show voxel map';
+    const signature=JSON.stringify([controlLabel,summary,arms,hint,this.buttons,this.workspaceButtons,this.navigationButtons,this.hovered,Math.round(workspaceScale*100),mode]);
     if(signature===this.drawn) return; this.drawn=signature;
     const c=this.hud.context;
     c.fillStyle='#13232d'; c.fillRect(0,0,1024,576); c.textAlign='left';
@@ -234,7 +236,7 @@ export class SpatialUI {
     for(const button of [...this.buttons,...this.workspaceButtons,...this.navigationButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);
-      c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font=`bold ${button.w<180?22:27}px system-ui`; c.textAlign='center';
+      c.fillStyle=button.enabled?'#10202b':'#78909b'; c.font=`bold ${button.w<200?22:27}px system-ui`; c.textAlign='center';
       c.fillText(button.label,button.x+button.w/2,button.y+button.h/2+10);
     }
     this.hud.texture.needsUpdate=true;
