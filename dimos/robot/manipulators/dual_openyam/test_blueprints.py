@@ -63,6 +63,7 @@ def test_webxr_blueprint_selects_physical_hardware_from_both_can_ports() -> None
     assert parsed.module_kwargs("manipulationmodule")["visualization"]["host"] == "0.0.0.0"
 
 
+@pytest.mark.self_hosted
 @pytest.mark.parametrize("engaged", ["left", "right"])
 def test_mock_webxr_grip_engages_only_its_own_arm(
     mocker: MockerFixture, tmp_path: Path, engaged: str

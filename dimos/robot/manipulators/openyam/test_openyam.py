@@ -91,6 +91,7 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     } == {"joint7": "prismatic", "joint8": "prismatic"}
 
 
+@pytest.mark.self_hosted
 def test_openyam_jaw_is_joint7_and_joint8_copies_it() -> None:
     loaded = make_openyam_model_config(robot="arm").model.load()
 

@@ -147,6 +147,7 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         assert rig.positions["arm/joint7"] == pytest.approx(-0.03)
 
 
+@pytest.mark.self_hosted
 def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     mocker.patch.object(global_config, "simulation", "mujoco")
     blueprint = dual_openyam_control()
