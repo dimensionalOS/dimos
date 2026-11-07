@@ -34,6 +34,7 @@ from dimos.robot.manipulators.makermods_metal.config import (
     METAL_MESHDIR,
     METAL_MJCF_PATH,
     METAL_SIM_HOME,
+    METAL_TF_LINKS,
     metal_sim_joints,
 )
 from dimos.robot.manipulators.makermods_metal.mjcf import (
@@ -124,6 +125,7 @@ def test_sim_blueprint_wires_the_arm_the_jaw_and_the_bench() -> None:
     planner_config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(planner.name))
     assert planner_config.gripper_tasks == {"arm": gripper.name}
     assert planner_config.model.home_joints == sim_config.reset_joint_positions
+    assert planner_config.model.tf_extra_links == METAL_TF_LINKS
 
 
 def _body_pose(engine: MujocoEngine, name: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:

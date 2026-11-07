@@ -16,6 +16,8 @@
 
 The same recorder, episode monitor, Quest teleop and planner as
 ``metal_quest_collection``; the sim's wrist camera stands in for the webcam.
+The planner puts every arm link on tf and the sim camera sends a point cloud
+of the bench, so a viewer can draw the arm and the scene.
 """
 
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
@@ -33,7 +35,10 @@ from dimos.robot.manipulators.makermods_metal.blueprints.teleop import (
     METAL_QUEST_MODEL,
     metal_quest_tasks,
 )
-from dimos.robot.manipulators.makermods_metal.config import make_metal_sim_hardware
+from dimos.robot.manipulators.makermods_metal.config import (
+    METAL_TF_LINKS,
+    make_metal_sim_hardware,
+)
 from dimos.robot.manipulators.makermods_metal.mjcf import make_metal_sim_module_kwargs
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
@@ -43,6 +48,8 @@ from dimos.teleop.webxr.extensions import ArmTeleopModule
 # rate: export resamples to DEFAULT_FPS and drops an episode whose camera ran
 # below 95% of it.
 _HEIGHT, _WIDTH = METAL_QUEST_PROFILE.observations["observation.images.wrist"].shape[:2]
+# The Quest model with every link on tf.
+_MODEL = METAL_QUEST_MODEL.model_copy(update={"tf_extra_links": list(METAL_TF_LINKS)})
 
 # The recorder comes first so it stops after the producers it records.
 metal_quest_collection_sim = autoconnect(
@@ -57,21 +64,32 @@ metal_quest_collection_sim = autoconnect(
         cls=TeleopControlCoordinator,
         instance_name="ControlCoordinator",
     ),
+    # Rays from the wrist camera (80 x 60, about 1 cm apart on the bench) give
+    # world-frame points at 5 Hz on "pointcloud".
     MujocoSimModule.blueprint(
-        **make_metal_sim_module_kwargs(), width=_WIDTH, height=_HEIGHT, fps=int(DEFAULT_FPS)
+        **make_metal_sim_module_kwargs(),
+        width=_WIDTH,
+        height=_HEIGHT,
+        fps=int(DEFAULT_FPS),
+        enable_pointcloud=True,
+        enable_mujoco_lidar=True,
+        mujoco_lidar_raycast_width=80,
+        mujoco_lidar_raycast_height=60,
+        mujoco_lidar_voxel_size=0.01,
     ),
     ManipulationModule.blueprint(
-        model=METAL_QUEST_MODEL,
+        model=_MODEL,
         gripper_tasks={"arm": "metal_gripper"},
         kinematics=METAL_QUEST_KINEMATICS,
         visualization={"backend": "viser"},
         default_speed_scale=0.2,
     ),
     # The planner already puts the arm's links on tf.
-    UrdfManager.blueprint(model=METAL_QUEST_MODEL.model, publish_joint_tf=False),
+    UrdfManager.blueprint(model=_MODEL.model, publish_joint_tf=False),
 ).remappings(
     [
         (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (MujocoSimModule, "color_image", "wrist_image"),
+        # The recorder's wrist image is the sim camera, which keeps its name.
+        ("recorder", "wrist_image", "color_image"),
     ]
 )

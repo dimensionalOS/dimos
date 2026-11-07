@@ -26,6 +26,7 @@ from dimos.robot.manipulators.common.blueprints import coordinator
 from dimos.robot.manipulators.makermods_metal.config import (
     METAL_HEURISTIC_AIM,
     METAL_SIM_HOME,
+    METAL_TF_LINKS,
     make_metal_model_config,
     make_metal_sim_hardware,
 )
@@ -33,7 +34,10 @@ from dimos.robot.manipulators.makermods_metal.mjcf import make_metal_sim_module_
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
-_MODEL = make_metal_model_config(robot="arm", home_joints=METAL_SIM_HOME)
+# Every link on tf, so a viewer can draw the arm at its pose.
+_MODEL = make_metal_model_config(
+    robot="arm", home_joints=METAL_SIM_HOME, tf_extra_links=METAL_TF_LINKS
+)
 _HARDWARE = make_metal_sim_hardware()
 
 # Trajectories, the jaw (joint7 is open at its lower end), the planner and the

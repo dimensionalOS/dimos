@@ -23,6 +23,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.imitation.collection.recorder import CollectionModule
 from dimos.imitation.dataprep.schema import DEFAULT_FPS
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.robot.manipulators.makermods_metal.blueprints.learning_collection import (
     METAL_QUEST_PROFILE,
     metal_quest_collection,
@@ -30,7 +31,7 @@ from dimos.robot.manipulators.makermods_metal.blueprints.learning_collection imp
 from dimos.robot.manipulators.makermods_metal.blueprints.learning_collection_sim import (
     metal_quest_collection_sim,
 )
-from dimos.robot.manipulators.makermods_metal.config import metal_sim_joints
+from dimos.robot.manipulators.makermods_metal.config import METAL_TF_LINKS, metal_sim_joints
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -54,16 +55,21 @@ def test_twin_records_the_quest_profile_from_the_simulated_metal(tmp_path: Path)
     atoms = metal_quest_collection_sim.active_blueprints
     real = metal_quest_collection.active_blueprints
     [sim] = [atom for atom in atoms if atom.module is MujocoSimModule]
+    [planner] = [atom for atom in atoms if atom.module is ManipulationModule]
     coordinator = _coordinator(atoms)
 
     assert issubclass(atoms[0].module, CollectionModule)
     assert atoms[0].kwargs["recording_schema"] == real[0].kwargs["recording_schema"]
     assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"
-    assert metal_quest_collection_sim.remapping_map[(sim.name, "color_image")] == "wrist_image"
+    assert metal_quest_collection_sim.remapping_map[("recorder", "wrist_image")] == "color_image"
+    assert (sim.name, "color_image") not in metal_quest_collection_sim.remapping_map
     camera = MujocoSimModuleConfig.model_validate(parsed.module_kwargs(sim.name))
     image = METAL_QUEST_PROFILE.observations["observation.images.wrist"]
     assert (camera.height, camera.width, 3) == image.shape
     assert camera.fps == DEFAULT_FPS
+    assert camera.enable_pointcloud and camera.enable_mujoco_lidar
+    planner_config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(planner.name))
+    assert planner_config.model.tf_extra_links == METAL_TF_LINKS
     assert issubclass(coordinator.module, TeleopControlCoordinator)
     control = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name))
     [arm] = control.hardware

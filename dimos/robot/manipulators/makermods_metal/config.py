@@ -53,6 +53,9 @@ METAL_GRIPPER_NAME = "gripper"
 METAL_FINGER_JOINTS = ("joint7", "joint8")
 #: joint7 fully open, then closed, metres.
 METAL_GRIPPER_RANGE = (-0.05, 0.0)
+#: Every link that moves, for a viewer that draws each URDF link at its tf
+#: frame; gripper_base is the planning tip and is already on tf.
+METAL_TF_LINKS = ["base_link", *(f"link{index}" for index in range(1, 9))]
 #: MIT-mode position and velocity gains of the six arm motors, N m/rad and N m s/rad.
 METAL_KP = [100.0, 100.0, 100.0, 50.0, 20.0, 20.0]
 METAL_KD = [5.0, 5.0, 5.0, 5.0, 0.6, 0.6]
@@ -90,7 +93,10 @@ METAL_PROFILES = (
 
 
 def make_metal_model_config(
-    *, robot: str | None = None, home_joints: list[float] | None = None
+    *,
+    robot: str | None = None,
+    home_joints: list[float] | None = None,
+    tf_extra_links: list[str] | None = None,
 ) -> RobotModelConfig:
     """Plan the arm to the gripper mount; the jaw moves on its own finger joint.
 
@@ -98,6 +104,8 @@ def make_metal_model_config(
         robot: Name the moving joints under this robot, e.g. "arm" gives
             "arm/joint1" and "arm/joint7".
         home_joints: The six arm joints of the "home" preset, rad; none by default.
+        tf_extra_links: URDF links the planner also publishes on tf, besides
+            the gripper mount; ``METAL_TF_LINKS`` for every moving link.
     """
     driven = f"{robot}/{METAL_FINGER_JOINTS[0]}" if robot else METAL_FINGER_JOINTS[0]
     return named_for_robot(
@@ -122,6 +130,7 @@ def make_metal_model_config(
                 pad_links=("link7", "link8"), finger_joints={driven: METAL_GRIPPER_RANGE}
             ),
             home_joints=home_joints,
+            tf_extra_links=list(tf_extra_links or []),
         ),
         robot,
         fingers=METAL_FINGER_JOINTS,

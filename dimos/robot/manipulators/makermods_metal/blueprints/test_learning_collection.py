@@ -82,6 +82,8 @@ def test_collection_takes_recording_task_camera_and_can_port(tmp_path: Path) -> 
     assert issubclass(atoms[0].module, CollectionModule)
     assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"
     assert parsed.module_configs["wrist"]["hardware"]["camera_index"] == "/dev/video3"
+    assert metal_quest_collection.remapping_map[("recorder", "wrist_image")] == "color_image"
+    assert ("wrist", "color_image") not in metal_quest_collection.remapping_map
     assert parsed.module_kwargs("metalconnection")["can_port"] == "test-can"
     assert (teleop.type, teleop.priority, teleop.joint_names) == ("teleop_ik", 20, _ARM_JOINTS)
     assert teleop.params["solver_type"] is PinkPoseTargetSolver

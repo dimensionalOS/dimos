@@ -72,10 +72,5 @@ metal_quest_collection = autoconnect(
         ),
         frame_id="wrist_camera_link",
     ),
-).remappings(
-    [
-        ("wrist", "color_image", "wrist_image"),
-        ("wrist", "camera_info", "wrist_camera_info"),
-        ("wrist", "tf", "wrist_tf"),
-    ]
-)
+    # The recorder's wrist image is the webcam, which keeps its name.
+).remappings([("recorder", "wrist_image", "color_image")])
