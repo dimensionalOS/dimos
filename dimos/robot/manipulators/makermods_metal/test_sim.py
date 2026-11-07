@@ -14,9 +14,13 @@
 
 """The Metal MJCF is what the URDF and the sim module expect, and the sim blueprint wires it."""
 
+import math
 from pathlib import Path
 
 import mujoco
+import numpy as np
+from numpy.typing import NDArray
+import pytest
 
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -29,6 +33,7 @@ from dimos.robot.manipulators.makermods_metal.config import (
     METAL_JOINT3_LIMITS,
     METAL_MESHDIR,
     METAL_MJCF_PATH,
+    METAL_SIM_HOME,
     metal_sim_joints,
 )
 from dimos.robot.manipulators.makermods_metal.mjcf import (
@@ -69,12 +74,16 @@ def test_mjcf_drives_every_arm_joint_and_the_jaw() -> None:
     assert _name(model, mujoco.mjtObj.mjOBJ_BODY, camera.bodyid[0]) == "gripper_base"
 
 
-def test_bench_composes_with_the_arm_the_way_the_sim_module_reads_it() -> None:
+def _bench_model() -> mujoco.MjModel:
     scene = mujoco.MjSpec.from_file(str(METAL_BENCH_PATH))
     robot = mujoco.MjSpec.from_file(str(METAL_MJCF_PATH))
     robot.meshdir = str(METAL_MESHDIR)
     scene.attach(robot, prefix=None, frame=scene.worldbody.add_frame())
-    model = scene.compile()
+    return scene.compile()
+
+
+def test_bench_composes_with_the_arm_the_way_the_sim_module_reads_it() -> None:
+    model = _bench_model()
     binding = resolve_robot_sim_binding(model, METAL_SIM_SPEC, build_joint_mappings(None, model))
     assert [mapping.name for mapping in binding.joint_mappings] == [
         f"/joint{i}" for i in range(1, 8)
@@ -115,3 +124,38 @@ def test_sim_blueprint_wires_the_arm_the_jaw_and_the_bench() -> None:
     planner_config = ManipulationModuleConfig.model_validate(parsed.module_kwargs(planner.name))
     assert planner_config.gripper_tasks == {"arm": gripper.name}
     assert planner_config.model.home_joints == sim_config.reset_joint_positions
+
+
+def _body_pose(engine: MujocoEngine, name: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    pose = engine.get_body_pose(name)
+    assert pose is not None
+    return pose
+
+
+def test_reset_places_named_bodies_once_and_puts_the_arm_at_home() -> None:
+    engine = MujocoEngine(
+        config_path=METAL_MJCF_PATH,
+        headless=True,
+        model=_bench_model(),
+        robot_sim_spec=METAL_SIM_SPEC,
+        reset_joint_positions=list(METAL_SIM_HOME),
+    )
+    assert engine.connect()
+    try:
+        with pytest.raises(ValueError, match="no body named"):
+            engine.request_reset(body_poses={"table": (0.2, 0.1, 0.02, 0.0)})
+        with pytest.raises(ValueError, match="no free joint"):
+            engine.request_reset(body_poses={"world": (0.2, 0.1, 0.02, 0.0)})
+
+        assert engine.request_reset(wait=True, body_poses={"cube": (0.20, 0.16, 0.02, 0.5)})
+        position, orientation = _body_pose(engine, "cube")
+        assert position == pytest.approx([0.20, 0.16, 0.02], abs=2e-3)
+        assert orientation == pytest.approx([0.0, 0.0, math.sin(0.25), math.cos(0.25)], abs=1e-3)
+        assert engine.read_joint_positions()[:6] == pytest.approx(METAL_SIM_HOME, abs=0.1)
+        assert [engine.get_position_target(i) for i in range(6)] == pytest.approx(METAL_SIM_HOME)
+
+        assert engine.request_reset(wait=True)
+        position, _ = _body_pose(engine, "cube")
+        assert position == pytest.approx([0.26, 0.11, 0.02], abs=2e-3)
+    finally:
+        engine.disconnect()

@@ -26,6 +26,7 @@ the camera in different worker processes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 from pathlib import Path
 import threading
@@ -65,6 +66,7 @@ from dimos.simulation.engines.mujoco_shm import (
     shm_key_from_path,
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
+from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.simulation.mujoco.constants import LIDAR_RESOLUTION, MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
@@ -727,15 +729,18 @@ class MujocoSimModule(
             raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {err}") from err
 
     @rpc
-    def reset(self) -> bool:
-        """Reset the running simulation to its current configured spawn pose."""
+    def reset(self, placements: Mapping[str, BodyPlacement] | None = None) -> bool:
+        """Reset the running simulation to its spawn pose and joint positions.
+        ``placements`` puts named free bodies at (x, y, z, yaw), metres and
+        radians in the world frame, for this reset only; an unknown or fixed
+        body raises ValueError. Returns False when the engine is not running."""
         engine = self._engine
         if engine is None:
             return False
         if self._sim_hooks is not None:
             self._sim_hooks.clear_latched_commands()
-        applied = engine.request_reset(wait=True)
-        logger.info("MujocoSimModule: reset requested", applied=applied)
+        applied = engine.request_reset(wait=True, body_poses=placements)
+        logger.info("MujocoSimModule: reset requested", applied=applied, placements=placements)
         return applied
 
     @rpc

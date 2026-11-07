@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -36,6 +36,7 @@ from dimos.simulation.engines.robot_sim_binding import (
     RobotSimSpec,
     resolve_robot_sim_binding,
 )
+from dimos.simulation.engines.sim_scene_spec import BodyPlacement
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -223,6 +224,8 @@ class MujocoEngine(SimulationEngine):
         self._lock = threading.Lock()
         self._reset_requested = False
         self._reset_done_events: list[threading.Event] = []
+        # Free bodies to place at the next reset: joint addresses and the pose, cleared once applied.
+        self._placements: dict[str, tuple[tuple[int, int], BodyPlacement]] = {}
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
 
@@ -550,6 +553,7 @@ class MujocoEngine(SimulationEngine):
         else:
             mujoco.mj_resetData(self._model, self._data)  # type: ignore[attr-defined]
         self._apply_spawn_pose_unlocked()
+        self._apply_placements_unlocked()
         self._apply_reset_joint_positions_unlocked()
         for i, mapping in enumerate(self._joint_mappings):
             self._joint_position_targets[i] = self._current_position(mapping)
@@ -589,6 +593,30 @@ class MujocoEngine(SimulationEngine):
         if qvel_adr is not None:
             self._data.qvel[qvel_adr : qvel_adr + 6] = 0.0
         mujoco.mj_forward(self._model, self._data)
+
+    def _apply_placements_unlocked(self) -> None:
+        for (qpos_adr, dof_adr), (x, y, z, yaw) in self._placements.values():
+            self._data.qpos[qpos_adr : qpos_adr + 3] = [x, y, z]
+            self._data.qpos[qpos_adr + 3 : qpos_adr + 7] = [
+                math.cos(yaw * 0.5),
+                0.0,
+                0.0,
+                math.sin(yaw * 0.5),
+            ]
+            self._data.qvel[dof_adr : dof_adr + 6] = 0.0
+        if self._placements:
+            self._placements = {}
+            mujoco.mj_forward(self._model, self._data)
+
+    def _free_joint_adrs(self, body: str) -> tuple[int, int]:
+        """The qpos and dof addresses of ``body``'s free joint; ValueError when the model has no free body of that name."""
+        body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body)
+        if body_id < 0:
+            raise ValueError(f"the model has no body named {body!r}")
+        joint = int(self._model.body_jntadr[body_id])
+        if self._model.body_jntnum[body_id] < 1 or int(self._model.jnt_type[joint]) != _MJJNT_FREE:
+            raise ValueError(f"body {body!r} has no free joint, so it cannot be placed")
+        return int(self._model.jnt_qposadr[joint]), int(self._model.jnt_dofadr[joint])
 
     def _apply_reset_joint_positions_unlocked(self) -> None:
         if self._reset_joint_positions is None:
@@ -789,9 +817,18 @@ class MujocoEngine(SimulationEngine):
         *,
         wait: bool = False,
         timeout: float = _RESET_WAIT_TIMEOUT_S,
+        body_poses: Mapping[str, BodyPlacement] | None = None,
     ) -> bool:
+        """Have the sim thread reset the scene at its next step. ``body_poses`` puts
+        named free bodies at (x, y, z, yaw), metres and radians in the world frame,
+        for this reset only; an unknown or fixed body raises ValueError here. With
+        ``wait`` the call returns once the reset is applied, False after ``timeout`` seconds."""
+        placements = {
+            name: (self._free_joint_adrs(name), pose) for name, pose in (body_poses or {}).items()
+        }
         done_event = threading.Event() if wait else None
         with self._lock:
+            self._placements = placements
             if done_event is not None:
                 self._reset_done_events.append(done_event)
             self._reset_requested = True
