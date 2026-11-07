@@ -157,6 +157,10 @@ class ArmTeleopModule(WebXRTeleopModule):
 
     _manipulation: ManipulationSpec | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._grip_held: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -208,6 +212,14 @@ class ArmTeleopModule(WebXRTeleopModule):
         )
         self._publish_buttons(buttons)
         self._publish_gripper_commands(left, right, buttons)
+        self._log_engagement(buttons)
+
+    def _log_engagement(self, buttons: Buttons) -> None:
+        """Log a hand as engaged when its grip is pressed, and disengaged when let go."""
+        for hand, held in ((Hand.LEFT, buttons.left_grip), (Hand.RIGHT, buttons.right_grip)):
+            if held != self._grip_held[hand]:
+                self._grip_held[hand] = held
+                logger.info(f"{hand.name} {'engaged' if held else 'disengaged'}.")
 
     def _publish_gripper_commands(
         self,
