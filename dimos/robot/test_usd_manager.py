@@ -903,7 +903,7 @@ def test_renaming_merges_rather_than_replacing() -> None:
 
 
 def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # Written in the subtree's own names, which is what a vendor description gives you.
     pytest.importorskip("pxr")
@@ -919,7 +919,7 @@ def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
 
 
 def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # Written in the prefixed names, for when the prefix is not the shape you wanted.
     pytest.importorskip("pxr")
@@ -935,7 +935,7 @@ def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
 
 
 def test_both_renames_apply_around_the_prefix(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     pytest.importorskip("pxr")
     mount = Mount.of(_FakeArm.blueprint().namespace("left")).renaming(
@@ -950,7 +950,7 @@ def test_both_renames_apply_around_the_prefix(
 
 
 def test_a_rename_naming_a_frame_the_subtree_does_not_have_fails_the_scene(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     # Loudly, rather than handing back a scene whose frames are not the ones asked for.
     pytest.importorskip("pxr")
