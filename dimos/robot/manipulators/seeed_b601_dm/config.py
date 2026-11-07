@@ -102,6 +102,8 @@ def b601_dm_model_config(
                     tip_link="end_link",
                 )
             ],
+            # The closed fingers touch each other.
+            collision_exclusion_pairs=[("finger_left_link", "finger_right_link")],
             auto_convert_meshes=True,
             home_joints=list(home_joints or [0.0] * B601_DM_DOF),
         ),

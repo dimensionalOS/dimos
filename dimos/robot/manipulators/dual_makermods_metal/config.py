@@ -91,6 +91,8 @@ def dual_metal_model_config(
                 )
                 for side in SIDES
             ],
+            # Each jaw's closed fingers touch each other.
+            collision_exclusion_pairs=[(f"{side}_link7", f"{side}_link8") for side in SIDES],
             auto_convert_meshes=True,
         ),
         robot,

@@ -81,6 +81,8 @@ def make_metal_model_config(*, robot: str | None = None) -> RobotModelConfig:
                     tip_link="gripper_base",
                 )
             ],
+            # The closed fingers touch each other.
+            collision_exclusion_pairs=[("link7", "link8")],
             auto_convert_meshes=True,
         ),
         robot,
