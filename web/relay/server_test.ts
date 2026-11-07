@@ -57,7 +57,7 @@ function certOpts(hashB64: string | undefined): WebTransportOptions {
 }
 
 function within<T>(promise: Promise<T>, what: string, ms = 8000): Promise<T> {
-  let timer: number;
+  let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
   });
@@ -195,7 +195,10 @@ function robotCarrier(wt: WebTransport): {
 }
 
 async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload: Uint8Array) {
-  const stream = await robot.createBidirectionalStream();
+  const stream = await within(
+    robot.createBidirectionalStream({ waitUntilAvailable: true }),
+    "provider stream credit",
+  );
   const writer = stream.writable.getWriter();
   await writer.write(encodeDataFrame(header, payload));
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
@@ -283,6 +286,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     return channels[0]?.inflight ?? -1;
   };
   const clients: WebTransport[] = [];
+  const controlWriters: WritableStreamDefaultWriter<Uint8Array>[] = [];
   let tearingDown = false;
   try {
     const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
@@ -307,6 +311,10 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
       await within(wt.ready, `${name} connect`);
       const control = await wt.createBidirectionalStream();
       const writer = control.writable.getWriter();
+      // Keep this connection's control stream alive for the whole round.
+      // Deno 2.9 releases unowned streams during collection; losing this
+      // writer closes the viewer before backpressure can be exercised.
+      controlWriters.push(writer);
       const next = controlQueue(control.readable);
       await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
       await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
@@ -391,6 +399,7 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     throw e;
   } finally {
     tearingDown = true;
+    for (const writer of controlWriters) void writer.abort().catch(() => {});
     for (const wt of clients) {
       try {
         wt.close();
@@ -1281,6 +1290,60 @@ Deno.test({
   } finally {
     client.close();
     await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "a relay with --cert/--key retries when an ephemeral TCP port is occupied on UDP",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cert = await makeEphemeralCert();
+  const serve = Deno.serve;
+  let occupied: Deno.DatagramConn | undefined;
+  let bindCount = 0;
+  let firstPort: number | undefined;
+  Deno.serve = new Proxy(serve, {
+    apply(target, thisArg, args) {
+      const server = Reflect.apply(target, thisArg, args) as Deno.HttpServer<Deno.NetAddr>;
+      bindCount++;
+      if (bindCount === 1) {
+        firstPort = server.addr.port;
+        // A TCP port picked by the OS may already be in use on UDP.
+        try {
+          occupied = Deno.listenDatagram({
+            hostname: "127.0.0.1",
+            port: server.addr.port,
+            transport: "udp",
+          });
+        } catch (e) {
+          if (!(e instanceof Deno.errors.AddrInUse)) throw e;
+        }
+      }
+      return server;
+    },
+  });
+  let relay: Awaited<ReturnType<typeof startRelay>> | undefined;
+  try {
+    relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+    assert(bindCount >= 2);
+    assert(firstPort !== undefined);
+    assert(relay.httpPort !== firstPort);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: firstPort });
+    probe.close();
+    const client = Deno.createHttpClient({ caCerts: [cert.certPem] });
+    try {
+      const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+    } finally {
+      client.close();
+    }
+  } finally {
+    Deno.serve = serve;
+    occupied?.close();
+    await relay?.shutdown();
   }
 });
 

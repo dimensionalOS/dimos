@@ -91,6 +91,7 @@ export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
 // it. Browsers and the SDK add an application ping on the control stream.
 export const MAX_IDLE_TIMEOUT_MS = 15_000;
 export const KEEP_ALIVE_INTERVAL_MS = 3_000;
+const EPHEMERAL_PORT_ATTEMPTS = 10;
 
 /** What the listeners serve: the ephemeral certificate or the operator's. */
 interface ServedCert {
@@ -257,34 +258,46 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   // certificate QUIC shares its port (one "443 TCP + 443 UDP" rule pair, and
   // /api/info derives the WebTransport URL from the request host); otherwise
   // QUIC binds an ephemeral port that clients discover via the ready line or
-  // /api/info, so --port stays a single HTTP-facing knob. Nothing awaits
-  // between this bind and the consts handleHttp closes over.
-  // Each bind fails synchronously (AddrInUse, a bad PEM) and no shutdown
-  // handle exists yet, so the catch undoes whatever was set up before the
-  // failure, the hub's TURN refresh included.
+  // /api/info, so --port stays a single HTTP-facing knob. A port chosen for
+  // TCP can already be in use on UDP, so retry that collision for --port 0.
+  // Each bind fails synchronously (AddrInUse, a bad PEM). A retry closes its
+  // candidate HTTP server; a final failure also closes the QUIC endpoint and
+  // the hub's TURN refresh interval.
   let httpServer: Deno.HttpServer<Deno.NetAddr> | undefined;
-  let httpPort: number;
+  let httpPort: number | undefined;
   let endpoint: Deno.QuicEndpoint | undefined;
   let listener: Deno.QuicListener;
   try {
-    httpServer = Deno.serve(
-      {
-        hostname: host,
-        port: options.port ?? 7780,
-        onListen: () => {},
-        cert: options.cert,
-        key: options.key,
-      },
-      handleHttp,
-    );
-    httpPort = (httpServer.addr as Deno.NetAddr).port;
-    try {
-      endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
-    } catch (e) {
-      throw new Error(
-        `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
-          ((e as Error)?.message ?? e),
+    for (let attempt = 0; attempt < EPHEMERAL_PORT_ATTEMPTS; attempt++) {
+      httpServer = Deno.serve(
+        {
+          hostname: host,
+          port: options.port ?? 7780,
+          onListen: () => {},
+          cert: options.cert,
+          key: options.key,
+        },
+        handleHttp,
       );
+      httpPort = (httpServer.addr as Deno.NetAddr).port;
+      try {
+        endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+        break;
+      } catch (e) {
+        await httpServer.shutdown();
+        httpServer = undefined;
+        if (
+          tls && options.port === 0 && e instanceof Deno.errors.AddrInUse &&
+          attempt < EPHEMERAL_PORT_ATTEMPTS - 1
+        ) continue;
+        throw new Error(
+          `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+            ((e as Error)?.message ?? e),
+        );
+      }
+    }
+    if (httpServer === undefined || httpPort === undefined || endpoint === undefined) {
+      throw new Error("relay listeners were not initialized");
     }
     listener = endpoint.listen({
       cert: cert.certPem,

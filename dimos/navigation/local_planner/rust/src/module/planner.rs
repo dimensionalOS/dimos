@@ -14,7 +14,8 @@
 
 //! The SE(2) local planner as a robot-side module. Cloud from
 //! `local_map`, pose from tf (`world_frame -> base_frame`), goal a carrot `goal_lookahead_m`
-//! along `planner_path`. A refusal or a stale map publishes a one-pose hold stub.
+//! along `planner_path`, pulled back along it to where the body fits. A refusal or a stale
+//! map publishes a one-pose hold stub.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -168,10 +169,14 @@ impl LocalPlanner {
     }
 }
 
-/// `lookahead` metres of arc from the waypoint closest to the robot, clamped to
-/// the route's end.
-pub fn carrot_along(route: &[[f64; 2]], robot: (f64, f64), lookahead: f64) -> Option<(f64, f64)> {
-    let last = route.last()?;
+/// The route from the waypoint closest to the robot to the carrot, which is its last
+/// point, `lookahead` meters of arc on and clamped to the route's end.
+pub fn approach_along(
+    route: &[[f64; 2]],
+    robot: (f64, f64),
+    lookahead: f64,
+) -> Option<Vec<[f64; 2]>> {
+    route.last()?;
     // np.argmin keeps the first minimum on a tie
     let mut i = 0usize;
     let mut best = f64::INFINITY;
@@ -188,11 +193,13 @@ pub fn carrot_along(route: &[[f64; 2]], robot: (f64, f64), lookahead: f64) -> Op
         let seg = dx.hypot(dy);
         if seg >= remaining {
             let f = remaining / seg;
-            return Some((route[j][0] + f * dx, route[j][1] + f * dy));
+            let mut out = route[i..=j].to_vec();
+            out.push([route[j][0] + f * dx, route[j][1] + f * dy]);
+            return Some(out);
         }
         remaining -= seg;
     }
-    Some((last[0], last[1]))
+    Some(route[i..].to_vec())
 }
 
 /// Has an input the plan depends on moved? The route enters only through the
@@ -277,7 +284,7 @@ pub fn plan_once(
     model: &dyn ObstacleModel,
     points: &[[f32; 3]],
     pose: (f64, f64, f64),
-    goal: (f64, f64),
+    approach: &[[f64; 2]],
     ground: &Plane,
     incumbent: Option<&[[f64; 3]]>,
 ) -> Path {
@@ -297,7 +304,7 @@ pub fn plan_once(
         &cloud,
         &terrain,
         pose,
-        goal,
+        approach,
         emb,
         config.resolution,
         incumbent,
@@ -431,11 +438,13 @@ impl Worker {
                     }
                     let pose = pose.expect("Plan implies a pose");
                     let route = snap.route.expect("Plan implies a route");
-                    let Some(goal) =
-                        carrot_along(&route, (pose.0, pose.1), self.config.goal_lookahead_m)
+                    let Some(approach) =
+                        approach_along(&route, (pose.0, pose.1), self.config.goal_lookahead_m)
                     else {
                         continue; // an empty route is stored as None, so unreachable
                     };
+                    let end = approach[approach.len() - 1];
+                    let goal = (end[0], end[1]);
                     if !replan_due(
                         self.config.replan_on_change,
                         planned,
@@ -464,7 +473,7 @@ impl Worker {
                             self.model.as_ref(),
                             &pts,
                             pose,
-                            goal,
+                            &approach,
                             &ground.plane,
                             incumbent.as_deref(),
                         );
@@ -535,6 +544,32 @@ mod tests {
 
     fn route(points: &[(f64, f64)]) -> Vec<[f64; 2]> {
         points.iter().map(|&(x, y)| [x, y]).collect()
+    }
+
+    fn carrot_along(route: &[[f64; 2]], robot: (f64, f64), lookahead: f64) -> Option<(f64, f64)> {
+        let end = *approach_along(route, robot, lookahead)?.last()?;
+        Some((end[0], end[1]))
+    }
+
+    #[test]
+    fn approach_runs_from_the_closest_waypoint_to_the_carrot() {
+        let r = route(&[(0.0, 0.0), (2.0, 0.0), (2.0, 4.0)]);
+        assert_eq!(
+            approach_along(&r, (2.1, 0.5), 1.5),
+            Some(vec![[2.0, 0.0], [2.0, 1.5]])
+        );
+    }
+
+    #[test]
+    fn an_approach_past_the_route_end_is_the_rest_of_the_route() {
+        let r = route(&[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]);
+        assert_eq!(approach_along(&r, (0.9, 0.0), 5.0), Some(r[1..].to_vec()));
+    }
+
+    #[test]
+    fn an_approach_from_the_last_waypoint_is_that_waypoint() {
+        let r = route(&[(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)]);
+        assert_eq!(approach_along(&r, (2.5, 0.0), 1.0), Some(vec![[2.0, 0.0]]));
     }
 
     // carrot_along
@@ -687,7 +722,7 @@ mod tests {
             model(&cfg).as_ref(),
             &[],
             (0.0, 0.0, 0.0),
-            (3.0, 0.0),
+            &[[3.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -733,7 +768,7 @@ mod tests {
             m.as_ref(),
             &gap(1.4),
             (0.0, 0.0, 0.0),
-            (3.0, 0.0),
+            &[[3.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -743,7 +778,7 @@ mod tests {
             m.as_ref(),
             &gap(0.45),
             (0.0, 0.0, 0.0),
-            (3.0, 0.0),
+            &[[3.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -776,7 +811,7 @@ mod tests {
             model(&cfg).as_ref(),
             &walls,
             (0.0, 0.0, 0.0),
-            (4.0, 0.0),
+            &[[4.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -804,7 +839,7 @@ mod tests {
             model(&cfg).as_ref(),
             &lifted,
             (0.0, 0.0, 0.0),
-            (4.0, 0.0),
+            &[[4.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -848,7 +883,7 @@ mod tests {
             model(&cfg).as_ref(),
             &room,
             (0.0, 0.0, 0.0),
-            (4.0, 0.0),
+            &[[4.0, 0.0]],
             &Plane::flat(-0.28),
             None,
         );
@@ -871,7 +906,7 @@ mod tests {
                 m,
                 &wall,
                 (0.0, 0.0, 0.0),
-                (3.0, 0.0),
+                &[[3.0, 0.0]],
                 &Plane::flat(0.0),
                 None,
             );
@@ -927,7 +962,7 @@ mod tests {
             model(&cfg).as_ref(),
             &slab,
             (0.0, 0.0, 0.0),
-            (4.0, 0.0),
+            &[[4.0, 0.0]],
             &Plane::flat(-0.28),
             None,
         );
@@ -958,7 +993,7 @@ mod tests {
             model(&cfg).as_ref(),
             &low_object((1.4, 1.64), (-0.12, 0.12)),
             (0.0, 0.0, 0.0),
-            (3.0, 0.0),
+            &[[3.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -991,7 +1026,7 @@ mod tests {
             model(&cfg).as_ref(),
             &world,
             (0.0, 0.0, 0.0),
-            (3.0, 0.0),
+            &[[3.0, 0.0]],
             &Plane::flat(0.0),
             None,
         );
@@ -1042,7 +1077,7 @@ mod tests {
             model(&cfg).as_ref(),
             &cloud,
             (0.0, 0.0, 0.0),
-            (3.0, 0.0),
+            &[[3.0, 0.0]],
             &ground.plane,
             None,
         );

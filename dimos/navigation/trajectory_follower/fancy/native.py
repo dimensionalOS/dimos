@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TrajectoryFollowerNative: the rust twin of :mod:`.follower`.
-
-Same ports, same laws (`dimos_trajectory_follower`, parity-locked to the python), and
-a control tick with no python in it: on the robot the follower runs off a
-locally-held path at a steady 10 Hz instead of receiving ``cmd_vel`` in bursts
-whenever the link hiccups. :mod:`.follower` stays the reference implementation.
-
-One field does not cross: ``controller``, because the native module runs the
-one law (``laws/hinted.rs``) by construction.
-"""
+"""The trajectory follower, running the hinted law off a locally held path at a steady rate."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
@@ -35,12 +26,6 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
-from dimos.navigation.trajectory_follower.fancy.module import TrajectoryFollowerConfig
-
-
-def _default(field: str) -> Any:
-    """The python follower's default for a field the native twin shares."""
-    return TrajectoryFollowerConfig.model_fields[field].default
 
 
 class TrajectoryFollowerNativeConfig(NativeModuleConfig):
@@ -52,15 +37,15 @@ class TrajectoryFollowerNativeConfig(NativeModuleConfig):
     # object out of it leaves `ps` readable.
     cli_exclude: frozenset[str] = frozenset({"embodiment"})
 
-    # Every field below crosses to the rust struct verbatim, and every one of
-    # them must: a native config has no rust-side defaults. Defaults are the
-    # python follower's own, read off its config so the twins cannot drift
-    # (test_follower.py asserts it).
-    control_frequency: float = _default("control_frequency")
-    goal_tolerance: float = _default("goal_tolerance")
+    # Every field below crosses to the Rust struct verbatim, since a native
+    # config has no Rust-side defaults.
+    control_frequency: float = 10.0
+    goal_tolerance: float = 0.20  # planar distance that counts as arrival in meters
     embodiment: Embodiment
-    base_frame: str = _default("base_frame")
-    max_path_age_s: float = _default("max_path_age_s")
+    # The pose is the path.frame_id to base_frame edge on tf, read each tick.
+    base_frame: str = "base_link"
+    # The deadman zeroes the twist once the held path is this old. It must clear the ~1 Hz replan cadence.
+    max_path_age_s: float = 2.5
 
 
 class TrajectoryFollowerNative(NativeModule, spec.TrajectoryFollower):

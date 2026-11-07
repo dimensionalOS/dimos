@@ -17,19 +17,23 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
+import re
 import threading
 from typing import Any, Literal
 
 import zenoh
 
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.protocol.pubsub.encoders import LCMEncoderMixin, PickleEncoderMixin
+from dimos.protocol.pubsub.encoders import CborEncoderMixin, LCMEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Every stream lives under `dimos/`, or under `dimos-domains/<domain>/` for a domain-scoped run.
+KEY_PREFIX = re.compile(r"^(?:dimos|dimos-domains/[^/]+)/")
 
 _RELIABILITY = {
     "reliable": zenoh.Reliability.RELIABLE,
@@ -144,27 +148,6 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         self._subscriber_lock = threading.Lock()
         self._stopped = False
 
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        """Drop the live publishers, subscribers and locks on top of the session."""
-        state = super().__getstate__()  # type: ignore[no-untyped-call]
-        for key in (
-            "_publishers",
-            "_publisher_lock",
-            "_subscribers",
-            "_drain_stops",
-            "_subscriber_lock",
-        ):
-            state.pop(key, None)
-        return state
-
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        super().__setstate__(state)
-        self._publishers = {}
-        self._publisher_lock = threading.Lock()
-        self._subscribers = []
-        self._drain_stops = []
-        self._subscriber_lock = threading.Lock()
-
     def _get_publisher(self, key_expr: str, qos: ZenohQoS | None) -> zenoh.Publisher:
         """Get or declare the cached publisher for a key expression.
 
@@ -239,7 +222,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         callback: Callable[[bytes, Topic], Any],
         keyed: Mapping[str, Callable[[bytes], Hashable]] | None = None,
     ) -> Callable[[], None]:
-        """Subscribe to all dimos topics, delivering only the latest per topic.
+        """Subscribe to all dimos topics of every domain, delivering only the latest per topic.
 
         Unlike `subscribe`, this is best effort. If it's done otherwise, rerun lags behind.
         A channel in `keyed` delivers the latest message per key instead, in the order
@@ -256,7 +239,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             # Fast path on the Zenoh delivery thread: keep only the newest per topic,
             # or per key on a keyed channel.
             name = topic.topic
-            key = key_of.get(name.removeprefix("dimos/")) if isinstance(name, str) else None
+            key = key_of.get(KEY_PREFIX.sub("", name)) if isinstance(name, str) else None
             with lock:
                 if key is None:
                     latest[str(topic)] = (msg, topic)
@@ -298,14 +281,17 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             self._drain_stops.append(stop_drain)
             thread.start()
 
-        inner_unsub = self.subscribe(Topic("dimos/**"), collect)
+        inner_unsubs = [
+            self.subscribe(Topic(key), collect) for key in ("dimos/**", "dimos-domains/**")
+        ]
 
         def unsubscribe() -> None:
             with self._subscriber_lock:
                 if stop_drain not in self._drain_stops:
                     return  # Already removed by stop() or a concurrent unsubscribe
                 self._drain_stops.remove(stop_drain)
-            inner_unsub()
+            for inner_unsub in inner_unsubs:
+                inner_unsub()
             stop_drain()
 
         return unsubscribe
@@ -337,10 +323,10 @@ class Zenoh(  # type: ignore[misc]
     ...
 
 
-class PickleZenoh(
-    PickleEncoderMixin,  # type: ignore[type-arg]
+class CborZenoh(
+    CborEncoderMixin,  # type: ignore[type-arg]
     ZenohPubSubBase,
 ):
-    """Zenoh pub/sub with pickle encoding for arbitrary Python objects."""
+    """Zenoh pub/sub with CBOR encoding for Python values without an LCM form."""
 
     ...

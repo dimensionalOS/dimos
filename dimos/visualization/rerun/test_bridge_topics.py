@@ -84,6 +84,24 @@ def test_named_topics_become_one_key_each(make_bridge: Callable[..., RerunBridge
     assert not pubsub.subscribed_all
 
 
+def test_a_hosted_run_subscribes_its_scoped_keys_onto_the_plain_entity(
+    make_bridge: Callable[..., RerunBridgeModule],
+) -> None:
+    pubsub = FakeZenoh()
+    bridge = make_bridge(topics=["tf"], g=GlobalConfig(zenoh_domain="r1"))
+    bridge._subscribe(pubsub)
+    assert pubsub.keys == ["dimos-domains/r1/tf/*"]
+    topic = ZenohTopic(topic="dimos-domains/r1/map_regions", lcm_type=PointCloud2)
+    assert bridge._get_entity_path(topic) == "world/map_regions"
+
+
+def test_another_domains_keys_land_on_the_plain_entity(
+    make_bridge: Callable[..., RerunBridgeModule],
+) -> None:
+    topic = ZenohTopic(topic="dimos-domains/r2/map_regions", lcm_type=PointCloud2)
+    assert make_bridge()._get_entity_path(topic) == "world/map_regions"
+
+
 def test_no_topics_keeps_the_firehose(make_bridge: Callable[..., RerunBridgeModule]) -> None:
     pubsub = FakeZenoh()
     make_bridge()._subscribe(pubsub)

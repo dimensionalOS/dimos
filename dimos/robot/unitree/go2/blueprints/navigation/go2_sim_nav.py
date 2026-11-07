@@ -33,7 +33,10 @@ _nav_rerun_config: dict[str, Any] = {
     **rerun_config,
     "blueprint": partial(rerun_blueprint, hidden=("world/nodes", "world/node_edges")),
     "static": {**rerun_config["static"], **go2_nav_static()},
-    "visual_override": {**rerun_config["visual_override"], **go2_nav_overrides()},
+    "visual_override": {
+        **rerun_config["visual_override"],
+        **go2_nav_overrides(static_regions=False),
+    },
 }
 
 # The nav MovementManager dedupes onto the sim's. One worker per module.

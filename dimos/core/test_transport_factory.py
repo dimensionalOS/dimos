@@ -64,7 +64,7 @@ def test_make_transport_lcm_typed() -> None:
     assert t.topic.topic == "/camera/color"
 
 
-def test_make_transport_lcm_pickled() -> None:
+def test_make_transport_lcm_untyped() -> None:
     t = make_transport("/human_input", g=LCM)
     assert type(t) is pLCMTransport
     assert t.topic == "/human_input"
@@ -76,7 +76,7 @@ def test_make_transport_zenoh_typed() -> None:
     assert t.topic.topic == "dimos/camera/color"
 
 
-def test_make_transport_zenoh_pickled() -> None:
+def test_make_transport_zenoh_untyped() -> None:
     t = make_transport("/human_input", g=ZENOH)
     assert type(t) is pZenohTransport
     assert t.topic == "dimos/human_input"
@@ -108,7 +108,7 @@ def test_make_transport_zenoh_typed_carries_qos() -> None:
     assert t.topic.qos == QOS_LATEST_WINS
 
 
-def test_make_transport_zenoh_pickled_carries_qos() -> None:
+def test_make_transport_zenoh_untyped_carries_qos() -> None:
     t = make_transport("/human_input", g=ZENOH)
     assert t._zenoh_topic.qos == QOS_NEVER_DROP
 

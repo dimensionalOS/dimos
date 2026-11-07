@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `agents` | LLM agent, speech, tool use | langchain, openai, ollama, faster-whisper | No |
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
-| `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
+| `web` | FastAPI web interface, audio | fastapi, uvicorn, av | No |
 | `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
@@ -50,12 +50,9 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
 | `cuda` | GPU inference backends | cupy, onnxruntime-gpu | **Yes** |
 | `cpu` | CPU inference backend | onnxruntime | No |
-| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
+| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
-
-Cockpit voice input and the legacy browser audio upload require the `ffmpeg`
-executable in addition to the Python `web` extra. The installer supplies it through system packages on Ubuntu and macOS.
 
 ## Headless / Server Environments
 

@@ -29,6 +29,7 @@ from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
+import dimos.core.daemon as core_daemon
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 import dimos.core.run_registry as run_registry
@@ -244,13 +245,18 @@ def stubbed_run(
         transports: dict[tuple[str, type], Any] = {}
 
         @classmethod
-        def build(cls, blueprint: Any, parsed_config: Any = None) -> "FakeCoordinator":
+        def build(
+            cls, blueprint: Any, parsed_config: Any = None, *, remote_module_refs: Any = None
+        ) -> "FakeCoordinator":
             recorded["blueprint"] = blueprint
             recorded["parsed_config"] = parsed_config
             return cls()
 
         def health_check(self) -> bool:
             return True
+
+        def start_rpc_service(self, *, name: str | None = None) -> None:
+            return None
 
         def stop(self) -> None:
             return None
@@ -264,6 +270,8 @@ def stubbed_run(
     class FakeEntry:
         def __init__(self, **fields: Any) -> None:
             recorded["entry"] = fields
+            self.run_id = fields["run_id"]
+            self.log_dir = fields["log_dir"]
 
         def save(self) -> None:
             return None
@@ -286,7 +294,7 @@ def stubbed_run(
     monkeypatch.setattr(run_registry, "cleanup_stale", lambda: 0)
     monkeypatch.setattr(run_registry, "generate_run_id", lambda name: f"test-{name}")
     monkeypatch.setattr(process_lifecycle, "spawn_watchdog", lambda *args, **kwargs: None)
-    monkeypatch.setattr(lifecycle, "install_signal_handlers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(core_daemon, "install_signal_handlers", lambda *args, **kwargs: None)
     monkeypatch.setattr(lifecycle, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(logging_config, "set_run_log_dir", lambda path: None)
     monkeypatch.setattr(get_all_blueprints, "get_by_name_or_exit", blueprints.__getitem__)
@@ -609,3 +617,26 @@ def test_spy_rejects_root_transport(monkeypatch, spy_main_argv):
     assert result.exit_code == 2
     assert "dimos spy --transport" in result.output
     assert spy_main_argv == []  # never reaches the spy
+
+
+def test_run_registered_keeps_the_entry_from_readiness_until_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path / "runs")
+    entry = run_registry.RunEntry("run-1", 1, "bp", "now", str(tmp_path))
+    seen: list[bool] = []
+
+    def fake_run(blueprint: Any, config: Any, *, on_ready: Any, **_: Any) -> None:
+        seen.append(entry.registry_path.exists())
+        on_ready(None)
+        seen.append(entry.registry_path.exists())
+        raise SystemExit(0)
+
+    monkeypatch.setattr(lifecycle, "run_coordinator", fake_run)
+    monkeypatch.setattr(lifecycle, "_mcp_url", lambda *_: "http://127.0.0.1:9990/mcp")
+    with pytest.raises(SystemExit):
+        lifecycle._run_registered("bp", "cfg", entry)  # type: ignore[arg-type]
+
+    assert seen == [False, True]
+    assert entry.mcp_url == "http://127.0.0.1:9990/mcp"
+    assert not entry.registry_path.exists()

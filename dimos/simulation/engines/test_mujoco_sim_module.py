@@ -170,7 +170,7 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         module.stop()
 
 
-def test_tracked_bodies_are_published_on_tf_in_world() -> None:
+def test_tracked_bodies_are_published_on_body_poses_not_tf() -> None:
     module = MujocoSimModule(tracked_bodies=["apple", "ghost"])
     try:
         module.config = MujocoSimModuleConfig(tracked_bodies=["apple", "ghost"])
@@ -185,8 +185,10 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
                 pass
 
         messages: list[Any] = []
+        bodies: list[Any] = []
         module._engine = _FakeEngine()
         module.tf.subscribe(messages.append)
+        module.body_poses.subscribe(bodies.append)
         frame = CameraFrame(
             rgb=np.zeros((1, 1, 3), dtype=np.uint8),
             depth=np.ones((1, 1), dtype=np.float32),
@@ -198,13 +200,13 @@ def test_tracked_bodies_are_published_on_tf_in_world() -> None:
         module._publish_tf(10.0, frame)
         module._publish_tf(11.0, frame)
         children = [t.child_frame_id for t in messages[-1].transforms]
-        assert children[:3] == [
+        assert children == [
             "wrist_camera_color_optical_frame",
             "wrist_camera_depth_optical_frame",
             "wrist_camera_link",
         ]
-        assert children[3:] == ["apple"]
-        apple = messages[-1].transforms[3]
+        assert [t.child_frame_id for t in bodies[-1].transforms] == ["apple"]
+        apple = bodies[-1].transforms[0]
         assert apple.frame_id == "world"
         assert apple.ts == pytest.approx(time.time(), abs=5.0)
         assert np.allclose(apple.translation.to_numpy(), [0.4, 0.08, 0.17])

@@ -14,23 +14,14 @@
 
 """Placing a live lidar cloud into a prior map.
 
-Coarse FPFH+RANSAC to find the place, then point-to-plane ICP over
-widening-to-narrowing distances to settle it. No streams, no modules, no
-clock - :mod:`dimos.mapping.relocalization.module` is the runtime around
-this, and ``tune.py`` measures it. Strategies + evals began at
-https://github.com/leshy/relocalization-test (this was ``align_fast``).
+Coarse FPFH+RANSAC to find the place, then point-to-plane ICP over narrowing
+distances to settle it. Pure computation; ``lidar/module.py`` is the runtime
+and ``tune.py`` measures it.
 
     relocalizer = LidarRelocalizer(premap_cloud, PRESETS["mid360"])
-    tf = relocalizer.relocalize(live_cloud)   # world -> map, or None if it refused
+    tf = relocalizer.relocalize(live_cloud, "world", "map")  # world -> map, or None
 
-The map is preprocessed once when the relocalizer is built - downsampling
-it, estimating normals and computing FPFH features is the pipeline's
-dominant cost, and it does not change between queries.
-
-Every scale in a :class:`RelocalizeConfig` was measured against one rig on
-one recording, so configs are named rather than universal - there is no
-default config, only :data:`PRESETS`. See tune.md for how to measure one
-for a rig that is not in there yet.
+Configs are per-rig :data:`PRESETS`; see tune.md to measure a new one.
 """
 
 from __future__ import annotations
@@ -46,10 +37,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if TYPE_CHECKING:
-    # open3d is imported lazily inside the methods that need it - it is a
-    # heavy import and a module-scope one would cost every process that
-    # merely touches this file. These names are for reading the signatures;
-    # open3d ships no stubs, so mypy still widens them to Any.
+    # open3d is imported lazily (heavy); these names are for signatures only.
     from open3d.geometry import PointCloud
     from open3d.pipelines.registration import Feature, RegistrationResult
 
@@ -70,13 +58,7 @@ class RelocAttempt(NamedTuple):
 
 
 class RelocalizeConfig(BaseConfig):
-    """The aligner's knobs for **one rig**. There is no universal setting.
-
-    The required fields are scales, wrong for a different sensor or a
-    room-sized map. Required so no bare ``RelocalizeConfig()`` can quietly
-    mean somebody else's rig. Measure a new one with a study (tune.md) and
-    add a preset; do not nudge an existing one.
-    """
+    """The aligner's knobs for one rig; scale fields are required, so there is no default."""
 
     voxel_coarse: float  # FPFH + RANSAC scale
     voxel_fine: float  # ICP scale
@@ -87,35 +69,20 @@ class RelocalizeConfig(BaseConfig):
     ransac_iters: int
     mutual_filter: bool
     edge_length: float
-    # ICP correspondence distance / voxel_fine, for the *last* stage. Earlier
-    # stages double it each step back, so a hypothesis landing further out
-    # than the final threshold still has a stage wide enough to reach it.
+    # ICP correspondence distance / voxel_fine for the last stage; earlier stages double it
     icp_dist_factor: float
     icp_stages: int
-    # Point every normal into one half-space. Normal sign is arbitrary out of
-    # estimate_normals and FPFH is built from angles involving it, so without
-    # this two passes over the same corner describe it differently. Needs a
-    # shared up axis, which lidar-inertial odometry gives both sides; turn it
-    # off for a premap of unknown provenance.
+    # Orient normals to +z so FPFH is consistent across passes; needs a shared up axis
     orient_normals: bool
-    # Best-of-N RANSAC, by fitness. Its best hypothesis is sometimes simply
-    # wrong and ICP then polishes a wrong answer. One suffices at mid360's
-    # iteration budget; restarts rescued the older, sparser search.
+    # Best-of-N RANSAC+ICP, by fitness
     ransac_restarts: int
-    # ICP fitness a fix must clear to be published. On the mid360 walk the two
-    # populations sit far apart - right place 0.84-0.94, place absent from the
-    # premap 0.04-0.24 - so this goes in the empty middle. Strictness is
-    # cheap: a rejected fix is a retry, an accepted wrong one is a TF the
-    # whole stack believes.
+    # ICP fitness a fix must clear to be published
     fitness_threshold: float
-    # Retry window, in accumulated scans: first try at `min_frames`, give up
-    # past `max_frames`. Rig scales, but hand-picked rather than measured -
-    # a study should search them (tune.md).
+    # Scan window: first try at `min_frames`, hold at most `max_frames`
     min_frames: int
     max_frames: int
 
-    # Search budgets and caps. Not scales, so not per-rig, so defaulted -
-    # tune them if a rig is slow, not because it is shaped differently.
+    # Search budgets, not rig-specific.
     normal_max_nn: int = 30
     fpfh_max_nn: int = 100
     ransac_confidence: float = 0.999
@@ -123,9 +90,7 @@ class RelocalizeConfig(BaseConfig):
     icp_max_iter: int = 200
 
 
-# Livox mid360 on a Go2, outdoors, against a premap of the same block.
-# Trial 229 of the go2-sf-area1 study - the candidate that held its hit rate
-# on probes it was never tuned against,
+# Livox mid360 on a Go2, outdoors; trial 229 of the go2-sf-area1 study.
 MID360 = RelocalizeConfig(
     voxel_coarse=0.59,
     voxel_fine=0.30,
@@ -147,22 +112,13 @@ MID360 = RelocalizeConfig(
 # The mid360 scales with the nav stack accept policy, from the go2 sf office replays.
 MID360_NAV = MID360.model_copy(update={"fitness_threshold": 0.8, "ransac_restarts": 3})
 
-# A rig's name to its measured settings. Add an entry by running a study for
-# that rig (tune.md); do not retune an existing one for a new sensor.
+# Rig name to its measured settings (tune.md).
 PRESETS: dict[str, RelocalizeConfig] = {"mid360": MID360, "mid360-nav": MID360_NAV}
 DEFAULT_PRESET = "mid360"
 
 
 class LidarRelocalizer:
-    """A prior map, prepared once, that places live clouds into itself.
-
-    The preprocessing the map needs is the pipeline's dominant cost and does
-    not change between queries, so it belongs in the constructor - a live
-    module builds one at startup and calls :meth:`relocalize` per cloud.
-    Holding the config here too means the map's derived forms and the
-    settings that produced them cannot drift apart, which a per-call config
-    argument would allow.
-    """
+    """A prior map, preprocessed once under ``config``, that places live clouds into itself."""
 
     def __init__(self, global_map: PointCloud, config: RelocalizeConfig) -> None:
         self.config = config
@@ -170,7 +126,7 @@ class LidarRelocalizer:
         self._target = self._prepare(global_map)
 
     def _prepare(self, cloud: PointCloud) -> _Prepared:
-        """Downsample, estimate normals, compute FPFH - under this relocalizer's config."""
+        """Downsample, estimate normals, compute FPFH under this relocalizer's config."""
         import open3d as o3d  # type: ignore[import-untyped]
 
         cfg = self.config
@@ -197,14 +153,9 @@ class LidarRelocalizer:
         return _Prepared(coarse=coarse, fpfh=fpfh, fine=fine)
 
     def align(self, local_map: PointCloud) -> RegistrationResult:
-        """Open3D's registration result for ``local_map`` against the prior map.
+        """Best registration of ``local_map`` against the prior map, however poor.
 
-        Always answers, however poor the answer, and answers in open3d's own
-        terms: ``.transformation`` places the live cloud into the map,
-        ``.fitness`` and ``.inlier_rmse`` say how well. :meth:`relocalize` is
-        the one a runtime calls; this is for a caller that wants to see a
-        refused fix, such as the eval measuring where a rejected hypothesis
-        landed.
+        ``.transformation`` places the live cloud in the map (map <- live).
         """
         import open3d as o3d  # type: ignore[import-untyped]
 
@@ -232,12 +183,7 @@ class LidarRelocalizer:
             )
 
         def refine(coarse_T: np.ndarray) -> RegistrationResult:
-            """Point-to-plane ICP from wide to narrow, so a distant guess is still reachable.
-
-            A single pass at the final distance cannot pull in a hypothesis
-            further out than that distance - its correspondences are already
-            wrong - which is why each earlier stage doubles it.
-            """
+            """Point-to-plane ICP from wide to narrow, so a distant guess is still reachable."""
             result = None
             for stage in reversed(range(max(cfg.icp_stages, 1))):
                 result = reg.registration_icp(

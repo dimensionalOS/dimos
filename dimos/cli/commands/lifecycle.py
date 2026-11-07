@@ -32,9 +32,9 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import (
     DAEMON_STATUS_FD_ENV,
     fork_daemon,
-    install_signal_handlers,
     read_daemon_status,
     redirect_stdio_to_devnull,
+    run_coordinator,
     write_daemon_status,
 )
 from dimos.core.global_config import global_config
@@ -43,8 +43,12 @@ from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
     from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.run_registry import RunEntry
 
 logger = setup_logger()
 
@@ -63,6 +67,35 @@ def _reject_legacy_config() -> None:
         raise typer.Exit(2)
 
 
+def _run_registered(
+    blueprint: Blueprint,
+    config: ParsedBlueprintConfig,
+    entry: RunEntry,
+    *,
+    sigint: bool = True,
+    on_ready: Callable[[ModuleCoordinator], None] | None = None,
+) -> None:
+    """run_coordinator with ``entry`` in the registry from readiness until exit."""
+
+    def ready(coordinator: ModuleCoordinator) -> None:
+        entry.mcp_url = _mcp_url(blueprint, coordinator)
+        entry.save()
+        if on_ready is not None:
+            on_ready(coordinator)
+
+    try:
+        run_coordinator(
+            blueprint,
+            config,
+            run_id=entry.run_id,
+            log_dir=entry.log_dir,
+            sigint=sigint,
+            on_ready=ready,
+        )
+    finally:
+        entry.remove()
+
+
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     """Append one relay bridge to an enabled CLI run after blueprint resolution."""
     if not (global_config.local_relay or global_config.relay_url):
@@ -76,6 +109,61 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
         ) from e
 
     return with_relay_bridge(blueprint)
+
+
+def _run_hosted(
+    blueprint: Blueprint,
+    entry: RunEntry,
+    overrides: Mapping[str, Any],
+    global_overrides: Mapping[str, Any],
+) -> None:
+    """Place the Blueprint on the live Hosts and stream their logs until Ctrl-C or SIGTERM."""
+    import threading
+
+    from dimos.hosted.client import root_rpc
+    from dimos.hosted.deploy import deployed, log_printer, wait_for_hosts
+    from dimos.hosted.machine import local_host
+    from dimos.protocol.service.zenohservice import split_csv
+
+    local = local_host()
+    connect = split_csv(global_config.zenoh_connect) or ([local.client_endpoint] if local else [])
+    if not connect:
+        typer.echo(
+            "Error: no local Host is running: `dimos host start`, or --zenoh-connect", err=True
+        )
+        raise typer.Exit(2)
+    named = {p.host for p in blueprint.hosted_placements if isinstance(p.host, str)}
+    if local is not None:
+        named.add(local.host_id)
+    tag_sets = [p.tags for p in blueprint.hosted_placements if p.tags]
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    try:
+        with root_rpc(connect) as rpc:
+            descriptors = wait_for_hosts(rpc, named, tag_sets=tag_sets)
+            with deployed(
+                blueprint,
+                rpc,
+                run_id=entry.run_id,
+                local_host_id=local.host_id if local else None,
+                descriptors=descriptors,
+                overrides=overrides,
+                global_overrides=global_overrides,
+                on_log=log_printer(),
+            ) as placement:
+                for module, host in sorted(placement.items()):
+                    typer.echo(f"{host:>16}  {module}")
+                typer.echo("Running; Ctrl-C stops every fragment")
+                entry.save()
+                try:
+                    stop.wait()
+                except KeyboardInterrupt:
+                    pass
+    except (RuntimeError, TimeoutError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        entry.remove()
 
 
 def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None:
@@ -120,17 +208,10 @@ def run(
         split_run_arguments,
     )
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator, stream_name_types
-    from dimos.core.coordination.process_lifecycle import (
-        DIMOS_RUN_ID_ENV,
-        spawn_watchdog,
-    )
-    from dimos.core.run_registry import (
-        RunEntry,
-        cleanup_stale,
-        generate_run_id,
-    )
-    from dimos.memory.tap import check_topics, recording
+    from dimos.core.coordination.module_coordinator import stream_name_types
+    from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+    from dimos.core.run_registry import RunEntry, cleanup_stale, generate_run_id
+    from dimos.memory.tap import check_topics
     from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
@@ -239,6 +320,28 @@ def run(
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
+    entry = RunEntry(
+        run_id=run_id,
+        pid=os.getpid(),
+        blueprint=blueprint_name,
+        started_at=datetime.now(timezone.utc).isoformat(),
+        log_dir=str(log_dir),
+        cli_args=list(blueprint_names),
+        config_overrides=global_option_overrides,
+        original_argv=sys.argv,
+    )
+    if blueprint.hosted_placements:
+        if daemon:
+            typer.echo("Error: a hosted blueprint runs in the foreground", err=True)
+            raise typer.Exit(2)
+        _run_hosted(
+            blueprint,
+            entry,
+            parsed_config.file_and_cli,
+            global_option_overrides,
+        )
+        return
+
     if daemon:
         # Fork before building: zenoh's process-global runtime does not survive
         # fork, so the daemon must open every session itself (issue #3395).
@@ -270,86 +373,37 @@ def run(
             typer.echo("  Status:    dimos status")
             return
 
-        # Daemon grandchild — stdio still attached so build output streams.
-        coordinator = None
-        try:
-            coordinator = ModuleCoordinator.build(blueprint, parsed_config)
-            if not coordinator.health_check():
-                write_daemon_status(
-                    status_fd,
-                    {"ok": False, "error": "health check failed — a worker process died."},
-                )
-                coordinator.stop()
-                os._exit(1)
+        # Daemon grandchild: stdio still attached so build output streams.
+        started = False
+
+        def ready(coordinator: ModuleCoordinator) -> None:
+            nonlocal started
             # Workers dup2 /dev/null over the terminal fds they inherited.
             coordinator.suppress_console()
-            # Idempotent with loop(); serving now means the success status below
-            # guarantees Coordinator RPC is actually reachable.
-            coordinator.start_rpc_service()
-            entry = RunEntry(
-                run_id=run_id,
-                pid=os.getpid(),
-                blueprint=blueprint_name,
-                started_at=datetime.now(timezone.utc).isoformat(),
-                log_dir=str(log_dir),
-                cli_args=list(blueprint_names),
-                config_overrides=global_option_overrides,
-                original_argv=sys.argv,
-                mcp_url=_mcp_url(blueprint, coordinator),
-            )
-            entry.save()
-            spawn_watchdog(run_id, log_dir=log_dir)
-            install_signal_handlers(entry, coordinator)
+            write_daemon_status(status_fd, {"ok": True, "n_modules": coordinator.n_modules})
+            os.close(status_fd)
             redirect_stdio_to_devnull()
+            started = True
+
+        entry.pid = os.getpid()
+        try:
+            # The launcher's exit released the pre-fork cache-usage marker (shared
+            # flock); hold a fresh one for the daemon's lifetime.
+            with cache_usage_guard():
+                _run_registered(blueprint, parsed_config, entry, on_ready=ready)
         except Exception as exc:
+            if started:
+                raise
             traceback.print_exc()
             write_daemon_status(status_fd, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-            if coordinator is not None:
-                try:
-                    coordinator.stop()
-                except Exception:
-                    logger.error("Error stopping coordinator", exc_info=True)
             sys.stderr.flush()
             # os._exit: never unwind the launcher's typer/atexit state in a
             # forked image.
             os._exit(1)
-        write_daemon_status(status_fd, {"ok": True, "n_modules": coordinator.n_modules})
-        os.close(status_fd)
-        # The launcher's exit released the pre-fork cache-usage marker (shared
-        # flock); hold a fresh one for the daemon's lifetime.
-        try:
-            with cache_usage_guard(), recording(coordinator):
-                coordinator.loop()
-        except Exception:
-            coordinator.stop()
-            raise
     else:
-        coordinator = ModuleCoordinator.build(blueprint, parsed_config)
-        entry = RunEntry(
-            run_id=run_id,
-            pid=os.getpid(),
-            blueprint=blueprint_name,
-            started_at=datetime.now(timezone.utc).isoformat(),
-            log_dir=str(log_dir),
-            cli_args=list(blueprint_names),
-            config_overrides=global_option_overrides,
-            original_argv=sys.argv,
-            mcp_url=_mcp_url(blueprint, coordinator),
-        )
-        entry.save()
-        spawn_watchdog(run_id, log_dir=log_dir)
-        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
-        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
-        # runs with a visible traceback.
-        install_signal_handlers(entry, coordinator, sigint=False)
-        try:
-            with recording(coordinator):
-                coordinator.loop()
-        except Exception:
-            coordinator.stop()
-            raise
-        finally:
-            entry.remove()
+        # Foreground: SIGINT stays at default so Ctrl+C raises KeyboardInterrupt with a
+        # visible traceback.
+        _run_registered(blueprint, parsed_config, entry, sigint=False)
 
 
 def status() -> None:

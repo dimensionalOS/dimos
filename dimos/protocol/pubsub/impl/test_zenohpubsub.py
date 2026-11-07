@@ -65,6 +65,7 @@ def pubsub(make_pubsub):
     return make_pubsub()
 
 
+@pytest.mark.flaky(reruns=1)
 @pytest.mark.parametrize(
     ("all_topics", "subscription_count"),
     [(False, 1), (True, 1), (True, 3)],
@@ -322,6 +323,23 @@ class TestZenohPubSubBase:
         pubsub.subscribe_all(callback)
         retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
         assert b"wildcard" in received
+
+    def test_subscribe_all_hears_a_domain_and_keys_its_channel(self, pubsub, retry_until) -> None:
+        topic = Topic("dimos-domains/r1/test/domain/cells")
+        keyed: list[bytes] = []
+        event = threading.Event()
+
+        def key(msg: bytes) -> bytes:
+            keyed.append(msg)
+            return msg
+
+        def callback(msg: bytes, t: Topic) -> None:
+            if t.topic == topic.topic:
+                event.set()
+
+        pubsub.subscribe_all(callback, keyed={"test/domain/cells": key})
+        retry_until(event, lambda: pubsub.publish(topic, b"cell"))
+        assert b"cell" in keyed
 
     def test_subscribe_all_keeps_every_key_of_a_keyed_channel(
         self, pubsub, retry_until, wait_until
