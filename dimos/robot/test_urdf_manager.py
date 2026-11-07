@@ -598,7 +598,7 @@ def _link_of(stage: Any, path: str) -> str:
     """The frame_id a prim travels under: its displayName, or its prim name without one."""
     prim = stage.GetPrimAtPath(path)
     assert prim, f"no prim at {path}"
-    return prim.GetDisplayName() or prim.GetName()
+    return str(prim.GetDisplayName() or prim.GetName())
 
 
 def _scene(module: UrdfManager) -> str:
@@ -883,13 +883,15 @@ def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
     assert module.get_usd()[0] == str(tmp_path)
 
 
-def test_a_subtree_mesh_path_is_rebased_onto_the_root_the_module_reported(
+def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
-    """The point of the root travelling with the USD.
+    """Both halves of what a mounted module's mesh path goes through.
 
-    The mounted module's cwd is not this one's, so a relative mesh path means nothing here
-    until it is rebased onto the root that module answered with.
+    The module's cwd is not this one's, so a relative path means nothing here until it is
+    rebased onto the root that module reported. And an absolute path on this machine means
+    nothing to whoever ends up asking for the file, so the scene goes out under a name this
+    manager answers for, with the real path kept behind it.
     """
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
@@ -900,8 +902,55 @@ def test_a_subtree_mesh_path_is_rebased_onto_the_root_the_module_reported(
 
     scene = _scene(module)
 
-    assert "@/opt/arm/desc/meshes/arm.stl@" in scene
     assert "@meshes/arm.stl@" not in scene
+    assert "@/opt/arm/desc/meshes/arm.stl@" not in scene, "a real path must not leave"
+    assert list(module._published_assets.values()) == ["/opt/arm/desc/meshes/arm.stl"]
+    assert next(iter(module._published_assets)) in scene
+
+
+def test_a_published_asset_is_named_from_where_it_first_appears(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    # Stable across runs of the same scene, and readable, rather than an opaque number.
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(subtree, asset_root="/opt"))
+
+    _scene(module)
+
+    published = next(iter(module._published_assets))
+    assert published.startswith("/dimos/assets/")
+    assert published.endswith("arm.stl")
+
+
+def test_one_mesh_on_two_mounts_is_published_once(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """Namespaces do not matter to an asset: the same file is the same asset.
+
+    Two copies of one arm are two mount points and one mesh, so they share a published name
+    rather than each getting their own.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(
+        urdf_xml=_TWO_ARM_URDF,
+        mounts={
+            "left_mount": _FakeArm.blueprint().namespace("left"),
+            "right_mount": _FakeArm.blueprint().namespace("right"),
+        },
+    )
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients.update(
+        {
+            "left/_fakearm": cast("Any", _FakeClient(subtree, asset_root="/opt/arm")),
+            "right/_fakearm": cast("Any", _FakeClient(subtree, asset_root="/opt/arm")),
+        }
+    )
+
+    _scene(module)
+
+    assert len(module._published_assets) == 1
 
 
 def test_a_subtree_with_no_root_keeps_its_paths_untouched(
@@ -913,7 +962,9 @@ def test_a_subtree_with_no_root_keeps_its_paths_untouched(
     subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="/already/abs.stl")
     module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(subtree))
 
-    assert "@/already/abs.stl@" in _scene(module)
+    _scene(module)
+
+    assert list(module._published_assets.values()) == ["/already/abs.stl"]
 
 
 @pytest.mark.parametrize(
@@ -1007,13 +1058,10 @@ def test_a_rename_meant_for_one_subtree_does_not_upset_the_others(
         tf_renames={"left/fake_arm_base": "the_left_one"},
     )
     module._subtree_clients.update(
-        cast(
-            "dict[str, Any]",
-            {
-                "left/_fakearm": _FakeClient(_SUBTREE_USD),
-                "right/_fakearm": _FakeClient(_SUBTREE_USD),
-            },
-        )
+        {
+            "left/_fakearm": cast("Any", _FakeClient(_SUBTREE_USD)),
+            "right/_fakearm": cast("Any", _FakeClient(_SUBTREE_USD)),
+        }
     )
 
     stage = _usd_stage(_scene(module))

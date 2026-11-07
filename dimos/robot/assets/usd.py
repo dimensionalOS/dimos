@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
+import itertools
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
@@ -53,8 +54,11 @@ _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 # becoming unreadable.
 HASH_ALGORITHM = "sha256"
 
+# Asset paths a scene leaves with are not paths on anyone's disk: they are names the manager
+# that assembled the scene answers for, under a root nothing can collide with.
+ASSET_ROOT_PREFIX = "/dimos/assets/"
+
 PASSTHROUGH_KEY = "urdf:unconverted"
-SOURCE_KEY = "urdf:source"
 
 # A prim's displayName carries the original URDF spelling of the link or joint it stands for.
 # USD prim names are identifiers, so "base-link" and "base:link" would both come out
@@ -137,9 +141,6 @@ def urdf_to_usd(
     stage.SetDefaultPrim(root.GetPrim())
 
     link_extras, joint_extras = _urdf_extras(model.xml)
-    # The whole document on the root, so a round trip through USD loses nothing at all, even
-    # the parts that belong to no link or joint (<material>, <gazebo> at robot level, ...).
-    root.GetPrim().SetCustomDataByKey(SOURCE_KEY, model.xml)
 
     paths: dict[str, str] = {}
     _write_link_tree(
@@ -305,6 +306,91 @@ def resolve_usd_assets(usd: str, root: str) -> str:
             changed = True
         stack.extend(spec.nameChildren)
     return str(layer.ExportToString()) if changed else usd
+
+
+def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
+    """``usd`` with every asset path replaced by a stable public one, and the map back.
+
+    The paths a scene is built with are absolute on whichever machine assembled it, which says
+    nothing to whoever asks for the file. So before a scene leaves, every asset is renamed to a
+    path under one fictional root, and the manager keeps the mapping so it can answer for them.
+
+    A name is taken from where the asset first appears in the scene -- its prim path, which is
+    the mount point it hangs from -- so it is stable across runs of the same scene rather than
+    being an opaque number. The *first* appearance wins and every later reference to the same
+    file reuses it: two copies of one arm are two mount points but one mesh, and the asset is
+    the same asset regardless of how many times the thing carrying it was duplicated.
+
+    Returns the rewritten layer and ``{public path: real path}``.
+    """
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a scene")
+    public: dict[str, str] = {}
+    taken: set[str] = set()
+    changed = False
+
+    stack = [layer.pseudoRoot]
+    while stack:
+        spec = stack.pop(0)  # breadth-first, so "first" means nearest the root
+        for real in _asset_paths_of(spec):
+            if real not in public:
+                public[real] = _public_asset_path(str(spec.path), real, taken)
+                taken.add(public[real])
+        if _rewrite_assets(pxr, spec, public):
+            changed = True
+        stack.extend(spec.nameChildren)
+
+    rewritten = str(layer.ExportToString()) if changed else usd
+    return rewritten, {name: real for real, name in public.items()}
+
+
+def _asset_paths_of(spec: Any) -> list[str]:
+    """Every asset path this prim spec names, by reference or by assetInfo."""
+    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+    paths = [ref.assetPath for ref in items if ref.assetPath]
+    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+    if identifier is not None and str(identifier.path):
+        paths.append(str(identifier.path))
+    return paths
+
+
+def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
+    """A path under the fictional root, from where this asset first appears.
+
+    The prim path is already unique within a scene, so the only way two assets collide is by
+    being on one prim -- a link with two meshes. The suffix is for exactly that, and it counts
+    rather than hashes so the names stay readable.
+    """
+    stem = f"{ASSET_ROOT_PREFIX}{prim_path.lstrip('/')}/{Path(real).name}"
+    if stem not in taken:
+        return stem
+    base, dot, extension = stem.rpartition(".")
+    for index in itertools.count(2):
+        candidate = f"{base}_{index}{dot}{extension}" if dot else f"{stem}_{index}"
+        if candidate not in taken:
+            return candidate
+    raise AssertionError("unreachable")
+
+
+def _rewrite_assets(pxr: Any, spec: Any, public: Mapping[str, str]) -> bool:
+    """Point this prim spec's asset paths at their public names."""
+    changed = False
+    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+    rebased = [
+        pxr.Sdf.Reference(public[ref.assetPath], ref.primPath) if ref.assetPath in public else ref
+        for ref in items
+    ]
+    if rebased and rebased != list(items):
+        if spec.referenceList.explicitItems:
+            spec.referenceList.explicitItems = rebased
+        else:
+            spec.referenceList.prependedItems = rebased
+        changed = True
+    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+    if identifier is not None and str(identifier.path) in public:
+        spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(public[str(identifier.path)])
+        changed = True
+    return changed
 
 
 def _layer_from(pxr: Any, usd: str, what: str) -> Any:

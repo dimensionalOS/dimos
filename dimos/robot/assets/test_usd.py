@@ -23,7 +23,6 @@ import pytest
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
-    SOURCE_KEY,
     asset_hash,
     graft_usd,
     prefix_usd_frames,
@@ -481,20 +480,6 @@ def test_a_joints_unconverted_urdf_rides_along_on_its_joint_prim(extra: Any) -> 
     assert any("dynamics" in fragment and "0.7" in fragment for fragment in kept)
     # origin is read into the joint frames, so it is not duplicated here either.
     assert not any("<origin" in fragment for fragment in kept)
-
-
-def test_the_whole_urdf_is_kept_on_the_root_so_nothing_is_lost(extra: Any) -> None:
-    """Some of a URDF belongs to no link or joint at all, like a robot-level <gazebo>.
-
-    Keeping the source document means converting to USD is never also a way to lose half a
-    description, whatever the converter does or does not understand.
-    """
-    stage = _stage(urdf_to_usd(extra))
-
-    source = stage.GetDefaultPrim().GetCustomDataByKey(SOURCE_KEY)
-
-    assert "<gazebo" in source
-    assert "mu1" in source
 
 
 def test_a_link_with_nothing_unconverted_carries_no_passthrough(extra: Any) -> None:
