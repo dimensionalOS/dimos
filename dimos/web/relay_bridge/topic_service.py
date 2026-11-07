@@ -449,10 +449,13 @@ class _Route:
                     continue
                 await self._transforms.slots.acquire()
                 try:
-                    # Select again with the permit in hand: the wait for a
-                    # worker must not leave an obsolete frame to encode.
-                    fresh, _ = self._mailbox.take(time.monotonic(), limit=128)
-                    self._absorb(fresh)
+                    # Select again with the permit in hand, past the rate
+                    # gate: the wait for a worker must not leave an obsolete
+                    # frame to encode. The newer sample replaces the selected
+                    # one, so the key's schedule stays.
+                    newer = self._mailbox.refresh(key)
+                    if newer is not None:
+                        self._absorb([newer])
                     sample = self._latest.get(key)
                     if sample is None or self._variants.get(variant.name) is not variant:
                         continue

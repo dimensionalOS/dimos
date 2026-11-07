@@ -16,18 +16,16 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 import itertools
 import json
 from pathlib import Path
 import sys
 import threading
-import time
 from typing import Any
 
 from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from dimos_lcm.sensor_msgs import Image
-import numpy as np
 import pytest
 import zenoh
 
@@ -74,6 +72,7 @@ from dimos.web.relay_bridge.topic_service import TopicServiceConfig
 from dimos.web.relay_bridge.topic_test_support import (
     next_message,
     provider_connection,
+    publish_camera,
     route_variants,
 )
 from dimos.web.relay_bridge.topic_transport import OrderedTopicWriter, TopicByteBudget
@@ -698,7 +697,7 @@ async def test_viewer_disconnect_closes_its_route_and_stops_encoding(
 
 
 async def test_media_workers_select_latest_after_capacity_and_leave_events_responsive(
-    relay: RelayReadyInfo, source: zenoh.Session, mocker
+    relay: RelayReadyInfo, mocker
 ) -> None:
     vectors = json.loads(
         (Path(__file__).parents[3] / "web/shared/fixtures/topic_media.json").read_text()
@@ -722,56 +721,74 @@ async def test_media_workers_select_latest_after_capacity_and_leave_events_respo
             raise TimeoutError("test media worker was not released")
         return original(profile, data, settings)
 
+    def held_seq(provider: topic_service.TopicProvider) -> int | None:
+        """The header seq of the newest "c" sample the route holds, taken or not."""
+        route = next(r for r in provider._routes.values() if r.spec.keyExpr == "c")
+        sample = route._mailbox._latest.get("c")
+        if sample is None:
+            sample = route._latest.get("c")
+        return None if sample is None else Image.lcm_decode(bytes(sample.payload)).header.seq
+
     encode = mocker.patch.object(topic_transform, "_encode", side_effect=slow)
     try:
-        async with await RelayClient.connect(relay.wt_url, "viewer") as viewer:
-            await viewer.hello(topics=True)
-            for key in ("a", "b", "c", "events"):
-                viewer.send_control(
-                    TopicSub(
-                        id=key,
-                        source="workspace",
-                        keyExpr=key,
-                        delivery="reliable" if key == "events" else "latest",
-                        profile="raw" if key == "events" else vector["profile"],
-                        maxHz=1000,
+        with local_session() as session:
+            async with (
+                provider_connection(relay, session) as provider,
+                await RelayClient.connect(relay.wt_url, "viewer") as viewer,
+            ):
+                await viewer.hello(topics=True)
+                for key in ("a", "b", "c", "events"):
+                    viewer.send_control(
+                        TopicSub(
+                            id=key,
+                            source="workspace",
+                            keyExpr=key,
+                            delivery="reliable" if key == "events" else "latest",
+                            profile="raw" if key == "events" else vector["profile"],
+                            maxHz=1000,
+                        )
                     )
+                    ready = await next_message(viewer, TopicReady)
+                    viewer.send_control(TopicActivate(route=ready.route, gen=ready.gen))
+                session.put("a", image.lcm_encode())
+                session.put("b", image.lcm_encode())
+                await asyncio.wait_for(both_started.wait(), 2)
+                for sequence in range(100):
+                    image.header.seq = sequence
+                    session.put("c", image.lcm_encode())
+                session.put("events", b"control remains responsive")
+                frames = viewer.frames()
+                async with timeout(2):
+                    event = await anext(frames)
+                assert event.payload == b"control remains responsive"
+                assert encode.call_count == 2
+                # Zenoh runs each subscriber's callback on its own thread: the
+                # control frame says nothing about how far the "c" burst got.
+                async with timeout(2):
+                    while held_seq(provider) != 99:
+                        await asyncio.sleep(0.01)
+                release.set()
+                async with timeout(5):
+                    received = [await anext(frames) for _ in range(3)]
+                by_key = {frame.header.meta["key"]: frame for frame in received}
+                assert by_key["c"].header.meta["headerSeq"] == 99
+                assert encode.call_count == 3
+                for key in ("a", "b", "c"):
+                    viewer.send_control(TopicUnsub(id=key))
+                # Ordered provider control: listing returns after subscriber cleanup.
+                viewer.send_control(
+                    TopicList(id="closed", source="workspace", prefix="", cursor="", limit=32)
                 )
-                ready = await next_message(viewer, TopicReady)
-                viewer.send_control(TopicActivate(route=ready.route, gen=ready.gen))
-            source.put("a", image.lcm_encode())
-            source.put("b", image.lcm_encode())
-            await asyncio.wait_for(both_started.wait(), 2)
-            for sequence in range(100):
-                image.header.seq = sequence
-                source.put("c", image.lcm_encode())
-            source.put("events", b"control remains responsive")
-            frames = viewer.frames()
-            async with timeout(2):
-                event = await anext(frames)
-            assert event.payload == b"control remains responsive"
-            assert encode.call_count == 2
-            release.set()
-            async with timeout(5):
-                received = [await anext(frames) for _ in range(3)]
-            by_key = {frame.header.meta["key"]: frame for frame in received}
-            assert by_key["c"].header.meta["headerSeq"] == 99
-            assert encode.call_count == 3
-            for key in ("a", "b", "c"):
-                viewer.send_control(TopicUnsub(id=key))
-            # Ordered provider control: listing returns after subscriber cleanup.
-            viewer.send_control(
-                TopicList(id="closed", source="workspace", prefix="", cursor="", limit=32)
-            )
-            await next_message(viewer, TopicPage)
-            source.put("a", image.lcm_encode())
-            source.put("events", b"no media viewers")
-            async with timeout(2):
-                event = await anext(frames)
-            assert event.payload == b"no media viewers"
-            assert encode.call_count == 3
+                await next_message(viewer, TopicPage)
+                session.put("a", image.lcm_encode())
+                session.put("events", b"no media viewers")
+                async with timeout(2):
+                    event = await anext(frames)
+                assert event.payload == b"no media viewers"
+                assert encode.call_count == 3
     finally:
         release.set()
+    await asyncio.get_running_loop().shutdown_default_executor()
 
 
 async def test_invalid_zenoh_expression_is_rejected_without_losing_the_source(
@@ -1333,21 +1350,6 @@ async def test_a_raw_rate_update_is_acknowledged_by_the_relay_and_reliable_event
 # Direct video (PLAN_2b): an aiortc viewer stands in for the browser.
 
 
-def camera_frame(seq: int, width: int = 320, height: int = 240) -> bytes:
-    """An rgb8 Image whose picture moves with ``seq``, so the encoder has work."""
-    message = Image.lcm_decode(bytes.fromhex(boxed_vector()["lcm"]))
-    message.header.seq = seq
-    shape = (height, width)
-    rows = np.broadcast_to((np.arange(height)[:, None] * 2 + seq * 7) % 256, shape)
-    cols = np.broadcast_to((np.arange(width)[None, :] * 3 + seq * 5) % 256, shape)
-    picture = np.stack([(rows + cols) % 256, rows, cols], axis=2).astype(np.uint8)
-    message.height, message.width, message.encoding = height, width, "rgb8"
-    message.is_bigendian, message.step = False, width * 3
-    message.data = picture.tobytes()
-    message.data_length = len(message.data)
-    return message.lcm_encode()
-
-
 class VideoViewer:
     """One relay viewer with one direct peer: the browser's half in Python."""
 
@@ -1410,35 +1412,6 @@ async def video_viewer(
             await viewer.close()
 
 
-@contextmanager
-def publish_camera(
-    source: zenoh.Session, key: str, count: int, hz: float = 30
-) -> Iterator[threading.Thread]:
-    """Publish up to ``count`` synthetic frames at ``hz`` from a thread that
-    stops with the block, so a failing test never leaves it putting into a
-    closing session."""
-    stop = threading.Event()
-
-    def run() -> None:
-        # Absolute schedule: building a frame never lowers the rate.
-        period = 1 / hz
-        next_at = time.monotonic()
-        for seq in range(count):
-            if stop.is_set():
-                return
-            source.put(key, camera_frame(seq))
-            next_at += period
-            stop.wait(max(0.0, next_at - time.monotonic()))
-
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    try:
-        yield thread
-    finally:
-        stop.set()
-        thread.join(5)
-
-
 async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
     relay: RelayReadyInfo, mocker
 ) -> None:
@@ -1464,7 +1437,10 @@ async def test_direct_video_viewers_receive_decodable_h264_from_one_encode(
                 assert received[0].key_frame
             assert encode.call_count >= 10
             encoder = next(iter(next(iter(provider._video._routes.values())).encoders.values()))
-            assert encoder.frames == encode.call_count
+            # Every encode ran on the one shared encoder. Its frames counter is
+            # not compared with the spy: it trails by one while the last encode
+            # is still on the worker thread.
+            assert all(call.args[0] is encoder for call in encode.call_args_list)
             assert encoder.keyframes >= 1
 
 
