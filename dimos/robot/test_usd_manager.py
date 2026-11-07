@@ -1445,7 +1445,7 @@ def test_trivialize_leaves_a_mounted_subtree_alone(
 
 
 def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     """The filter works in the description's names and reads tf in the published ones.
 
@@ -1470,7 +1470,7 @@ def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
 
 
 def test_a_renamed_multidof_joint_is_still_found_on_tf(
-    make_filter: Callable[..., UrdfManagerPointClearing],
+    make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
     """A floating joint's motion comes from tf, so its edge has to be looked up renamed too."""
     urdf = _joint_robot("floating")
