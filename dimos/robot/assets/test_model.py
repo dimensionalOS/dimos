@@ -872,7 +872,77 @@ def test_a_usd_model_from_a_file_is_read_lazily(tmp_path: Path) -> None:
 
     assert model.usd == _SCENE_USDA
     assert model.root_link == "room"
-    assert model.joints == ()
+
+
+_JOINTED_USDA = """#usda 1.0
+(
+    defaultPrim = "arm"
+)
+
+def Xform "arm"
+{
+    def Xform "base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Xform "forearm" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            double3 xformOp:translate = (0, 0, 0.5)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+
+        def PhysicsRevoluteJoint "shoulder"
+        {
+            uniform token physics:axis = "Z"
+            float physics:lowerLimit = -90
+            float physics:upperLimit = 90
+            rel physics:body0 = </arm/base>
+            rel physics:body1 = </arm/base/forearm>
+            point3f physics:localPos0 = (0, 0, 0.5)
+            point3f physics:localPos1 = (0, 0, 0)
+        }
+    }
+}
+"""
+
+
+def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
+    """A robot described only in USD still has joints to put on tf.
+
+    They are UsdPhysics prims in the layer rather than URDF joints, so they have to be read
+    back before anything can be posed at an angle. Without this a USD-native robot publishes
+    no joint tf at all and every link renders at the origin.
+    """
+    pytest.importorskip("pxr")
+    source = tmp_path / "arm.usda"
+    source.write_text(_JOINTED_USDA)
+    model = robot_model.UsdModel.from_file(source)
+
+    (joint,) = model.joints
+    assert joint.name == "shoulder"
+    assert joint.type == "revolute"
+    assert joint.parent_link == "base"
+    assert joint.child_link == "forearm"
+    assert model.get_joint("shoulder") is joint
+
+
+def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """The URDF is still there, so a robot that was described in URDF needs no usd-core for tf.
+
+    This is the line a 3.10 arm robot stands on: reading a layer back needs pxr, and it must
+    not be on the path a URDF-described robot takes.
+    """
+    import dimos.robot.assets.usd_to_urdf as usd_to_urdf_module
+
+    convert = mocker.patch.object(usd_to_urdf_module, "usd_to_urdf")
+    model = _urdf(tmp_path).to_usd()
+
+    assert [joint.name for joint in model.joints] == ["shoulder"]
+    convert.assert_not_called()
 
 
 def test_a_usd_model_from_a_file_is_its_own_loaded_form(tmp_path: Path) -> None:
