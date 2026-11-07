@@ -109,6 +109,7 @@ all_blueprints = {
     "metal-lerobot-rollout": "dimos.robot.manipulators.makermods_metal.blueprints.learning_rollout:metal_lerobot_rollout",
     "metal-perception-sim": "dimos.robot.manipulators.makermods_metal.blueprints.sim:metal_perception_sim",
     "metal-quest-collection": "dimos.robot.manipulators.makermods_metal.blueprints.learning_collection:metal_quest_collection",
+    "metal-quest-collection-sim": "dimos.robot.manipulators.makermods_metal.blueprints.learning_collection_sim:metal_quest_collection_sim",
     "metal-sim": "dimos.robot.manipulators.makermods_metal.blueprints.sim:metal_sim",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-pointlio": "dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints:mid360_pointlio",

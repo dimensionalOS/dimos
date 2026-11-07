@@ -107,8 +107,18 @@ dimos imitation control
 
 `--wrist.hardware.camera-index /dev/video2` selects another camera.
 `--simulation` swaps the connection for the echo mock; the camera is still a
-real device. There is no hand-guided teaching entry: the Metal runs without
-gravity compensation, so a zero-stiffness arm drops.
+real device. `metal-quest-collection-sim` rehearses the same collection with
+the Metal in MuJoCo, its wrist camera standing in for the webcam, so no CAN
+port or camera is needed:
+
+```bash
+dimos --simulation run metal-quest-collection-sim \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cube"
+```
+
+There is no hand-guided teaching entry: the Metal runs without gravity
+compensation, so a zero-stiffness arm drops.
 
 ## Bimanual Quest teleop and collection
 
