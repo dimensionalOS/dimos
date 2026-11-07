@@ -59,6 +59,7 @@ from dimos.simulation.engines.mujoco_engine import (
     CameraFrame,
     MujocoEngine,
     RaycastLidarConfig,
+    RaycastLidarFrame,
 )
 from dimos.simulation.engines.mujoco_shm import (
     CMD_MODE_PD_TAU,
@@ -303,6 +304,10 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     mujoco_lidar_max_range: float = MAX_RANGE
     mujoco_lidar_max_height: float = MAX_HEIGHT
     mujoco_lidar_robot_exclusion_radius: float = 0.0
+    # Publish each lidar camera's cloud in its own "<camera>_lidar_frame", with
+    # the camera's world pose at the cast on tf, as a depth camera's cloud is.
+    # A mapper then casts its rays from the camera instead of the world origin.
+    mujoco_lidar_in_camera_frame: bool = False
     # Inject menagerie/dimos-bundled mesh bytes (via
     # dimos.simulation.mujoco.model.get_assets) into MjModel.from_xml_string.
     # MJCFs that reference meshes by bare filename (G1 GR00T, Go2) need this;
@@ -1153,6 +1158,12 @@ class MujocoSimModule(
         engine = self._engine
         if engine is None:
             return
+        if self.config.mujoco_lidar_in_camera_frame:
+            for camera_name in self._mujoco_lidar_camera_names():
+                frame = engine.read_raycast_lidar(camera_name)
+                if frame is not None and frame.points.size > 0:
+                    self._publish_camera_lidar(camera_name, frame)
+            return
 
         all_points: list[NDArray[Any]] = []
         latest_ts = 0.0
@@ -1175,5 +1186,30 @@ class MujocoSimModule(
             )
             pcd = pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size)
             self.pointcloud.publish(pcd)
+        except Exception as exc:
+            logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))
+
+    def _publish_camera_lidar(self, camera_name: str, frame: RaycastLidarFrame) -> None:
+        """Publish one cast in the camera's frame, and the camera's world pose at the cast on tf."""
+        if frame.origin is None or frame.rotation is None:
+            return
+        frame_id = f"{camera_name}_lidar_frame"
+        # Row-vector form of p_camera = R^T (p_world - origin).
+        points = (frame.points.astype(np.float64) - frame.origin) @ frame.rotation
+        try:
+            self.tf.publish(
+                TFMessage(
+                    _transform_from_matrix(
+                        _pose_matrix(frame.origin, frame.rotation),
+                        frame_id="world",
+                        child_frame_id=frame_id,
+                        ts=frame.timestamp,
+                    )
+                )
+            )
+            pcd = PointCloud2.from_numpy(
+                points.astype(np.float32), frame_id=frame_id, timestamp=frame.timestamp
+            )
+            self.pointcloud.publish(pcd.voxel_downsample(self.config.mujoco_lidar_voxel_size))
         except Exception as exc:
             logger.error("MuJoCo lidar pointcloud generation error", error=str(exc))

@@ -58,6 +58,7 @@ def test_the_sim_cloud_becomes_the_planner_map_through_the_self_and_box_filters(
 
     camera = MujocoSimModuleConfig.model_validate(sim.kwargs)
     assert camera.enable_pointcloud and camera.enable_mujoco_lidar
+    assert camera.mujoco_lidar_in_camera_frame
     assert topics[MujocoSimModule, "pointcloud"] == topics[UrdfManagerPointClearing, "pointcloud"]
     assert (
         topics[UrdfManagerPointClearing, "filtered_pointcloud"]

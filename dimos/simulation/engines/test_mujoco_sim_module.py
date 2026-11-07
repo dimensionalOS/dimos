@@ -26,7 +26,7 @@ import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine, RaycastLidarFrame
 from dimos.simulation.engines.mujoco_sim_module import (
     MujocoSimModule,
     MujocoSimModuleConfig,
@@ -214,6 +214,43 @@ def test_camera_tf_is_published_relative_to_configured_base_frame() -> None:
         assert camera_link_tf.frame_id == "link7"
         assert camera_link_tf.child_frame_id == "wrist_camera_link"
         assert np.allclose(camera_link_tf.translation.to_numpy(), [0.0, 0.0, 1.0])
+    finally:
+        module.stop()
+
+
+def test_lidar_in_camera_frame_puts_the_camera_at_the_cloud_origin_on_tf() -> None:
+    config = {"enable_mujoco_lidar": True, "mujoco_lidar_in_camera_frame": True}
+    module = MujocoSimModule(**config)
+    try:
+        module.config = MujocoSimModuleConfig(**config)
+        # The camera at (0.1, 0, 0.4), turned 90 degrees about z.
+        rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        origin = np.array([0.1, 0.0, 0.4])
+        hits = np.array([[0.3, 0.05, 0.02], [0.25, -0.1, 0.0]], dtype=np.float32)
+
+        class _FakeLidarEngine:
+            def read_raycast_lidar(self, camera_name: str) -> RaycastLidarFrame:
+                return RaycastLidarFrame(hits, 5.0, origin, rotation)
+
+            def disconnect(self) -> None:
+                pass
+
+        tf: list[Any] = []
+        clouds: list[Any] = []
+        module._engine = _FakeLidarEngine()
+        module.tf.subscribe(tf.append)
+        module.pointcloud.subscribe(clouds.append)
+
+        module._generate_pointcloud()
+
+        [cloud] = clouds
+        [camera] = tf[-1].transforms
+        assert cloud.frame_id == camera.child_frame_id == "wrist_camera_lidar_frame"
+        assert camera.frame_id == "world"
+        assert cloud.ts == camera.ts == 5.0
+        world_points = cloud.points_f32() @ rotation.T + camera.translation.to_numpy()
+        assert np.allclose(np.sort(world_points, axis=0), np.sort(hits, axis=0), atol=1e-5)
+        assert np.allclose(camera.to_matrix()[:3, :3], rotation)
     finally:
         module.stop()
 

@@ -121,8 +121,13 @@ class RaycastLidarConfig:
 
 @dataclass
 class RaycastLidarFrame:
+    """One cast: world-frame hit points (N x 3, metres), the cast time, and the
+    camera's world position (metres) and 3 x 3 rotation at that time."""
+
     points: NDArray[np.float32]
     timestamp: float
+    origin: NDArray[np.float64] | None = None
+    rotation: NDArray[np.float64] | None = None
 
 
 @dataclass
@@ -545,6 +550,8 @@ class MujocoEngine(SimulationEngine):
                 self._raycast_lidar_frames[state.cfg.name] = RaycastLidarFrame(
                     points=arr,
                     timestamp=now,
+                    origin=origin,
+                    rotation=camera_mat,
                 )
 
     @staticmethod
