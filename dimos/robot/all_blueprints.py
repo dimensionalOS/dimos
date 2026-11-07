@@ -197,6 +197,7 @@ all_blueprints = {
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
     "xarm-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_sim",
+    "xarm6-cameras": "dimos.robot.manipulators.xarm.blueprints.cameras:xarm6_cameras",
     "xarm6-grasp": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp",
     "xarm6-grasp-graspgenx": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm6_grasp_graspgenx",
     "xarm6-handeye-calibrate": "dimos.robot.manipulators.xarm.blueprints.calibration:xarm6_handeye_calibrate",

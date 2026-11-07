@@ -64,7 +64,7 @@ The run waits before each of the first `approve_first_moves` moves and logs the 
 
 ## Read the result
 
-`calibrate()` returns the verdict, the confidence numbers, and the transform in two forms: the solved colour optical frame, and the mount (`link6` to `camera_link`) that a blueprint uses. The same is written to `STATE_DIR/calibration/<name>.json`. The xArm grasp blueprints read `xarm6_wrist_camera.json` from there when it exists and has `passed: true`.
+`calibrate()` returns the verdict, the confidence numbers, and the transform in two forms: the solved colour optical frame, and the mount (`link6` to `camera_link`) that a blueprint uses. The same is written to `STATE_DIR/calibration/<name>.json`. The xArm blueprints read `xarm6_wrist_camera.json` and `xarm6_chest_camera.json` from there when they exist and have `passed: true`, and otherwise the measured results shipped with the package; see [xArm6 with two calibrated cameras](/docs/usage/xarm6_cameras.md).
 
 `passed` means all of these held:
 
