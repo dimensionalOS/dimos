@@ -21,7 +21,6 @@ from pathlib import Path
 from threading import RLock
 import time
 from typing import Any
-import xml.etree.ElementTree as ET
 
 import numpy as np
 from pydantic import Field
@@ -90,7 +89,7 @@ class UrdfManager(Module):
         super().__init__(**kwargs)
         self._lock = RLock()
         self._description = self.config.model.load()
-        self._file_paths = _files_named_by(self._description.xml)
+        self._file_paths = self._description.referenced_files()
         self._joints = {joint.name: joint for joint in self._description.joints}
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
@@ -277,12 +276,3 @@ class UrdfManager(Module):
             for joint in self._joints.values()
             if joint.type not in MULTI_DOF_JOINT_TYPES
         ]
-
-
-def _files_named_by(xml: str) -> set[str]:
-    """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
-    return {
-        element.attrib["filename"]
-        for element in ET.fromstring(xml).iter()
-        if "filename" in element.attrib
-    }
