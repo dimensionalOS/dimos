@@ -55,6 +55,19 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 # The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
+# The RPC a mounted module answers with its *whole* tree, its own mounts included. A manager
+# has one; a plain sensor does not.
+SCENE_RPC = "get_scene"
+
+
+# The root link a manager given no model stands on.
+WORLD_LINK = "world"
+
+
+def _world_model() -> RobotModel:
+    """The stand-in description for a manager given no model: one link, called "world"."""
+    return RobotModel.from_root_link(WORLD_LINK, name=WORLD_LINK)
+
 
 # What get_usd and get_scene answer with: [asset_root, usd].
 #
@@ -89,6 +102,11 @@ class Mount:
     # remote_name: namespace() sets the two together but keeps a frame_id_prefix the user set
     # by hand, and that override is the answer to "what are this module's frames called".
     frame_prefix: str = ""
+    # The rpc that hands over this module's whole tree. A manager that has mounts of its own
+    # answers get_scene, and asking it that rather than get_usd is what makes mounting
+    # iterative: a lidar on a g1 arrives with the g1. Anything else only has get_usd.
+    # A bare instance name has no class to ask, so it gets get_usd and says so.
+    subtree_rpc: str = SUBTREE_RPC
 
     @classmethod
     def of(cls, value: object) -> Mount:
@@ -113,7 +131,7 @@ class Mount:
             return cls(None, value, value.rsplit("/", 1)[0] if "/" in value else "")
         if isinstance(value, type) and issubclass(value, Module):
             # Matches RPCClient.remote's own default for a module with no instance_name.
-            return cls(value, value.__name__)
+            return cls(value, value.__name__, subtree_rpc=cls._tree_rpc(value))
         raise TypeError(
             f"mounts values are a Module subclass, a Blueprint or an instance name; got {value!r}"
         )
@@ -134,11 +152,24 @@ class Mount:
                 f"{SUBTREE_RPC}() ({sorted(atom.name for atom in atoms)}); name the one that owns "
                 f"the subtree instead of the whole blueprint"
             )
-        return cls(atoms[0].module, atoms[0].name, atoms[0].kwargs.get("frame_id_prefix") or "")
+        return cls(
+            atoms[0].module,
+            atoms[0].name,
+            atoms[0].kwargs.get("frame_id_prefix") or "",
+            subtree_rpc=cls._tree_rpc(atoms[0].module),
+        )
+
+    @staticmethod
+    def _tree_rpc(module: type[Module]) -> str:
+        """get_scene when the module has one, so its own mounts come along; else get_usd."""
+        return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
 
 
 class UrdfManagerConfig(ModuleConfig):
-    model: RobotModel
+    # The robot this manager answers for. None gives a single link called "world" and nothing
+    # else, which is a scene with no robot of its own -- useful when all this manager does is
+    # hold mounts, so a tree of sensors and arms has somewhere to hang from.
+    model: RobotModel | None = None
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -197,7 +228,7 @@ class UrdfManager(Module):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._description = self.config.model.load()
+        self._description = (self.config.model or _world_model()).load()
         self._file_paths = _files_named_by(self._description.xml)
         self._joints = {joint.name: joint for joint in self._description.joints}
         self._next_joint_tf_t = 0.0
@@ -217,20 +248,23 @@ class UrdfManager(Module):
             raise
 
     def _check_mounts(self) -> None:
-        """Fail here rather than at get_scene time, which is a blueprint's last step before start."""
-        links = {self._description.root_link, *(j.child_link for j in self._description.joints)}
+        """Fail here rather than at get_scene time, which is a blueprint's last step before start.
+
+        Only the module is checkable this early. The frame is not: a mount may legitimately name
+        a frame that belongs to another mounted subtree and so does not exist until the scene is
+        assembled ("g1/head_mount"). That one is caught by _graft_in_waves, which by then can
+        list every frame there actually is.
+        """
         for frame_id, mount in self.config.mounts.items():
-            if frame_id not in links:
-                raise ValueError(
-                    f"mounts names frame {frame_id!r}, which is not a link of this "
-                    f"URDF (it has {sorted(links)})"
-                )
             # An instance name on its own carries no class, so there is nothing to check; it fails
             # at get_scene time instead, which is why a class or a blueprint is the better value.
-            if mount.module is not None and SUBTREE_RPC not in mount.module.rpcs:
+            if mount.module is None:
+                continue
+            if not {SUBTREE_RPC, SCENE_RPC} & set(mount.module.rpcs):
                 raise ValueError(
-                    f"mounts attaches {mount.module.__name__} at {frame_id!r}, "
-                    f"but it has no @rpc {SUBTREE_RPC}() to ask for its subtree"
+                    f"mounts attaches {mount.module.__name__} at {frame_id!r}, but it has "
+                    f"neither an @rpc {SUBTREE_RPC}() nor an @rpc {SCENE_RPC}() to ask for its "
+                    f"subtree"
                 )
 
     @rpc
@@ -268,7 +302,7 @@ class UrdfManager(Module):
         return str(source.parent) if source is not None else ""
 
     @rpc
-    async def get_scene(self) -> list[str]:
+    async def get_scene(self, visited: list[str] | None = None) -> list[str]:
         """``[asset_root, usd]``: this URDF with every mounted subtree grafted on.
 
         Async and meant to be called before start(): it waits for every module in the map, with no
@@ -277,20 +311,67 @@ class UrdfManager(Module):
 
         Each subtree is rebased onto the root its own module reported before it is grafted, so
         the one root this answers with covers the whole scene.
+
+        A mount whose frame belongs to another subtree rather than to this URDF is grafted once
+        that subtree is in place, so a lidar can hang off a g1 that is itself mounted here. See
+        _graft_in_waves.
+
+        ``visited`` is the chain of managers already assembling a scene above this one, which is
+        how a mount cycle is caught instead of recursing until something falls over. Callers
+        leave it alone; a manager asking one of its own mounts passes it on.
         """
-        subtrees = await self._subtrees()
+        chain = list(visited or [])
+        if self._scene_identity in chain:
+            raise ValueError(
+                f"circular mount: {' -> '.join([*chain, self._scene_identity])}. One of these "
+                f"modules is mounted on a module that is mounted on it, directly or through the "
+                f"others, so neither scene can be built before the other. Break the cycle by "
+                f"removing one of those mounts."
+            )
+        subtrees = await self._subtrees([*chain, self._scene_identity])
         root = self.get_usd()
         if not subtrees:
             return root
-        return [root[ASSET_ROOT], graft_usd(root[USD], subtrees)]
+        return [root[ASSET_ROOT], self._graft_in_waves(root[USD], subtrees)]
 
-    async def _subtrees(self) -> dict[str, str]:
+    @property
+    def _scene_identity(self) -> str:
+        """What this manager is called in a mount chain: the name it answers RPC under."""
+        return self.config.rpc_name or self.config.instance_name or type(self).__name__
+
+    def _graft_in_waves(self, root_usd: str, subtrees: dict[str, str]) -> str:
+        """Graft each subtree once the frame it names exists, which may be another subtree's.
+
+        Mounts are not independent: "g1/head_mount" is a frame that only exists once the g1 is
+        in place. So this grafts whatever can be grafted, then looks again, until either
+        everything is in or nothing moved -- and nothing moving means the frames that are left
+        are never going to appear.
+        """
+        scene = root_usd
+        remaining = dict(subtrees)
+        while remaining:
+            present = usd_frame_names(scene)
+            ready = {frame: usd for frame, usd in remaining.items() if frame in present}
+            if not ready:
+                raise ValueError(
+                    f"cannot mount at {sorted(remaining)}: no link or joint by those names "
+                    f"exists in this scene, and nothing left to graft would add one. Mount "
+                    f"frames are the names as they end up in the scene, so a frame inside a "
+                    f'mounted subtree carries that subtree\'s namespace prefix ("g1/head_mount", '
+                    f'not "head_mount"). The scene has: {sorted(present)}'
+                )
+            scene = graft_usd(scene, ready)
+            for frame in ready:
+                del remaining[frame]
+        return scene
+
+    async def _subtrees(self, chain: list[str]) -> dict[str, str]:
         mounts = self.config.mounts
         if not mounts:
             self._check_renames_matched(set())
             return {}
         results = await asyncio.gather(
-            *(self._subtree(frame_id, mount) for frame_id, mount in mounts.items())
+            *(self._subtree(frame_id, mount, chain) for frame_id, mount in mounts.items())
         )
         self._check_renames_matched({name for _, matched in results for name in matched})
         return {frame_id: usd for frame_id, (usd, _) in zip(mounts, results, strict=True)}
@@ -316,13 +397,13 @@ class UrdfManager(Module):
         if client is None:
             if mount.module is None:
                 # No class to take a signature or an rpc list from, so declare the one rpc we call.
-                client = RPCClient(None, None, mount.remote_name, {SUBTREE_RPC}, rpc=self.rpc)
+                client = RPCClient(None, None, mount.remote_name, {mount.subtree_rpc}, rpc=self.rpc)
             else:
                 client = RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
             self._subtree_clients[mount.remote_name] = client
         return client
 
-    async def _subtree(self, frame_id: str, mount: Mount) -> tuple[str, set[str]]:
+    async def _subtree(self, frame_id: str, mount: Mount, chain: list[str]) -> tuple[str, set[str]]:
         """The mounted module's USD, rebased and renamed, retried until it answers.
 
         No deadline: a mount is a module the blueprint says is physically there, so not
@@ -333,13 +414,13 @@ class UrdfManager(Module):
         attempts = 0
         while True:
             attempts += 1
-            answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id)
+            answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id, mount, chain)
             if answer is not None:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
                 return await asyncio.to_thread(self._adopt, answer, mount)
             if attempts % _WAITING_LOG_EVERY == 0:
                 logger.warning(
-                    f"still waiting on {name} for {SUBTREE_RPC}() at frame {frame_id!r} "
+                    f"still waiting on {name} for {mount.subtree_rpc}() at frame {frame_id!r} "
                     f"after {attempts} asks"
                 )
             await asyncio.sleep(self.config.scene_retry_s)
@@ -367,12 +448,25 @@ class UrdfManager(Module):
             matched |= usd_frame_names(usd) & set(post)
         return rename_usd_frames(usd, post), matched
 
-    def _ask_for_usd(self, client: Any, frame_id: str) -> list[str] | None:
-        """One RPC attempt; a module that is not serving yet is a retry, not a failure."""
+    def _ask_for_usd(
+        self, client: Any, frame_id: str, mount: Mount, chain: list[str]
+    ) -> list[str] | None:
+        """One RPC attempt; a module that is not serving yet is a retry, not a failure.
+
+        A manager is asked for its whole scene and handed the chain, so it can refuse a cycle
+        rather than ask back round. Anything else is asked for its own layer.
+        """
         try:
-            answer = getattr(client, SUBTREE_RPC)()
+            if mount.subtree_rpc == SCENE_RPC:
+                answer = getattr(client, SCENE_RPC)(chain)
+            else:
+                answer = getattr(client, SUBTREE_RPC)()
         except Exception as exc:
-            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} did not answer yet: {exc}")
+            # A circular mount is the one failure worth stopping for: retrying cannot fix it,
+            # and the manager below has already named the whole chain.
+            if "circular mount" in str(exc):
+                raise
+            logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} did not answer yet: {exc}")
             return None
         if (
             not isinstance(answer, (list, tuple))
@@ -380,7 +474,7 @@ class UrdfManager(Module):
             or not all(isinstance(part, str) for part in answer)
             or not answer[USD]
         ):
-            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} answered {answer!r}, retrying")
+            logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} answered {answer!r}, retrying")
             return None
         return list(answer)
 
