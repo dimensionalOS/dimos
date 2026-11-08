@@ -25,9 +25,14 @@ from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
     asset_hash,
     graft_usd,
+    prefix_usd_frames,
+    rename_usd_frames,
     require_asset_hashes,
+    trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
+    usd_frame_names,
+    usd_with_frames,
 )
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
@@ -285,6 +290,90 @@ def test_a_grafted_subtree_keeps_its_joints_pointing_at_its_own_links(toy: Any) 
     assert str(targets[0]) == "/toy/base_link/mount/arm_sub/base_link"
 
 
+def test_a_graft_joins_the_subtree_to_its_mount_with_a_floating_joint(toy: Any) -> None:
+    """Nesting says where a subtree hangs; the joint says how.
+
+    Welding it is wrong -- the root of an articulated subtree is a frame tf publishes, and two
+    parents make its pose flip -- but saying nothing is worse: a reader with no tf has nowhere
+    to put it, and a root with no joint above it reads as a static scene tile rather than a
+    robot. Free in all six degrees is the true answer.
+    """
+    root = urdf_to_usd(toy)
+
+    stage = _stage(graft_usd(root, {"mount": urdf_to_usd(toy, name="arm_sub")}))
+    # The generic PhysicsJoint is the only free one; the toy's own joints are fixed or revolute.
+    mounted = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
+
+    assert len(mounted) == 1
+    joint = mounted[0]
+    assert joint.GetDisplayName() == "base_link_mount"
+    assert str(joint.GetRelationship("physics:body0").GetTargets()[0]) == "/toy/base_link/mount"
+    assert str(joint.GetRelationship("physics:body1").GetTargets()[0]) == (
+        "/toy/base_link/mount/arm_sub/base_link"
+    )
+
+
+def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
+    """The nesting already placed the subtree; the joint only says it is free."""
+    from pxr import Gf
+
+    stage = _stage(graft_usd(urdf_to_usd(toy), {"mount": urdf_to_usd(toy, name="arm_sub")}))
+    joint = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint")
+
+    for attribute in ("physics:localPos0", "physics:localPos1"):
+        assert joint.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
+    for attribute in ("physics:localRot0", "physics:localRot1"):
+        assert joint.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
+
+
+def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
+    """A converted room arrives with frames for its own furniture and none for its visitors.
+
+    Three robots standing in one need three frames, because grafting two subtrees at one frame
+    is refused, so the scene has to be able to grow them.
+    """
+    root = urdf_to_usd(toy)
+
+    grown = usd_with_frames(root, {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
+    stage = _stage(graft_usd(grown, {"spot": urdf_to_usd(toy, name="arm_sub")}))
+
+    assert _prim_by_link(stage, "spot"), "the frame is a link, so graft_usd can match it"
+    assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
+
+
+def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
+    with pytest.raises(ValueError, match="is taken"):
+        usd_with_frames(
+            urdf_to_usd(toy), {"mount": ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
+        )
+
+
+def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
+    with pytest.raises(ValueError, match="no frame 'nowhere'"):
+        usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+
+
+def test_trivializing_keeps_the_lights_and_drops_the_shapes(toy: Any) -> None:
+    """A light is not a shape.
+
+    It is how the scene looks, and the one thing a viewer cannot work out for itself: told
+    none, it has to invent some, and a room that says what its sky is gets lit by a guess.
+    Dropping them with the geometry meant a scene could not hand over its lighting without
+    handing over its meshes too.
+    """
+    lit = urdf_to_usd(toy).replace(
+        'def Xform "toy"\n{',
+        'def Xform "toy"\n{\n    def DomeLight "sky"\n    {\n'
+        "        color3f inputs:color = (0.4, 0.6, 0.9)\n    }\n",
+    )
+    assert 'def DomeLight "sky"' in lit, "the fixture has to actually carry a light"
+
+    lean = trivialize_usd(lit)
+
+    assert 'def DomeLight "sky"' in lean, "the sky survives"
+    assert "def Mesh " not in lean and "def Cube " not in lean, "the shapes do not"
+
+
 def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no prim for that frame"):
         graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
@@ -327,6 +416,17 @@ def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
     assert stage.GetPrimAtPath("/base_link/base_link/arm_sub/base_link"), (
         "the subtree went to the root rather than to the link of that name"
     )
+
+
+def test_a_prefix_moves_the_root_with_everything_under_it(toy: Any) -> None:
+    """Two namespaced copies of one scene must share no frame name, the root included."""
+    scene = urdf_to_usd(toy, name="room")
+
+    left = usd_frame_names(prefix_usd_frames(scene, "left"))
+    right = usd_frame_names(prefix_usd_frames(scene, "right"))
+
+    assert left & right == set(), f"both copies still answer to {sorted(left & right)}"
+    assert "left/room" in left, sorted(left)
 
 
 def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
@@ -614,3 +714,19 @@ def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
     texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
 
     assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
+
+
+def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
+    """A converted room's root is a plain Xform, not a link, and it is still a frame.
+
+    It is the one everything in the room hangs off, so if tf calls that frame something else
+    -- "world", where the robots stand -- the rename has to reach it. Validating the name and
+    then quietly not applying it is the worst of the three options.
+    """
+    scene = urdf_to_usd(toy, name="office")
+
+    assert "office" in usd_frame_names(scene)
+    renamed = rename_usd_frames(scene, {"office": "world"})
+
+    assert 'displayName = "world"' in renamed
+    assert "world" in usd_frame_names(renamed)

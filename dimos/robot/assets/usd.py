@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 
     from dimos.robot.assets.model import JointDescription, LoadedRobotModel
 
+Vector = tuple[float, float, float]
+
 logger = setup_logger()
 
 # No single position, and no UsdPhysics equivalent: their pose comes from odometry.
@@ -208,8 +210,47 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
         # Copied specs keep their authored target paths, so a joint's body rels would still
         # point at the subtree's old root. Rebase them onto where the subtree now lives.
         _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
+        _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
 
     return str(root_layer.ExportToString())
+
+
+def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) -> str:
+    """``usd`` with each named frame added as a link on the frame it hangs off.
+
+    The USD counterpart of ``mjcf_with_frames``. A scene needs somewhere to mount things that
+    are not part of it -- three robots standing in a room need three frames, because grafting
+    two subtrees at one frame is refused and rightly so -- and a converted room arrives with
+    frames for its own furniture and none for its visitors.
+
+    Each value is ``(parent frame, xyz, rpy)``. The frame becomes a prim carrying
+    RigidBodyAPI, which is what makes it a link to everything that reads this layer: graft_usd
+    matches a mount frame on it, and the viewer places it from tf like any other.
+    """
+    if not frames:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a scene")
+    stage = pxr.Usd.Stage.Open(layer)
+    by_link = _link_prim_paths(stage)
+    for name, (parent, xyz, rpy) in frames.items():
+        parent_path = by_link.get(parent)
+        if parent_path is None:
+            raise ValueError(
+                f"cannot add the frame {name!r}: the layer has no frame {parent!r} to hang it "
+                f"off (it has {sorted(by_link)[:8]}...)"
+            )
+        path = pxr.Sdf.Path(parent_path).AppendChild(_identifier(pxr, name))
+        if stage.GetPrimAtPath(path):
+            raise ValueError(f"cannot add the frame {name!r}: {path} is taken")
+        prim = pxr.UsdGeom.Xform.Define(stage, path)
+        pxr.UsdPhysics.RigidBodyAPI.Apply(prim.GetPrim())
+        prim.GetPrim().SetDisplayName(name)
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
+        transform[:3, 3] = xyz
+        prim.AddTransformOp().Set(_matrix(pxr, transform))
+    return str(layer.ExportToString())
 
 
 def prefix_usd_frames(usd: str, prefix: str) -> str:
@@ -224,31 +265,53 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
     Only ``displayName`` changes. Prim names cannot hold a "/" and prim paths are already unique
     by nesting, so neither needs to move. A prim with no displayName of its own is given one
     from its prim name, because the prefixed name is exactly the case the prim name cannot hold.
+
+    The defaultPrim moves too, the same way it does in ``usd_frame_names`` and
+    ``rename_usd_frames``. A converted room is a plain Xform holding its furniture, so that root
+    is a frame without being a link, and it is the one frame every copy of the layer names the
+    same. Leaving it behind is what the prefix exists to prevent: two namespaced copies would
+    publish "left/desk" and "right/desk" under a single shared "room", their subtrees would
+    merge there, and whichever copy published its root's pose last would move both.
     """
     if not prefix:
         return usd
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a subtree")
     stage = pxr.Usd.Stage.Open(layer)
+    root = stage.GetDefaultPrim()
     for prim in stage.Traverse():
-        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+        carries_a_frame = prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+        if carries_a_frame or (root and prim == root):
             prim.SetDisplayName(f"{prefix}/{prim.GetDisplayName() or prim.GetName()}")
     return str(layer.ExportToString())
 
 
 def usd_frame_names(usd: str) -> set[str]:
-    """Every link and joint name ``usd`` carries, under the names they travel as."""
+    """Every link and joint name ``usd`` carries, under the names they travel as.
+
+    The defaultPrim counts, the same way it does in ``_link_prim_paths`` and for the same
+    reason: a converted room is a plain Xform holding its furniture, so the frame everything
+    in it hangs off is that root and not a link at all. Leaving it out means nothing can
+    rename it, and a scene whose root is named something tf never publishes -- "office_555"
+    where the robots stand in "world" -- cannot be placed and so is not drawn.
+
+    Last, and only under a name no link has taken, so a real link still wins any clash.
+    """
     pxr = _pxr()
     stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
-    return {
+    names = {
         prim.GetDisplayName() or prim.GetName()
         for prim in stage.Traverse()
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
     }
+    root = stage.GetDefaultPrim()
+    if root:
+        names.add(root.GetDisplayName() or root.GetName())
+    return names
 
 
 def trivialize_usd(usd: str) -> str:
-    """``usd`` with every link and joint kept, and everything they carry dropped.
+    """``usd`` with every link, joint and light kept, and the shapes they carry dropped.
 
     The same description serves a robot on real hardware and a simulated one, but only the sim
     needs the shapes: on a real robot the geometry is the world itself. So this keeps the
@@ -256,6 +319,11 @@ def trivialize_usd(usd: str) -> str:
     mount point are -- and removes the visuals, the collision shapes and the meshes they
     reference. The frames come out identical either way, so one description can be the only
     one rather than a trivial second copy that drifts from it.
+
+    Lights stay. A light is not a shape: it is how the scene looks, and it is the one thing a
+    viewer cannot work out for itself -- told none, it has to invent some, and a room that said
+    what its sky and its eighteen ceiling fittings are gets lit by a guess instead. Keeping them
+    is what lets a scene hand over its lighting without handing over its geometry twice.
     """
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a layer")
@@ -274,14 +342,22 @@ def trivialize_usd(usd: str) -> str:
         return usd
     for path in doomed:
         spec = layer.GetPrimAtPath(path)
-        if spec is not None:
+        # A prim at the layer's own root has no nameParent to be removed from -- a converted
+        # scene keeps its materials and its render settings up there beside the room. Those are
+        # not geometry hanging off a frame, and removing one is the layer's business, not ours.
+        if spec is not None and spec.nameParent is not None:
             del spec.nameParent.nameChildren[spec.name]
     return str(layer.ExportToString())
 
 
 def _holds_a_frame(pxr: Any, prim: Any) -> bool:
-    """True when ``prim`` or anything under it is a link or a joint."""
+    """True when ``prim`` or anything under it is a link, a joint, or a light."""
     if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+        return True
+    # By type name rather than UsdLux.LightAPI, which _pxr does not carry: this is the same test
+    # the viewer makes, and it covers DomeLight, DistantLight, SphereLight, DiskLight and RectLight
+    # without naming each one.
+    if str(prim.GetTypeName()).endswith("Light"):
         return True
     return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
 
@@ -308,6 +384,13 @@ def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
         for prim in stage.Traverse()
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
     ]
+    # The defaultPrim is a frame too, the same way usd_frame_names and _link_prim_paths count
+    # it: a converted room is a plain Xform holding its furniture, so the frame everything in
+    # it hangs off is that root. Leaving it out here means a rename validates and then quietly
+    # does nothing, which is worse than refusing it.
+    root = stage.GetDefaultPrim()
+    if root and root not in frames:
+        frames.append(root)
     # Read every name before writing any, so a -> b alongside b -> a is a swap.
     named = [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]
     changed = False
@@ -475,6 +558,52 @@ def _rewrite_assets(pxr: Any, spec: Any, public: Mapping[str, str]) -> bool:
             attribute.default = pxr.Sdf.AssetPath(public[str(value.path)])
             changed = True
     return changed
+
+
+def _mount_joint(pxr: Any, stage: Any, mount_path: str, subtree_path: str, frame_id: str) -> None:
+    """A floating joint from the mount frame to the subtree's root link.
+
+    Nesting alone says a grafted subtree hangs off the mount frame, but says nothing about how.
+    A reader is then left to guess, and the one guess it cannot make is a weld: the root of an
+    articulated subtree is a frame tf already publishes, so welding it to the room as well would
+    give it two parents and its pose would flip between them. The honest answer is a joint free
+    in all six degrees -- "something else places this" -- which is what tf does.
+
+    Saying it costs nothing and buys two things: a reader that has no tf yet still has somewhere
+    to put the subtree (its mount), instead of a root it must either drop or place at random;
+    and the root stops looking like a link nothing hangs off, which is how a scene's static
+    tiles are told apart from a robot.
+    """
+    root_link = _first_link(pxr, stage, subtree_path)
+    if root_link is None:
+        return
+    mount = stage.GetPrimAtPath(pxr.Sdf.Path(mount_path))
+    name = _identifier(pxr, f"{frame_id}_mount")
+    joint = pxr.UsdPhysics.Joint.Define(stage, f"{subtree_path}/{name}")
+    joint.CreateBody0Rel().SetTargets([mount.GetPath()])
+    joint.CreateBody1Rel().SetTargets([root_link.GetPath()])
+    # The subtree sits where its mount is: the nesting already placed it, so the joint adds no
+    # offset of its own.
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.GetPrim().SetDisplayName(f"{_frame_name(root_link)}_mount")
+
+
+def _first_link(pxr: Any, stage: Any, path: str) -> Any:
+    """The topmost prim at or below ``path`` carrying RigidBodyAPI: the subtree's root link."""
+    root = stage.GetPrimAtPath(pxr.Sdf.Path(path))
+    if not root:
+        return None
+    for prim in pxr.Usd.PrimRange(root):
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            return prim
+    return None
+
+
+def _frame_name(prim: Any) -> str:
+    return prim.GetDisplayName() or prim.GetName()
 
 
 def warm_usd() -> None:
