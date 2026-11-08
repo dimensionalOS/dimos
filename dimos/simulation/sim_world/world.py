@@ -204,18 +204,27 @@ def load_display_spec(path: Path) -> mujoco.MjSpec:
     return spec
 
 
-def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
-    """The scene's boxes, the robot and each lidar housing as a contact box, in one model."""
-    spec = _with_scene(rig.spec(), scene)
+def add_housings(spec: mujoco.MjSpec, rig: Rig, prefix: str = "") -> None:
+    """Each lidar on the robot's base as a contact box, so its mount bumps into the world.
+
+    A robot attached into a scene takes a prefix on every name, so the names this looks up and
+    the names it writes take the same one.
+    """
     for sensor in rig.sensors:
-        housing = spec.body(rig.base_body).add_geom()
-        housing.name = sensor.name
+        housing = spec.body(f"{prefix}{rig.base_body}").add_geom()
+        housing.name = f"{prefix}{sensor.name}"
         housing.type = mujoco.mjtGeom.mjGEOM_BOX
         housing.size = sensor.housing_half_extents
         housing.pos = sensor.mount_xyz
         q = Rotation.from_matrix(sensor.mount_r).as_quat()
         housing.quat = (q[3], q[0], q[1], q[2])
         housing.group = COLLISION_GROUP
+
+
+def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
+    """The scene's boxes, the robot and each lidar housing as a contact box, in one model."""
+    spec = _with_scene(rig.spec(), scene)
+    add_housings(spec, rig)
     model = spec.compile()
     if rig.tune is not None:
         rig.tune(model)

@@ -93,13 +93,24 @@ class LeggedG1:
 
     dt = CONTROL_DT
 
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData, policy: G1Policy) -> None:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        policy: G1Policy,
+        prefix: str = "",
+    ) -> None:
+        # A robot attached into a scene takes a prefix on every name, so that two of them, or a
+        # robot and a room that both call something "box", stay apart. Everything this class
+        # looks up goes through it.
         self.model = model
         self.data = data
         self.policy = policy
-        self.trunk = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, BASE_BODY)
+        self.prefix = prefix
+        self.trunk = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}{BASE_BODY}")
         foot_bodies = [
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name) for name in FOOT_BODIES
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}{name}")
+            for name in FOOT_BODIES
         ]
         self.feet = tuple(g for g in range(model.ngeom) if model.geom_bodyid[g] in foot_bodies)
         self.substeps = max(1, round(CONTROL_DT / model.opt.timestep))
@@ -109,6 +120,7 @@ class LeggedG1:
             model.joint(j).name
             for j in range(model.njnt)
             if model.jnt_type[j] != mujoco.mjtJoint.mjJNT_FREE
+            and model.joint(j).name.startswith(prefix)
         )
         joints = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n) for n in self._joint_names]
         self._qpos_adr = np.array([model.jnt_qposadr[j] for j in joints])
