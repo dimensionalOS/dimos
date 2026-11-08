@@ -105,10 +105,47 @@ class Rig:
     cloud_frame: CloudFrame
     lidar_group: int = ROBOT_VISUAL_GROUP
     tune: Callable[[mujoco.MjModel], None] | None = None
+    # How to read this robot out of a model it shares, under a prefix. A rig without one can
+    # still have a world built around it alone; it cannot be placed in a world with others.
+    chassis: Callable[[mujoco.MjModel, mujoco.MjData, str], Chassis] | None = None
 
     def __post_init__(self) -> None:
         if self.cloud_frame == "sensor" and len(self.sensors) != 1:
             raise ValueError("a rig reporting at its sensor needs exactly one sensor")
+
+
+class Chassis(Protocol):
+    """A robot inside a model it shares: it touches only its own addresses, and never steps.
+
+    `Body` is this plus the actor that decides the targets, which is the right shape when one
+    robot owns the world. When several share it, the actors run in the robots' own modules and
+    the world only needs this much of each.
+    """
+
+    @property
+    def dt(self) -> float: ...
+
+    @property
+    def substeps(self) -> int: ...
+
+    @property
+    def joint_names(self) -> tuple[str, ...]: ...
+
+    def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None: ...
+
+    def apply(self, target: NDArray[np.float64]) -> None:
+        """Hand the actuators a joint target. Stepping is the world's job."""
+        ...
+
+    def target(self) -> NDArray[np.float64]: ...
+
+    def base_pose(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]: ...
+
+    def base_velocity(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]: ...
+
+    def joint_state(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]: ...
+
+    def part(self, geom: int) -> Part: ...
 
 
 class Body(Protocol):

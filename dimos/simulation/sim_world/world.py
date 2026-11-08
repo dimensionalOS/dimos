@@ -168,7 +168,8 @@ def _dress(spec: mujoco.MjSpec) -> None:
     spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
 
 
-def _with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
+def with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
+    """The scene's boxes, lights and materials added to whatever spec is given."""
     _dress(spec)
     add_boxes(spec, scene)
     for i, box in enumerate(scene.boxes):
@@ -182,7 +183,7 @@ def _with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
 
 def scene_model(scene: Scene, robot: mujoco.MjSpec) -> mujoco.MjModel:
     """The scene's boxes and a robot spec, in one model for drawing."""
-    model: mujoco.MjModel = _with_scene(robot, scene).compile()
+    model: mujoco.MjModel = with_scene(robot, scene).compile()
     return model
 
 
@@ -223,7 +224,7 @@ def add_housings(spec: mujoco.MjSpec, rig: Rig, prefix: str = "") -> None:
 
 def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
     """The scene's boxes, the robot and each lidar housing as a contact box, in one model."""
-    spec = _with_scene(rig.spec(), scene)
+    spec = with_scene(rig.spec(), scene)
     add_housings(spec, rig)
     model = spec.compile()
     if rig.tune is not None:

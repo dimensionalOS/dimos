@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 from dimos.core.core import rpc
 from dimos.robot.unitree.g1.g1_tf_publisher import base_to_torso, torso_to_mid360
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
-from dimos.simulation.g1_sim.body import BASE_BODY, LeggedG1, g1_spec
+from dimos.simulation.g1_sim.body import BASE_BODY, G1Chassis, LeggedG1, g1_spec
 from dimos.simulation.g1_sim.policy import G1Policy
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sensors.mid360.lidar import HOUSING_HALF_EXTENTS, sim_mid360
@@ -92,6 +92,7 @@ SHAPE = BodyShape(
 
 G1_RIG = Rig(
     spec=g1_spec,
+    chassis=G1Chassis,
     base_body=BASE_BODY,
     sensors=(MID360,),
     shape=SHAPE,
