@@ -146,6 +146,7 @@ class ControlTaskRegistry:
         *,
         hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody] | None = None,
         model: RobotModel | None = None,
+        joint_limits: Mapping[str, tuple[float | None, float | None]] | None = None,
     ) -> ControlTask:
         """Instantiate a task by registered name.
 
@@ -159,12 +160,18 @@ class ControlTaskRegistry:
             model: The coordinator's model of the robots it drives through
                 connection modules, joints named ``<robot>/<joint>``. Passed
                 only to a factory that takes a ``model`` argument.
+            joint_limits: The coordinator's model-derived position limits,
+                for robots driven through connection modules (no adapters).
+                Passed only to factories that declare a ``joint_limits``
+                parameter.
         """
         key = name.lower()
         factory = self._resolve_factory(key)
         kwargs: dict[str, Any] = {"cfg": cfg, "hardware": hardware or {}}
         if "model" in inspect.signature(factory).parameters:
             kwargs["model"] = model
+        if joint_limits is not None and "joint_limits" in inspect.signature(factory).parameters:
+            kwargs["joint_limits"] = joint_limits
         task = factory(**kwargs)
         self._validate_bound_handlers(key, task)
         return task

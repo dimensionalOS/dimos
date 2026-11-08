@@ -150,7 +150,7 @@ export class SpatialUI {
       this.onAction(action); this.hidePalm(); return;
     }
     if(![...this.buttons,...this.workspaceButtons,...this.navigationButtons].some(button=>button.action===action && button.enabled)) return;
-    if(['actual_size','scale_down','scale_up','exit_xr','toggle_map'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
+    if(['actual_size','scale_down','scale_up','exit_xr','toggle_map','calibrate_body'].includes(action) || action.startsWith('mode:')) { this.onAction(action); return; }
     if(this.pending && action!=='hold') return;
     this.pending=action; const version=++this.version; this.error='';
     try {
@@ -171,7 +171,7 @@ export class SpatialUI {
     finally { if(version===this.version) this.pending=null; }
   }
 
-  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={},torsoHeightControl=false,mapVisible=true}) {
+  update({now,ready,observationsFresh=true,holdReason=null,surfaceAvailable=false,connected,paused,actions,preview,workspaceScale=1,workspaceActive=false,mode='tools',control={},torsoHeightControl=false,mapVisible=true,absoluteBody=false,bodyStatus=null}) {
     this.control=control;
     this.outline.visible=workspaceActive;
     this.workspaceButtons=[
@@ -180,7 +180,7 @@ export class SpatialUI {
       {action:'actual_size',label:'Actual size',x:780,w:220},
     ].map(button=>({...button,y:424,h:48,enabled:!preview&&!workspaceActive}));
     this.navigationButtons=[
-      ['mode:tools','Tool handles'],['mode:clutch','Classic teleop'],['toggle_map',mapVisible?'Hide voxel map':'Show voxel map'],['bring_here','Bring here'],['exit_xr','Exit XR'],
+      [absoluteBody?'calibrate_body':'mode:tools',absoluteBody?'Calibrate body':'Tool handles'],['mode:clutch',absoluteBody?'Body follow':'Classic teleop'],['toggle_map',mapVisible?'Hide voxel map':'Show voxel map'],['bring_here','Bring here'],['exit_xr','Exit XR'],
     ].map(([action,label],i)=>({action,label,x:24+i*200,y:512,w:184,h:48,enabled:action==='toggle_map'||!preview}));
     for(const view of this.cameras.values()) {
       if(!view.stale && now-view.ts>0.5) this.cameraStatus(view,false);
@@ -201,7 +201,7 @@ export class SpatialUI {
     const controlLabel=!ready?'ROBOT FEEDBACK UNAVAILABLE':paused?'TELEOP PAUSED':preview?'DESKTOP · STATION CONTROLS':workspaceActive?'ARRANGING WORKSPACE · ARMS HELD':!connected?'XR INPUT DISCONNECTED':'XR INPUT CONNECTED';
     const take=this.pending?({record:'STARTING',save:'SAVING',discard:'DISCARDING',home:'PLANNING HOME',hold:'HOLDING',resume:'RESUMING'}[this.pending])
       :recording?`REC ${timer}`:!available?'RECORDER UNAVAILABLE':state.available===false?'NO RECORDER':state.last_event==='save'?'SAVED':state.last_event==='discard'?'DISCARDED':'READY';
-    const hint=this.error || (paused&&holdReason) || (!observationsFresh&&surfaceAvailable?'View delayed · waiting for fresh sensor surfaces.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
+    const hint=this.error || (paused&&holdReason) || bodyStatus || (!observationsFresh&&surfaceAvailable?'View delayed · waiting for fresh sensor surfaces.':null) || this.pollError || state?.collection_error || (recording?state.task:state?.collection_waiting)
       || (torsoHeightControl?'Face forward on XR entry. Hold → Resume recalibrates. Right stick ↑/↓ changes height.':'Point at a button and pinch. Tool handles move only their own arm.');
     const arms=['left','right'].map(side=>{
       const owned=ready&&!paused&&!workspaceActive?actions?.[side]:null;
@@ -231,8 +231,8 @@ export class SpatialUI {
     c.fillStyle='#c4dcf2'; c.font='25px system-ui'; c.fillText(arms,24,192);
     c.fillStyle='#b9cecf'; c.font='24px system-ui'; wrapped(c,hint,24,239,976,32);
     c.font='21px system-ui'; c.fillStyle='#76e2c1';
-    c.fillText(`${mode==='clutch'?'Classic teleop':'Tool handles'} · Workspace ${Math.round(workspaceScale*100)}%`,24,440);
-    c.fillStyle='#b9cecf'; c.fillText(mode==='clutch'?'Grip: move arm · trigger: jaws · −/+ changes view only':'Pinch / trigger at a tool · free hand pinches arrange workspace',24,480);
+    c.fillText(`${absoluteBody?'Body follow':mode==='clutch'?'Classic teleop':'Tool handles'} · Workspace ${Math.round(workspaceScale*100)}%`,24,440);
+    c.fillStyle='#b9cecf'; c.fillText(absoluteBody?'Both grips: follow body · triggers: jaws · right stick ↑/↓: height':mode==='clutch'?'Grip: move arm · trigger: jaws · −/+ changes view only':'Pinch / trigger at a tool · free hand pinches arrange workspace',24,480);
     for(const button of [...this.buttons,...this.workspaceButtons,...this.navigationButtons]) {
       c.fillStyle=!button.enabled?'#25333e':button.action===this.hovered?'#c0f4e7':button.action==='discard'?'#f1b38f':'#76e2c1';
       c.fillRect(button.x,button.y,button.w,button.h);

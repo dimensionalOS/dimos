@@ -56,6 +56,7 @@ class R1SpatialConfig(SpatialViewerConfig):
     start_paused: bool = False
     body_relative_clutch: bool = True
     torso_height_control: bool = True
+    ik_base_frame: str | None = None
     linear_speed: float = Field(default=0.2, gt=0, le=0.4)
     angular_speed: float = Field(default=0.3, gt=0, le=0.5)
 
@@ -103,12 +104,81 @@ class R1ProSpatialTeleop(SpatialTeleopModule):
         return True
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
-        # Body input is calibrated operator FLU, independent of world heading
-        # and view placement. Express its deltas in the shoulder's IK frame.
-        # Tool/keyboard input retains the spatial world's coordinate contract.
+        # Body input uses calibrated operator FLU, independent of view placement.
+        # Absolute input is normalized shoulder-to-hand reach; legacy input is
+        # a pose for clutch-relative IK. Desktop input is in the spatial world.
         side = "left" if hand == Hand.LEFT else "right"
         group = self.config.groups.get(side)
         if group is None:
+            return
+        if self.config.absolute_body_targets:
+            if output_msg.frame_id == "body":
+                assert self._robot is not None
+                reference = self._robot.geometry["body_reference"][side]
+                vector = output_msg.position.to_numpy()
+                vector = vector * min(1.0, 0.98 / max(float(np.linalg.norm(vector)), 1e-9))
+                shoulder = np.asarray(reference["shoulder"])
+                if group.body_anchor_frame is not None:
+                    anchor = self._transforms.get(
+                        self.config.robot_model.base_link,
+                        group.body_anchor_frame,
+                        self._feedback.get("source_ts"),
+                        0.1,
+                        warn=False,
+                    )
+                    if anchor is None:
+                        return
+                    shoulder = shoulder + anchor.to_matrix()[:3, 3]
+                pose = PoseStamped(
+                    position=shoulder + reference["reach"] * vector,
+                    orientation=(
+                        Rotation.from_quat(output_msg.orientation.to_list())
+                        * Rotation.from_quat(group.body_forward_orientation)
+                    ).as_quat(),
+                    frame_id=self.config.robot_model.base_link,
+                    ts=output_msg.ts,
+                )
+            else:
+                transform = self._transforms.get(
+                    self.config.robot_model.base_link,
+                    "world",
+                    self._feedback.get("source_ts"),
+                    0.1,
+                    warn=False,
+                )
+                if transform is None:
+                    return
+                matrix = transform.to_matrix()
+                pose = PoseStamped(
+                    position=matrix[:3, :3] @ output_msg.position.to_numpy() + matrix[:3, 3],
+                    orientation=(
+                        Rotation.from_matrix(matrix[:3, :3])
+                        * Rotation.from_quat(output_msg.orientation.to_list())
+                    ).as_quat(),
+                    frame_id=self.config.robot_model.base_link,
+                    ts=output_msg.ts,
+                )
+            if self.config.ik_base_frame is not None:
+                transform = self._transforms.get(
+                    self.config.ik_base_frame,
+                    self.config.robot_model.base_link,
+                    self._feedback.get("source_ts"),
+                    0.1,
+                    warn=False,
+                )
+                if transform is None:
+                    return
+                matrix = transform.to_matrix()
+                pose = PoseStamped(
+                    position=matrix[:3, :3] @ pose.position.to_numpy() + matrix[:3, 3],
+                    orientation=(
+                        Rotation.from_matrix(matrix[:3, :3])
+                        * Rotation.from_quat(pose.orientation.to_list())
+                    ).as_quat(),
+                    frame_id=self.config.ik_base_frame,
+                    ts=pose.ts,
+                )
+            super()._publish_msg(hand, pose)
             return
         if hand not in self._clutch_frames:
             transform = self._transforms.get(

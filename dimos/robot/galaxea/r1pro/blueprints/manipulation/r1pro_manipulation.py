@@ -14,8 +14,9 @@
 
 """R1 Pro upper-body manipulation (EXPERIMENTAL).
 
-The hardware-backed planner exposes the arms and torso. The chassis remains
-driven separately by the velocity task; grippers are not driven yet.
+The hardware-backed planner exposes the arms and torso, and each arm's jaw
+is driven through the standard manipulation API by its own gripper task. The
+chassis remains driven separately by the velocity task.
 
 Usage:
     dimos run r1pro-manipulation
@@ -23,7 +24,6 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
@@ -34,18 +34,38 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_visualization,
 )
-from dimos.robot.galaxea.r1pro.config import make_r1pro_model_config
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.config import R1PRO_GRIPPER_TASKS, make_r1pro_model_config
+from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
 
 # One canonical trajectory task spans both arms and the torso; the planner
 # selects an arm through the model's planning groups, not through task names.
+# Each jaw gets its own gripper task: feedback-gated (a jaw whose feedback
+# drops out loses its latched target and waits for a new command) and never
+# listening to the unscoped broadcast, so one message can never move both
+# sides together. The task names are the ones R1PRO_GRIPPER_TASKS binds to
+# the arm planning groups.
+_GRIPPER_TASK_JOINTS = {
+    "r1pro_left_gripper": "r1pro/left_gripper",
+    "r1pro_right_gripper": "r1pro/right_gripper",
+}
+assert set(_GRIPPER_TASK_JOINTS) == set(R1PRO_GRIPPER_TASKS.values())
 _manipulation_tasks = [
     joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
     TaskConfig(
         name="vel_chassis",
         type="velocity",
-        joint_names=make_twist_base_joints("chassis"),
+        joint_names=R1PRO_BASE_JOINTS,
         priority=10,
+    ),
+    *(
+        TaskConfig(
+            name=task_name,
+            type="gripper",
+            joint_names=[joint],
+            priority=10,
+            params={"require_feedback": True, "accept_broadcast": False},
+        )
+        for task_name, joint in _GRIPPER_TASK_JOINTS.items()
     ),
 ]
 

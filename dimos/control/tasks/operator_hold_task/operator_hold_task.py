@@ -43,7 +43,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from dimos.control.coordinator import TaskConfig
 
@@ -114,6 +114,11 @@ class OperatorHoldTask(BaseControlTask):
     that appears later, e.g. hardware added during a hold, is frozen when
     first seen. A joint with no valid reading waits in ``unheld``.
 
+    A connection robot's base axes (``go2/base/vx``, ...) never appear in
+    the snapshot — they are commanded speeds, not read positions — so the
+    coordinator names them through ``set_base_axes`` and the hold zeroes
+    them, like an adapter base's velocity joints.
+
     An e-stop turns the hold on (route "failsafe", reason "e-stop"). While
     the e-stop is latched the hold commands nothing; once it is cleared the
     hold freezes each joint where it is then, and stays on until acknowledged.
@@ -128,17 +133,20 @@ class OperatorHoldTask(BaseControlTask):
         name: str = OPERATOR_HOLD_TASK_NAME,
         priority: int = OPERATOR_HOLD_PRIORITY,
         status_interval: float = 1.0,
+        excluded_joints: Iterable[str] = (),
     ) -> None:
         """
         Args:
             name: Task name; callers address request/acknowledge to it.
             priority: Arbitration priority. Must exceed every other task's.
             status_interval: Seconds between repeated status messages while on.
+            excluded_joints: Command-only resources that must never be held positionally.
         """
         if not math.isfinite(status_interval) or status_interval <= 0.0:
             raise ValueError(f"status_interval must be positive seconds, got {status_interval}")
         self._name = name
         self._priority = priority
+        self._excluded_joints = frozenset(excluded_joints)
         self._status_interval = status_interval
         self._publish: Callable[[OperatorHoldStatus], None] | None = None
 
@@ -149,12 +157,34 @@ class OperatorHoldTask(BaseControlTask):
         self._started_at = 0.0
         self._held: dict[str, float] = {}  # joint -> value commanded while on
         self._unheld: set[str] = set()  # joints seen without a finite reading
+        # Connection robots' base axes, named by the coordinator: held at
+        # zero speed, no reading needed.
+        self._base_axes: tuple[str, ...] = ()
         self._last_status_t: float | None = None  # coordinator time of the last status
         self._estopped = False
 
     def set_status_publisher(self, publish: Callable[[OperatorHoldStatus], None] | None) -> None:
         """Where to send OperatorHoldStatus messages; None sends them nowhere."""
         self._publish = publish
+
+    def set_base_axes(self, axes: Iterable[str]) -> None:
+        """The base axes the coordinator drives, held at zero while the hold is on.
+
+        A connection robot's base axes (``go2/base/vx``, ...) are commanded
+        speeds with no position reading, so they cannot be discovered in the
+        joint-state snapshot the way joints are. The coordinator calls this
+        with every connection robot's base axes when the hold is added.
+        """
+        with self._lock:
+            self._base_axes = tuple(dict.fromkeys(axes))
+
+    def exclude_joints(self, joints: Iterable[str]) -> None:
+        """Add connection command-only resources without hiding their feedback."""
+        with self._lock:
+            self._excluded_joints = self._excluded_joints.union(joints)
+            for name in self._excluded_joints:
+                self._held.pop(name, None)
+                self._unheld.discard(name)
 
     def claim(self) -> ResourceClaim:
         """Every joint frozen so far; empty until the first tick after a request."""
@@ -178,7 +208,7 @@ class OperatorHoldTask(BaseControlTask):
             # Freeze nothing while e-stopped, so after the clear the hold
             # takes each joint where it is then. _held is empty until then.
             for name, position in state.joints.joint_positions.items():
-                if self._estopped or name in self._held:
+                if self._estopped or name in self._held or name in self._excluded_joints:
                     continue
                 if math.isfinite(position):
                     self._held[name] = _hold_value(name, position)
@@ -186,6 +216,12 @@ class OperatorHoldTask(BaseControlTask):
                 elif name not in self._unheld:
                     self._unheld.add(name)
                     newly_unheld.append(name)
+            # Base axes are commanded speeds, not read positions, so they
+            # never show up above: hold each at zero, needing no reading.
+            if not self._estopped:
+                for axis in self._base_axes:
+                    if axis not in self._held and axis not in self._excluded_joints:
+                        self._held[axis] = 0.0
             if (
                 self._last_status_t is None
                 or state.t_now - self._last_status_t >= self._status_interval
@@ -320,6 +356,7 @@ class OperatorHoldTaskParams(BaseConfig):
     """Task-owned parameters from ``TaskConfig.params``."""
 
     status_interval: float = Field(default=1.0, gt=0.0, allow_inf_nan=False)
+    excluded_joints: frozenset[str] = frozenset()
 
 
 def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
@@ -332,4 +369,8 @@ def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
             "operator hold claims every joint the coordinator reads; leave joint_names empty"
         )
     params = OperatorHoldTaskParams.model_validate(cfg.params)
-    return OperatorHoldTask(priority=cfg.priority, status_interval=params.status_interval)
+    return OperatorHoldTask(
+        priority=cfg.priority,
+        status_interval=params.status_interval,
+        excluded_joints=params.excluded_joints,
+    )

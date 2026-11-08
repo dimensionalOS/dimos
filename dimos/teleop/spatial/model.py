@@ -31,6 +31,9 @@ class SpatialGroup(BaseModel):
     joint_names: tuple[str, ...]
     tip_frame: str
     base_frame: str
+    body_shoulder_frame: str | None = None
+    body_anchor_frame: str | None = None
+    body_forward_orientation: tuple[float, float, float, float] = (0, 0, 0, 1)
     gripper_joint: str | None = None
     gripper_open_position: float = Field(default=1.0, gt=0)
 
@@ -76,7 +79,23 @@ class SpatialRobot:
                 }
             )
             self.nodes[group_name].append(node)
-        self.geometry = {
+        body_reference = {}
+        for name, group in groups.items():
+            if group.body_shoulder_frame is None:
+                continue
+            shoulder = self.robot.get_transform(group.body_shoulder_frame)[:3, 3]
+            tip = self.robot.get_transform(group.tip_frame)[:3, 3]
+            # Follow lower-torso translation, but do not chase waist IK rotation.
+            if group.body_anchor_frame is not None:
+                shoulder = shoulder - self.robot.get_transform(group.body_anchor_frame)[:3, 3]
+            body_reference[name] = {
+                "shoulder": shoulder.tolist(),
+                "reach": float(
+                    np.linalg.norm(tip - self.robot.get_transform(group.body_shoulder_frame)[:3, 3])
+                ),
+            }
+        self.geometry: dict[str, Any] = {
+            "body_reference": body_reference,
             "meshes": meshes,
             "arms": {name: parts[name] for name in groups},
             "body": parts["body"],

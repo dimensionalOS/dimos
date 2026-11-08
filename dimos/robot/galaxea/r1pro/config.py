@@ -22,7 +22,10 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.galaxea.r1pro.joints import (
+    CONTROL_PASSIVE_JOINTS,
+    GRIPPER_JOINT_RENAMES,
     LEFT_ARM_JOINTS,
+    NAMESPACE,
     PASSIVE_JOINTS,
     RIGHT_ARM_JOINTS,
     TORSO_JOINTS,
@@ -84,6 +87,27 @@ R1PRO_COLLISION_EXCLUSIONS = (
 )
 
 
+#: The vendor jaw controller's opening range, in metres on the contract: the
+#: gripper topics speak millimetres, 0-100 mm fully closed to fully open (the
+#: URDF finger joints are welded at zero with empty limits and carry no
+#: range of their own).
+R1PRO_GRIPPER_OPENING_RANGE = (0.0, 0.1)
+
+
+def _with_contract_grippers(model: RobotModel, *, prefix: str) -> RobotModel:
+    """Give the model real gripper drive joints: the vendor's opening range in
+    metres, renamed to their contract names (``prefix``-prefixed)."""
+    for urdf_joint in GRIPPER_JOINT_RENAMES:
+        model = model.with_joint_position_limits(
+            urdf_joint,
+            lower=R1PRO_GRIPPER_OPENING_RANGE[0],
+            upper=R1PRO_GRIPPER_OPENING_RANGE[1],
+        )
+    return model.with_renamed_joints(
+        {urdf: f"{prefix}{name}" for urdf, name in GRIPPER_JOINT_RENAMES.items()}
+    )
+
+
 R1PRO_MODEL = (
     RobotModel.from_file(
         R1PRO_MODEL_PATH,
@@ -92,6 +116,32 @@ R1PRO_MODEL = (
     .with_default_joint_acceleration_limit(2.0)
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
+)
+#: The same robot for the connection module's limits table: the driven
+#: joints under their vendor names — the control contract puts the "r1pro"
+#: source in front of them itself (``ConnectionConfig.source``) — plus the
+#: two gripper drives as movable joints with the vendor's opening range.
+R1PRO_CONNECTION_MODEL = _with_contract_grippers(
+    RobotModel.from_file(
+        R1PRO_MODEL_PATH,
+        package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT},
+    )
+    .with_default_joint_acceleration_limit(2.0)
+    .with_fixed_joints(*CONTROL_PASSIVE_JOINTS),
+    prefix="",
+)
+#: The coordinator's view: every driven joint under its contract name —
+#: the 18 upper-body joints and both grippers. Planning stays on
+#: ``R1PRO_MODEL`` and its 18 DOF; the grippers never enter a trajectory.
+R1PRO_COORDINATOR_MODEL = _with_contract_grippers(
+    RobotModel.from_file(
+        R1PRO_MODEL_PATH,
+        package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT},
+    )
+    .with_default_joint_acceleration_limit(2.0)
+    .with_fixed_joints(*CONTROL_PASSIVE_JOINTS)
+    .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS}),
+    prefix=f"{NAMESPACE}/",
 )
 R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
 R1PRO_UPPER_BODY_PLANNING_JOINTS = tuple(coordinator_name(joint) for joint in UPPER_BODY_JOINTS)
@@ -120,8 +170,66 @@ _R1PRO_UPPER_BODY_PLANNING_GROUPS = (
 )
 
 
-def make_r1pro_model_config() -> RobotModelConfig:
-    """Build the hardware-backed torso and bimanual planning model."""
+#: The manipulation-API gripper binding: each arm's planning group drives its
+#: own jaw through a dedicated gripper task; the torso declares none. Task
+#: names match the ``TaskConfig`` names in the manipulation blueprint.
+R1PRO_GRIPPER_TASKS = {
+    "left_arm": "r1pro_left_gripper",
+    "right_arm": "r1pro_right_gripper",
+}
+
+
+#: The pose the waist and both arms are meant to start from: hands out in
+#: front where the operator can hand over the controllers, elbows bent, and the
+#: wrists clear of their hard stops. It is the model's ``home_joints`` (the
+#: ``Home`` preset in the manipulation panel, and the planning seed) and the
+#: simulation's initial state, so fake and real share one target instead of two
+#: copies of the numbers. Solved by forward kinematics on the vendor URDF:
+#: gripper links at roughly x=0.44 m, z=1.07 m, smallest joint-limit margin
+#: about 0.2 rad. It is a joint-space target, not a collision-checked path —
+#: planning still has to succeed before hardware may move.
+R1PRO_HOME_POSE: dict[str, float] = {
+    "torso_joint1": 0.0,
+    "torso_joint2": 0.0,
+    "torso_joint3": 0.0,
+    "torso_joint4": 0.0,
+    "left_arm_joint1": -0.852,
+    "left_arm_joint2": 0.418,
+    "left_arm_joint3": -0.888,
+    "left_arm_joint4": -0.728,
+    "left_arm_joint5": 1.254,
+    "left_arm_joint6": 0.815,
+    "left_arm_joint7": -0.244,
+    "right_arm_joint1": -0.852,
+    "right_arm_joint2": -0.413,
+    "right_arm_joint3": 0.887,
+    "right_arm_joint4": -0.727,
+    "right_arm_joint5": -1.255,
+    "right_arm_joint6": 0.815,
+    "right_arm_joint7": 0.243,
+}
+
+
+def r1pro_home_joints(joint_names: tuple[str, ...] | list[str]) -> list[float]:
+    """``R1PRO_HOME_POSE`` expanded to the given coordinator joint names."""
+    poses: list[float] = []
+    for name in joint_names:
+        bare = name.split("/", 1)[-1]
+        if bare not in R1PRO_HOME_POSE:
+            raise KeyError(f"home pose has no value for joint {name!r}")
+        poses.append(R1PRO_HOME_POSE[bare])
+    return poses
+
+
+def make_r1pro_model_config(
+    gripper_tasks: dict[str, str] | None = None,
+) -> RobotModelConfig:
+    """Build the hardware-backed torso and bimanual planning model.
+
+    ``gripper_tasks`` binds a planning group to its gripper task; the default
+    is the R1 Pro's two jaws (``R1PRO_GRIPPER_TASKS``). Pass ``{}`` for a
+    gripper-less model.
+    """
     return RobotModelConfig(
         model=R1PRO_MODEL,
         joint_names=list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
@@ -129,7 +237,8 @@ def make_r1pro_model_config() -> RobotModelConfig:
         planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
-        home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),
+        home_joints=r1pro_home_joints(R1PRO_UPPER_BODY_PLANNING_JOINTS),
+        gripper_tasks=dict(R1PRO_GRIPPER_TASKS) if gripper_tasks is None else gripper_tasks,
     )
 
 
@@ -171,3 +280,22 @@ def make_r1pro_arm_models() -> dict[str, RobotModel]:
         )
         for side in ("left", "right")
     }
+
+
+def make_r1pro_upper_teleop_model() -> RobotModelConfig:
+    """Solve above the measured height linkage; never freeze its joints at zero."""
+    joints = [name for name in UPPER_BODY_JOINTS if name not in ("torso_joint1", "torso_joint2")]
+    return RobotModelConfig(
+        model=RobotModel.from_file(
+            R1PRO_MODEL_PATH,
+            package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT},
+        )
+        .with_subtree_rooted_at("torso_link2")
+        .with_fixed_joints(
+            *(f"{side}_gripper_finger_joint{i}" for side in ("left", "right") for i in (1, 2))
+        )
+        .with_renamed_joints({name: coordinator_name(name) for name in joints})
+        .with_default_joint_acceleration_limit(2.0),
+        joint_names=[coordinator_name(name) for name in joints],
+        base_link="torso_link2",
+    )

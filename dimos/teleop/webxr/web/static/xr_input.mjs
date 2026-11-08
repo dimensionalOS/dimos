@@ -6,8 +6,8 @@ const separation = (a, b) => Math.hypot(...a.map((v, i) => v - b[i]));
 const buttonDistance = value => 0.05 - 0.04 * value;
 const value = button => Math.max(0, Math.min(1, button?.value ?? 0));
 
-export function xrSessionOptions() {
-  return {requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking']};
+export function xrSessionOptions({bodyTracking=false}={}) {
+  return {requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking', ...(bodyTracking?['body-tracking']:[])]};
 }
 
 export function interactionMode(preference, samples) {

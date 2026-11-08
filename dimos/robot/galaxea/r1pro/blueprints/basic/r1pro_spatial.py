@@ -14,6 +14,9 @@
 
 """Real R1 Pro: the shared Desktop/XR station, vendor actuation and calibrated RGB-D."""
 
+import math
+
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_HOST_CMD_DATA_PORT,
@@ -23,37 +26,57 @@ from dimos.hardware.sensors.lidar.livox.ports import (
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop import vr_tasks
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
+    R1PRO_COORDINATOR_MODEL,
     R1PRO_MODEL,
-    make_r1pro_arm_models,
     make_r1pro_model_config,
+    make_r1pro_upper_teleop_model,
 )
-from dimos.robot.galaxea.r1pro.connection import R1ProConnection
+from dimos.robot.galaxea.r1pro.connection import R1PRO_GRIPPER_JOINTS, R1ProConnection
 from dimos.robot.galaxea.r1pro.lio import R1ProLio
 from dimos.robot.galaxea.r1pro.spatial import R1ProSpatialTeleop
-from dimos.robot.galaxea.r1pro.spatial_control import R1SpatialControl
 from dimos.robot.galaxea.r1pro.spatial_sensors import R1SpatialCloud, R1SpatialSensors
-from dimos.robot.galaxea.r1pro.teleop import R1HardwareTeleopCoordinator, arm_tasks
+from dimos.robot.galaxea.r1pro.teleop import R1HardwareTeleopCoordinator
 from dimos.robot.urdf_manager import UrdfManager
 from dimos.teleop.spatial.model import SpatialGroup
+
+
+def spatial_tasks() -> list[TaskConfig]:
+    tasks = vr_tasks()
+    for task in tasks:
+        if task.type == "teleop_ik":
+            task.params = {
+                **task.params,
+                "absolute_targets": True,
+                "robot_model": make_r1pro_upper_teleop_model(),
+                "max_joint_velocity_rad_s": 0.25,
+                "feedback_limit_tolerance": 0.01,
+                "command_limit_margin": 0.03,
+            }
+            task.params["pink"] = task.params["pink"].model_copy(
+                update={"solver": "quadprog", "dt": 0.02}
+            )
+    return tasks
+
 
 r1pro_spatial = (
     autoconnect(
         UrdfManager.blueprint(model=R1PRO_MODEL, unchanged_tf_hz=15),
         R1ProConnection.blueprint(
-            enable_grippers=True,
+            tracking_speed=0.25,
             enable_wrist_color=False,
             enable_wrist_depth=False,
             boot_vendor_stack=False,
             publish_odom_tf=False,
         ),
-        R1SpatialControl.blueprint(),
         R1HardwareTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            model=R1PRO_MODEL,
-            tasks=arm_tasks(make_r1pro_arm_models()),
+            model=R1PRO_COORDINATOR_MODEL,
+            command_only_joints=list(R1PRO_GRIPPER_JOINTS),
+            tasks=spatial_tasks(),
             tick_rate=50,
             publish_joint_state=False,
         ),
@@ -79,6 +102,8 @@ r1pro_spatial = (
             title="R1 Pro · Real robot",
             environment="Hardware",
             joint_jog_available=False,
+            absolute_body_targets=True,
+            ik_base_frame="torso_link2",
             robot_model=make_r1pro_model_config(),
             groups={
                 side: SpatialGroup(
@@ -86,8 +111,12 @@ r1pro_spatial = (
                     joint_names=tuple(f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)),
                     tip_frame=f"{side}_gripper_link",
                     base_frame=f"{side}_arm_base_link",
+                    body_shoulder_frame=f"{side}_arm_link2",
+                    body_anchor_frame="torso_link3",
+                    # Neutral URDF arms point down; a forward hand is Ry(-pi/2).
+                    body_forward_orientation=(0, -math.sqrt(0.5), 0, math.sqrt(0.5)),
                     gripper_joint=f"r1pro/{side}_gripper",
-                    gripper_open_position=100,
+                    gripper_open_position=0.1,
                 )
                 for side in ("left", "right")
             },
@@ -108,9 +137,10 @@ r1pro_spatial = (
     )
     .remappings(
         [
-            (R1ProConnection, "cmd_vel", "hardware_cmd_vel"),
+            (R1ProConnection, "cmd_vel", "r1pro_cmd_vel"),
+            (R1ProConnection, "position_command", "r1pro_position_command"),
+            (R1ProSpatialTeleop, "cmd_vel", "twist_command"),
             (R1HardwareTeleopCoordinator, "r1pro_joint_state", "joint_state"),
-            (R1HardwareTeleopCoordinator, "r1pro_position_command", "upper_command"),
             (R1ProSpatialTeleop, "coordinator_joint_state", "joint_state"),
             (UrdfManager, "coordinator_joint_state", "joint_state"),
             (R1ProSpatialTeleop, "left_controller_output", "left_cartesian_command"),

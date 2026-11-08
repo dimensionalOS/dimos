@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
+from dimos.control.connection_source import interface_for_mode
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -445,32 +446,52 @@ class TickLoop:
     ) -> dict[str, tuple[dict[str, float], ControlMode]]:
         """Route joint-centric commands to hardware.
 
+        A base axis of a robot behind a connection module (``go2/base/vx``)
+        goes to its own ``<robot>/base`` entry, so a velocity task driving
+        the base never mode-conflicts with a task driving the robot's joints
+        in another mode; ``_write_all_connections`` merges the two entries
+        into one command per robot.
+
         Returns:
             {hardware_id: ({joint: value}, mode)}
         """
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]] = {}
 
         with self._hardware_lock:
+            base_axes = {
+                axis for source in self._connections.values() for axis in source.base_joint_names
+            }
             for joint_name, (value, mode, _) in joint_commands.items():
                 hw_id = self._joint_to_hardware.get(joint_name)
                 if hw_id is None:
                     logger.warning(f"Unknown joint {joint_name}, cannot route")
                     continue
 
-                if hw_id not in hw_commands:
-                    hw_commands[hw_id] = ({}, mode)
+                route = f"{hw_id}/base" if joint_name in base_axes else hw_id
+                if route not in hw_commands:
+                    hw_commands[route] = ({}, mode)
                 else:
                     # Check for mode conflict across joints on same hardware
-                    existing_mode = hw_commands[hw_id][1]
-                    if mode != existing_mode:
+                    existing_mode = hw_commands[route][1]
+                    if mode != existing_mode and not (
+                        # A connection robot sees values per interface, not
+                        # per mode: POSITION and SERVO_POSITION both arrive as
+                        # positions, so a held-by-servo gripper and a
+                        # trajectory-driven arm share one command. Adapters
+                        # switch behavior per mode, so they keep the strict
+                        # check.
+                        route in self._connections
+                        and interface_for_mode(mode) is not None
+                        and interface_for_mode(mode) == interface_for_mode(existing_mode)
+                    ):
                         logger.error(
-                            f"Mode conflict for hardware {hw_id}: joint {joint_name} wants "
+                            f"Mode conflict for hardware {route}: joint {joint_name} wants "
                             f"{mode.name} but hardware already has {existing_mode.name}. "
                             f"Dropping command for {joint_name}."
                         )
                         continue
 
-                hw_commands[hw_id][0][joint_name] = value
+                hw_commands[route][0][joint_name] = value
 
         return hw_commands
 
@@ -542,6 +563,12 @@ class TickLoop:
                 mode: ControlMode | None = None
                 if name in hw_commands:
                     winners, mode = hw_commands[name]
+                # Base axes routed to their own entry (see _route_to_hardware)
+                # rejoin the robot's command here; they are speeds whatever
+                # the joints' mode is.
+                base = hw_commands.get(f"{name}/base")
+                if base is not None:
+                    winners = {**winners, **base[0]}
                 try:
                     publish(name, source.command(winners, mode))
                 except Exception as e:

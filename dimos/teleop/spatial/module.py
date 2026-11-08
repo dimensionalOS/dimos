@@ -142,6 +142,7 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     camera_depth_ranges: dict[str, tuple[float, float]] = Field(default_factory=dict)
     camera_max_edge_m: dict[str, float] = Field(default_factory=dict)
     base_drive: bool = False
+    absolute_body_targets: bool = False
     body_relative_clutch: bool = False
     torso_height_control: bool = False
     start_paused: bool = True
@@ -323,6 +324,7 @@ class SpatialTeleopModule(ArmTeleopModule):
                 "cameras": self.config.cameras,
                 "base_drive": self.config.base_drive,
                 "body_relative_clutch": self.config.body_relative_clutch,
+                "absolute_body_targets": self.config.absolute_body_targets,
                 "torso_height_control": self.config.torso_height_control,
                 "map_voxel_size_m": self.config.map_voxel_size_m,
                 "headset_port": self.config.server_port,

@@ -302,6 +302,7 @@ class ManipulationModule(Module):
         )
 
         self._world_monitor.load_model(self.config.model)
+        self._gripper_tasks()  # Validate the gripper bindings against the live groups.
 
         operator = ManipulationOperator(self, self._world_monitor)
         self._world_monitor.finalize(visualization, operator=operator)
@@ -1069,8 +1070,17 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
+    def _gripper_tasks(self) -> dict[str, str]:
+        if self._world_monitor is None:
+            return {}
+        bindings = self.config.model.resolve_gripper_tasks(
+            self._world_monitor.planning_groups.list()
+        )
+        bindings.update(self.config.gripper_tasks)
+        return bindings
+
     def _group_gripper_task(self, group: PlanningGroup) -> str | None:
-        return self.config.gripper_tasks.get(group.id)
+        return self._gripper_tasks().get(group.id)
 
     def _get_group_gripper_position(self, group: PlanningGroup) -> float | None:
         task_name = self._group_gripper_task(group)

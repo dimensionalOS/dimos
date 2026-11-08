@@ -33,6 +33,37 @@ def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
     return CoordinatorState(joints=JointStateSnapshot(joint_positions=positions), t_now=t_now)
 
 
+def test_command_only_feedback_is_preserved_but_not_held():
+    task = create_task(
+        TaskConfig(
+            name="operator_hold",
+            type="operator_hold",
+            priority=100,
+            params={"excluded_joints": ["r1pro/left_gripper"]},
+        ),
+        None,
+    )
+    task.exclude_joints(["r1pro/right_gripper"])
+    task.set_base_axes(["r1pro/base/vx"])
+    state = _state({"r1pro/arm": 0.5, "r1pro/left_gripper": 0.03, "r1pro/right_gripper": 0.04})
+    task.request("manual")
+    for estopped in (False, True, False):
+        task.set_estop(estopped)
+        output = task.compute(state)
+        assert state.joints.joint_positions["r1pro/left_gripper"] == 0.03
+        assert state.joints.joint_positions["r1pro/right_gripper"] == 0.04
+        assert task.get_status().on
+        if estopped:
+            assert output is None
+        else:
+            assert output is not None
+            assert dict(zip(output.joint_names, output.positions, strict=True)) == {
+                "r1pro/arm": 0.5,
+                "r1pro/base/vx": 0.0,
+            }
+            assert task.claim().joints == {"r1pro/arm", "r1pro/base/vx"}
+
+
 def test_idle_until_requested():
     task = OperatorHoldTask()
 
@@ -41,6 +72,36 @@ def test_idle_until_requested():
     assert task.compute(_state({"arm/joint1": 0.5})) is None
     status = task.get_status()
     assert status == OperatorHoldStatus(on=False, stamp=status.stamp)
+
+
+def test_connection_base_axes_are_held_at_zero_without_any_reading():
+    """Base axes come from set_base_axes, not the snapshot: no reading needed."""
+    task = OperatorHoldTask()
+    task.set_base_axes(["go2/base/vx", "go2/base/vy", "go2/base/wz"])
+    task.request("manual")
+
+    output = task.compute(_state({}))
+
+    assert output is not None
+    assert dict(zip(output.joint_names, output.positions, strict=True)) == {
+        "go2/base/vx": 0.0,
+        "go2/base/vy": 0.0,
+        "go2/base/wz": 0.0,
+    }
+    assert task.claim().joints == {"go2/base/vx", "go2/base/vy", "go2/base/wz"}
+
+
+def test_estop_drops_the_base_axes_and_the_clear_holds_them_again():
+    task = OperatorHoldTask()
+    task.set_base_axes(["go2/base/vx"])
+
+    task.set_estop(True)
+    assert task.compute(_state({})) is None  # nothing is commanded while stopped
+
+    task.set_estop(False)
+    output = task.compute(_state({}))
+    assert output is not None
+    assert dict(zip(output.joint_names, output.positions, strict=True)) == {"go2/base/vx": 0.0}
 
 
 def test_freezes_each_joint_at_first_sight_and_base_joints_at_zero():

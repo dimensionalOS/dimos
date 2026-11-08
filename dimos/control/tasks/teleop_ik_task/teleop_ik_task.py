@@ -82,6 +82,7 @@ class TeleopIKTaskConfig:
     max_command_tracking_error_deg: float = 10.0
     feedback_limit_tolerance: float = 1e-3
     command_limit_margin: float = 1e-4
+    absolute_targets: bool = False
 
     def __attrs_post_init__(self) -> None:
         if not 1 <= len(self.bindings) <= 2:
@@ -229,6 +230,18 @@ class TeleopIKTask(PoseTargetIKTask):
                 hand.latest_pose is None for hand in self._hands.values()
             ):
                 return None
+            if self._teleop_config.absolute_targets:
+                return FrameTargetSnapshot(
+                    targets={
+                        binding.target_frame: pose
+                        for hand, binding in self._bindings.items()
+                        if (pose := self._hands[hand].latest_pose) is not None
+                    },
+                    last_update_time=min(
+                        self._last_button_update_time,
+                        *(hand.last_update_time for hand in self._hands.values()),
+                    ),
+                )
             session_epoch = self._session_epoch
             needs_capture = any(
                 hand.controller_reference is None or hand.robot_reference is None
@@ -306,6 +319,7 @@ class TeleopIKTaskParams(PoseTargetIKTaskParams):
     """Task-owned parameters carried inside the generic task envelope."""
 
     bindings: list[TeleopHandBindingParams]
+    absolute_targets: bool = False
     solver_type: type[PinkPoseTargetSolver] = PinkPoseTargetSolver
     # Teleop still rejects feedback past the model limits.
     feedback_limit_tolerance: float = 1e-3
@@ -329,6 +343,7 @@ def create_task(
         joint_names=tuple(cfg.joint_names),
         robot_model=params.robot_model,
         bindings=bindings,
+        absolute_targets=params.absolute_targets,
         pink=params.pink,
         priority=cfg.priority,
         timeout=params.timeout,

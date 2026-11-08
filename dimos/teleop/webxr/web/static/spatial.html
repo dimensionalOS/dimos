@@ -25,16 +25,17 @@ figure{min-height:150px}#panel{max-width:490px;padding:14px 18px}
 <header><h1>Robot</h1><span>SPATIAL TELEOP</span></header>
 <div id="panel">
 <div id="status">Connecting to the station…</div>
-<p>Use either hand: pinch thumb and index finger at a round tool handle to move that arm. Pinch its opening control and slide toward OPEN or CLOSE to adjust the jaws; the other hand can keep moving the arm. Release to hold.</p>
+<p id="tool-help">Use either hand: pinch thumb and index finger at a round tool handle to move that arm. Pinch its opening control and slide toward OPEN or CLOSE to adjust the jaws; the other hand can keep moving the arm. Release to hold.</p>
 <p class="muted">Solid markers show measured opening; the white outline shows your request. Point at the scene, pinch and release to select an observed surface. Surfaces come from RGB-D; arms follow joint feedback.</p>
 <label>Control <select id="interaction-mode"><option value="auto">Auto: hands / controllers</option><option value="tools">Tool handles</option><option value="clutch">Classic teleop</option></select></label>
-<p class="muted">Controllers: hold the grip to move your corresponding arm, trigger closes its jaws. Release grip to hold. Tool mode uses trigger near handles and sliders. Point and trigger to use menus. Classic hands: index pinch moves; middle pinch closes.</p>
+<p id="control-help" class="muted">Controllers: hold the grip to move your corresponding arm, trigger closes its jaws. Release grip to hold. Tool mode uses trigger near handles and sliders. Point and trigger to use menus. Classic hands: index pinch moves; middle pinch closes.</p>
 <label>View <select id="xr-mode"><option value="immersive-vr">Virtual reality</option><option value="immersive-ar">Mixed reality</option></select></label>
 <button id="enter" disabled>Enter XR</button><button id="place">Place workspace / set forward</button>
 <button data-action="toggle_map">Hide voxel map</button>
 <p id="entry-hint" class="muted"></p>
 <p class="muted">Drag a panel's title bar with pinch or trigger. HUD pins it to your view; Unpin returns it to the workspace. Dragging a pinned panel also unpins it.</p>
 <p class="muted">Use the HUD −/+ buttons to resize the scene with controllers. In Tool handles mode with hand tracking, pinch with both hands in free space to arrange the workspace. Turn an open palm upward for “Bring workspace here”, then point and pinch with the other hand.</p>
+<div id="body-calibration" hidden><button id="calibrate-body">Calibrate body</button><p id="body-calibration-status">In XR: choose Calibrate body, then release grips and extend both arms forward at shoulder height during the three-second countdown.</p></div>
 <div id="episode-controls">
 <label for="task">Demonstration task</label><input id="task" maxlength="256" value="Pick up the bottle and place it in the tray">
 <div id="episode-state">Connecting to recorder…</div><p id="episode-hint"></p>

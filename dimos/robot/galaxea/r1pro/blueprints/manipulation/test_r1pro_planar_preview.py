@@ -19,7 +19,6 @@ import platform
 
 import pytest
 
-from dimos.control.components import HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -33,7 +32,7 @@ from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview impo
     r1pro_planar_preview,
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_PLANAR_BASE
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
 
 
 def _coordinator_config(blueprint) -> ControlCoordinatorConfig:
@@ -103,23 +102,12 @@ def test_planar_preview_drives_its_mock_base_from_a_base_trajectory(wait_until) 
         coordinator.stop()
 
 
-def test_real_control_keeps_planar_joints_out_of_hardware() -> None:
-    blueprint = r1pro_control()
-    parsed = BlueprintConfigParser(blueprint).parse(environ={})
-    coordinator_atom = next(
-        atom for atom in blueprint.active_blueprints if issubclass(atom.module, ControlCoordinator)
-    )
-    coordinator = ControlCoordinatorConfig.model_validate(
-        parsed.module_kwargs(coordinator_atom.name)
-    )
+def test_real_control_keeps_planar_joints_off_the_real_robot() -> None:
+    """The planar base's virtual joints belong to the preview, never the real control."""
+    coordinator = _coordinator_config(r1pro_control())
 
-    assert [hardware.hardware_type for hardware in coordinator.hardware] == [
-        HardwareType.WHOLE_BODY,
-        HardwareType.BASE,
-    ]
-    assert coordinator.hardware[0].joints == R1PRO_UPPER_BODY_JOINTS
-    assert coordinator.hardware[1].joints == make_twist_base_joints("chassis")
-    real_joint_names = {
-        joint_name for hardware in coordinator.hardware for joint_name in hardware.joints
-    }
-    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(real_joint_names)
+    # The real robot is driven through R1ProConnection: no hardware adapters.
+    assert coordinator.hardware == []
+    claimed = {joint for task in coordinator.tasks for joint in task.joint_names}
+    assert claimed == {*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS}
+    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(claimed)

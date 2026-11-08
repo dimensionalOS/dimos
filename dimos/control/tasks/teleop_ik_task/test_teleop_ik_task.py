@@ -17,6 +17,7 @@
 from pathlib import Path
 from typing import cast
 
+import attrs
 import pytest
 from pytest_mock import MockerFixture
 
@@ -417,3 +418,30 @@ def test_factory_constructs_fresh_custom_solver_for_each_task() -> None:
     assert second._solver is _CustomPoseTargetSolver.instances[1]
     assert first._solver is not second._solver
     assert _CustomPoseTargetSolver.instances[0].received_config == first._config
+
+
+def test_absolute_body_target_survives_release_without_recapturing_robot(
+    mocker: MockerFixture,
+) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "body",
+        attrs.evolve(
+            _config((_binding("right", "right_tool"),)),
+            absolute_targets=True,
+        ),
+        solver=solver,
+    )
+    for at in (1.0, 2.0):
+        task.on_teleop_buttons(_buttons(), at - 0.1)
+        assert task.compute(_state(at - 0.1)) is None
+        task.on_teleop_buttons(_buttons(right=True), at)
+        task.on_right_cartesian_command(_pose(0.65), at)
+        assert task.compute(_state(at)) is not None
+        assert solver.step.call_args.args[0]["right_tool"].position.x == pytest.approx(0.65)
+    solver.frame_poses.assert_not_called()
+    assert task.compute(_state(3.0)) is None
+    task.set_estop(True)
+    task.on_teleop_buttons(_buttons(right=True), 3.1)
+    task.on_right_cartesian_command(_pose(0.65), 3.1)
+    assert task.compute(_state(3.1)) is None

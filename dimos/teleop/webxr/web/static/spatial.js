@@ -10,6 +10,8 @@ import {interactionMode, sampleXRInputs, xrSessionOptions} from './xr_input.mjs'
 import {SpatialOperator} from './spatial_operator.mjs';
 import {KeyboardClutch} from './spatial_keyboard.mjs';
 import {BodyClutchFrame} from './body_clutch.mjs';
+import {BodyFollow} from './body_follow.mjs';
+import {captureBody} from './webxr_body.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
 const boundSession = new URLSearchParams(location.search).get('operator_session');
@@ -91,7 +93,14 @@ let keyboardEnabled=false, keyboardSide='left', keyboardFrame='world', lastKeybo
 let objectsTS=0, selectedObject=null;
 const keyboard=new KeyboardClutch();
 const bodyClutch=new BodyClutchFrame();
+const bodyFollow=new BodyFollow();
+let calibrateBodyAt=0;
+function requestBodyCalibration() {
+  if(!renderer.xr.isPresenting) {entryError='Enter XR before calibrating your body.';return;}
+  bodyFollow.reset(); calibrateBodyAt=performance.now()+3000; resetHands(); send({});
+}
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
+  if(action==='calibrate_body') { requestBodyCalibration(); return; }
   if(action==='toggle_map') { mapCloud.visible=!mapCloud.visible; return; }
   if(action==='hold'||action==='resume') bodyClutch.reset();
   if(state) { feedback=state; paused=!!state.control?.paused; }
@@ -110,6 +119,14 @@ const geometry = await fetch(endpoint('model')).then(check).then(r => r.json()).
   status.textContent = `Cannot load station: ${error.message}. Reload after the blueprint is running.`;
   throw error;
 });
+if(geometry.absolute_body_targets) {
+  modePreference='clutch'; activeMode='clutch';
+  const choice=document.querySelector('#interaction-mode'); choice.value='clutch'; choice.disabled=true;
+  choice.querySelector('[value="clutch"]').textContent='Body follow';
+  document.querySelector('#body-calibration').hidden=false;
+  document.querySelector('#tool-help').hidden=true;
+  document.querySelector('#control-help').textContent='Calibrate body once in XR: release grips and extend both arms forward during the three-second countdown. Hold both grips to follow your body; triggers close the jaws. Release either grip to hold both arms. Re-engaging keeps the same body reference.';
+}
 const meshes = {};
 if(!geometry.finger_geometry) {
   const note=document.querySelector('#model-note'); note.hidden=false;
@@ -306,22 +323,26 @@ function place(viewer) {
   workspace.place(target.sub(offset).toArray(),yaw);
   applyPlacement(); ui.recenter(); resetHands(); send({}); placeAhead = false;
 }
+document.querySelector('#calibrate-body').onclick=requestBodyCalibration;
 document.querySelector('#place').onclick = () => { placeAhead=true; resetHands(); send({}); };
 enter.onclick = async () => {
   entryError = '';
   let session;
   try {
-    session = await navigator.xr.requestSession(document.querySelector('#xr-mode').value, xrSessionOptions());
+    session = await navigator.xr.requestSession(document.querySelector('#xr-mode').value, xrSessionOptions({bodyTracking:geometry.absolute_body_targets}));
     controlRequested = true; paused=false;
     scene.background=session.environmentBlendMode==='opaque'?new THREE.Color('#11181d'):null;
     renderer.setClearAlpha(scene.background?1:0);
     session.addEventListener('end', () => {
+      bodyFollow.reset(); calibrateBodyAt=0;
       controlRequested = false; resetHands(); send({}); socket?.close(); enter.disabled = false; orbit.enabled = true;
       document.querySelector('#xr-mode').disabled=false;
       scene.background=new THREE.Color('#11181d'); renderer.setClearAlpha(1);
     });
     session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') { resetHands(); send({}); } });
-    await renderer.xr.setSession(session); connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
+    await renderer.xr.setSession(session);
+    renderer.xr.getReferenceSpace().addEventListener('reset',()=>{bodyFollow.reset();calibrateBodyAt=0;resetHands();send({});});
+    connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
     document.querySelector('#xr-mode').disabled=true;
   } catch (error) {
     controlRequested = false; socket?.close(); entryError = `Cannot enter WebXR: ${error.message}`;
@@ -357,6 +378,17 @@ function track(frame, reference, observationsFresh, viewer) {
   if(mode!==activeMode) { activeMode=mode; resetHands(); send({}); }
   const robotReady=feedback?.control?.robot_ready && feedback.control.mode===activeMode;
   const bodyInput=activeMode==='clutch' && geometry.body_relative_clutch;
+  const viewerPose=viewer?{position:[viewer.transform.position.x,viewer.transform.position.y,viewer.transform.position.z],
+    orientation:[viewer.transform.orientation.x,viewer.transform.orientation.y,viewer.transform.orientation.z,viewer.transform.orientation.w]}:null;
+  const trackedBody=geometry.absolute_body_targets?captureBody(frame,reference):null;
+  if(geometry.absolute_body_targets) {
+    if(calibrateBodyAt && performance.now()>=calibrateBodyAt) {
+      bodyFollow.calibrate(viewerPose,raw,trackedBody); calibrateBodyAt=0;
+      resetHands(); send({});
+    }
+    document.querySelector('#body-calibration-status').textContent=(calibrateBodyAt?`Calibration in ${Math.ceil((calibrateBodyAt-performance.now())/1000)}s: release grips, extend both arms forward.`:bodyFollow.error) ||
+      `Body follow calibrated · ${bodyFollow.calibration.source}. Grips enable both arms; release holds without changing calibration.`;
+  }
   if(bodyInput && !paused && robotReady && viewer) {
     const p=viewer.transform.position,q=viewer.transform.orientation;
     bodyClutch.calibrate([p.x,p.y,p.z],[q.x,q.y,q.z,q.w]);
@@ -434,11 +466,12 @@ function track(frame, reference, observationsFresh, viewer) {
     const orientation=rotation.clone().multiply(hand.orientation);
     if(activeMode==='clutch') {
       const clutch=clutches[side].update(hand.clutchDistance,
-        !paused && robotReady && (!bodyInput || bodyClutch.rotation!==null) && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
+        !paused && robotReady && (!bodyInput || (geometry.absolute_body_targets?bodyFollow.calibration!==null:bodyClutch.rotation!==null)) && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
       if(clutch.grab) {
         gestures[side].reset(); ui.layout.end(side);
-        const pose=bodyInput?bodyClutch.pose(hand.position.toArray(),hand.orientation.toArray())
+        const pose=bodyInput?(geometry.absolute_body_targets?bodyFollow.pose(side,{position:hand.position.toArray(),orientation:hand.orientation.toArray()},viewerPose,trackedBody):bodyClutch.pose(hand.position.toArray(),hand.orientation.toArray()))
           :{position:pinchPosition.toArray(),orientation:orientation.toArray()};
+        if(!pose) { clutches[side].reset(); continue; }
         inputs[side]={...pose,
           pinched:true,arm:side,action:'move',trigger:hand.trigger};
         continue;
@@ -503,7 +536,7 @@ renderer.setAnimationLoop((time, frame) => {
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
     ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:Object.values(surfaces).some(surface=>surface.ts>0),connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
     workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode,
-    torsoHeightControl:geometry.torso_height_control,mapVisible:mapCloud.visible});
+    absoluteBody:geometry.absolute_body_targets,bodyStatus:geometry.absolute_body_targets?document.querySelector('#body-calibration-status').textContent:null,torsoHeightControl:geometry.torso_height_control,mapVisible:mapCloud.visible});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
     const viewer = frame.getViewerPose(reference);
