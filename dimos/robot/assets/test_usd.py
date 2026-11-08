@@ -314,6 +314,20 @@ def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
     assert stage.GetPrimAtPath("/toy/arm_sub/base_link")
 
 
+def test_grafting_two_copies_of_one_description_at_one_frame_is_an_error(toy: Any) -> None:
+    """Both mount under the same prim name, so the second would quietly replace the first.
+
+    Prefixing a description renames its frames, not its prims -- prim paths are already unique
+    by nesting, so there is nothing to rename. Three G1s grafted at one frame therefore came
+    out as one G1, with the right frame count and no complaint.
+    """
+    # At the scene's own root, which is where robots standing in a room mount.
+    root = graft_usd(urdf_to_usd(toy), {"toy": urdf_to_usd(toy, name="arm_sub")})
+
+    with pytest.raises(ValueError, match="is taken"):
+        graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")})
+
+
 def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
     """The defaultPrim is offered last, so it can never shadow a real link of the same name."""
     root = urdf_to_usd(toy, name="base_link")

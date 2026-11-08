@@ -178,6 +178,13 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
         if not source:
             raise ValueError(f"the subtree USD for {frame_id!r} declares no defaultPrim")
         target = pxr.Sdf.Path(attach_path).AppendChild(source.GetName())
+        if root_stage.GetPrimAtPath(target):
+            raise ValueError(
+                f"cannot attach a subtree at {frame_id!r}: {target} is taken. Two copies of one "
+                f"description mount under the same prim name, because prefixing renames frames "
+                f"and not prims -- so grafting both would keep only the last, silently. Give "
+                f"the scene a frame per copy."
+            )
         if not pxr.Sdf.CopySpec(sub_layer, source.GetPath(), root_layer, target):
             raise ValueError(f"could not copy the subtree USD for {frame_id!r} into the scene")
         # Copied specs keep their authored target paths, so a joint's body rels would still
