@@ -300,6 +300,31 @@ def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> Non
         graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
 
 
+def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
+    """A scene is rooted at a plain Xform, and that is where a robot standing in it mounts.
+
+    A converted room is 450 bodies under one Xform that carries no RigidBodyAPI, so matching
+    only on that API left it with no attach point at all -- while `usd_root_link` happily named
+    it as the root. The two have to agree.
+    """
+    root = urdf_to_usd(toy)
+
+    stage = _stage(graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")}))
+
+    assert stage.GetPrimAtPath("/toy/arm_sub/base_link")
+
+
+def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
+    """The defaultPrim is offered last, so it can never shadow a real link of the same name."""
+    root = urdf_to_usd(toy, name="base_link")
+
+    stage = _stage(graft_usd(root, {"base_link": urdf_to_usd(toy, name="arm_sub")}))
+
+    assert stage.GetPrimAtPath("/base_link/base_link/arm_sub/base_link"), (
+        "the subtree went to the root rather than to the link of that name"
+    )
+
+
 def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
     root = urdf_to_usd(toy)
 
