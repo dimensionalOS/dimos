@@ -67,7 +67,7 @@ def observation(position=0.2):
 async def test_context_requires_registration_and_pre_tick_state_is_unavailable(coordinators):
     task = RecordingTask("reader")
     with pytest.raises(RuntimeError, match="not registered"):
-        _ = task.context
+        task.context  # noqa: B018
     coordinator = coordinators()
     assert coordinator.add_task(task)
     assert task.context.get_state() is None
@@ -110,7 +110,7 @@ async def test_context_is_exclusive_and_removal_revokes_then_allows_re_registrat
     assert second.list_tasks() == []
     assert first.remove_task("reader")
     with pytest.raises(RuntimeError, match="not registered"):
-        _ = task.context
+        task.context  # noqa: B018
     assert second.add_task(task)
     second._set_latest_state(observation())
     assert task.context.get_state() == observation()
@@ -125,7 +125,7 @@ async def test_failed_route_registration_releases_task_context(coordinators):
         )
     assert coordinator.list_tasks() == []
     with pytest.raises(RuntimeError, match="not registered"):
-        _ = task.context
+        task.context  # noqa: B018
     assert coordinator.add_task(task)
 
 
