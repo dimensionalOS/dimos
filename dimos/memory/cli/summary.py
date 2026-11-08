@@ -81,7 +81,7 @@ def main(
     from dimos.memory.store.sqlite import SqliteStore
 
     rows: list[tuple[str, int, float | None, float | None, int, str]] = []
-    store = SqliteStore(path=str(db_path))
+    store = SqliteStore(path=str(db_path), must_exist=True)
     with store, Progress(transient=True) as prog:
         names = store.list_streams()
         task = prog.add_task("scanning", total=len(names))
