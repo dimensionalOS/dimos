@@ -70,6 +70,16 @@ class PGOVoxelMapperConfig(ModuleConfig):
     reloc_recheck_s: float = 30.0
 
 
+def _pgo_config(cfg: PGOVoxelMapperConfig) -> PGOConfig:
+    """The PGO settings, loop closure left on unless switched off or in simulation.
+
+    Simulators publish ground-truth odometry, so there is no drift for a loop to correct.
+    """
+    if cfg.pgo.loop_closure is not None:
+        return cfg.pgo
+    return cfg.pgo.model_copy(update={"loop_closure": not cfg.g.simulation})
+
+
 class PGOVoxelMapper(Module):
     """Global voxel map that stays loop-closed, anchored at the robot, optionally on a premap."""
 
@@ -121,7 +131,7 @@ class PGOVoxelMapper(Module):
             voxel_size=cfg.voxel_size,
             frame_id=cfg.frame_id,
             rebuild_cooldown_s=cfg.rebuild_cooldown_s,
-            pgo=cfg.pgo,
+            pgo=_pgo_config(cfg),
             premap=premap,
         )
         # fix, its fitness, and the current attachment's fitness on the same window
