@@ -254,6 +254,8 @@ class UsdManager(SharedConfigModule):
         self._usd: str | None = None
         # Its own lock: baking meshes into a USD takes seconds, and self._lock is on the tf path.
         self._usd_lock = RLock()
+        # Serializes scene assembly across the file requests that arrive while it runs.
+        self._scene_build = asyncio.Lock()
         # The last scene get_scene assembled. A renderer wants the whole tree, not just this
         # robot, and only get_scene knows what is mounted.
         self._scene: str | None = None
@@ -589,11 +591,20 @@ class UsdManager(SharedConfigModule):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(USD_SUFFIXES):
-            # Off the loop thread: the first request is the one that pays for the import
-            # and the conversion, and it arrives while tf is flowing.
-            usd = self._scene
-            if usd is None:
-                usd = (await asyncio.to_thread(self.get_usd))[USD]
+            async with self._scene_build:
+                usd = self._scene
+                if usd is None and self.config.mounts:
+                    # A manager with mounts answers for the whole tree, and nothing else
+                    # assembles it: get_scene is an rpc for a manager above this one to call,
+                    # and a top-level manager has nobody above it. Falling through to get_usd
+                    # here answered with this robot's own layer alone -- for a manager that is
+                    # only a set of mount points, a stage of empty frames with no geometry in
+                    # it at all, and not an error anywhere to say so.
+                    usd = (await self.get_scene())[USD]
+                if usd is None:
+                    # Off the loop thread: the first request is the one that pays for the import
+                    # and the conversion, and it arrives while tf is flowing.
+                    usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
         # Only files this manager has published: a request is never an arbitrary path into the
