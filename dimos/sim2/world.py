@@ -33,8 +33,31 @@ _IMU_SENSORS = {
 }
 
 
+# USD suffixes MuJoCo will read, once its reader is registered.
+_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
+
+
+def _register_usd_reader(scene: Path) -> None:
+    """MuJoCo reads USD, but only once `mujoco._usd` has been imported.
+
+    Without it `MjSpec.from_file` falls back to the MJCF parser and a USD layer comes back as
+    "syntax error: line 1, column 0" -- XML's complaint about a file that was never XML. The
+    import is what registers the reader, so it has to happen in whichever process loads the
+    scene, not merely somewhere in the application.
+    """
+    if scene.suffix.lower() not in _USD_SUFFIXES:
+        return
+    try:
+        import mujoco._usd  # noqa: F401
+    except ImportError as error:
+        raise ImportError(
+            f"{scene} is a USD layer and this MuJoCo cannot read one: {error}"
+        ) from error
+
+
 def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel:
     """Robots are prefixed "<robot_id>/"; scene-mounted sensors are prefixed "world/"."""
+    _register_usd_reader(Path(scene))
     descriptions = list(simulated)
     robots = [d for d in descriptions if isinstance(d, SimulatedRobot)]
     sensors = [d for d in descriptions if isinstance(d, SimulatedSensor)]
