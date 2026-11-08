@@ -39,7 +39,9 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD,
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.usd_manager import UsdManager
@@ -66,11 +68,20 @@ POLICY_HZ = 50.0
 class _Walker(TeleopControlCoordinator):
     """The G1's own whole-body coordinator, one per robot.
 
-    A subclass only so each robot gets its own class-named instance; the ports and the task
-    registry are the coordinator's. Nothing here is sim-specific -- `transport_lcm` is the same
-    adapter the real G1 runs behind, reading `motor_states` and `imu` and writing
-    `motor_command`, and in a namespace those three names are that robot's alone.
+    A subclass for two reasons. Each robot gets its own class-named instance; and the velocity
+    input is named `cmd_vel` rather than the coordinator's own `twist_command`, because the
+    Controller decides whether a blueprint can be driven by looking for an input stream whose
+    *name* contains "cmd_vel", read from the blueprint catalog rather than from topics. Pointing
+    `twist_command` at the cmd_vel topic drives the robots perfectly well from a script and
+    still leaves the app saying "nothing to drive", which is no use to someone holding a
+    joystick. `stream_bind` on the task below joins the two.
+
+    Nothing else here is sim-specific: `transport_lcm` is the same adapter the real G1 runs
+    behind, reading `motor_states` and `imu` and writing `motor_command`, and in a namespace
+    those three names are that robot's alone.
     """
+
+    cmd_vel: In[Twist]
 
 
 def _walker(name: str):
@@ -99,6 +110,8 @@ def _walker(name: str):
                 joint_names=joints[:15],
                 priority=50,
                 auto_start=True,
+                # The task's own card input is twist_command; read it off the cmd_vel port.
+                stream_bind={"twist_command": "cmd_vel"},
                 params={
                     "model_path": LfsPath("groot"),
                     "hardware_id": name,
@@ -158,9 +171,6 @@ def _robot(name: str, xy: tuple[float, float]):
             # and the robot's own frames -- the Mid-360's mount among them -- never reach tf.
             [
                 (UsdManager, "coordinator_joint_state", "motor_states"),
-                # The coordinator's velocity input is named for the task that reads it; what the
-                # Controller's joystick publishes is cmd_vel.
-                (_Walker, "twist_command", "cmd_vel"),
                 # The Mid-360 has an IMU of its own, and in this namespace it would publish on
                 # the same "imu" the whole-body adapter reads. The policy would then be fed a
                 # sensor bolted upside down on the torso instead of the one in the pelvis, and
