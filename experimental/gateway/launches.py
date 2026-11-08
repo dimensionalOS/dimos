@@ -378,26 +378,29 @@ def _save(record: dict[str, Any]) -> None:
     store.write_atomic(launch_file(), json.dumps(record))
 
 
-FATAL = ("*** Terminating app", "[err]", "[cri]")
-LOG_LINE = re.compile(
-    r"^\d\d:\d\d:\d\d\.\d+ \["
-)  # dimos' console format: `HH:MM:SS.mmm [lvl][file]`
+# dimos' console format: `HH:MM:SS.mmm [lvl][file]`
+FATAL_LOG_LINE = re.compile(r"^\d\d:\d\d:\d\d\.\d+ \[(?:err|cri)\]")
+EXCEPTION_LINE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:: .*)?")
 
 
 def last_error(output: str) -> str:
     """The cause of a failed launch: the last fatal line, or the exception ending the last traceback.
 
     Shutdown chatter (`Stopping module...`, `All workers shut down`) follows a crash, so the
-    last line alone names the wrong thing. Without a fatal line it still stands, as before."""
+    last line alone names the wrong thing. The last recognized cause wins, including shutdown
+    errors. Without a recognized cause, the last line still stands, as before."""
     lines = [line.rstrip() for line in output.splitlines()[1:] if line.strip()]
     cause = None
-    for index, line in enumerate(lines):
-        if any(marker in line for marker in FATAL):
+    in_traceback = False
+    for line in lines:
+        if line.startswith("Traceback (most recent call last):"):
+            in_traceback = True
+        elif line.startswith("*** Terminating app") or FATAL_LOG_LINE.match(line):
             cause = line.strip()
-        elif line.startswith("Traceback (most recent call last):"):
-            # other workers' log lines can land between the frames and the exception
-            rest = (f for f in lines[index + 1 :] if not LOG_LINE.match(f))
-            cause = next((f.strip() for f in rest if not f.startswith((" ", "\t"))), cause)
+        elif in_traceback and EXCEPTION_LINE.fullmatch(line):
+            # Other workers' output can land between the frames and the exception.
+            cause = line.strip()
+            in_traceback = False
     if cause is None:
         return lines[-1].strip() if lines else "dimos exited during startup"
     return cause
