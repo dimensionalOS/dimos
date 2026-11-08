@@ -302,6 +302,93 @@ def test_a_capsule_becomes_a_cylinder_that_covers_it() -> None:
     assert float(cylinder.get("length") or 0) == pytest.approx(0.38)
 
 
+_MJC_GROUPED_USDA = """#usda 1.0
+(
+    defaultPrim = "leg"
+)
+
+def Xform "leg"
+{
+    def Xform "thigh" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Capsule "left_thigh"
+        {
+            double height = 0.2
+            double radius = 0.06
+            uniform int mjc:group = 3
+        }
+
+        def Mesh "thigh_visual"
+        {
+            uniform int mjc:group = 2
+        }
+    }
+}
+"""
+
+
+def test_a_layer_that_marks_no_collision_falls_back_to_mujocos_grouping() -> None:
+    """An MJCF that switches collision off wholesale still says which shapes are the hard ones.
+
+    The G1's default class is `contype="0" conaffinity="0"` -- its policy does not need
+    self-collision -- so the converted layer carries no CollisionAPI anywhere and RoboPlan would
+    get a humanoid with no collision scene at all. Those models still put their collision geoms
+    in MuJoCo's group 3.
+    """
+    root = ET.fromstring(usd_to_urdf(_MJC_GROUPED_USDA))
+    (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
+
+    assert link.find("collision/geometry/cylinder") is not None, "group 3 was not read as collision"
+    assert link.find("visual/geometry/cylinder") is None
+
+
+_MARKED_AND_GROUPED_USDA = """#usda 1.0
+(
+    defaultPrim = "leg"
+)
+
+def Xform "leg"
+{
+    def Xform "thigh" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Cube "hard" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double size = 1
+        }
+
+        def Capsule "soft"
+        {
+            double height = 0.2
+            double radius = 0.06
+            uniform int mjc:group = 3
+        }
+    }
+}
+"""
+
+
+def test_a_layer_that_marks_collision_is_not_second_guessed() -> None:
+    """The group number is per-model -- the M20's vendor MJCF collides on group 1, not 3.
+
+    So the fallback must stay a fallback. Here the layer says outright which shape is hard, and
+    a second shape happens to sit in group 3; reading the group anyway would make it collide.
+    """
+    root = ET.fromstring(usd_to_urdf(_MARKED_AND_GROUPED_USDA))
+    (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
+
+    assert link.find("collision/geometry/box") is not None
+    assert link.find("visual/geometry/cylinder") is not None, (
+        "the group was read despite CollisionAPI"
+    )
+    assert link.find("collision/geometry/cylinder") is None
+
+
 def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
     """USD conveys the tree by nesting; a URDF with two unconnected links will not load.
 
