@@ -92,6 +92,114 @@ const controlMsgs: Record<string, Msg> = {
     token: "viewer-token-fixture-0123456789abcdef",
   },
   welcome: { t: "welcome", v: PROTOCOL_VERSION },
+  hello_topic_source: {
+    t: "hello",
+    v: PROTOCOL_VERSION,
+    role: "robot",
+    token: "provider-token-fixture-0123456789",
+    topicSource: "workspace",
+    topicsVersion: 1,
+    topicCapabilities: {
+      read: true,
+      write: false,
+      profiles: ["raw", "depth.lossless.v1"],
+      guardedPublishers: false,
+    },
+  },
+  topic_sources: {
+    t: "topic_sources",
+    v: 1,
+    sources: [{
+      source: "workspace",
+      gen: 3,
+      read: true,
+      write: false,
+      profiles: ["raw"],
+      guardedPublishers: false,
+    }],
+  },
+  topic_sub: {
+    t: "topic_sub",
+    id: "s1",
+    source: "workspace",
+    keyExpr: "demo/β/**",
+    delivery: "reliable",
+    profile: "raw",
+    maxHz: 1000,
+  },
+  topic_open: {
+    t: "topic_open",
+    route: "@t:p1",
+    gen: 3,
+    keyExpr: "demo/β/**",
+    delivery: "reliable",
+    profile: "raw",
+    maxHz: 1000,
+  },
+  topic_opened: { t: "topic_opened", route: "@t:p1", gen: 3 },
+  topic_ready: { t: "topic_ready", id: "s1", source: "workspace", route: "@t:v2", gen: 3 },
+  topic_activate: { t: "topic_activate", route: "@t:v2", gen: 3 },
+  topic_rate_update: { t: "topic_activate", route: "@t:p1", gen: 3, maxHz: 30 },
+  topic_close: { t: "topic_close", route: "@t:p1", gen: 3 },
+  topic_credit: { t: "topic_credit", route: "@t:v2", gen: 3, frames: 40, bytes: 13000 },
+  topic_unsub: { t: "topic_unsub", id: "s1" },
+  topic_guard_ready: {
+    t: "topic_guard_ready",
+    id: "drive",
+    handle: "@p:1",
+    gen: 3,
+    ticket: 1,
+    timeoutMs: 400,
+  },
+  topic_guard_heartbeat: { t: "topic_guard_heartbeat", handle: "@p:1", gen: 3, ticket: 1 },
+  topic_guard_ticket: { t: "topic_guard_ticket", handle: "@p:1", gen: 3, ticket: 2 },
+  topic_guard_stop: { t: "topic_guard_stop", handle: "@p:1", gen: 3 },
+  topic_guard_closed: { t: "topic_guard_closed", handle: "@p:1", gen: 3, code: "guard_expired" },
+  topic_guard_result: {
+    t: "topic_guard_result",
+    handle: "@p:1",
+    gen: 3,
+    seq: 10,
+    outcome: "accepted",
+    code: "",
+    providerTs: 100.5,
+  },
+  topic_error: {
+    t: "topic_error",
+    id: "s1",
+    code: "source_offline",
+    message: "Source interrupted",
+    outcome: "interrupted",
+  },
+  topic_list: {
+    t: "topic_list",
+    id: "l1",
+    source: "workspace",
+    prefix: "demo/",
+    cursor: "",
+    limit: 32,
+  },
+  topic_page: {
+    t: "topic_page",
+    id: "l1",
+    source: "workspace",
+    gen: 3,
+    entries: [{
+      key: "demo/β/clock",
+      encoding: "application/json",
+      type: "",
+      availability: "observed",
+    }],
+    cursor: "",
+  },
+  topic_pub_result: {
+    t: "topic_pub_result",
+    id: "w1",
+    outcome: "accepted",
+    code: "",
+    message: "",
+    providerTs: 1752576000.5,
+  },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
   pong: { t: "pong", n: 7, ts: 1752576000.5 },
   error_version: {
@@ -201,6 +309,38 @@ const teleopMsgs: Record<string, Msg> = {
 };
 
 const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> = {
+  topic_sample: {
+    header: {
+      ch: "@t:v2",
+      seq: 9,
+      ts: 1752576000.75,
+      delivery: "reliable",
+      meta: {
+        key: "demo/β/clock",
+        encoding: "application/octet-stream",
+        gen: 3,
+        ingressTs: 1752576000.5,
+        sourceTs: 1752576000.25,
+      },
+    },
+    payload: new Uint8Array([0, 255, 128, 1]),
+  },
+  topic_publish: {
+    header: {
+      ch: "@put",
+      seq: 1,
+      ts: 1752576000.75,
+      delivery: "reliable",
+      meta: {
+        id: "w1",
+        source: "workspace",
+        gen: 3,
+        key: "demo/β/command",
+        encoding: "application/octet-stream",
+      },
+    },
+    payload: new Uint8Array([255, 0, 1, 128]),
+  },
   odom_reliable: {
     header: { ch: "odom", seq: 42, ts: 1752576000.5, delivery: "reliable" },
     payload: new TextEncoder().encode('{"x":1.5,"y":-2.5,"yaw":0.75}'),
@@ -846,12 +986,89 @@ const manifests = {
 };
 
 const dir = new URL(".", import.meta.url);
+const invalidTopics = {
+  vectors: [
+    ...[null, true, 0, -1, 1001, "30"].map((maxHz, i) => ({
+      name: `invalid_rate_update_${i}`,
+      message: { ...controlMsgs.topic_activate, maxHz },
+    })),
+    ...[
+      ["invalid_guard_handle", { handle: "@t:1" }],
+      ["guard_handle_newline", { handle: "@p:1\n" }],
+      ["boolean_guard_ticket", { ticket: true }],
+      ["zero_guard_ticket", { ticket: 0 }],
+      ["fractional_guard_timeout", { timeoutMs: 400.5 }],
+      ["unbounded_guard_timeout", { timeoutMs: 1001 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_guard_ready, ...fields as Record<string, unknown> },
+    })),
+    ...[null, { read: 1, write: false, profiles: ["raw"] }, {
+      read: true,
+      write: false,
+      profiles: new Array(17).fill("raw"),
+    }, { read: true, write: false, profiles: [""] }].map((topicCapabilities, i) => ({
+      name: `invalid_capabilities_${i}`,
+      message: { ...controlMsgs.hello_topic_source, topicCapabilities },
+    })),
+    { name: "boolean_version", message: { t: "topic_sources", v: true, sources: [] } },
+    {
+      name: "boolean_hello_version",
+      message: { t: "hello", v: PROTOCOL_VERSION, role: "viewer", topicsVersion: true },
+    },
+    {
+      name: "null_hello_source",
+      message: { t: "hello", v: PROTOCOL_VERSION, role: "robot", topicSource: null },
+    },
+    ...[
+      ["empty_key", { keyExpr: "" }],
+      ["long_unicode_key", { keyExpr: "β".repeat(513) }],
+      ["bad_source", { source: "../workspace" }],
+      ["source_cr", { source: "workspace\r" }],
+      ["source_lf", { source: "workspace\n" }],
+      ["source_unicode_line_end", { source: "workspace\u2028" }],
+      ["negative_rate", { maxHz: -1 }],
+      ["boolean_rate", { maxHz: true }],
+      ["unknown_delivery", { delivery: "datagram" }],
+      ["empty_profile", { profile: "" }],
+      ["long_id", { id: "x".repeat(65) }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_sub, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["literal_key_route", { route: "demo/a" }],
+      ["route_cr", { route: "@t:v2\r" }],
+      ["route_unicode_line_end", { route: "@t:v2\u2029" }],
+      ["negative_gen", { gen: -1 }],
+      ["fractional_gen", { gen: 1.5 }],
+      ["boolean_gen", { gen: true }],
+      ["unsafe_gen", { gen: 9007199254740992 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_ready, ...fields as Record<string, unknown> },
+    })),
+    { name: "oversized_page", message: { ...controlMsgs.topic_list, limit: 33 } },
+    { name: "fractional_limit", message: { ...controlMsgs.topic_list, limit: 1.5 } },
+    { name: "negative_credit", message: { ...controlMsgs.topic_credit, bytes: -1 } },
+    { name: "boolean_credit", message: { ...controlMsgs.topic_credit, frames: true } },
+    { name: "unknown_outcome", message: { ...controlMsgs.topic_error, outcome: "probably" } },
+    {
+      name: "bad_descriptors",
+      message: {
+        ...controlMsgs.topic_page,
+        entries: [{ key: "a", type: "", encoding: "", availability: "live" }],
+      },
+    },
+  ],
+};
 for (
   const [file, obj] of [
     ["control_frames.json", control],
     ["datagrams.json", datagrams],
     ["data_frames.json", data],
     ["manifests.json", manifests],
+    ["topics_invalid.json", invalidTopics],
   ] as const
 ) {
   await Deno.writeTextFile(new URL(file, dir), JSON.stringify(obj, null, 2) + "\n");

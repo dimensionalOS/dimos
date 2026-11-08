@@ -158,6 +158,8 @@ class ConnectionSource:
         model: Its joints and position limits, named ``<robot>/...``; ``None``
             for a robot with no joint ports.
         reading_timeout_s: How old its newest reading may be, in seconds.
+        zero_stiffness_joints: Joints the connection commands with zero
+            stiffness, so tasks such as hand guiding may follow them by hand.
 
     Raises:
         ValueError: If the coordinator cannot drive it: no reading port, a
@@ -172,6 +174,8 @@ class ConnectionSource:
         readings: Collection[str],
         model: RobotModel | None,
         reading_timeout_s: float,
+        *,
+        zero_stiffness_joints: Collection[str] = (),
     ) -> None:
         if commands and not readings:
             raise ValueError(
@@ -218,6 +222,13 @@ class ConnectionSource:
             )
             for name, limit in joints.items()
         ]
+        unknown = frozenset(zero_stiffness_joints) - set(joints)
+        if unknown:
+            raise ValueError(
+                f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}"
+            )
+        #: Joints this robot's connection commands with zero stiffness.
+        self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
         imu = f"{robot}{SEPARATOR}imu"
         self._sensors = (
             [_SensorReading(imu, i, f"{imu}{SEPARATOR}{i}") for i in IMU_INTERFACES]

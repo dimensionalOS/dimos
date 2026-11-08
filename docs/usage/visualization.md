@@ -55,7 +55,7 @@ dimos run unitree-go2 --rerunbridgemodule.rerun-web true --rerunbridgemodule.rer
 - The Rerun web viewer in your browser at http://localhost:9878
 - Works headless (no display required)
 
-The integrated dashboard at http://localhost:7779 (the Rerun viewer plus the command center sidebar with teleop and goal setting) is the `WebsocketVisModule`, which a blueprint adds with `vis_module(..., websocket_vis=True)`. It opens automatically and embeds Rerun when the bridge's `rerun_open` is `web` or `both`. Override these choices independently with `--websocketvismodule.open-browser false` or `--websocketvismodule.show-rerun-dashboard false`. Without a Rerun bridge, both default to off.
+The dashboard at http://localhost:7779 (a page that embeds the Rerun web viewer) is the `WebsocketVisModule`, which a blueprint adds with `vis_module(..., websocket_vis=True)`. It opens automatically when the bridge's `rerun_open` is `web` or `both`. Override these choices independently with `--websocketvismodule.open-browser false` or `--websocketvismodule.show-rerun-dashboard false`. Without a Rerun bridge, both default to off.
 
 ---
 
