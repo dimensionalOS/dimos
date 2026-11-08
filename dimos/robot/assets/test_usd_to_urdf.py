@@ -262,6 +262,46 @@ def Xform "rig"
 """
 
 
+_CAPSULE_USDA = """#usda 1.0
+(
+    defaultPrim = "leg"
+)
+
+def Xform "leg"
+{
+    def Xform "thigh" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Capsule "collision_0" (
+            prepend apiSchemas = ["PhysicsCollisionAPI"]
+        )
+        {
+            double height = 0.3
+            double radius = 0.04
+        }
+    }
+}
+"""
+
+
+def test_a_capsule_becomes_a_cylinder_that_covers_it() -> None:
+    """URDF has no capsule, and dropping one leaves the link with no collision volume at all.
+
+    The G1's thighs, shins and hand collision volumes are capsules, so the consumers of this --
+    body masking, RoboPlan -- would otherwise plan against a robot with bare legs. A cylinder
+    spanning the capsule's full length, caps included, is the usual stand-in.
+    """
+    root = ET.fromstring(usd_to_urdf(_CAPSULE_USDA))
+    (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
+
+    cylinder = link.find("collision/geometry/cylinder")
+    assert cylinder is not None, "the capsule was dropped"
+    assert float(cylinder.get("radius") or 0) == pytest.approx(0.04)
+    # height + both hemispherical caps, so the stand-in is never shorter than what it replaces.
+    assert float(cylinder.get("length") or 0) == pytest.approx(0.38)
+
+
 def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
     """USD conveys the tree by nesting; a URDF with two unconnected links will not load.
 

@@ -330,6 +330,18 @@ def _shape_of(pxr: Any, prim: Any) -> ET.Element | None:
             radius=_number(radius * float(scale[0])),
             length=_number(height * float(scale[2])),
         )
+    if type_name == "Capsule":
+        # URDF has no capsule. A cylinder of the same radius and length is the usual stand-in:
+        # it is what the consumers of this -- body masking, RoboPlan -- can represent, and it
+        # under-covers only the two hemispherical caps. Dropping it instead would give a G1 with
+        # no collision volume on its thighs, shins or hands at all.
+        radius = _float_attr(prim, "radius", 1.0)
+        height = _float_attr(prim, "height", 1.0)
+        return ET.Element(
+            "cylinder",
+            radius=_number(radius * float(scale[0])),
+            length=_number((height + 2.0 * radius) * float(scale[2])),
+        )
     if type_name == "Mesh":
         filename = _referenced_path(prim)
         if filename is None:
