@@ -97,6 +97,49 @@ def test_the_view_is_posed_by_the_world_alone(description):
     view.close()
 
 
+def test_a_sensor_does_not_see_the_body_it_is_mounted_on(description):
+    """The lidar site sits at the centre of the head's sphere, as a real one sits inside its shell.
+
+    A collision hull is a few convex shapes around a shape that is neither, so a sensor bolted
+    to a robot is inside its mount rather than proud of it -- the G1's Mid-360 is 22 mm inside
+    torso_link's. Casting without saying so returns the mount for every ray in every direction,
+    and a lidar that drops returns inside its blind range then reports an empty scan.
+    """
+    view = open_view(description)
+    view.update(_World().at(0.0, 0.0, 0.0))
+    origin, _ = view.pose("dog/lidar")
+    # Forward and down, so it clears the base behind it and reaches the floor.
+    out_and_down = np.array([[1.0, 0.0, -1.0]]) / np.sqrt(2.0)
+
+    blinded, _ = view.raycaster((0,)).cast(origin, out_and_down, 10.0)
+    seeing, _ = view.raycaster((0,), mounted_at="dog/lidar").cast(origin, out_and_down, 10.0)
+
+    # Starting inside its own mount, the ray gets no further than the mount's own surface --
+    # 50 mm here, 22 mm on the real G1, both well inside a Mid-360's 160 mm blind range, so
+    # every such return is dropped and the scan comes out empty.
+    assert blinded[0] == pytest.approx(0.05, abs=1e-3)
+    # With the mount left out it carries on to the floor, a good way below.
+    assert seeing[0] > 1.0
+
+
+def test_blind_to_lets_the_rays_through_further_frames(description):
+    """For what the mount rule does not cover: a radome, a mast, a wall a test wants gone."""
+    view = open_view(description)
+    view.update(_World().at(0.0, 0.0, 0.0))
+    # From a metre to the robot's side, level with its base, looking straight at it.
+    base, _ = view.pose("dog/base")
+    origin = base + np.array([0.0, -1.0, 0.0])
+    at_the_robot = np.array([[0.0, 1.0, 0.0]])
+
+    stopped, _ = view.raycaster((0,)).cast(origin, at_the_robot, 10.0)
+    through, _ = view.raycaster((0,), blind_to=["dog/base"]).cast(origin, at_the_robot, 10.0)
+
+    # The base's near face, a metre away less its half-width.
+    assert stopped[0] == pytest.approx(0.9, abs=1e-3)
+    # Nothing else stands in that direction, so with the base ignored the ray reaches nothing.
+    assert through[0] < 0
+
+
 def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(description):
     view, world = open_view(description), _World()
     view.update(world.at(1.0, 0.0, 0.0))
