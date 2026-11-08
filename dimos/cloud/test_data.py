@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from dimos.cloud import data as cd, preview
+from dimos.cloud import data as cd
 from dimos.cloud.config import CloudConfig
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
 
@@ -159,9 +159,9 @@ def test_preview_timing_budget_includes_video(
     video = {"bytes": 100, "duration_s": 2, "speed": 1, "type": "video/mp4"}
     base = {k: v for k, v in doc.items() if k != "timing"}
     limit = len(json.dumps({**base, "video": video}).encode())
-    monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", limit)
-    monkeypatch.setattr(preview, "build", lambda store: doc.copy())
-    monkeypatch.setattr(preview, "timelapse", lambda store, path: video)
+    monkeypatch.setattr(cd.preview, "PREVIEW_MAX_BYTES", limit)
+    monkeypatch.setattr(cd.preview, "build", lambda store: doc.copy())
+    monkeypatch.setattr(cd.preview, "timelapse", lambda store, path: video)
 
     def open_copy(path: Path) -> Any:
         assert path != source and path.read_bytes() == original

@@ -240,16 +240,17 @@ def test_timing_failure_preserves_spatial_preview(
 
 def test_timing_caps_intervals_not_metadata_scan(tmp_path: Path) -> None:
     # This file contains timestamp columns only: there are no payloads to decode.
-    recording = store(
-        tmp_path / "meta.db", camera=[(100 + i * 2.0, None, None) for i in reversed(range(201))]
-    )
+    # The largest gap falls after the 64 displayed intervals.
+    timestamps = [100 + i * 2.0 for i in range(200)] + [510.0]
+    recording = store(tmp_path / "meta.db", camera=[(t, None, None) for t in reversed(timestamps)])
     report = preview._timing(tmp_path / "meta.db", dict(recording.streams.items()), 100.0)[
         "streams"
     ]["camera"]
     assert report["gaps"] == [[i * 2.0, (i + 1) * 2.0] for i in range(64)]
     assert report["gap_count"] == 200 and report["truncated"] is True
-    assert report["last_s"] == report["span_s"] == 400.0
-    assert report["max_gap_s"] == 2.0
+    assert report["first_s"] == 0.0
+    assert report["last_s"] == report["span_s"] == 410.0
+    assert report["max_gap_s"] == 12.0
 
 
 def test_timing_uses_original_sorted_timestamps_and_preview_origin(tmp_path: Path) -> None:
