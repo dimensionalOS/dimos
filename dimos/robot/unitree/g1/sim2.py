@@ -116,6 +116,14 @@ class G1Sim(Module):
     mjcf = mjcf_with_frames(
         menagerie_path() / "unitree_g1" / "g1.xml",
         {"mid360_link": ("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))},
+        # Menagerie collides each foot with four small spheres whose undersides sit 5.5 mm
+        # above the bottom of the foot it draws, so the robot stands on the spheres and the
+        # foot goes through the floor by that much. The spheres stand in for the contact
+        # patch; the mesh is the foot.
+        on_the_sole=("left_ankle_roll_link", "right_ankle_roll_link"),
+        # Each wrist draws a rubber hand and collides only the wrist, so the robot's own lidar
+        # sees its shoulders and elbows and looks straight through its hands.
+        collide_drawn=("left_wrist_yaw_link", "right_wrist_yaw_link"),
     )
     lidar_mount_frame = "mid360_link"
 
