@@ -209,9 +209,7 @@ class MultipartBackend:
         must stay byte-identical to what was uploaded. Best effort: the upload stands
         without it."""
         try:
-            # the copy keeps the recording's suffix: open_store dispatches on it, so a .mcap
-            # copied to a .db name could never be opened at all
-            copy, clip = tmp / f"preview{path.suffix}", tmp / "timelapse.mp4"
+            copy, clip = tmp / "preview.db", tmp / "timelapse.mp4"
             shutil.copyfile(path, copy)
             note = ""
             with open_store(copy) as store:
