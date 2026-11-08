@@ -182,8 +182,9 @@ _robots = {name: _robot(name, xy) for name, xy in SPOTS.items()}
 # collects all three descriptions into that single stage, each under its own namespace's frames.
 scene_manager = UsdManager.blueprint(
     model=RobotModel.from_urdf_string(MOUNT_URDF),
-    # Its own three joints are fixed and go out as tf, so every frame in the stage it serves is
-    # one tf can place. The robots' joints stay with the managers that own them.
+    # Its own three joints are fixed and sit at the origin, so the viewer places those frames
+    # from the stage itself. Nothing sends it a joint state and it poses nothing: each robot's
+    # own manager publishes that robot's joints, and G1Sim publishes world -> <robot>/pelvis.
     mounts={name: _manager_name(blueprint) for name, blueprint in _robots.items()},
     # It is a scene, not a robot: its frames are the world's and take no prefix. Set here rather
     # than left out, because namespace() below would otherwise fill it in.
