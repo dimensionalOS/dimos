@@ -139631,7 +139631,6 @@ def RenderSettings "Look"
     # to put the bright end back inside the range, and the contrast bump -- which pushes exactly the
     # values that were clipping -- goes away. Saturation is what is actually wanted here.
     float dimos:look:exposure = 0.8
-    float dimos:look:environmentIntensity = 0.7
     float dimos:look:saturation = 1.25
     float dimos:look:contrast = 1
 }
