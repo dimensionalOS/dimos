@@ -25,13 +25,9 @@ from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
     asset_hash,
     graft_usd,
-    prefix_usd_frames,
-    rename_usd_frames,
     require_asset_hashes,
-    trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
-    usd_frame_names,
 )
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
@@ -74,12 +70,6 @@ def toy(tmp_path: Path) -> Any:
     urdf = tmp_path / "toy.urdf"
     urdf.write_text(_URDF)
     return RobotModel.from_file(urdf).load()
-
-
-def _link_of(stage: Any, path: str) -> str:
-    prim = stage.GetPrimAtPath(path)
-    assert prim, f"no prim at {path}"
-    return prim.GetDisplayName() or prim.GetName()
 
 
 def _stage(usd: str) -> Any:
@@ -345,135 +335,6 @@ def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
     assert graft_usd(root, {}) == root
 
 
-def _names(stage: Any, kind: str) -> set[str]:
-    """Every link, or every joint, by the name it travels under."""
-    from pxr import UsdPhysics
-
-    out = set()
-    for prim in stage.Traverse():
-        is_joint = prim.IsA(UsdPhysics.Joint)
-        if (kind == "joint") is not is_joint:
-            continue
-        if kind == "link" and not prim.HasAPI(UsdPhysics.RigidBodyAPI):
-            continue
-        out.add(prim.GetDisplayName() or prim.GetName())
-    return out
-
-
-def test_every_link_name_moves_under_the_prefix(toy: Any) -> None:
-    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
-
-    assert _names(stage, "link") == {
-        "left/base_link",
-        "left/mount",
-        "left/arm-1",
-        "left/spin",
-    }
-
-
-def test_joint_names_move_with_the_links(toy: Any) -> None:
-    # A joint name is what a JointState keys on: two arms answering to one name is the same
-    # collision the link names have, one layer down.
-    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
-
-    assert _names(stage, "joint") == {
-        "left/base_to_mount",
-        "left/mount_to_arm",
-        "left/arm_to_spin",
-    }
-
-
-def test_the_original_urdf_spelling_survives_the_move(toy: Any) -> None:
-    # "arm-1" is not a USD identifier, so the prim is "arm_1"; the attribute keeps the real name.
-    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "left"))
-
-    assert stage.GetPrimAtPath("/toy/base_link/mount/arm_1")
-    assert _link_of(stage, "/toy/base_link/mount/arm_1") == "left/arm-1"
-
-
-def test_a_nested_namespace_prefixes_whole(toy: Any) -> None:
-    stage = _stage(prefix_usd_frames(urdf_to_usd(toy), "fleet/robot0"))
-
-    assert "fleet/robot0/base_link" in _names(stage, "link")
-
-
-def test_prim_paths_and_joint_bodies_are_untouched_by_the_move(toy: Any) -> None:
-    # Prim names cannot hold a "/", and prim paths are already unique by nesting.
-    prefixed = prefix_usd_frames(urdf_to_usd(toy), "left")
-
-    stage = _stage(prefixed)
-    joint = stage.GetPrimAtPath("/toy/joints/base_to_mount")
-
-    assert joint
-    targets = joint.GetRelationship("physics:body0").GetTargets()
-    assert str(targets[0]) == "/toy/base_link"
-
-
-def test_an_empty_prefix_leaves_the_layer_byte_identical(toy: Any) -> None:
-    # An un-namespaced module must not even be re-exported: nothing about it is ambiguous.
-    usd = urdf_to_usd(toy)
-
-    assert prefix_usd_frames(usd, "") is usd
-
-
-def test_a_prefixed_subtree_grafts_at_the_roots_own_unprefixed_frame(toy: Any) -> None:
-    # The key is a link of the root, which is never renamed; only the subtree moves.
-    root = urdf_to_usd(toy)
-    subtree = prefix_usd_frames(urdf_to_usd(toy, name="arm_sub"), "left")
-
-    stage = _stage(graft_usd(root, {"mount": subtree}))
-
-    assert _link_of(stage, "/toy/base_link/mount") == "mount"
-    assert _link_of(stage, "/toy/base_link/mount/arm_sub/base_link") == "left/base_link"
-
-
-def test_a_rename_moves_a_link_and_leaves_the_rest(toy: Any) -> None:
-    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"arm-1": "elbow"}))
-
-    assert "elbow" in _names(stage, "link")
-    assert "arm-1" not in _names(stage, "link")
-    assert "base_link" in _names(stage, "link")
-
-
-def test_a_rename_reaches_joints_too(toy: Any) -> None:
-    # A joint name is a JointState key, so it needs renaming for the same reasons a link does.
-    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"base_to_mount": "shoulder"}))
-
-    assert "shoulder" in _names(stage, "joint")
-
-
-def test_a_pair_of_renames_swaps_rather_than_collapsing(toy: Any) -> None:
-    # Every name is read before any is written, so a -> b with b -> a is a swap.
-    stage = _stage(rename_usd_frames(urdf_to_usd(toy), {"mount": "spin", "spin": "mount"}))
-
-    assert {"mount", "spin"} <= _names(stage, "link")
-
-
-def test_renaming_a_frame_the_layer_does_not_have_is_skipped(toy: Any) -> None:
-    """One mapping is applied to every subtree of a scene, so most keys miss most layers.
-
-    Whether a key matched *anywhere* is the caller's to check, which UsdManager does across
-    all of its mounts at once.
-    """
-    usd = urdf_to_usd(toy)
-
-    assert rename_usd_frames(usd, {"elbow": "wrist"}) is usd
-
-
-def test_the_frame_names_a_layer_carries_are_its_links_and_joints(toy: Any) -> None:
-    # What a caller checks a rename against.
-    names = usd_frame_names(urdf_to_usd(toy))
-
-    assert {"base_link", "mount", "arm-1", "spin"} <= names
-    assert {"base_to_mount", "mount_to_arm", "arm_to_spin"} <= names
-
-
-def test_renaming_nothing_leaves_the_layer_alone(toy: Any) -> None:
-    usd = urdf_to_usd(toy)
-
-    assert rename_usd_frames(usd, {}) is usd
-
-
 _EXTRAS_URDF = """<?xml version="1.0"?>
 <robot name="extra">
   <link name="base_link">
@@ -717,55 +578,39 @@ def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
     assert list(missing.values()) == ["/hashy/base_link/visual_0"]
 
 
-def _type_names(stage: Any) -> set[str]:
-    return {prim.GetTypeName() for prim in stage.Traverse()}
+def test_a_texture_is_an_asset_the_hash_check_sees(tmp_path: Any) -> None:
+    """A texture names its image in an `asset` attribute, which is neither an arc nor assetInfo.
+
+    So the check that exists to refuse an unidentified asset walked straight past every texture:
+    a layer with three untextured-after-transport PNGs in it passed, which is the same vacuous
+    pass that reading only reference arcs used to give on every mesh.
+    """
+    from pxr import Sdf, Usd, UsdGeom, UsdShade
+
+    image = tmp_path / "wood.png"
+    image.write_bytes(b"not really a png, but it is a file")
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/scene")
+    stage.SetDefaultPrim(root.GetPrim())
+    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
+    texture.CreateIdAttr("UsdUVTexture")
+    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
+
+    assert str(image) in unhashed_assets(stage.GetRootLayer().ExportToString())
 
 
-def test_trivialize_keeps_every_frame_and_its_pose(toy: Any) -> None:
-    from pxr import UsdGeom
+def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
+    """And it is satisfiable the same way a mesh is, by naming the hash in assetInfo."""
+    from pxr import Sdf, Usd, UsdGeom, UsdShade
 
-    full = urdf_to_usd(toy)
+    image = tmp_path / "wood.png"
+    image.write_bytes(b"not really a png, but it is a file")
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/scene")
+    stage.SetDefaultPrim(root.GetPrim())
+    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
+    texture.CreateIdAttr("UsdUVTexture")
+    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
+    texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
 
-    thin = trivialize_usd(full)
-
-    assert usd_frame_names(thin) == usd_frame_names(full)
-    # The stages stay in locals: a prim does not outlive the stage it came from.
-    thin_stage, full_stage = _stage(thin), _stage(full)
-    pose = UsdGeom.Xformable(_prim_by_link(thin_stage, "mount")).GetLocalTransformation()
-    was = UsdGeom.Xformable(_prim_by_link(full_stage, "mount")).GetLocalTransformation()
-    np.testing.assert_allclose(np.array(pose), np.array(was), atol=1e-12)
-
-
-def test_trivialize_drops_the_shapes(toy: Any) -> None:
-    full = urdf_to_usd(toy)
-    full_stage = _stage(full)
-    assert _type_names(full_stage) & {"Cube", "Cylinder"}
-
-    thin = trivialize_usd(full)
-
-    thin_stage = _stage(thin)
-    assert not _type_names(thin_stage) & {"Cube", "Cylinder", "Sphere", "Mesh"}
-
-
-def test_trivialize_drops_the_meshes_a_link_references(meshy: Any) -> None:
-    """The geometry prim goes, and the reference arc and asset hash go with it."""
-    thin = trivialize_usd(urdf_to_usd(meshy))
-
-    assert "meshes/box.stl" not in thin
-    assert "references" not in thin
-
-
-def test_trivialize_keeps_the_joints_and_their_limits(toy: Any) -> None:
-    """A mount point is a frame plus how it moves; only the shapes are expendable."""
-    thin = trivialize_usd(urdf_to_usd(toy))
-
-    stage = _stage(thin)
-    joint = stage.GetPrimAtPath("/toy/joints/mount_to_arm")
-    assert joint
-    assert joint.GetAttribute("physics:lowerLimit").Get() == pytest.approx(-90.0, abs=1e-3)
-
-
-def test_trivializing_a_layer_with_no_geometry_leaves_it_alone(toy: Any) -> None:
-    thin = trivialize_usd(urdf_to_usd(toy))
-
-    assert trivialize_usd(thin) == thin
+    assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
