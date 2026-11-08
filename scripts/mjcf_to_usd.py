@@ -71,6 +71,11 @@ logger = setup_logger()
 
 # The geometry a referenced mesh file supplies for itself.
 _BAKED = frozenset({"points", "faceVertexIndices", "faceVertexCounts", "normals", "extent"})
+# The two primvars that are the mesh's appearance rather than its geometry. They are one value
+# per prim, not one per vertex, so keeping them costs nothing -- and dropping them is what left
+# every piece of office_555's furniture at MuJoCo's default grey: the MJCF gives those geoms an
+# rgba rather than a material, the exporter writes it here, and the sidecar does not carry it.
+_KEPT_PRIMVARS = frozenset({"primvars:displayColor", "primvars:displayOpacity"})
 # What a sidecar is written as: binary, because nothing hands these around as text -- they are
 # fetched as bytes, one file per mesh, exactly like the STL beside them.
 _SIDECAR_SUFFIX = ".usdc"
@@ -193,9 +198,10 @@ def rereference(
             continue
         # Everything per-vertex goes: the reference supplies it, and it is what made the layer
         # large. primvars included -- the converter bakes normals there, which alone is most of
-        # the size. Transform ops and material bindings stay, since the file carries neither.
+        # the size. Transform ops, material bindings and the mesh's own colour stay, since the
+        # file carries none of them.
         for property in list(prim.GetPropertyNames()):
-            if property.startswith("xformOp") or property.startswith("material:"):
+            if property.startswith(("xformOp", "material:")) or property in _KEPT_PRIMVARS:
                 continue
             if property.startswith("primvars:") or property in _BAKED:
                 prim.RemoveProperty(property)
