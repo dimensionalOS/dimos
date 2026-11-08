@@ -208,6 +208,7 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
         # Copied specs keep their authored target paths, so a joint's body rels would still
         # point at the subtree's old root. Rebase them onto where the subtree now lives.
         _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
+        _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
 
     return str(root_layer.ExportToString())
 
@@ -475,6 +476,52 @@ def _rewrite_assets(pxr: Any, spec: Any, public: Mapping[str, str]) -> bool:
             attribute.default = pxr.Sdf.AssetPath(public[str(value.path)])
             changed = True
     return changed
+
+
+def _mount_joint(pxr: Any, stage: Any, mount_path: str, subtree_path: str, frame_id: str) -> None:
+    """A floating joint from the mount frame to the subtree's root link.
+
+    Nesting alone says a grafted subtree hangs off the mount frame, but says nothing about how.
+    A reader is then left to guess, and the one guess it cannot make is a weld: the root of an
+    articulated subtree is a frame tf already publishes, so welding it to the room as well would
+    give it two parents and its pose would flip between them. The honest answer is a joint free
+    in all six degrees -- "something else places this" -- which is what tf does.
+
+    Saying it costs nothing and buys two things: a reader that has no tf yet still has somewhere
+    to put the subtree (its mount), instead of a root it must either drop or place at random;
+    and the root stops looking like a link nothing hangs off, which is how a scene's static
+    tiles are told apart from a robot.
+    """
+    root_link = _first_link(pxr, stage, subtree_path)
+    if root_link is None:
+        return
+    mount = stage.GetPrimAtPath(pxr.Sdf.Path(mount_path))
+    name = _identifier(pxr, f"{frame_id}_mount")
+    joint = pxr.UsdPhysics.Joint.Define(stage, f"{subtree_path}/{name}")
+    joint.CreateBody0Rel().SetTargets([mount.GetPath()])
+    joint.CreateBody1Rel().SetTargets([root_link.GetPath()])
+    # The subtree sits where its mount is: the nesting already placed it, so the joint adds no
+    # offset of its own.
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.GetPrim().SetDisplayName(f"{_frame_name(root_link)}_mount")
+
+
+def _first_link(pxr: Any, stage: Any, path: str) -> Any:
+    """The topmost prim at or below ``path`` carrying RigidBodyAPI: the subtree's root link."""
+    root = stage.GetPrimAtPath(pxr.Sdf.Path(path))
+    if not root:
+        return None
+    for prim in pxr.Usd.PrimRange(root):
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+            return prim
+    return None
+
+
+def _frame_name(prim: Any) -> str:
+    return prim.GetDisplayName() or prim.GetName()
 
 
 def warm_usd() -> None:
