@@ -69,5 +69,12 @@ UPLOAD_RATE_SMOOTHING_S = 6.0
 UPLOAD_ETA_WARMUP_S = 1.0
 # cloud uploads: progress events go out at most this often within a phase, so a fast upload doesn't flood the bus
 UPLOAD_PROGRESS_EMIT_S = 0.4
+# cloud uploads: after a cancel, how long a transfer gets to notice and unwind before the thread is
+# abandoned. Long enough for one waiting on the cloud's last answer to report the id it was given,
+# short enough that an upload wedged where it can't see the flag still cancels.
+UPLOAD_CANCEL_GRACE_S = 10.0
 # cloud account: account checks are cached this long; ?fresh= forces one
 ACCOUNT_CACHE_S = 20.0
+# cloud account: reading the login touches the OS keyring, which can stall; past this the request
+# answers with an error instead of never answering at all
+ACCOUNT_TIMEOUT_S = 15.0

@@ -313,3 +313,54 @@ def test_rate_gives_a_time_left_after_warming_up() -> None:
     rate.tick(2.0, 200)
     assert rate.bps == pytest.approx(100, rel=0.2)
     assert rate.eta(800) == pytest.approx(8, rel=0.3)
+
+
+def test_the_account_answers_with_an_error_when_the_login_cant_be_read(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading the login touches the OS keyring, which stalls when it is locked. The route used
+    to wait on it with no deadline: 0 bytes, no error, forever, and every poll parked another
+    thread behind the same prompt until the upload worker had none left."""
+    release = threading.Event()
+    tries = 0
+
+    def stalled() -> dict[str, Any]:
+        nonlocal tries
+        tries += 1
+        release.wait()
+        return logged_in_account(True)
+
+    monkeypatch.setattr(uploads, "account", stalled)
+    monkeypatch.setattr(uploads.constants, "ACCOUNT_TIMEOUT_S", 0.2)
+    try:
+        for _ in range(3):
+            answer = client.get("/cloud/account").json()
+            assert answer["loggedIn"] is False
+            assert "Couldn't read" in answer["error"]
+        assert tries == 1  # the three polls shared one lookup instead of one thread each
+    finally:
+        release.set()
+
+
+def test_an_upload_blocked_before_its_first_byte_still_cancels(
+    client: TestClient, recording: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transfer wedged where it can never see the cancel flag — the keyring, a socket with no
+    timeout — used to ignore DELETE: 200 back, and the upload stayed "uploading" forever."""
+    release = threading.Event()
+
+    def never_reports(path: str, robot_id: Any, kind: Any, tick: Callable[..., None]) -> Any:
+        release.wait()  # blocked before the first tick(), so the flag is never read
+        return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
+
+    state: State = client.app.state.gateway  # type: ignore[attr-defined]
+    monkeypatch.setattr(state.uploads, "_transfer", never_reports)
+    monkeypatch.setattr(uploads.constants, "UPLOAD_CANCEL_GRACE_S", 0.2)
+    work(client)
+    try:
+        upload = client.post("/cloud/uploads", json={"path": str(recording)}).json()
+        until(lambda: state_of(client, upload["id"]) == "uploading")
+        assert client.delete(f"/cloud/uploads?id={upload['id']}").status_code == 200
+        until(lambda: state_of(client, upload["id"]) == "cancelled")
+    finally:
+        release.set()
