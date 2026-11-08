@@ -285,6 +285,42 @@ def test_a_grafted_subtree_keeps_its_joints_pointing_at_its_own_links(toy: Any) 
     assert str(targets[0]) == "/toy/base_link/mount/arm_sub/base_link"
 
 
+def test_a_graft_joins_the_subtree_to_its_mount_with_a_floating_joint(toy: Any) -> None:
+    """Nesting says where a subtree hangs; the joint says how.
+
+    Welding it is wrong -- the root of an articulated subtree is a frame tf publishes, and two
+    parents make its pose flip -- but saying nothing is worse: a reader with no tf has nowhere
+    to put it, and a root with no joint above it reads as a static scene tile rather than a
+    robot. Free in all six degrees is the true answer.
+    """
+    root = urdf_to_usd(toy)
+
+    stage = _stage(graft_usd(root, {"mount": urdf_to_usd(toy, name="arm_sub")}))
+    # The generic PhysicsJoint is the only free one; the toy's own joints are fixed or revolute.
+    mounted = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
+
+    assert len(mounted) == 1
+    joint = mounted[0]
+    assert joint.GetDisplayName() == "base_link_mount"
+    assert str(joint.GetRelationship("physics:body0").GetTargets()[0]) == "/toy/base_link/mount"
+    assert str(joint.GetRelationship("physics:body1").GetTargets()[0]) == (
+        "/toy/base_link/mount/arm_sub/base_link"
+    )
+
+
+def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
+    """The nesting already placed the subtree; the joint only says it is free."""
+    from pxr import Gf
+
+    stage = _stage(graft_usd(urdf_to_usd(toy), {"mount": urdf_to_usd(toy, name="arm_sub")}))
+    joint = next(prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint")
+
+    for attribute in ("physics:localPos0", "physics:localPos1"):
+        assert joint.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
+    for attribute in ("physics:localRot0", "physics:localRot1"):
+        assert joint.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
+
+
 def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no prim for that frame"):
         graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
