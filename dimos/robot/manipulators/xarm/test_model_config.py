@@ -25,19 +25,6 @@ from dimos.robot.manipulators.xarm.config import (
 )
 
 
-def test_xarm_gripper_geometry_does_not_imply_control_hardware() -> None:
-    model_only = make_xarm6_model_config(add_gripper=True)
-    controlled = make_xarm6_model_config(
-        add_gripper=True,
-        gripper_hardware_id="arm",
-    )
-
-    assert model_only.planning_groups[0].tip_link == "link_tcp"
-    assert model_only.gripper_hardware_id is None
-    assert controlled.planning_groups[0].tip_link == "link_tcp"
-    assert controlled.gripper_hardware_id == "arm"
-
-
 def test_dual_xarm6_configures_canonical_groups() -> None:
     config = make_dual_xarm6_model_config()
 
@@ -84,7 +71,7 @@ def test_prefixed_xarm_model_asset_uses_coordinator_facing_names() -> None:
 
 
 def test_lite6_model_config_selects_lite_robot_type() -> None:
-    config = make_lite6_model_config(add_gripper=True, gripper_hardware_id="arm")
+    config = make_lite6_model_config(add_gripper=True)
 
     assert dict(config.model._xacro_args)["robot_type"] == "lite"
     assert config.joint_names == [f"joint{i}" for i in range(1, 7)]

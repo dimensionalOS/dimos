@@ -273,5 +273,5 @@ def test_dimos_yaml_declares_this_api_and_its_endpoints(client: TestClient) -> N
 def test_serve_refuses_a_socket_path_too_long_to_bind(tmp_path: Path) -> None:
     socket_path = tmp_path / ("s" * constants.UNIX_SOCKET_PATH_LIMIT) / "dimos-gateway.sock"
     with pytest.raises(SystemExit, match="dimos-gateway.socket"):
-        serve(socket_path, tmp_path, None, constants.DEFAULT_HOST, None, None, False)
+        serve(socket_path, tmp_path, None, constants.DEFAULT_HOST, False)
     assert not socket_path.parent.exists()

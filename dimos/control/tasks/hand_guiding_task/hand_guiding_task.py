@@ -17,7 +17,7 @@
 
 from collections.abc import Mapping
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
 from dimos.control.task import BaseControlTask, CoordinatorState, JointCommandOutput, ResourceClaim
@@ -25,6 +25,16 @@ from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
+
+
+class ZeroStiffnessSource(Protocol):
+    """A connection robot's joints and the ones it commands with zero stiffness."""
+
+    @property
+    def joint_names(self) -> list[str]: ...
+
+    @property
+    def zero_stiffness_joints(self) -> frozenset[str]: ...
 
 
 class HandGuidingTask(BaseControlTask):
@@ -81,7 +91,15 @@ class HandGuidingTask(BaseControlTask):
 def create_task(
     cfg: "TaskConfig",
     hardware: Mapping[str, ConnectedHardware | ConnectedWholeBody],
+    connections: Mapping[str, ZeroStiffnessSource] | None = None,
 ) -> HandGuidingTask:
+    """Build the task only where the deployment declares zero stiffness.
+
+    Hardware adapters prove it with whole-body gains; connection modules
+    declare it on the coordinator and expose it per robot through their
+    ``ConnectionSource``. A robot that declares nothing is refused, so a
+    position-holding stack cannot silently fight the operator.
+    """
     BaseConfig.model_validate(cfg.params)
     remaining = set(cfg.joint_names)
     for connected in hardware.values():
@@ -96,6 +114,16 @@ def create_task(
         ):
             raise ValueError("Hand guiding requires whole-body hardware with explicit zero kp")
         remaining.difference_update(connected.joint_names)
+    for source in (connections or {}).values():
+        claimed = remaining.intersection(source.joint_names)
+        if not claimed:
+            continue
+        if not claimed <= source.zero_stiffness_joints:
+            raise ValueError(
+                "Hand guiding requires whole-body hardware with explicit zero kp "
+                "or a connection that declares zero stiffness"
+            )
+        remaining.difference_update(source.joint_names)
     if remaining:
         raise ValueError(f"Hand guiding joints have no connected hardware: {sorted(remaining)}")
     return HandGuidingTask(cfg.name, cfg.joint_names, cfg.priority)

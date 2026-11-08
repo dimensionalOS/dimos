@@ -97,6 +97,27 @@ function line(text: string): Text {
   return new Text(text, 0, 0);
 }
 
+class ToolBlock extends Container {
+  override render(width: number): string[] {
+    // Pi finds a scrolled image's anchor by walking back through empty continuation rows.
+    return super.render(Math.max(1, width - 4)).map((line) => (line === "" ? line : `  ${line}`));
+  }
+
+  override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
+    if (event.x < 2 || event.x >= event.width - 2) return undefined;
+    return super.handleMouse({ ...event, x: event.x - 2, width: Math.max(1, event.width - 4) });
+  }
+}
+
+function userBlock(text: string): Component {
+  const message = new UserMessageComponent(text, undefined, 3);
+  if (text.trim() === "") return message;
+  const block = new Container();
+  block.addChild(new Spacer(1));
+  block.addChild(message);
+  return block;
+}
+
 const FROM_LABELS: { readonly [F in QueuedRow["from"]]: string } = {
   you: "",
   module: "⚡",
@@ -312,12 +333,17 @@ export class TranscriptView implements Component {
       case "item":
         return this.itemView(row.item, row.outcome, rows);
       case "streaming": {
-        let text = partialText(row.message);
-        const markdown = new Markdown(text, 1, 1, getMarkdownTheme());
-        return this.fixed(markdown, (next) => {
-          if (next.kind !== "streaming" || partialText(next.message) === text) return;
-          text = partialText(next.message);
+        let text = partialText(row.message).trim();
+        const markdown = new Markdown(text, 1, 0, getMarkdownTheme());
+        const block = new Container();
+        const gap = new Spacer(text === "" ? 0 : 1);
+        block.addChild(gap);
+        block.addChild(markdown);
+        return this.fixed(block, (next) => {
+          if (next.kind !== "streaming" || partialText(next.message).trim() === text) return;
+          text = partialText(next.message).trim();
           markdown.setText(text);
+          gap.setLines(text === "" ? 0 : 1);
         });
       }
       case "tool":
@@ -348,7 +374,7 @@ export class TranscriptView implements Component {
     card.setExpanded(this.expanded);
     if (output !== "") card.output(output);
     const hint = new Container();
-    const block = new Container();
+    const block = new ToolBlock();
     block.addChild(card);
     block.addChild(hint);
     let shownOutput = output;
@@ -390,19 +416,21 @@ export class TranscriptView implements Component {
         );
         break;
       case "user":
-        block.addChild(new UserMessageComponent(userText(item.message)));
+        block.addChild(userBlock(userText(item.message)));
         break;
       case "assistant":
         block.addChild(new AssistantMessageComponent(cleanAssistant(item.message), true));
         break;
       case "tool_result": {
+        const tools = new ToolBlock();
+        block.addChild(tools);
         const card = cardFor(callOf(rows, item.result), this.tui, this.cwd());
         card.setExpanded(this.expanded);
         card.end(withPlaceholders(item.result));
-        block.addChild(card);
+        tools.addChild(card);
         cards.push(card);
         const render = renderOf(item.result);
-        if (render !== null) galleries.push(this.gallery(block, render));
+        if (render !== null) galleries.push(this.gallery(tools, render));
         break;
       }
       case "compaction":
@@ -456,7 +484,7 @@ export class TranscriptView implements Component {
     const source = input.source;
     switch (source.kind) {
       case "user":
-        block.addChild(new UserMessageComponent(cleanMultiline(input.text)));
+        block.addChild(userBlock(cleanMultiline(input.text)));
         break;
       case "event":
         block.addChild(line(amber(" ⚡ ") + clean(`${source.event.module}: ${source.event.text}`)));
