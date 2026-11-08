@@ -60,7 +60,12 @@ SPOTS = {
 }
 # What each namespace lets through to the shared world: the simulation is one world for all
 # three, so its traffic must not be namespaced apart with the rest of the robot's topics.
-SHARED = {"world_observations", "actions", "cmd_vel"}
+SHARED = {"world_observations", "actions"}
+# The one robot the joystick drives. Its cmd_vel is the unnamespaced topic the Controller
+# publishes on; the other two keep theirs inside their namespace, where nothing writes, so
+# they stand still. One joystick driving all three at once was a demo, not a thing anyone
+# would want while trying to drive a robot.
+DRIVEN = "main"
 # The rate the GR00T policy was trained at, so the tick runs it every tick.
 POLICY_HZ = 50.0
 
@@ -166,11 +171,7 @@ def _robot(name: str, xy: tuple[float, float]):
             _walker(name),
         )
         .remappings(
-            # The manager poses the description from a joint state, and G1Sim publishes that as
-            # motor_states. Without this it listens on a topic nobody writes, never poses anything,
-            # and the robot's own frames -- the Mid-360's mount among them -- never reach tf.
             [
-                (UsdManager, "coordinator_joint_state", "motor_states"),
                 # The Mid-360 has an IMU of its own, and in this namespace it would publish on
                 # the same "imu" the whole-body adapter reads. The policy would then be fed a
                 # sensor bolted upside down on the torso instead of the one in the pelvis, and
@@ -178,7 +179,7 @@ def _robot(name: str, xy: tuple[float, float]):
                 (LivoxSim, "imu", "lidar_imu"),
             ]
         )
-        .namespace(name, expose=SHARED)
+        .namespace(name, expose=SHARED | ({"cmd_vel"} if name == DRIVEN else set()))
     )
 
 
