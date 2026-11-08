@@ -107,10 +107,18 @@ def write_sidecar(source: Path, pxr: Any) -> Path:
 
 
 def mesh_files(mjcf: Path) -> dict[str, str]:
-    """``<mesh name=... file=...>`` out of the MJCF: the name a prim carries -> its file.
+    """Every name a baked prim might carry -> the mesh file behind it.
 
-    The converter names each mesh prim after the MJCF asset it came from, which is what lets a
-    baked prim be matched back to the file without guessing from geometry.
+    Two spellings, because the converter names a mesh prim after whichever the MJCF gave it:
+
+    * the **mesh asset's** own name, which is what a robot MJCF uses -- its geoms are unnamed
+      and the prim inherits `<mesh name=...>`;
+    * the **geom's** name, which is what a scene MJCF uses -- office_555 names every geom
+      (`drawer_cabinet_5_g29`) and has them reference meshes called `asset_0`, `asset_1`, ...
+
+    Indexing both means one lookup covers both, and a robot and a room go through the same
+    script. Without the geom spelling the office scene re-points nothing: 3547 meshes stay
+    baked and the layer comes out 35 MB.
     """
     root = ET.fromstring(mjcf.read_text())
     files = {}
@@ -118,6 +126,10 @@ def mesh_files(mjcf: Path) -> dict[str, str]:
         name, file = mesh.get("name"), mesh.get("file")
         if name and file:
             files[name] = file
+    for geom in root.iter("geom"):
+        name, mesh_name = geom.get("name"), geom.get("mesh")
+        if name and mesh_name and mesh_name in files:
+            files[name] = files[mesh_name]
     return files
 
 

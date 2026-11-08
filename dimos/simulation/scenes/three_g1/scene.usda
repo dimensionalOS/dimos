@@ -1,7 +1,7 @@
 #usda 1.0
 (
     defaultPrim = "stage"
-    doc = """Three standing places for a G1, and the ground they stand on.
+    doc = """A room with three standing places for a G1.
 
     The UsdManager holds this and mounts a G1 onto each of the three frames; see
     dimos/robot/unitree/g1/blueprints/basic/unitree_g1_three.py. Deliberately plain: it exists
@@ -35,6 +35,83 @@ def Xform "stage" (
         double size = 1
         double3 xformOp:translate = (0, 0, -0.01)
         float3 xformOp:scale = (8, 8, 0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    # The four walls of the room, 2.5 m high, each a visual and a collision shape.
+    def Cube "visual_1"
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.42, 0.43, 0.47)]
+        double3 xformOp:translate = (4.0, 0.0, 1.25)
+        float3 xformOp:scale = (0.1, 8.0, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "collision_1" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+        double3 xformOp:translate = (4.0, 0.0, 1.25)
+        float3 xformOp:scale = (0.1, 8.0, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "visual_2"
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.42, 0.43, 0.47)]
+        double3 xformOp:translate = (-4.0, 0.0, 1.25)
+        float3 xformOp:scale = (0.1, 8.0, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "collision_2" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+        double3 xformOp:translate = (-4.0, 0.0, 1.25)
+        float3 xformOp:scale = (0.1, 8.0, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "visual_3"
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.42, 0.43, 0.47)]
+        double3 xformOp:translate = (0.0, 4.0, 1.25)
+        float3 xformOp:scale = (8.0, 0.1, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "collision_3" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+        double3 xformOp:translate = (0.0, 4.0, 1.25)
+        float3 xformOp:scale = (8.0, 0.1, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "visual_4"
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.42, 0.43, 0.47)]
+        double3 xformOp:translate = (0.0, -4.0, 1.25)
+        float3 xformOp:scale = (8.0, 0.1, 2.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "collision_4" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+        double3 xformOp:translate = (0.0, -4.0, 1.25)
+        float3 xformOp:scale = (8.0, 0.1, 2.5)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
     }
 
