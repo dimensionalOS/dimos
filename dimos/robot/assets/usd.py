@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Any
 import xml.etree.ElementTree as ET
 
@@ -59,18 +60,35 @@ _NO_USD = (
 )
 
 
-def _pxr() -> Any:
-    """The pxr modules, imported on first use.
+# The import, done once, behind a lock. A manager assembling a scene hashes every mounted
+# subtree in parallel, so three robots is three threads reaching this at the same instant; a
+# concurrent first `from pxr import ...` wedges on CPython's per-module import lock and never
+# comes back. The module then answers nothing -- not its file requests, not even its rpcs --
+# while looking perfectly healthy, because nothing raised.
+_PXR_LOCK = Lock()
+_PXR: _Pxr | None = None
+
+
+def _pxr() -> _Pxr:
+    """The pxr modules, imported once on first use.
 
     Deferred because usd-core is an optional extra, and on linux-aarch64 it is installable
     only on Python 3.11 and up: a robot must come up and pose itself on tf without it, and
     only asking for a USD layer needs it.
     """
-    try:
-        from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, Vt
-    except ImportError as exc:  # pragma: no cover - exercised only where the extra is absent
-        raise ImportError(_NO_USD) from exc
-    return _Pxr(Gf=Gf, Sdf=Sdf, Tf=Tf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics, Vt=Vt)
+    global _PXR
+    if _PXR is not None:
+        return _PXR
+    with _PXR_LOCK:
+        if _PXR is None:
+            try:
+                from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, Vt
+            except ImportError as exc:  # pragma: no cover - only where the extra is absent
+                raise ImportError(_NO_USD) from exc
+            _PXR = _Pxr(
+                Gf=Gf, Sdf=Sdf, Tf=Tf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics, Vt=Vt
+            )
+    return _PXR
 
 
 @dataclass(frozen=True)
