@@ -308,15 +308,15 @@ else:
 
     if global_config.simulation == "sim2":
         from dimos.robot.unitree.g1.sim2 import G1Sim
-        from dimos.robot.urdf_manager import UrdfManager
+        from dimos.robot.usd_manager import UsdManager
         from dimos.sim2.livox import LivoxSim
         from dimos.sim2.module import Simulation
 
         # The real stack with each device swapped for its sim twin: G1Sim for the connection, LivoxSim at
-        # G1Sim's Mid-360 frame for the Mid360. The UrdfManager serves G1Sim's URDF (sent it through
+        # G1Sim's Mid-360 frame for the Mid360. The UsdManager serves G1Sim's URDF (sent it through
         # shared_config) to renderers; the real stack has no joint tf, so neither does this.
         _backend = autoconnect(
-            Simulation.blueprint(), G1Sim.blueprint(), UrdfManager.blueprint(publish_joint_tf=False)
+            Simulation.blueprint(), G1Sim.blueprint(), UsdManager.blueprint(publish_joint_tf=False)
         )
         _mid360 = LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame).remappings(
             [(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")]
