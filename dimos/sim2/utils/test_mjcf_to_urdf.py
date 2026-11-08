@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+import re
 
 import mujoco
 import numpy as np
@@ -117,7 +118,8 @@ def test_frames_added_to_the_mjcf_are_sites_there_and_links_in_its_urdf(tmp_path
         out_dir=tmp_path,
     )
     model = mujoco.MjModel.from_xml_path(str(framed))
-    assert model.body(model.site("camera_optical").bodyid).name == "lower"
+    # mujoco 4 returns a named accessor's ids as a 1-element array, and body() wants a plain int
+    assert model.body(int(model.site("camera_optical").bodyid[0])).name == "lower"
     # Both frames' poses, through the joints, match between the MJCF and its URDF.
     assert_urdf_matches_mujoco(framed, tmp_path)
 
@@ -131,6 +133,19 @@ def test_root_rename_and_meshes(tmp_path: Path) -> None:
     assert {j.name for j in description.joints} >= {"shoulder", "elbow", "slide"}
     meshes = list(tmp_path.glob("arm-*/tri.obj"))
     assert len(meshes) == 1 and "tri.obj" in description.xml
+
+
+def test_robots_off_one_mjcf_name_one_copy_of_each_mesh(tmp_path: Path) -> None:
+    """Three of one robot in a scene differ by name, and a viewer should fetch each mesh once."""
+    mjcf = tmp_path / "arm.xml"
+    mjcf.write_text(_ARM)
+    names = ("main", "left", "right")
+    descriptions = [mjcf_to_urdf(mjcf, name=name, out_dir=tmp_path).load() for name in names]
+    for name, description in zip(names, descriptions, strict=True):
+        assert f'robot name="{name}"' in description.xml
+    meshes = {mesh for d in descriptions for mesh in re.findall(r'filename="([^"]+)"', d.xml)}
+    assert len(meshes) == 1, meshes
+    assert len(list(tmp_path.glob("arm-*/tri.obj"))) == 1
 
 
 def test_cached_until_the_mjcf_changes(tmp_path: Path) -> None:
