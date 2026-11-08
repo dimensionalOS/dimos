@@ -278,14 +278,27 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
 
 
 def usd_frame_names(usd: str) -> set[str]:
-    """Every link and joint name ``usd`` carries, under the names they travel as."""
+    """Every link and joint name ``usd`` carries, under the names they travel as.
+
+    The defaultPrim counts, the same way it does in ``_link_prim_paths`` and for the same
+    reason: a converted room is a plain Xform holding its furniture, so the frame everything
+    in it hangs off is that root and not a link at all. Leaving it out means nothing can
+    rename it, and a scene whose root is named something tf never publishes -- "office_555"
+    where the robots stand in "world" -- cannot be placed and so is not drawn.
+
+    Last, and only under a name no link has taken, so a real link still wins any clash.
+    """
     pxr = _pxr()
     stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
-    return {
+    names = {
         prim.GetDisplayName() or prim.GetName()
         for prim in stage.Traverse()
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
     }
+    root = stage.GetDefaultPrim()
+    if root:
+        names.add(root.GetDisplayName() or root.GetName())
+    return names
 
 
 def trivialize_usd(usd: str) -> str:
