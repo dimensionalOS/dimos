@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 def test_summary_missing_sqlite_does_not_create_parents(tmp_path: Path) -> None:
     missing = tmp_path / "absent" / "nested" / "recording.db"
     result = CliRunner().invoke(mem_app, ["summary", str(missing)])
-    assert result.exit_code != 0
+    assert result.exit_code == 1
+    assert isinstance(result.exception, FileNotFoundError)
+    assert str(result.exception) == f"SQLite database not found: {missing}"
     assert not (tmp_path / "absent").exists()
 
 
