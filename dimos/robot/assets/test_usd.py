@@ -25,6 +25,7 @@ from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
     asset_hash,
     graft_usd,
+    prefix_usd_frames,
     rename_usd_frames,
     require_asset_hashes,
     trivialize_usd,
@@ -415,6 +416,17 @@ def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
     assert stage.GetPrimAtPath("/base_link/base_link/arm_sub/base_link"), (
         "the subtree went to the root rather than to the link of that name"
     )
+
+
+def test_a_prefix_moves_the_root_with_everything_under_it(toy: Any) -> None:
+    """Two namespaced copies of one scene must share no frame name, the root included."""
+    scene = urdf_to_usd(toy, name="room")
+
+    left = usd_frame_names(prefix_usd_frames(scene, "left"))
+    right = usd_frame_names(prefix_usd_frames(scene, "right"))
+
+    assert left & right == set(), f"both copies still answer to {sorted(left & right)}"
+    assert "left/room" in left, sorted(left)
 
 
 def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
