@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import collections
 
+import mujoco
 import numpy as np
 import pytest
 
@@ -51,3 +52,22 @@ def test_the_room_is_not_one_flat_grey(room: object) -> None:
 
     assert len(grey) < 50, f"{len(grey)} of {len(rgba)} geoms are MuJoCo's default grey"
     assert len(collections.Counter(rgba)) > 40, "the room came out of the converter near-monochrome"
+
+
+def test_the_room_keeps_its_textures(room: object) -> None:
+    """Its three textures are MuJoCo builtins, so there was no file for USD to name.
+
+    `<texture builtin="checker">` is generated at compile time rather than loaded, and the
+    converter dropped all three -- the floor, the concrete and the woodwork came through white.
+    They are baked to PNGs beside the meshes now and the materials read them through a
+    UsdPreviewSurface, which MuJoCo's own decoder turns back into a real texture.
+    """
+    rgb = int(mujoco.mjtTextureRole.mjTEXROLE_RGB)
+    textured = [
+        room.material(i).name  # type: ignore[attr-defined]
+        for i in range(room.nmat)  # type: ignore[attr-defined]
+        if int(room.mat_texid[i][rgb]) >= 0  # type: ignore[attr-defined]
+    ]
+
+    assert room.ntex == 3, f"{room.ntex} textures survived the conversion"  # type: ignore[attr-defined]
+    assert len(textured) == 3, f"only {textured} point at one"

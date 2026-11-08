@@ -4,7 +4,7 @@
         string creator = "MuJoCo USD Converter v0.9.0"
     }
     defaultPrim = "office_555"
-    doc = """Generated from Composed Stage of root layer /tmp/claude-1000/office555_recolour/converted/office_555.usda
+    doc = """Generated from Composed Stage of root layer /tmp/mjcf-to-usd-aytrj0uz/converted/office_555.usda
 """
     kilogramsPerUnit = 1
     metersPerUnit = 1
@@ -139091,8 +139091,8 @@ def Xform "office_555" (
     {
         def Material "ground" (
             apiSchemas = ["MaterialXConfigAPI"]
-            instanceable = true
-            add references = </Flattened_Prototype_3>
+            instanceable = false
+            add references = </Flattened_Prototype_1>
         )
         {
             string config:mtlx:version = "1.39"
@@ -139145,13 +139145,27 @@ def Xform "office_555" (
                 }
             )
             token outputs:mtlx:surface.connect = </office_555/Materials/ground/OpenPBR.outputs:out>
-            token outputs:surface.connect = </office_555/Materials/ground/PreviewSurface.outputs:surface>
+            token outputs:surface.connect = </office_555/Materials/ground/mjcPreviewSurface.outputs:surface>
+
+            def Shader "mjcPreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </office_555/Materials/ground/mjcTexture.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "mjcTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @meshes/ground_grid.png@
+                float3 outputs:rgb
+            }
         }
 
         def Material "concrete_0" (
             apiSchemas = ["MaterialXConfigAPI"]
-            instanceable = true
-            add references = </Flattened_Prototype_1>
+            instanceable = false
+            add references = </Flattened_Prototype_3>
         )
         {
             string config:mtlx:version = "1.39"
@@ -139204,12 +139218,26 @@ def Xform "office_555" (
                 }
             )
             token outputs:mtlx:surface.connect = </office_555/Materials/concrete_0/OpenPBR.outputs:out>
-            token outputs:surface.connect = </office_555/Materials/concrete_0/PreviewSurface.outputs:surface>
+            token outputs:surface.connect = </office_555/Materials/concrete_0/mjcPreviewSurface.outputs:surface>
+
+            def Shader "mjcPreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </office_555/Materials/concrete_0/mjcTexture.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "mjcTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @meshes/concrete_0.png@
+                float3 outputs:rgb
+            }
         }
 
         def Material "wood_1" (
             apiSchemas = ["MaterialXConfigAPI"]
-            instanceable = true
+            instanceable = false
             add references = </Flattened_Prototype_2>
         )
         {
@@ -139263,7 +139291,21 @@ def Xform "office_555" (
                 }
             )
             token outputs:mtlx:surface.connect = </office_555/Materials/wood_1/OpenPBR.outputs:out>
-            token outputs:surface.connect = </office_555/Materials/wood_1/PreviewSurface.outputs:surface>
+            token outputs:surface.connect = </office_555/Materials/wood_1/mjcPreviewSurface.outputs:surface>
+
+            def Shader "mjcPreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor.connect = </office_555/Materials/wood_1/mjcTexture.outputs:rgb>
+                token outputs:surface
+            }
+
+            def Shader "mjcTexture"
+            {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @meshes/wood_1.png@
+                float3 outputs:rgb
+            }
         }
     }
 
