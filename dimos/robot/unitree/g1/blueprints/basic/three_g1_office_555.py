@@ -50,14 +50,23 @@ SHARED = {"world_observations", "actions"}
 
 def _robot(name: str, xy: tuple[float, float]):
     """One G1 in the room: the sim module, the description it serves, and its Mid-360."""
-    return autoconnect(
-        # The robot id and the namespace are the same word on purpose: what
-        # the world calls this robot is what namespace() prefixes its frames with, so a cloud in
-        # "left/mid360_link" finds "left/pelvis" above it.
-        G1Sim.blueprint(robot_id=name, xy=xy, frame_id=f"{name}/pelvis"),
-        UsdManager.blueprint(),
-        LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame),
-    ).namespace(name, expose=SHARED)
+    return (
+        autoconnect(
+            # The robot id and the namespace are the same word on purpose: what
+            # the world calls this robot is what namespace() prefixes its frames with, so a cloud in
+            # "left/mid360_link" finds "left/pelvis" above it.
+            G1Sim.blueprint(robot_id=name, xy=xy, frame_id=f"{name}/pelvis"),
+            UsdManager.blueprint(),
+            LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame),
+        )
+        .remappings(
+            # The manager poses the description from a joint state, and G1Sim publishes that as
+            # motor_states. Without this it listens on a topic nobody writes, never poses anything,
+            # and the robot's own frames -- the Mid-360's mount among them -- never reach tf.
+            [(UsdManager, "coordinator_joint_state", "motor_states")]
+        )
+        .namespace(name, expose=SHARED)
+    )
 
 
 three_g1_office_555 = autoconnect(
