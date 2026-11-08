@@ -188,6 +188,22 @@ class Mount:
         return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
 
 
+def _positions_by_joint(state: JointState) -> dict[str, float]:
+    """A joint state's positions, under both the joint's name and the motor's.
+
+    A coordinator names a joint after the motor that drives it, which is the URDF joint name
+    without its "_joint" suffix: `make_humanoid_joints` gives "g1/left_knee" for what a URDF
+    calls "left_knee_joint". Nothing reconciles the two, and a description looking up the name
+    it knows finds nothing, so every joint stays at zero -- a robot drawn rigid, moving only
+    with its root. Accept either spelling here rather than make every caller know.
+    """
+    positions = dict(zip(state.name, state.position, strict=False))
+    for name, value in list(positions.items()):
+        if not name.endswith("_joint"):
+            positions.setdefault(f"{name}_joint", value)
+    return positions
+
+
 class UsdManagerConfig(ModuleConfig):
     # The robot this manager answers for: a URDF to convert, or a USD layer to serve as it is
     # (a simulated world, say, which is already USD). None gives a single link called "world"
@@ -250,6 +266,7 @@ class UsdManager(SharedConfigModule):
         self._lock = RLock()
         self._load(self.config.model)
         self._next_joint_tf_t = 0.0
+        self._warned_about_joint_names = False
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._usd: str | None = None
@@ -667,7 +684,19 @@ class UsdManager(SharedConfigModule):
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
         """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
-        positions = dict(zip(state.name, state.position, strict=False))
+        positions = _positions_by_joint(state)
+        if self._joints and not positions.keys() & self._joints.keys():
+            # Every joint would silently sit at zero, which draws a robot that cannot bend: the
+            # body moves with its root and nothing else does. Say so once, with both spellings,
+            # rather than let it look like a renderer fault.
+            if not self._warned_about_joint_names:
+                self._warned_about_joint_names = True
+                logger.warning(
+                    f"a joint state names none of this description's joints, so every joint is "
+                    f"held at zero and the robot cannot articulate: it names "
+                    f"{sorted(state.name)[:3]}..., the description wants "
+                    f"{sorted(self._joints)[:3]}..."
+                )
         for joint in self._joints.values():
             if joint.mimic is not None and joint.mimic[0] in positions:
                 leader, multiplier, offset = joint.mimic
