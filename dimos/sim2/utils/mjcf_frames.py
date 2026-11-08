@@ -37,25 +37,23 @@ def mjcf_with_frames(
     mjcf: Path,
     frames: Frames,
     out_dir: Path | None = None,
-    on_the_sole: Sequence[str] = (),
     collide_drawn: Sequence[str] = (),
 ) -> Path:
     """A copy of `mjcf` with each frame as a site on the body it is fixed to; reused while nothing changes.
 
-    ``on_the_sole`` names bodies whose contact geometry should touch the ground where the body is
-    *drawn* to touch it; see ``_sit_on_the_sole``. ``collide_drawn`` names bodies that are drawn
-    but cannot be hit, and gives each drawn shape a collider of its own; see ``_collide_drawn``.
+    ``collide_drawn`` names bodies that are drawn but cannot be hit, and gives each drawn
+    shape a collider of its own; see ``_collide_drawn``.
     """
     mjcf = Path(mjcf).resolve()
     key = hashlib.sha256(
         f"{mjcf}\0{mjcf.stat().st_mtime_ns}\0{sorted(frames.items())}"
-        f"\0{sorted(on_the_sole)}\0{sorted(collide_drawn)}".encode()
+        f"\0{sorted(collide_drawn)}".encode()
     )
     out = (out_dir or _CACHE) / f"{mjcf.stem}-{key.hexdigest()[:16]}.xml"
     if not out.exists():
         out.parent.mkdir(parents=True, exist_ok=True)
         partial = out.with_suffix(".partial")
-        partial.write_text(_with_frames(mjcf, frames, on_the_sole, collide_drawn))
+        partial.write_text(_with_frames(mjcf, frames, collide_drawn))
         partial.replace(out)
     return out
 
@@ -65,23 +63,6 @@ def mjcf_with_frames(
 # meshes are the ones that do neither.
 def _is_collision(spec_geom) -> bool:
     return bool(spec_geom.contype) or bool(spec_geom.conaffinity)
-
-
-def _lowest_in_body(model, geom_index: int) -> float:
-    """The lowest point of a geom, in the frame of the body it hangs off."""
-    import mujoco as mj
-
-    pos = np.asarray(model.geom_pos[geom_index], dtype=float)
-    quat = np.asarray(model.geom_quat[geom_index], dtype=float)
-    rotation = Rotation.from_quat(quat[[1, 2, 3, 0]]).as_matrix()
-    mesh = int(model.geom_dataid[geom_index])
-    if mesh >= 0 and int(model.geom_type[geom_index]) == mj.mjtGeom.mjGEOM_MESH:
-        start = int(model.mesh_vertadr[mesh])
-        count = int(model.mesh_vertnum[mesh])
-        vertices = np.asarray(model.mesh_vert[start : start + count]).reshape(-1, 3)
-        return float((vertices @ rotation.T + pos)[:, 2].min())
-    # Everything else: its bounding sphere, which for a sphere is the shape itself.
-    return float(pos[2] - model.geom_rbound[geom_index])
 
 
 def _collide_drawn(spec, body_name: str) -> None:
@@ -121,45 +102,9 @@ def _collide_drawn(spec, body_name: str) -> None:
 _COLLISION_GROUP = 3
 
 
-def _sit_on_the_sole(spec, body_name: str) -> None:
-    """Lower a body's contact geometry until it touches where the body is drawn to touch.
-
-    A foot is drawn as a mesh and collided as a few small spheres under it, and the two need
-    not agree: on Menagerie's G1 the spheres' undersides sit 5.5 mm above the bottom of the
-    drawn sole, so the robot stands on the spheres and the foot it is drawn in goes through
-    the floor. The spheres are a cheap stand-in for the contact patch, not a claim about the
-    shape of the foot, so the mesh is the one to believe.
-
-    This moves them down by the difference, which leaves their layout alone and only puts the
-    surface they define where the sole really is.
-    """
-    import mujoco as mj
-
-    model = spec.compile()
-    index = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
-    if index < 0:
-        raise ValueError(f"no body named {body_name!r} to sit on its sole")
-    first = int(model.body_geomadr[index])
-    geoms = range(first, first + int(model.body_geomnum[index]))
-    drawn = [g for g in geoms if not (model.geom_contype[g] or model.geom_conaffinity[g])]
-    collided = [g for g in geoms if model.geom_contype[g] or model.geom_conaffinity[g]]
-    if not drawn or not collided:
-        return
-    drop = min(_lowest_in_body(model, g) for g in drawn) - min(
-        _lowest_in_body(model, g) for g in collided
-    )
-    if drop >= 0:
-        return  # the contact geometry already reaches at least as low as the drawn shape
-    body = spec.body(body_name)
-    for geom in body.geoms:
-        if _is_collision(geom):
-            geom.pos = [geom.pos[0], geom.pos[1], geom.pos[2] + drop]
-
-
 def _with_frames(
     mjcf: Path,
     frames: Frames,
-    on_the_sole: Sequence[str] = (),
     collide_drawn: Sequence[str] = (),
 ) -> str:
     spec = mujoco.MjSpec.from_file(str(mjcf))
@@ -184,6 +129,4 @@ def _with_frames(
         )
     for body_name in collide_drawn:
         _collide_drawn(spec, body_name)
-    for body_name in on_the_sole:
-        _sit_on_the_sole(spec, body_name)
     return str(spec.to_xml())
