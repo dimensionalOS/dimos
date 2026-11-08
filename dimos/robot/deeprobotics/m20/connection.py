@@ -17,11 +17,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
-import json
+from dataclasses import dataclass
 import math
-import socket
-import struct
 from threading import Condition, Event, RLock, Thread
 import time
 from typing import Any, Literal, TypeVar
@@ -41,9 +38,21 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.robot.deeprobotics.m20.basic_server import (
+    CHARGE_CHARGING,
+    CHARGE_COMMAND_START,
+    CHARGE_COMMAND_STOP,
+    CHARGE_ENTERING,
+    CHARGE_ERROR,
+    CHARGE_ERROR_NAMES,
+    CHARGE_EXITING,
+    CHARGE_IDLE,
+    CHARGE_ON_DOCK,
+    USAGE_MODE_NAVIGATION,
+    BasicServerLink,
+)
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
@@ -61,35 +70,10 @@ _NAVIGATION_GAITS: dict[NavigationTerrain, int] = {
     "flat": GAIT_FLAT_AGILE,
     "stairs": GAIT_STAIR_AGILE,
 }
-
-USAGE_MODE_NAVIGATION = 1
-
-_BASIC_SERVER_MAGIC = bytes.fromhex("eb91eb90")
-_BASIC_SERVER_JSON = 1
-_BASIC_SERVER_HEADER = struct.Struct("<4sHHB7s")
-_BASIC_SERVER_MODE_TYPE = 1101
-_BASIC_SERVER_MODE_COMMAND = 5
-_BASIC_SERVER_HEARTBEAT_TYPE = 100
-_BASIC_SERVER_HEARTBEAT_COMMAND = 100
-_BASIC_SERVER_HEARTBEAT_PERIOD_S = 0.5
-_BASIC_SERVER_REPORT_TYPE = 1002
-_BASIC_SERVER_ERROR_LIST_COMMAND = 3
-_BASIC_SERVER_BASIC_STATUS_COMMAND = 6
-_BASIC_SERVER_CHARGE_TYPE = 2
-_BASIC_SERVER_CHARGE_COMMAND = 24
-_BASIC_SERVER_POLL_S = 0.25
-# basic_server's own wait for a gait change (its "waitForGaitChange timeout" log line).
+_GAIT_COMMAND_ATTEMPTS = 2
+# basic_server's own gait-change wait, logged as waitForGaitChange timeout.
 _VENDOR_GAIT_WAIT_S = 3.0
 
-CHARGE_COMMAND_STOP = 0
-CHARGE_COMMAND_START = 1
-
-CHARGE_IDLE = 0
-CHARGE_ENTERING = 1
-CHARGE_CHARGING = 2
-CHARGE_EXITING = 3
-CHARGE_ERROR = 4
-CHARGE_ON_DOCK = 5
 _CHARGE_LABELS = {
     CHARGE_IDLE: "idle",
     CHARGE_ENTERING: "entering the dock",
@@ -99,23 +83,20 @@ _CHARGE_LABELS = {
     CHARGE_ON_DOCK: "on the dock, not charging",
 }
 _CHARGE_BUSY_STATES = frozenset({CHARGE_ENTERING, CHARGE_CHARGING, CHARGE_EXITING, CHARGE_ON_DOCK})
-_CHARGE_ERROR_NAMES = {
-    0x8501: "location timeout",
-    0x8502: "reflector localization failed to start",
-    0x8503: "no location, reflectors not found",
-    0x8506: "no current from the dock",
-    0x8509: "dock entry timeout",
-    0x8510: "dock exit timeout",
-}
 _CHARGE_STATUS_MAX_AGE_S = 3.0
 _CHARGE_STATUS_WAIT_S = 5.0
+_CHARGE_POLL_S = 0.25
 # Reports arrive at 2 Hz, so a status read this soon after a command can predate it.
 _CHARGE_COMMAND_GRACE_S = 1.0
 _BUSY_GOAL_CANCEL_PERIOD_S = 1.0
 
-DOCK_CHARGING = "charging"
-
 ChargeTask = Literal["dock", "undock"]
+
+
+@dataclass
+class _ChargeJob:
+    task: ChargeTask
+    started: bool = False
 
 
 class _StoppingError(Exception):
@@ -143,16 +124,17 @@ class M20ConnectionConfig(ModuleConfig):
     undock_timeout_s: float = Field(default=45.0, gt=0.0)
 
 
-def dock_verdict(
+def dock_failure(
     status: int,
     entered: bool,
     elapsed_s: float,
+    *,
     start_timeout_s: float,
     dock_timeout_s: float,
 ) -> str | None:
-    """Return None while docking continues, DOCK_CHARGING on success, else why it failed."""
+    """Return why docking failed, or None while it has not."""
     if status == CHARGE_CHARGING:
-        return DOCK_CHARGING
+        return None
     if status == CHARGE_ERROR:
         return "the robot reported a charging error"
     if status == CHARGE_EXITING:
@@ -188,8 +170,6 @@ class M20Connection(Module):
 
     config: M20ConnectionConfig
 
-    # cmd_vel goes to the drdds bridge on NOS. MovementManager's velocity arrives on
-    # requested_cmd_vel and is forwarded only off the dock, so this is the one sender.
     cmd_vel: Out[Twist]
     requested_cmd_vel: In[Twist]
     command_ready: In[Bool]
@@ -209,18 +189,16 @@ class M20Connection(Module):
         self._motion_state: int | None = None
         self._gait_state: int | None = None
         self._navigation_terrain: NavigationTerrain = "stairs"
-        self._basic_server_message_ids = SequentialIds()
-        self._link_stop = Event()
         self._stopping = Event()
         self._auto_stand_thread: Thread | None = None
-        self._udp: socket.socket | None = None
-        self._link_threads: list[Thread] = []
-        self._charge_status: int | None = None
-        self._charge_status_time = 0.0
-        self._charge_error: int | None = None
-        self._usage_mode: int | None = None
-        self._charge_task: ChargeTask | None = None
-        self._dock_started = False
+        self._basic_server = BasicServerLink(
+            host=self.config.basic_server_host,
+            tcp_port=self.config.basic_server_tcp_port,
+            udp_port=self.config.basic_server_udp_port,
+            timeout_s=self.config.basic_server_timeout_s,
+            on_report=self._on_basic_server_report,
+        )
+        self._charge_job: _ChargeJob | None = None
         self._charge_thread: Thread | None = None
         self._last_busy_goal_cancel = -math.inf
 
@@ -235,7 +213,7 @@ class M20Connection(Module):
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
         self._stopping.clear()
-        self._start_basic_server_link()
+        self._basic_server.start()
         if self.config.auto_stand:
             self._auto_stand_thread = Thread(
                 target=self._auto_stand, name="m20-auto-stand", daemon=True
@@ -272,9 +250,10 @@ class M20Connection(Module):
                 logger.warning("M20 did not confirm Sit before stopping")
         else:
             self.stop_movement()
-        self._stop_basic_server_link()
-        if self._auto_stand_thread is not None:
-            self._auto_stand_thread.join(timeout=self.config.basic_server_timeout_s)
+        for thread in (self._charge_thread, self._auto_stand_thread):
+            if thread is not None:
+                thread.join(timeout=self.config.basic_server_timeout_s)
+        self._basic_server.stop()
         super().stop()
 
     @rpc
@@ -300,7 +279,10 @@ class M20Connection(Module):
         cancelled instead.
         """
         with self._lock:
-            docking = self._charge_task == "dock" or self._fresh_charge_status() == CHARGE_ENTERING
+            job = self._charge_job
+            docking = (job is not None and job.task == "dock") or (
+                self._fresh_charge_status() == CHARGE_ENTERING
+            )
         if docking:
             logger.info("M20 stop_movement cancels docking")
             self.undock()
@@ -331,14 +313,14 @@ class M20Connection(Module):
         gait = _NAVIGATION_GAITS[terrain]
 
         def navigating() -> bool:
-            return self._usage_mode in (None, USAGE_MODE_NAVIGATION)
+            return self._basic_server.usage_mode in (None, USAGE_MODE_NAVIGATION)
 
         if not was_walking:
-            # Standing up makes basic_server reset the usage mode and gait itself, and a mode sent before that lands is lost.
+            # A stand makes basic_server reset the mode and gait, losing any mode sent before.
             self._wait_for_gait_state(GAIT_BASIC, _VENDOR_GAIT_WAIT_S * attempts)
 
-        # Right after a stand basic_server is still finishing its own gait change; a usage mode sent then is
-        # answered OK but never applied, so the mode and gait are watched for one such wait and sent again if they fell back.
+        # Right after a stand basic_server answers OK to a usage mode but drops it.
+        # Resend if the mode or gait falls back.
         for attempt in range(1, attempts + 1):
             if not self._enter_navigation_mode():
                 logger.error("M20 basic_server rejected the navigation usage mode")
@@ -423,19 +405,20 @@ class M20Connection(Module):
         """
         self.start_tool("dock")
         with self._state_condition:
-            if self._charge_task == "dock":
+            if self._charge_job is not None and self._charge_job.task == "dock":
                 return "Already docking. A tool update reports the result."
             refusal = self._dock_refusal()
-            if refusal is None:
-                self._charge_task = "dock"
-                self._dock_started = False
-                self._charge_error = None
-        if refusal is not None:
-            self.stop_tool("dock")
-            return f"Not docking: {refusal}."
+            if refusal is not None:
+                self.stop_tool("dock")
+                return f"Not docking: {refusal}."
+            job = _ChargeJob("dock")
+            self._charge_job = job
+            self._basic_server.charge_error = None
 
         self._cancel_nav_goal()
-        self._charge_thread = Thread(target=self._run_dock, name="m20-dock", daemon=True)
+        self._charge_thread = Thread(
+            target=self._run_dock, args=(job,), name="m20-dock", daemon=True
+        )
         self._charge_thread.start()
         return "Docking. A tool update reports each stage and the result."
 
@@ -447,25 +430,26 @@ class M20Connection(Module):
         """
         self.start_tool("undock")
         with self._state_condition:
-            if self._charge_task == "undock":
+            job = self._charge_job
+            if job is not None and job.task == "undock":
                 return "Already undocking. A tool update reports the result."
-            if self._charge_task == "dock" and not self._dock_started:
-                self._charge_task = None
+            if job is not None and not job.started:
+                self._charge_job = None
                 self._state_condition.notify_all()
                 self.stop_tool("undock")
                 return "Cancelled docking before it started."
             status = self._fresh_charge_status()
-            if self._charge_task is None and status == CHARGE_IDLE:
+            if job is None and status == CHARGE_IDLE:
                 self.stop_tool("undock")
                 return "Not undocking: the robot is not on the dock."
             previous = self._charge_thread
-            self._charge_task = "undock"
-            self._charge_error = None
+            self._charge_job = _ChargeJob("undock")
+            self._basic_server.charge_error = None
             self._state_condition.notify_all()
 
-        if status != CHARGE_EXITING and not self._send_charge_command(CHARGE_COMMAND_STOP):
+        if status != CHARGE_EXITING and not self._basic_server.send_charge(CHARGE_COMMAND_STOP):
             with self._state_condition:
-                self._charge_task = None
+                self._charge_job = None
             self.stop_tool("undock")
             return "Not undocking: could not reach the robot."
         self._charge_thread = Thread(
@@ -477,9 +461,8 @@ class M20Connection(Module):
     @skill
     def charge_status(self) -> str:
         """Report the robot's charging state and the charging error it reports now, if any."""
-        with self._lock:
-            status = self._fresh_charge_status()
-            error = self._charge_error
+        status = self._fresh_charge_status()
+        error = self._basic_server.charge_error
         label = "unknown" if status is None else _CHARGE_LABELS.get(status, "unknown")
         return f"{label}, error {_charge_error_text(error)}" if error is not None else label
 
@@ -487,7 +470,7 @@ class M20Connection(Module):
         status = self._fresh_charge_status()
         if status is None:
             return "the robot is not reporting its charge status"
-        if self._charge_task == "undock":
+        if self._charge_job is not None:
             return "an undock is still running"
         if self._charge_thread is not None and self._charge_thread.is_alive():
             return "the last dock or undock is still finishing"
@@ -497,9 +480,9 @@ class M20Connection(Module):
             return "the robot is not standing ready to walk"
         return None
 
-    def _run_dock(self) -> None:
+    def _run_dock(self, job: _ChargeJob) -> None:
         try:
-            outcome = self._watch_dock()
+            outcome = self._watch_dock(job)
         except _StoppingError:
             outcome = "Stopped docking, module stopping."
         except Exception:
@@ -509,41 +492,41 @@ class M20Connection(Module):
         self.tool_update("dock", outcome)
         self.stop_tool("dock")
         with self._state_condition:
-            if self._charge_task == "dock":
-                self._charge_task = None
+            if self._charge_job is job:
+                self._charge_job = None
             self._state_condition.notify_all()
 
-    def _watch_dock(self) -> str:
+    def _watch_dock(self, job: _ChargeJob) -> str:
         with self._state_condition:
             self._state_condition.wait_for(
-                lambda: self._charge_task != "dock" or self._link_stop.is_set(),
+                lambda: self._charge_job is not job or self._stopping.is_set(),
                 timeout=self.config.dock_settle_s,
             )
-            if self._charge_task != "dock":
+            if self._charge_job is not job:
                 return "Docking cancelled before it started."
-            if self._link_stop.is_set():
+            if self._stopping.is_set():
                 return "Docking cancelled, module stopping."
-            self._dock_started = True
-            if not self._send_charge_command(CHARGE_COMMAND_START):
+            job.started = True
+            if not self._basic_server.send_charge(CHARGE_COMMAND_START):
                 return "Docking failed: could not reach the robot."
 
-        started = time.monotonic()
+        started_at = time.monotonic()
         entered = False
         reported: int | None = None
         # The robot can clear its error as it gives up, so keep the last one seen for the verdict.
         error: int | None = None
         while True:
             with self._state_condition:
-                self._state_condition.wait(timeout=_BASIC_SERVER_POLL_S)
-                if self._charge_task != "dock":
+                self._state_condition.wait(timeout=_CHARGE_POLL_S)
+                if self._charge_job is not job:
                     return "Docking cancelled by undock."
-                if self._link_stop.is_set():
+                if self._stopping.is_set():
                     return "Stopped watching docking, module stopping."
                 status = self._fresh_charge_status()
-                error = self._charge_error or error
+                error = self._basic_server.charge_error or error
 
             if status is None:
-                self._send_charge_command(CHARGE_COMMAND_STOP)
+                self._basic_server.send_charge(CHARGE_COMMAND_STOP)
                 return "Docking failed: the robot stopped reporting its charge status."
             entered = entered or status != CHARGE_IDLE
             if status != reported and status != CHARGE_IDLE:
@@ -552,34 +535,34 @@ class M20Connection(Module):
                 logger.info("M20 charge status: %s", label)
                 self.tool_update("dock", f"Charge status: {label}.")
 
-            verdict = dock_verdict(
+            if status == CHARGE_CHARGING:
+                return "Docked and charging."
+            failure = dock_failure(
                 status,
                 entered,
-                time.monotonic() - started,
-                self.config.dock_start_timeout_s,
-                self.config.dock_timeout_s,
+                time.monotonic() - started_at,
+                start_timeout_s=self.config.dock_start_timeout_s,
+                dock_timeout_s=self.config.dock_timeout_s,
             )
-            if verdict == DOCK_CHARGING:
-                return "Docked and charging."
-            if verdict is None:
+            if failure is None:
                 continue
             if status in (CHARGE_ENTERING, CHARGE_ON_DOCK):
-                self._send_charge_command(CHARGE_COMMAND_STOP)
+                self._basic_server.send_charge(CHARGE_COMMAND_STOP)
             detail = "" if error is None else f" ({_charge_error_text(error)})"
-            return f"Docking failed: {verdict}{detail}. {self._resume_navigation()}"
+            return f"Docking failed: {failure}{detail}. {self._resume_navigation(job)}"
 
-    def _resume_navigation(self) -> str:
+    def _resume_navigation(self, job: _ChargeJob) -> str:
         """Restore navigation mode once the robot is idle, because idle switches it to Basic."""
         with self._state_condition:
             self._state_condition.wait_for(
-                lambda: self._charge_task != "dock"
-                or self._link_stop.is_set()
+                lambda: self._charge_job is not job
+                or self._stopping.is_set()
                 or self._fresh_charge_status() == CHARGE_IDLE,
                 timeout=self.config.undock_timeout_s,
             )
-            if self._charge_task != "dock":
+            if self._charge_job is not job:
                 return "Undocking took over."
-            if self._link_stop.is_set():
+            if self._stopping.is_set():
                 return "The module is stopping."
             if self._fresh_charge_status() != CHARGE_IDLE:
                 return "The robot did not return to idle, so navigation mode was not restored."
@@ -608,20 +591,20 @@ class M20Connection(Module):
         self.tool_update("undock", outcome)
         self.stop_tool("undock")
         with self._state_condition:
-            self._charge_task = None
+            self._charge_job = None
             self._state_condition.notify_all()
 
     def _watch_undock(self) -> str | None:
         """Wait for the robot to leave the dock and return why it did not, or None."""
-        started = time.monotonic()
+        started_at = time.monotonic()
         with self._state_condition:
             while True:
-                self._state_condition.wait(timeout=_BASIC_SERVER_POLL_S)
-                if self._link_stop.is_set():
+                self._state_condition.wait(timeout=_CHARGE_POLL_S)
+                if self._stopping.is_set():
                     return "Stopped watching undocking, module stopping."
-                elapsed = time.monotonic() - started
+                elapsed = time.monotonic() - started_at
                 if elapsed >= _CHARGE_COMMAND_GRACE_S:
-                    error = self._charge_error
+                    error = self._basic_server.charge_error
                     if error is not None:
                         return f"Undocking failed: {_charge_error_text(error)}."
                     if self._fresh_charge_status() == CHARGE_IDLE:
@@ -636,13 +619,16 @@ class M20Connection(Module):
         return True
 
     def _charge_busy(self) -> bool:
+        report = self._basic_server.charge
+        on_dock = report is not None and report.status in _CHARGE_BUSY_STATES
         with self._lock:
-            return self._charge_task is not None or self._charge_status in _CHARGE_BUSY_STATES
+            return on_dock or self._charge_job is not None
 
     def _fresh_charge_status(self) -> int | None:
-        with self._lock:
-            age = time.monotonic() - self._charge_status_time
-            return self._charge_status if age <= _CHARGE_STATUS_MAX_AGE_S else None
+        report = self._basic_server.charge
+        if report is None or time.monotonic() - report.received_at > _CHARGE_STATUS_MAX_AGE_S:
+            return None
+        return report.status
 
     def _wait_for_charge_status(self, timeout_s: float) -> bool:
         with self._state_condition:
@@ -652,14 +638,12 @@ class M20Connection(Module):
             )
             return self._fresh_charge_status() is not None
 
-    def _send_charge_command(self, command: int) -> bool:
-        _message_id, apdu = self._encode_basic_server_apdu(
-            _BASIC_SERVER_CHARGE_TYPE, _BASIC_SERVER_CHARGE_COMMAND, {"Charge": command}
-        )
-        return self._send_udp(apdu)
-
     def _cancel_nav_goal(self) -> None:
         self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
+
+    def _on_basic_server_report(self) -> None:
+        with self._state_condition:
+            self._state_condition.notify_all()
 
     def _on_requested_cmd_vel(self, twist: Twist) -> None:
         if not self._charge_busy():
@@ -710,7 +694,7 @@ class M20Connection(Module):
 
     def _set_gait_and_wait(self, gait: int) -> bool:
         # The robot drops a gait command that arrives with its own reset to Basic.
-        for _attempt in range(2):
+        for _attempt in range(_GAIT_COMMAND_ATTEMPTS):
             self._command(self.gait_cmd, UInt32(gait))
             if self._wait_for_gait_state(gait, self.config.gait_timeout_s):
                 return True
@@ -723,195 +707,7 @@ class M20Connection(Module):
             stream.publish(msg)
 
     def _enter_navigation_mode(self) -> bool:
-        response = self._basic_server_request(
-            message_type=_BASIC_SERVER_MODE_TYPE,
-            command=_BASIC_SERVER_MODE_COMMAND,
-            items={"Mode": USAGE_MODE_NAVIGATION},
-        )
-        try:
-            error_code = int(response["PatrolDevice"]["Items"]["ErrorCode"])
-        except (KeyError, TypeError, ValueError):
-            logger.error("M20 basic_server returned an invalid usage-mode response")
-            return False
-        if error_code != 0:
-            logger.error("M20 basic_server usage-mode switch failed: error %s", error_code)
-            return False
-        return True
-
-    def _basic_server_request(
-        self,
-        *,
-        message_type: int,
-        command: int,
-        items: dict[str, Any],
-    ) -> dict[str, Any]:
-        message_id, apdu = self._encode_basic_server_apdu(message_type, command, items)
-        try:
-            with socket.create_connection(
-                (self.config.basic_server_host, self.config.basic_server_tcp_port),
-                timeout=self.config.basic_server_timeout_s,
-            ) as connection:
-                connection.settimeout(self.config.basic_server_timeout_s)
-                connection.sendall(apdu)
-                response_header = _recv_exact(connection, _BASIC_SERVER_HEADER.size)
-                magic, length, response_id, encoding, _reserved = _BASIC_SERVER_HEADER.unpack(
-                    response_header
-                )
-                if magic != _BASIC_SERVER_MAGIC:
-                    raise ValueError("invalid APDU magic")
-                if response_id != message_id:
-                    raise ValueError("response APDU message ID does not match request")
-                if encoding != _BASIC_SERVER_JSON:
-                    raise ValueError("basic_server response is not JSON")
-                response_payload = _recv_exact(connection, length)
-        except (OSError, ValueError) as exc:
-            logger.error("M20 basic_server request failed: %s", exc)
-            return {}
-
-        try:
-            decoded = json.loads(response_payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            logger.error("M20 basic_server returned invalid JSON: %s", exc)
-            return {}
-        return decoded if isinstance(decoded, dict) else {}
-
-    def _start_basic_server_link(self) -> None:
-        self._link_stop.clear()
-        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp.bind(("", 0))
-        udp.settimeout(_BASIC_SERVER_POLL_S)
-        self._udp = udp
-        self._link_threads = [
-            Thread(target=self._heartbeat, name="m20-heartbeat", daemon=True),
-            Thread(target=self._read_reports, name="m20-reports", daemon=True),
-        ]
-        for thread in self._link_threads:
-            thread.start()
-
-    def _stop_basic_server_link(self) -> None:
-        self._link_stop.set()
-        with self._state_condition:
-            self._state_condition.notify_all()
-        threads = list(self._link_threads)
-        if self._charge_thread is not None:
-            threads.append(self._charge_thread)
-        for thread in threads:
-            if thread.is_alive():
-                thread.join(timeout=2.0)
-        if self._udp is not None:
-            self._udp.close()
-            self._udp = None
-
-    def _send_udp(self, apdu: bytes) -> bool:
-        try:
-            return self._sendto(apdu)
-        except OSError as exc:
-            logger.warning("M20 basic_server send failed: %s", exc)
-            return False
-
-    def _sendto(self, apdu: bytes) -> bool:
-        udp = self._udp
-        if udp is None:
-            return False
-        udp.sendto(apdu, (self.config.basic_server_host, self.config.basic_server_udp_port))
-        return True
-
-    def _heartbeat(self) -> None:
-        failing = False
-        while not self._link_stop.is_set():
-            _message_id, apdu = self._encode_basic_server_apdu(
-                _BASIC_SERVER_HEARTBEAT_TYPE, _BASIC_SERVER_HEARTBEAT_COMMAND, {}
-            )
-            try:
-                self._sendto(apdu)
-            except OSError as exc:
-                if not failing:
-                    logger.warning("M20 basic_server heartbeat failed: %s", exc)
-                failing = True
-            else:
-                if failing:
-                    logger.info("M20 basic_server heartbeat recovered")
-                failing = False
-            self._link_stop.wait(_BASIC_SERVER_HEARTBEAT_PERIOD_S)
-
-    def _read_reports(self) -> None:
-        udp = self._udp
-        if udp is None:
-            return
-        while not self._link_stop.is_set():
-            try:
-                frame = udp.recv(0xFFFF)
-            except TimeoutError:
-                continue
-            except OSError as exc:
-                logger.warning("M20 basic_server read failed: %s", exc)
-                self._link_stop.wait(_BASIC_SERVER_POLL_S)
-                continue
-            self._on_report(frame)
-
-    def _on_report(self, frame: bytes) -> None:
-        device = _decode_report(frame)
-        if device is None or device.get("Type") != _BASIC_SERVER_REPORT_TYPE:
-            return
-        items = device.get("Items")
-        if not isinstance(items, dict):
-            return
-        command = device.get("Command")
-        if command == _BASIC_SERVER_BASIC_STATUS_COMMAND:
-            basic_status = items.get("BasicStatus")
-            if not isinstance(basic_status, dict):
-                return
-            charge = basic_status.get("Charge")
-            usage_mode = basic_status.get("ControlUsageMode")
-            with self._state_condition:
-                if isinstance(charge, int):
-                    self._charge_status = charge
-                    self._charge_status_time = time.monotonic()
-                if isinstance(usage_mode, int):
-                    self._usage_mode = usage_mode
-                self._state_condition.notify_all()
-        elif command == _BASIC_SERVER_ERROR_LIST_COMMAND:
-            error_list = items.get("ErrorList")
-            if not isinstance(error_list, list):
-                return
-            codes = [
-                error.get("errorCode") if isinstance(error, dict) else None for error in error_list
-            ]
-            # A malformed list can't say an error cleared.
-            if not all(isinstance(code, int) for code in codes):
-                return
-            charge_errors = [code for code in codes if code in _CHARGE_ERROR_NAMES]
-            with self._state_condition:
-                # The list is every active error, so a charge error the robot no longer reports has cleared.
-                self._charge_error = charge_errors[-1] if charge_errors else None
-                self._state_condition.notify_all()
-
-    def _encode_basic_server_apdu(
-        self, message_type: int, command: int, items: dict[str, Any]
-    ) -> tuple[int, bytes]:
-        payload = json.dumps(
-            {
-                "PatrolDevice": {
-                    "Type": message_type,
-                    "Command": command,
-                    "Time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "Items": items,
-                }
-            },
-            separators=(",", ":"),
-        ).encode()
-        if len(payload) > 0xFFFF:
-            raise ValueError("M20 basic_server payload exceeds the APDU limit")
-
-        message_id = self._basic_server_message_ids.next() & 0xFFFF
-        header = _BASIC_SERVER_HEADER.pack(
-            _BASIC_SERVER_MAGIC,
-            len(payload),
-            message_id,
-            _BASIC_SERVER_JSON,
-            b"\0" * 7,
-        )
-        return message_id, header + payload
+        return self._basic_server.set_usage_mode(USAGE_MODE_NAVIGATION)
 
     def _wait_for_motion_state(self, expected: int, timeout_s: float) -> bool:
         return self._wait_unless_stopping(lambda: self._motion_state == expected, timeout_s)
@@ -922,15 +718,15 @@ class M20Connection(Module):
     def _wait_for_control_readiness(self, timeout_s: float) -> bool:
         return self._wait_unless_stopping(lambda: self._command_ready, timeout_s)
 
-    def _holds(self, ready: Callable[[], bool], seconds: float) -> bool:
-        """Watch for `seconds` and return False as soon as `ready` stops being true."""
+    def _holds(self, condition: Callable[[], bool], duration_s: float) -> bool:
+        """Watch for duration_s and return False as soon as condition stops holding."""
         with self._state_condition:
             self._state_condition.wait_for(
-                lambda: self._stopping.is_set() or not ready(), timeout=seconds
+                lambda: self._stopping.is_set() or not condition(), timeout=duration_s
             )
             if self._stopping.is_set():
                 raise _StoppingError
-            return ready()
+            return condition()
 
     def _wait_unless_stopping(self, ready: Callable[[], bool], timeout_s: float) -> bool:
         with self._state_condition:
@@ -943,25 +739,4 @@ class M20Connection(Module):
 
 
 def _charge_error_text(code: int) -> str:
-    return f"{code:#x} {_CHARGE_ERROR_NAMES.get(code, 'unknown')}"
-
-
-def _decode_report(frame: bytes) -> dict[str, Any] | None:
-    if len(frame) < _BASIC_SERVER_HEADER.size or not frame.startswith(_BASIC_SERVER_MAGIC):
-        return None
-    try:
-        decoded = json.loads(frame[_BASIC_SERVER_HEADER.size :])
-    except ValueError:
-        return None
-    device = decoded.get("PatrolDevice") if isinstance(decoded, dict) else None
-    return device if isinstance(device, dict) else None
-
-
-def _recv_exact(connection: socket.socket, size: int) -> bytes:
-    result = bytearray()
-    while len(result) < size:
-        chunk = connection.recv(size - len(result))
-        if not chunk:
-            raise OSError("basic_server closed the connection before completing its response")
-        result.extend(chunk)
-    return bytes(result)
+    return f"{code:#x} {CHARGE_ERROR_NAMES.get(code, 'unknown')}"
