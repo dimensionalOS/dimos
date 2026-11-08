@@ -43,19 +43,23 @@ from __future__ import annotations
 
 import enum
 import functools
+import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import IO, Any
 
+from filelock import FileLock
 from pydantic import Field, model_validator
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
+from dimos.constants import CACHE_DIR, DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -128,6 +132,43 @@ def _check_legacy_cwd(values: Any) -> Any:
     return values
 
 
+def _packaged_native_root() -> Path:
+    """Stage bundled Rust inputs in a writable cache, keeping sibling crate paths."""
+    inputs: set[Path] = set()
+    for directory, dirs, files in os.walk(DIMOS_PROJECT_ROOT / "dimos"):
+        dirs[:] = [
+            name
+            for name in dirs
+            if name not in {"target", "build", "__pycache__"} and not name.startswith("result")
+        ]
+        relative = Path(directory).relative_to(DIMOS_PROJECT_ROOT)
+        if "rust" in relative.parts:
+            inputs.update(
+                relative / name
+                for name in files
+                if not name.startswith("result") and not name.endswith(".pyc")
+            )
+    digest = hashlib.sha256()
+    for path in sorted(inputs):
+        digest.update(path.as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256((DIMOS_PROJECT_ROOT / path).read_bytes()).digest())
+    cache = CACHE_DIR / "native"
+    cache.mkdir(parents=True, exist_ok=True)
+    root = cache / digest.hexdigest()
+    with FileLock(cache / f"{root.name}.lock"):
+        if not root.exists():
+            with tempfile.TemporaryDirectory(dir=cache) as temporary:
+                staged = Path(temporary) / "sources"
+                staged.mkdir()
+                for path in inputs:
+                    target = staged / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    # Do not propagate read-only installation permissions.
+                    shutil.copyfile(DIMOS_PROJECT_ROOT / path, target)
+                staged.rename(root)
+    return root
+
+
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native subprocess module."""
 
@@ -178,11 +219,11 @@ class NativeModuleConfig(ModuleConfig):
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
-            # Wheels ship native sources alongside the Python that configures them.
-            # In a checkout this resolves to the same source tree as before.
             build_cwd = DIMOS_PROJECT_ROOT / self.source_dir
             if not any((build_cwd / name).is_file() for name in ("flake.nix", "Cargo.toml")):
                 build_cwd = get_project_root() / self.source_dir
+            elif not (DIMOS_PROJECT_ROOT / ".git").exists():
+                build_cwd = _packaged_native_root() / self.source_dir
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)

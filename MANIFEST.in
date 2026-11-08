@@ -17,6 +17,7 @@ recursive-include dimos/**/rust/**/.cargo *.toml
 prune dimos/**/rust/**/target
 prune dimos/**/rust/**/build
 prune dimos/**/rust/**/result*
+recursive-exclude dimos/**/rust result*
 
 # Test fixtures must never ship.
 recursive-exclude dimos/agents/fixtures *
