@@ -105,10 +105,6 @@ class G1SimConfig(ModuleConfig):
     frame_id: str = "g1_pelvis"
     # What the robot's pose is given in. The world frame, as the Go2 twin uses.
     odom_frame_id: str = "world"
-    # Put in front of this robot's own frames. Empty for a lone robot, whose frames are the bare
-    # link names its URDF uses. Several robots in one world each need their own, or they publish
-    # the same "pelvis" and tf sees one frame with three robots claiming it.
-    frame_prefix: str = ""
     # As G1WholeBodyConnection: full damping at once, stiffness and torque fading in over this long.
     soft_start_seconds: float = 3.0
     # As G1WholeBodyConnection's, but per sim second.
@@ -203,9 +199,11 @@ class G1Sim(Module):
             position=position.tolist(),
             orientation=orientation.tolist(),
         )
-        self.tf.publish(
-            TFMessage(Transform.from_pose(f"{self.config.frame_prefix}{ROOT_BODY}", odom))
-        )
+        # Every module config carries frame_id_prefix and namespace() sets it, so several robots
+        # in one world do not all publish the same "pelvis" for tf to choose between.
+        prefix = self.config.frame_id_prefix
+        root = f"{prefix}/{ROOT_BODY}" if prefix else ROOT_BODY
+        self.tf.publish(TFMessage(Transform.from_pose(root, odom)))
         self.odom.publish(odom)
 
     async def _publish(self) -> None:
