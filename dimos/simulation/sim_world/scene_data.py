@@ -28,6 +28,8 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+from dimos.simulation.sim_world.body import COLLISION_GROUP
+
 SCENE_DATA_FORMAT = "dimos.scene_data.v2"
 SCENE_FILE = "sim_scene.json"
 _GEOM_TYPES = {
@@ -104,6 +106,12 @@ def scene_files(
         for geom in range(first, first + model.body_geomnum[body]):
             kind = _GEOM_TYPES.get(int(model.geom_type[geom]))
             if kind is None:
+                continue
+            # Group 3 is contact geometry, which MuJoCo's own viewer hides and nothing should
+            # draw. A generated scene has none, so this used to make no difference; a converted
+            # room has it in bulk -- office_555 carries 3083 convex pieces behind its 464 visual
+            # meshes, so sending them would be seven times the payload for the wrong picture.
+            if int(model.geom_group[geom]) == COLLISION_GROUP:
                 continue
             material = int(model.geom_matid[geom])
             rgba = model.mat_rgba[material] if material >= 0 else model.geom_rgba[geom]
