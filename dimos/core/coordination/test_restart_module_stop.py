@@ -15,8 +15,9 @@
 import os
 from pathlib import Path
 import threading
-import time
 from typing import Any
+
+from pytest_mock import MockerFixture
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -25,8 +26,8 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 
 
-class SlowTeardown(Module):
-    """stop() takes a while and a concurrent stop() returns at once, like NativeModule.stop()."""
+class RecordedTeardown(Module):
+    """Record every stop attempt, including concurrent calls that return immediately."""
 
     def __init__(self, record: str, **kwargs: Any) -> None:
         self._record = record
@@ -44,37 +45,43 @@ class SlowTeardown(Module):
 
     @rpc
     def stop(self) -> None:
+        self._note("stop")
         with self._stop_lock:
             if self._stop_started:
                 return
             self._stop_started = True
-        time.sleep(1.5)
         super().stop()
         self._note("stopped")
 
 
 class Companion(Module):
-    """Shares the worker, so unloading SlowTeardown does not shut the worker down."""
+    """Keep the old worker alive after its recorded module is unloaded."""
 
 
-def test_restart_waits_for_the_old_instance_to_stop(tmp_path: Path) -> None:
-    """The old instance is gone before the replacement is built.
-
-    Both answer to the same RPC name, so an old instance that is still stopping
-    would handle the replacement's build() as well.
-    """
+def test_restart_stops_old_instance_once_before_replacement_build(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     record = tmp_path / "events"
     coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
     coordinator.start()
     try:
         coordinator.load_blueprint(
-            autoconnect(SlowTeardown.blueprint(record=str(record)), Companion.blueprint())
+            autoconnect(RecordedTeardown.blueprint(record=str(record)), Companion.blueprint())
         )
-        coordinator.restart_module(SlowTeardown, reload_source=False)
+        old_proxy = coordinator.get_instance(RecordedTeardown)
+        stop_rpc = mocker.spy(old_proxy, "stop")
+
+        coordinator.restart_module(RecordedTeardown, reload_source=False)
+        stop_rpc.assert_not_called()
     finally:
         coordinator.stop()
 
     events = [line.split() for line in record.read_text().splitlines()]
     builds = [instance for event, instance in events if event == "build"]
     assert len(builds) == 2 and builds[0] != builds[1], events
+    assert [event for event, instance in events if instance == builds[0]] == [
+        "build",
+        "stop",
+        "stopped",
+    ], events
     assert ["stopped", builds[0]] in events[: events.index(["build", builds[1]])], events

@@ -874,11 +874,18 @@ def test_module_saved_in_modules_dir_after_start_loads(
         coordinator.stop()
 
 
-def test_restart_module_basic(dynamic_coordinator) -> None:
+@pytest.mark.parametrize("worker_exited", [False, True], ids=["running-worker", "dead-worker"])
+def test_restart_module_basic(dynamic_coordinator, worker_exited) -> None:
     """restart_module replaces the deployed proxy with a fresh one."""
     dynamic_coordinator.load_module(ModuleA)
     old_proxy = dynamic_coordinator.get_instance(ModuleA)
     assert old_proxy is not None
+
+    worker = dynamic_coordinator._managers["python"].workers[0]
+    if worker_exited:
+        worker._process.terminate()
+        worker._process.join(timeout=5)
+    assert worker.has_exited is worker_exited
 
     new_proxy = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
 
