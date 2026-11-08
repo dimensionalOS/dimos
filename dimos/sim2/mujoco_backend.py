@@ -20,6 +20,7 @@ import base64
 from collections.abc import Mapping, Sequence
 import json
 from pathlib import Path
+import re
 from threading import Lock
 import time
 from typing import TYPE_CHECKING, Any
@@ -377,8 +378,39 @@ def _actuator_kind(model: mujoco.MjModel, actuator: int) -> str:
     return "position" if model.actuator_biasprm[actuator][1] != 0 else "velocity"
 
 
+# USD suffixes a scene may arrive as, which are not XML and must not be parsed as such.
+_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
+# A USD layer names an asset between @ signs: `prepend references = @meshes/desk.usdc@`.
+_USD_ASSET = re.compile(r"@([^@\n]+)@")
+
+
+def _files_named_by_usd(layer: Path) -> dict[str, Path]:
+    """The same, for a scene that is a USD layer rather than an MJCF.
+
+    A USD is not XML, and handing one to an XML parser gets "syntax error: line 1, column 0" --
+    which reads like a corrupt model and is really a file in the wrong language. A layer names
+    its assets between @ signs, relative to itself, so they are read the same way the XML
+    branch reads `file=` attributes.
+
+    Only the text form can be scanned like this; a binary .usdc scene names its assets inside
+    the crate, so this finds the layer alone and whatever asks for a mesh gets told no.
+    """
+    files = {str(layer): layer}
+    try:
+        text = layer.read_text(errors="ignore")
+    except OSError:
+        return files
+    for name in _USD_ASSET.findall(text):
+        path = (layer.parent / name).resolve()
+        if path.is_file():
+            files[str(path)] = path
+    return files
+
+
 def _files_named_by(mjcf: Path, assets: Path | None) -> dict[str, Path]:
     """The model and every file it names (meshes, textures, ...), by full path; a robot's assets hold its own."""
+    if mjcf.suffix.lower() in _USD_SUFFIXES:
+        return _files_named_by_usd(mjcf)
     root = ET.parse(mjcf).getroot()
     compiler = root.find("compiler")
     directories = {
