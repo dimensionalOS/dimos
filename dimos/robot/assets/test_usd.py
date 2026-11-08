@@ -25,10 +25,12 @@ from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
     asset_hash,
     graft_usd,
+    rename_usd_frames,
     require_asset_hashes,
     trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
+    usd_frame_names,
     usd_with_frames,
 )
 
@@ -700,3 +702,19 @@ def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
     texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
 
     assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
+
+
+def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
+    """A converted room's root is a plain Xform, not a link, and it is still a frame.
+
+    It is the one everything in the room hangs off, so if tf calls that frame something else
+    -- "world", where the robots stand -- the rename has to reach it. Validating the name and
+    then quietly not applying it is the worst of the three options.
+    """
+    scene = urdf_to_usd(toy, name="office")
+
+    assert "office" in usd_frame_names(scene)
+    renamed = rename_usd_frames(scene, {"office": "world"})
+
+    assert 'displayName = "world"' in renamed
+    assert "world" in usd_frame_names(renamed)
