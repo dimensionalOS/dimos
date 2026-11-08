@@ -265,14 +265,23 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
     Only ``displayName`` changes. Prim names cannot hold a "/" and prim paths are already unique
     by nesting, so neither needs to move. A prim with no displayName of its own is given one
     from its prim name, because the prefixed name is exactly the case the prim name cannot hold.
+
+    The defaultPrim moves too, the same way it does in ``usd_frame_names`` and
+    ``rename_usd_frames``. A converted room is a plain Xform holding its furniture, so that root
+    is a frame without being a link, and it is the one frame every copy of the layer names the
+    same. Leaving it behind is what the prefix exists to prevent: two namespaced copies would
+    publish "left/desk" and "right/desk" under a single shared "room", their subtrees would
+    merge there, and whichever copy published its root's pose last would move both.
     """
     if not prefix:
         return usd
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a subtree")
     stage = pxr.Usd.Stage.Open(layer)
+    root = stage.GetDefaultPrim()
     for prim in stage.Traverse():
-        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+        carries_a_frame = prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+        if carries_a_frame or (root and prim == root):
             prim.SetDisplayName(f"{prefix}/{prim.GetDisplayName() or prim.GetName()}")
     return str(layer.ExportToString())
 
