@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import sys
 
 import mujoco
 import numpy as np
@@ -34,6 +33,7 @@ from dimos.simulation.go2_legged.robot import (
     yaw_of,
 )
 from dimos.simulation.m20_sim.policy import LEG_JOINTS, LEGS, M20Policy
+from dimos.simulation.usd_spec import load_usd_spec
 
 # the policy acts at 50 Hz
 CONTROL_DT = 0.02
@@ -42,24 +42,8 @@ COLLISION_GROUP = 1
 
 
 def m20_spec() -> mujoco.MjSpec:
-    """An editable spec of the M20, read from the one USD M20_MODEL is, its demo floor and light removed.
-
-    MuJoCo reads the layer through its own USD decoder (mujoco-usd), so the actuators, joint
-    settings and collision groups come across as the ``mjcPhysics`` prims they were written as --
-    nothing is round-tripped through URDF and nothing of the vendor MJCF is left in the tree.
-    """
-    try:
-        # Importing it registers MuJoCo's USD decoder plugin with the resolver. Without it
-        # MjSpec.from_file refuses the layer outright: "could not find decoder for resource".
-        import mujoco._usd
-    except ImportError as error:
-        raise RuntimeError(
-            f"the M20 sim reads {M20_USD.name} through MuJoCo's USD decoder, which comes from "
-            f"mujoco-usd and needs Python 3.11 or newer (this is {sys.version_info.major}."
-            f"{sys.version_info.minor}). The robots that ship 3.10 do not run the simulator."
-        ) from error
-
-    spec = mujoco.MjSpec.from_file(str(M20_USD))
+    """An editable spec of the M20, read from the one USD M20_MODEL is, its demo floor and light removed."""
+    spec = load_usd_spec(M20_USD)
     world = spec.worldbody
     for element in [*world.geoms, *world.lights]:
         spec.delete(element)

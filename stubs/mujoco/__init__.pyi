@@ -157,6 +157,8 @@ class mjtLightType:
     mjLIGHT_SPOT: int
 
 class mjtJoint:
+    mjJNT_FREE: int
+    mjJNT_BALL: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
 
