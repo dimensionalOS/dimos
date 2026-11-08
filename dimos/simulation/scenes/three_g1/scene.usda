@@ -1,0 +1,52 @@
+#usda 1.0
+(
+    defaultPrim = "stage"
+    doc = """Three standing places for a G1, and the ground they stand on.
+
+    The UsdManager holds this and mounts a G1 onto each of the three frames; see
+    dimos/robot/unitree/g1/blueprints/basic/unitree_g1_three.py. Deliberately plain: it exists
+    to show three robots grafted into one scene and served as one layer, so anything that is
+    not a frame or the floor would only be in the way.
+    """
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "stage" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+)
+{
+    def Cube "floor" (
+        prepend apiSchemas = ["PhysicsCollisionAPI"]
+    )
+    {
+        double size = 1
+        float3 xformOp:scale = (8, 8, 0.02)
+        double3 xformOp:translate = (0, 0, -0.01)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Xform "stand_main" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        double3 xformOp:translate = (0, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "stand_left" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        double3 xformOp:translate = (0, 1.2, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "stand_right" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        double3 xformOp:translate = (0, -1.2, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
