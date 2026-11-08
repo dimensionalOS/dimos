@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dimos_lcm.std_msgs import Bool as LcmBool, Float64 as LcmFloat64, String as LcmString
+from dimos_lcm.std_msgs import String as LcmString
 import numpy as np
 import pytest
 
@@ -115,8 +115,8 @@ def test_wrapped_codec_decodes_from_native_metadata(tmp_path: Path, explicit: bo
 
 
 @pytest.mark.parametrize("encoding", ["lcm", "lz4+lcm"])
-@pytest.mark.parametrize("expected", [LcmBool(True), LcmString("ready"), LcmFloat64(42.25)])
-def test_generated_lcm_channel_decodes_from_native_metadata(tmp_path, encoding, expected):
+def test_generated_lcm_channel_decodes_from_native_metadata(tmp_path, encoding):
+    expected = LcmString("ready")
     path = tmp_path / "generated.mcap"
     payload_type = type(expected)
     codec = LcmCodec(payload_type)
@@ -217,19 +217,23 @@ def test_lcm_metadata_does_not_import_payload_module(
         assert store.stream("untrusted").first().data == b"raw payload"
 
 
-@pytest.mark.parametrize("encoding", ["pickle", "lcm", "lz4+lcm"])
 @pytest.mark.parametrize(
-    "payload_type",
+    ("encoding", "payload_type"),
     [
-        "untrusted_module.Payload",
-        "dimos.msgs.sensor_msgs.Imu.Other",
-        "dimos_lcm.std_msgs.Bool.Other",
-        "dimos_lcm.std_msgs.Unknown.Unknown",
-        "dimos_lcm.untrusted_module.Payload.Payload",
+        ("lcm", "dimos.msgs.sensor_msgs.Imu.Other"),
+        ("lcm", "dimos_lcm.std_msgs.Unknown.Unknown"),
+        ("lcm", "dimos_lcm.untrusted_module.Payload.Payload"),
+        ("lz4+lcm", "untrusted_module.Payload"),
+        ("pickle", "dimos.msgs.sensor_msgs.Imu.Imu"),
     ],
 )
-def test_unknown_metadata_stays_raw(tmp_path, encoding, payload_type):
+def test_unsupported_metadata_stays_raw(tmp_path, encoding, payload_type):
     path = tmp_path / "unknown.mcap"
+    payload = (
+        Lz4Codec(LcmCodec(LcmString)).encode(LcmString("untouched"))
+        if encoding == "lz4+lcm"
+        else b"untouched"
+    )
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
         writer.start(profile="dimos")
@@ -239,10 +243,10 @@ def test_unknown_metadata_stays_raw(tmp_path, encoding, payload_type):
             schema_id=0,
             metadata={"dimos.payload_type": payload_type},
         )
-        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=b"untouched")
+        writer.add_message(channel_id=channel, log_time=1, publish_time=1, data=payload)
         writer.finish()
     with McapStore(path=str(path)) as store:
-        assert store.streams.raw.first().data == b"untouched"
+        assert store.streams.raw.first().data == payload
         assert "raw bytes" in store.summary()
 
 

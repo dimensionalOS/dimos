@@ -293,7 +293,11 @@ def test_odom_to_tf_prefixed() -> None:
 
 @pytest.mark.parametrize("dataset_kind", ["sqlite", "named-sqlite", "mcap"])
 def test_replay_opens_recording_and_emits_typed_odometry(tmp_path, monkeypatch, dataset_kind):
-    values = [PoseStamped(ts=12.5, frame_id="world"), PoseStamped(ts=13.5, frame_id="world")]
+    values = [
+        PoseStamped(ts=12.5, frame_id="world"),
+        PoseStamped(ts=13.5, frame_id="world"),
+        PoseStamped(ts=14.0, frame_id="world"),  # beyond seek + duration
+    ]
     if dataset_kind == "mcap":
         path = tmp_path / "native.mcap"
         with path.open("wb") as output:
