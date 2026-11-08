@@ -136,7 +136,18 @@ def _robot(name: str, xy: tuple[float, float]):
             # The robot id and the namespace are the same word on purpose: what
             # the world calls this robot is what namespace() prefixes its frames with, so a cloud in
             # "left/mid360_link" finds "left/pelvis" above it.
-            G1Sim.blueprint(robot_id=name, xy=xy, frame_id=f"{name}/pelvis"),
+            G1Sim.blueprint(
+                robot_id=name,
+                xy=xy,
+                frame_id=f"{name}/pelvis",
+                # No fade-in, to match the controller arming with no ramp. The fade-in exists
+                # for a real G1, where something else holds the robot while stiffness comes up.
+                # Here nothing does: until the first command the servos' own gains hold the
+                # stance, and the first command replaces them -- scaled from zero, so the legs
+                # go limp at the one moment they are carrying the robot, and it is on the floor
+                # long before the three seconds are up.
+                soft_start_seconds=0.0,
+            ),
             UsdManager.blueprint(),
             LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame),
             _walker(name),
