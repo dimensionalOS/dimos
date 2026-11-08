@@ -212,6 +212,12 @@ scene_manager = UsdManager.blueprint(
     # It is a scene, not a robot: its frames are the world's and take no prefix. Set here rather
     # than left out, because namespace() below would otherwise fill it in.
     frame_id_prefix="",
+    # The scene's root link is "office_555", and tf has never heard of it: the robots publish
+    # world -> <robot>/pelvis, so "world" is the frame everything else is placed against. Under
+    # its own name the room has no transform and the viewer says so outright -- "office_555 isn't
+    # in the tree ... so nothing places it in the view" -- and draws none of it. Renaming the
+    # root on the way out is what joins the room to the frame the robots already stand in.
+    tf_renames={"office_555": "world"},
 ).namespace(
     # A namespace of its own, for one reason: a manager outside every namespace hears
     # @shared_config(UsdManager) from all three robots and refuses, having been handed four
