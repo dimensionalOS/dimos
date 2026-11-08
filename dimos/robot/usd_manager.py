@@ -27,7 +27,7 @@ import numpy as np
 from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import IO, In, Out
