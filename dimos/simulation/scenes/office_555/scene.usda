@@ -139603,7 +139603,10 @@ def Xform "office_555" (
     )
     {
         color3f inputs:color = (0.9333333, 0.9333333, 1)
-        float inputs:intensity = 0.3
+        # Ambient reaches into a shadow as readily as onto the floor beside it, so it is the last
+        # thing keeping a desk's shadow pale once the lamps overhead are casting. The room has
+        # brightness to spare from the fittings; this only has to keep the corners off black.
+        float inputs:intensity = 0.18
         bool inputs:shadow:enable = 0
     }
 
