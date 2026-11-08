@@ -684,19 +684,27 @@ class UsdManager(SharedConfigModule):
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
         """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
-        positions = _positions_by_joint(state)
-        if self._joints and not positions.keys() & self._joints.keys():
+        # A joint state may key by the description's own name ("left_knee_joint"), or by the
+        # name this manager publishes that joint under, which is what a namespaced coordinator
+        # sends ("main/left_knee"). Resolve each joint through both.
+        by_name = _positions_by_joint(state)
+        positions = {
+            joint.name: value
+            for joint in self._joints.values()
+            for value in [by_name.get(joint.name, by_name.get(self.frame(joint.name)))]
+            if value is not None
+        }
+        if state.name and self._joints and not positions and not self._warned_about_joint_names:
             # Every joint would silently sit at zero, which draws a robot that cannot bend: the
-            # body moves with its root and nothing else does. Say so once, with both spellings,
-            # rather than let it look like a renderer fault.
-            if not self._warned_about_joint_names:
-                self._warned_about_joint_names = True
-                logger.warning(
-                    f"a joint state names none of this description's joints, so every joint is "
-                    f"held at zero and the robot cannot articulate: it names "
-                    f"{sorted(state.name)[:3]}..., the description wants "
-                    f"{sorted(self._joints)[:3]}..."
-                )
+            # body moves with its root and nothing else does. Say so, rather than leave it
+            # looking like a renderer fault -- there is nothing else to see it by.
+            self._warned_about_joint_names = True
+            logger.warning(
+                f"a joint state names none of this description's joints, so every joint is held "
+                f"at zero and the robot cannot articulate: it names {sorted(state.name)[:2]}..., "
+                f"the description wants {sorted(self._joints)[:2]}... "
+                f"(published as {sorted(self.frame(n) for n in self._joints)[:2]}...)"
+            )
         for joint in self._joints.values():
             if joint.mimic is not None and joint.mimic[0] in positions:
                 leader, multiplier, offset = joint.mimic
