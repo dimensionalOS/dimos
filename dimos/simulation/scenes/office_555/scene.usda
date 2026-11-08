@@ -139628,19 +139628,19 @@ def RenderSettings "Look"
     # bright colour toward white, which costs a lit room most of its paint; the neutral curve keeps the
     # hue and takes the brightness instead. The saturation and contrast afterwards are what a render
     # out of Blender has and a plain rasterised frame does not.
-    # AgX is what Blender puts on by default: sixteen and a half stops, and hot colour desaturates
-    # toward white the way film does instead of clipping to a flat primary. There is no standard USD
-    # attribute for a view transform -- the nearest is OCIO stage metadata -- so it is named here.
-    uniform token dimos:look:toneMap = "agx"
+    # AgX, Blender's own default, was tried here and measured worse: it is built for renders with
+    # sixteen stops to compress, and this room is low-contrast to begin with, so all it did was
+    # desaturate (0.094 -> 0.059) and flatten. The neutral curve keeps the hue and the contrast.
+    uniform token dimos:look:toneMap = "neutral"
     # The fittings were turned up while the filmic curve was still rolling their highlights off.
     # Without that curve the same light clips the walls to flat white, so the room is exposed down
     # to put the bright end back inside the range, and the contrast bump -- which pushes exactly the
     # values that were clipping -- goes away. Saturation is what is actually wanted here.
     float dimos:look:exposure = 0.9
-    # Blender's rooms read the way they do largely because light bounces, which nothing here does.
-    # The dome's sky as an environment map is the closest stand-in available, and it lights a face by
-    # what is actually above it rather than by which hemisphere it points into.
-    float dimos:look:environmentIntensity = 0.8
+    # No environment light. Blender's bounce comes from irradiance volumes, which vary through space
+    # and know what is occluding what; a single environment map does not, so it fills the floor under
+    # a desk exactly as much as the floor beside it and erases the shadow it was meant to soften.
+    # Measured: shadow depth went 0.81 -> 0.89. The viewer still supports it for scenes that want it.
     float dimos:look:saturation = 1.45
     float dimos:look:contrast = 1
 }
