@@ -79,20 +79,29 @@ def _shortened(elements: Iterable[Any], kind: str) -> dict[str, str]:
 def shorten_names(spec: mujoco.MjSpec) -> None:
     """Rename every element to the last component of its prim path, references included.
 
-    MjSpec holds its cross-references as **strings** -- a geom names its mesh, an actuator names
-    its joint, a contact exclusion names two bodies -- so renaming without rewriting them fails
-    at compile with "mesh ... not found in geom 0" or "body ... not found in bodypair 0".
-    Materials are deliberately left alone: nothing renames them, so nothing has to find them.
+    MjSpec holds its cross-references as **strings** -- a geom names its mesh and its material,
+    a material names its textures, an actuator names its joint, a contact exclusion names two
+    bodies -- so renaming without rewriting them fails at compile with "mesh ... not found in
+    geom 0" or "body ... not found in bodypair 0".
     """
     meshes = _shortened(spec.meshes, "mesh")
     targets = {**_shortened(spec.joints, "joint"), **_shortened(spec.sites, "site")}
     bodies = _shortened(spec.bodies, "body")
+    textures = _shortened(spec.textures, "texture")
+    materials = _shortened(spec.materials, "material")
     _shortened(spec.geoms, "geom")
     _shortened(spec.actuators, "actuator")
 
     for geom in spec.geoms:
         if geom.meshname in meshes:
             geom.meshname = meshes[geom.meshname]
+    # A material is looked up by name as much as a body is: the M20's sim paints its collision
+    # shapes by asking the spec for `collision_material`, and a prim path there answers None.
+    for element in (*spec.geoms, *spec.sites):
+        if element.material in materials:
+            element.material = materials[element.material]
+    for material in spec.materials:
+        material.textures = [textures.get(name, name) for name in material.textures]
     for actuator in spec.actuators:
         if actuator.target in targets:
             actuator.target = targets[actuator.target]

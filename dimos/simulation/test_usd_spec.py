@@ -53,6 +53,16 @@ def _spec() -> mujoco.MjSpec:
     exclude = spec.add_exclude()
     exclude.bodyname1 = "/robot/Geometry/base"
     exclude.bodyname2 = "/robot/Geometry/base/arm"
+
+    grain = spec.add_texture()
+    grain.name = "/robot/Materials/grain"
+    grain.builtin = mujoco.mjtBuiltin.mjBUILTIN_CHECKER
+    grain.height = 2
+    grain.width = 2
+    paint = spec.add_material()
+    paint.name = "/robot/Materials/paint"
+    paint.textures = ["/robot/Materials/grain"] + [""] * (len(paint.textures) - 1)
+    skin.material = "/robot/Materials/paint"
     return spec
 
 
@@ -97,3 +107,21 @@ def test_a_name_that_would_collide_leaves_its_whole_kind_alone() -> None:
     assert mujoco.mj_name2id(spec.compile(), mujoco.mjtObj.mjOBJ_BODY, "base") == -1
     # The kinds that did not collide are still shortened.
     assert mujoco.mj_name2id(spec.compile(), mujoco.mjtObj.mjOBJ_ACTUATOR, "shoulder_motor") >= 0
+
+
+def test_materials_are_found_by_their_short_name_too() -> None:
+    """A material is looked up by name as much as a body is, and answers None if it was missed.
+
+    The M20's sim paints its collision shapes with `spec.material("collision_material")`, which
+    is a prim path in the layer: the lookup returned None and the whole rig stopped building.
+    Renaming one is only half of it -- a geom holds its material as a string, so the geom has to
+    be repointed, and a material holds its textures the same way.
+    """
+    spec = _spec()
+    shorten_names(spec)
+
+    assert spec.material("paint") is not None, "a prim path here is a None the caller must handle"
+    assert spec.geom("skin").material == "paint"
+    assert spec.material("paint").textures[0] == "grain"
+    # Left behind, either of those strings names nothing and the compile is the one that says so.
+    assert spec.compile().nmat == 1
