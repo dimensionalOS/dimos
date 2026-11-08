@@ -139487,7 +139487,7 @@ def Xform "office_555" (
             def Shader "mjcTexture_concrete_0" (
                 assetInfo = {
                     asset identifier = @meshes/concrete_0.png@
-                    string version = "sha256:ecc778c7489eaaade9c8c3eee370ada62d442bcdfb557a463dc55e909e02924a"
+                    string version = "sha256:db31043554357287222b7927c66bdf4d99e3d44cba3c53655a05ca4167d93e21"
                 }
             )
             {
