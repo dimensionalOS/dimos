@@ -150,6 +150,7 @@ all_blueprints = {
     "teleop-webxr-xarm6": "dimos.teleop.webxr.blueprints:teleop_webxr_xarm6",
     "teleop-webxr-xarm7": "dimos.teleop.webxr.blueprints:teleop_webxr_xarm7",
     "teleop-webxr-xarm7-video": "dimos.teleop.webxr.blueprints:teleop_webxr_xarm7_video",
+    "three-g1-office-555": "dimos.robot.unitree.g1.blueprints.basic.three_g1_office_555:three_g1_office_555",
     "unitree-g1": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1:unitree_g1",
     "unitree-g1-agentic": "dimos.robot.unitree.g1.blueprints.agentic.unitree_g1_agentic:unitree_g1_agentic",
     "unitree-g1-agentic-sim": "dimos.robot.unitree.g1.blueprints.agentic.unitree_g1_agentic_sim:unitree_g1_agentic_sim",
