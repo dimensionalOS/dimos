@@ -233,3 +233,41 @@ the robot; pass `--visualization.host 127.0.0.1` to keep it local.
 Pose each leader like its arm before starting it: the first streamed target is
 rate limited, but a limited move across a large gap is still a swing. If the
 link drops, the follower holds its last target.
+
+## Record demonstrations
+
+`openarm-mini-collection` wraps the one-machine teleop stack in the collection
+recorder, as `openyam-quest-collection` does for Quest. It records the measured
+follower joints (`coordinator_joint_state`, 14 arm joints and 2 grippers), the
+coordinator's attempted position commands (`coordinator_joint_command`, the 14
+arm joints the leaders drive) and two 640x480 wrist cameras. The follower is
+in-memory unless both CAN ports are given.
+
+```bash
+dimos run openarm-mini-collection --daemon \
+  --openarmminiteleopmodule.port-left <feetech-port> \
+  --openarmminiteleopmodule.port-right <feetech-port> \
+  --controlcoordinator.left-can-port can2 --controlcoordinator.right-can-port can3 \
+  --left-wrist.hardware.camera-index /dev/video0 \
+  --right-wrist.hardware.camera-index /dev/video2 \
+  --recorder.recording recordings/openarm-001 \
+  --episodes.task "pick up the cube"
+dimos imitation control
+```
+
+For leaders on a separate machine, run `openarm-mini-follower-collection` on the
+robot computer with the CAN ports, cameras, recording and task options above,
+and `teleop-openarm-mini-leader` on the operator machine as in the previous
+section. The episode panel controls takes, not teleop; the arms keep following
+the leaders between episodes.
+
+Grippers are observed but not commanded: the Mini leaders have no gripper
+input, so `action` has 14 values and `observation.state` 16. Commands are
+attempted targets, not proof of arrival. Prepare the recording as for any
+collection:
+
+```bash
+dimos imitation inspect recordings/openarm-001
+dimos imitation prepare recordings/openarm-001 --output datasets/openarm-001
+dimos imitation inspect datasets/openarm-001
+```

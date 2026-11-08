@@ -108,6 +108,8 @@ all_blueprints = {
     "mid360-pointlio-voxels": "dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints:mid360_pointlio_voxels",
     "mid360-realsense-record": "dimos.robot.assembly.mid360_realsense_30:mid360_realsense_record",
     "mid360-realsense-record-with-pcap": "dimos.robot.assembly.mid360_realsense_30:mid360_realsense_record_with_pcap",
+    "openarm-mini-collection": "dimos.robot.manipulators.openarm.blueprints.mini_collection:openarm_mini_collection",
+    "openarm-mini-follower-collection": "dimos.robot.manipulators.openarm.blueprints.mini_collection:openarm_mini_follower_collection",
     "openarm-planner-coordinator": "dimos.robot.manipulators.openarm.blueprints.basic:openarm_planner_coordinator",
     "openyam-lerobot-quest-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_quest_rollout",
     "openyam-lerobot-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_rollout",
