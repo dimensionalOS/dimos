@@ -46,8 +46,8 @@ dimos --robot-ip 10.21.31.106 \
   --rerunwebsocketserver.host 0.0.0.0 --daemon
 ```
 
-`--robot-ip` names the NOS Zenoh bridge. `M20Connection` and the camera relay
-still use the documented AOS endpoints at `10.21.31.103`.
+`--robot-ip` names the NOS Zenoh bridge. `M20Connection` still uses the
+documented AOS endpoints at `10.21.31.103`.
 
 Follow the log with `dimos log -f`. `dimos stop` sits the robot down and stops
 DimOS.
@@ -60,8 +60,14 @@ dimos-viewer \
   --ws-url ws://10.21.31.104:3030/ws
 ```
 
-The Rerun bridge, camera relay, mapping, planning, and control modules all run
-inside the GOS control blueprint. The desktop viewer is only a client.
+The Rerun bridge, mapping, planning, and control modules all run inside the GOS
+control blueprint. The desktop viewer is only a client.
+
+The cameras are not in that blueprint: `m20-camera.service` runs the native
+relay on AOS, where the V4L2 devices are, and publishes `CompressedVideo` on
+zenoh. The Rerun bridge subscribes to every zenoh topic, so it renders those
+streams without owning them, and the Desktop gateway passes the H.264 through
+to the browser.
 
 Attach the control shell:
 
