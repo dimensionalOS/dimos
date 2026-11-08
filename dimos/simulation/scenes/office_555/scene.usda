@@ -138579,7 +138579,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
