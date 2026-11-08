@@ -15,7 +15,7 @@
 """A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
 
 Go2Sim.mjcf is the Go2's MJCF with the rig's sensor frames as sites: a sensor names one (Go2Sim.lidar_mount_frame, ...)
-as its frame_id, and Go2Sim hands a UrdfManager the URDF of it, which poses the same frames on tf.
+as its frame_id, and Go2Sim hands a UsdManager the URDF of it, which poses the same frames on tf.
 """
 
 import asyncio
@@ -46,7 +46,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_XYZ,
     OPTICAL_RPY,
 )
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
@@ -93,7 +93,7 @@ class Go2Sim(Module):
     actions: Out[WorldAction]
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
-    # Named as the Go2's URDF names them, for UrdfManager.
+    # Named as the Go2's URDF names them, for UsdManager.
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -121,7 +121,7 @@ class Go2Sim(Module):
             )
         }
 
-    @shared_config(UrdfManager)
+    @shared_config(UsdManager)
     def urdf(self) -> dict[str, RobotModel]:
         # The MJCF's base body is the URDF's base_link, the frame odometry moves.
         return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, "base_link")}
