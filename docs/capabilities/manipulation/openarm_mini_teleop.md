@@ -259,8 +259,9 @@ recorder, as `openyam-quest-collection` does for Quest. It records the measured
 follower joints (`coordinator_joint_state`, 14 arm joints and 2 grippers), the
 coordinator's attempted position commands (`coordinator_joint_command`, same 16
 joints: arm targets from the leaders, gripper openings from their triggers) and
-two 640x480 wrist cameras. Both leaders need a calibrated trigger, or the
-action stream lacks the gripper joints and preparation fails. The follower is
+three 640x480 cameras: `front` (any UVC node, the D455's color node on Alfred)
+and the two wrists. Both leaders need a calibrated trigger, or the action
+stream lacks the gripper joints and preparation fails. The follower is
 in-memory unless both CAN ports are given.
 
 ```bash
@@ -268,6 +269,7 @@ dimos run openarm-mini-collection --daemon \
   --openarmminiteleopmodule.port-left <feetech-port> \
   --openarmminiteleopmodule.port-right <feetech-port> \
   --controlcoordinator.left-can-port can2 --controlcoordinator.right-can-port can3 \
+  --front.hardware.camera-index /dev/video8 \
   --left-wrist.hardware.camera-index /dev/video0 \
   --right-wrist.hardware.camera-index /dev/video2 \
   --recorder.recording recordings/openarm-001 \

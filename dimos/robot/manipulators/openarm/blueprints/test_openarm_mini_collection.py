@@ -44,6 +44,8 @@ def test_collection_uses_normal_module_configuration(blueprint: Blueprint, tmp_p
             str(tmp_path / "session"),
             "--episodes.task",
             "pick up the block",
+            "--front.hardware.camera-index",
+            "/dev/video8",
             "--left-wrist.hardware.camera-index",
             "/dev/video0",
             "--right-wrist.hardware.camera-index",
@@ -55,6 +57,7 @@ def test_collection_uses_normal_module_configuration(blueprint: Blueprint, tmp_p
     schema = recorder.kwargs["recording_schema"]
     assert schema.robot_type == "openarm"
     assert parsed.module_configs["recorder"]["recording"] == tmp_path / "session"
+    assert parsed.module_configs["front"]["hardware"]["camera_index"] == "/dev/video8"
     assert parsed.module_configs["left_wrist"]["hardware"]["camera_index"] == "/dev/video0"
     assert parsed.module_configs["right_wrist"]["hardware"]["camera_index"] == "/dev/video2"
 
@@ -71,11 +74,13 @@ def test_state_and_action_cover_every_joint_from_the_coordinator_streams() -> No
     assert action.stream == "coordinator_joint_command"
     assert action.source_kind == "joint_position_updates"
     assert action.names == list(OPENARM_JOINTS)
+    assert schema.observation["observation.images.front"].stream == "front_image"
     assert schema.observation["observation.images.left_wrist"].stream == "left_wrist_image"
     assert schema.observation["observation.images.right_wrist"].stream == "right_wrist_image"
     assert recorder.kwargs["input_types"].keys() == {
         "coordinator_joint_state",
         "coordinator_joint_command",
+        "front_image",
         "left_wrist_image",
         "right_wrist_image",
     }
@@ -91,8 +96,12 @@ def test_one_machine_collection_wraps_the_one_machine_teleop_stack() -> None:
         _OpenArmManipulationModule,
         WebcamModule,
         WebcamModule,
+        WebcamModule,
     ]
     assert dict(openarm_mini_collection.remapping_map) == {
+        ("front", "color_image"): "front_image",
+        ("front", "camera_info"): "front_camera_info",
+        ("front", "tf"): "front_tf",
         ("left_wrist", "color_image"): "left_wrist_image",
         ("left_wrist", "camera_info"): "left_wrist_camera_info",
         ("left_wrist", "tf"): "left_wrist_tf",

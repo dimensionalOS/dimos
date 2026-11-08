@@ -29,7 +29,8 @@ from dimos.robot.manipulators.openarm.blueprints.mini_teleop import (
 )
 from dimos.robot.manipulators.openarm.config import OPENARM_JOINTS
 
-_CAMERAS = ("left_wrist", "right_wrist")
+# Any UVC camera serves as a feed; the front camera is the D455's color node.
+_CAMERAS = ("front", "left_wrist", "right_wrist")
 
 _state = FeatureSpec(
     stream="coordinator_joint_state",
