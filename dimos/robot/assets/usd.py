@@ -375,6 +375,13 @@ def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
         for prim in stage.Traverse()
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
     ]
+    # The defaultPrim is a frame too, the same way usd_frame_names and _link_prim_paths count
+    # it: a converted room is a plain Xform holding its furniture, so the frame everything in
+    # it hangs off is that root. Leaving it out here means a rename validates and then quietly
+    # does nothing, which is worse than refusing it.
+    root = stage.GetDefaultPrim()
+    if root and root not in frames:
+        frames.append(root)
     # Read every name before writing any, so a -> b alongside b -> a is a swap.
     named = [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]
     changed = False
