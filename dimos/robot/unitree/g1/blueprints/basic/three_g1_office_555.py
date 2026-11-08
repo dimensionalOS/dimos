@@ -51,7 +51,10 @@ SHARED = {"world_observations", "actions"}
 def _robot(name: str, xy: tuple[float, float]):
     """One G1 in the room: the sim module, the description it serves, and its Mid-360."""
     return autoconnect(
-        G1Sim.blueprint(robot_id=name, xy=xy, frame_id=f"{name}_pelvis"),
+        # The robot id, the namespace and the frame prefix are the same word on purpose: what
+        # the world calls this robot is what its frames are called, so a cloud in "left/mid360_link"
+        # finds "left/pelvis" above it.
+        G1Sim.blueprint(robot_id=name, xy=xy, frame_id=f"{name}/pelvis", frame_prefix=f"{name}/"),
         UsdManager.blueprint(),
         LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame),
     ).namespace(name, expose=SHARED)
