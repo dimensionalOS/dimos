@@ -29,11 +29,14 @@ from dimos_lcm.world_msgs import WorldAction, WorldObservations
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
 from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
@@ -88,10 +91,16 @@ SERVOS = (
 )
 
 
+# The MJCF body the URDF is rooted at, and so the frame odometry moves.
+ROOT_BODY = "pelvis"
+
+
 class G1SimConfig(ModuleConfig):
     robot_id: str = "g1"
     xy: tuple[float, float] = (0.0, 0.0)
     frame_id: str = "g1_pelvis"
+    # What the robot's pose is given in. The world frame, as the Go2 twin uses.
+    odom_frame_id: str = "world"
     # As G1WholeBodyConnection: full damping at once, stiffness and torque fading in over this long.
     soft_start_seconds: float = 3.0
     # As G1WholeBodyConnection's, but per sim second.
@@ -113,6 +122,11 @@ class G1Sim(Module):
     # Named and ordered as G1WholeBodyConnection's.
     motor_states: Out[JointState]
     imu: Out[Imu]
+    # Where the robot is. The sim knows it exactly, and nothing else does: without it a viewer
+    # has no way to place the robot, so the model goes undrawn and every frame hanging off it --
+    # the Mid-360's mount among them -- is reported as missing from the tf tree.
+    odom: Out[PoseStamped]
+    tf: Out[TFMessage]
     _simulation: SimulationSpec
     _view: WorldView | None = None
     _soft_start: float | None = None
@@ -124,7 +138,7 @@ class G1Sim(Module):
             "simulated": SimulatedRobot(
                 self.config.robot_id,
                 self.mjcf,
-                "pelvis",
+                ROOT_BODY,
                 xyz=(x, y, HOME_HEIGHT),
                 servos=SERVOS,
             )
@@ -133,7 +147,7 @@ class G1Sim(Module):
     @shared_config(UsdManager)
     def urdf(self) -> dict[str, RobotModel]:
         # The MJCF's pelvis is the URDF's root, as on the real G1.
-        return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, "pelvis")}
+        return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, ROOT_BODY)}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
@@ -165,6 +179,25 @@ class G1Sim(Module):
             )
         )
 
+    def _publish_pose(self, world: "WorldMirror", robot: str, stamp: float) -> None:
+        """The robot's pose in the world, as odometry and as the tf edge to its root body.
+
+        An entity's pose is x, y, z then the quaternion as x, y, z, w -- the order a PoseStamped
+        already wants, so it goes straight through.
+        """
+        base = world.entity(robot)
+        if base is None or base.pose is None:
+            return
+        position, orientation = base.pose[:3], base.pose[3:7]
+        odom = PoseStamped(
+            ts=stamp,
+            frame_id=self.config.odom_frame_id,
+            position=position.tolist(),
+            orientation=orientation.tolist(),
+        )
+        self.tf.publish(TFMessage(Transform.from_pose(ROOT_BODY, odom)))
+        self.odom.publish(odom)
+
     async def _publish(self) -> None:
         robot, view, world = self.config.robot_id, self._view, self._world
         assert view is not None
@@ -186,6 +219,7 @@ class G1Sim(Module):
                     effort=rows[:, 2].tolist(),
                 )
             )
+            self._publish_pose(world, robot, stamp)
             view.update(world)
             gyro, accelerometer, (w, x, y, z) = view.imu(f"{robot}/imu_in_pelvis")
             self.imu.publish(
