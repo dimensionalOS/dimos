@@ -28,6 +28,8 @@ import {
 import { MAX_MANIFEST_ID_LEN, TRACK_ENCODING } from "@dimos/shared/manifest";
 
 import type { CarrierStats } from "./carrier.ts";
+import { TopicRegistry } from "./topics.ts";
+import type { TopicMsg } from "@dimos/shared";
 import {
   type ChannelPolicy,
   LatestChannel,
@@ -177,6 +179,7 @@ interface RobotEntry {
 }
 
 export class Registry {
+  readonly topics: TopicRegistry;
   #robots = new Map<string, RobotEntry>();
   #viewers = new Set<ViewerPeer>();
   #pubViewers = new Map<ViewerPeer, ViewerPubState>();
@@ -196,8 +199,13 @@ export class Registry {
 
   /** Clock injected so tests fabricate time (buckets and pending deadlines
    * are the only time-dependent state beyond stats). A null `hub` disables
-   * track channels. */
-  constructor(now: () => number = Date.now, hub: RtcBroker | null = null) {
+   * track channels; `openTopics` false disables raw topic sources. */
+  constructor(
+    now: () => number = Date.now,
+    hub: RtcBroker | null = null,
+    openTopics = true,
+  ) {
+    this.topics = new TopicRegistry(now, openTopics);
     this.#now = now;
     this.#hub = hub;
   }
@@ -247,6 +255,7 @@ export class Registry {
 
   viewerClosed(viewer: ViewerPeer): void {
     if (!this.#viewers.delete(viewer)) return;
+    this.topics.viewerClosed(viewer);
     this.#hub?.viewerClosed(viewer);
     disposePolicies(viewer);
     // Release the viewer's pending publishes silently (there is nobody left
@@ -341,6 +350,10 @@ export class Registry {
       });
       return false;
     }
+    if (msg.t.startsWith("topic_")) {
+      this.topics.onViewerMsg(viewer, msg as TopicMsg, reply);
+      return true;
+    }
     switch (msg.t) {
       case "hello": {
         if (msg.v !== PROTOCOL_VERSION) {
@@ -364,6 +377,7 @@ export class Registry {
         // channel is datagrams, so this is its loss-healing path.
         reply({ t: "welcome", v: PROTOCOL_VERSION });
         reply(this.robotsMsg());
+        if (msg.topicsVersion === 1) this.topics.addViewer(viewer, reply);
         if (this.#hub !== null) reply(this.#hub.iceMsg());
         break;
       }
@@ -779,6 +793,7 @@ export class Registry {
    * opportunistically, but an idle input stops offering; server.ts drives
    * this on an interval. Clock passed in so tests fabricate time. */
   reapAll(nowMs: number): void {
+    this.topics.reap(nowMs);
     for (const viewer of this.#viewers) {
       for (const policy of viewer.policies.values()) policy.reap(nowMs);
     }
