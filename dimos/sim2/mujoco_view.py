@@ -25,7 +25,7 @@ from numpy.typing import NDArray
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
+from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
 
 _GRAVITY = np.array([0.0, 0.0, -9.81])
 
@@ -114,9 +114,55 @@ class MujocoView:
         renderer.update_scene(self.data, camera=camera)
         return renderer.render().copy()
 
-    def raycaster(self, groups: Sequence[int]) -> MujocoRaycaster:
+    def raycaster(
+        self,
+        groups: Sequence[int],
+        mounted_at: str | None = None,
+        blind_to: Sequence[str] = (),
+    ) -> MujocoRaycaster:
+        """Rays against ``groups``; ``mounted_at`` names a frame whose own body they pass through.
+
+        A ranging sensor is bolted to something, and in a model it sits inside that something's
+        collision hull rather than proud of its surface -- a hull is a few convex shapes around
+        a shape that is neither. Cast against collision geometry without saying so and every
+        ray, in every direction, returns the mount a couple of centimetres away; a sensor that
+        drops returns inside its blind range then reports nothing at all.
+
+        Excluding the one body the sensor is mounted on says only "a sensor does not see its own
+        housing", which is true of every sensor on every robot and needs no distance picked by
+        hand. Everything else stays visible, the arms and legs hanging off that mount included.
+
+        ``blind_to`` names any further frames to ignore, for the cases that rule does not cover:
+        a radome, a mast the sensor looks past, a wall a test wants out of the way. MuJoCo can
+        exclude one body from a cast, so these are moved instead to a geom group the cast does
+        not read -- in this view's own model, and a geom's group is a label it selects and draws
+        by, never one it simulates by.
+        """
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
-        return MujocoRaycaster(self.model, self.data, mask)
+        for frame in blind_to or ():
+            self._hide_from_rays(self._mount(frame), groups)
+        mount = NO_BODY_EXCLUDED if mounted_at is None else self._mount(mounted_at)
+        return MujocoRaycaster(self.model, self.data, mask, mount)
+
+    def _hide_from_rays(self, body: int, groups: Sequence[int]) -> None:
+        """Move ``body``'s geoms to a group ``groups`` leaves out, so rays pass through it."""
+        spare = next((g for g in range(mujoco.mjNGROUP) if g not in groups), None)
+        if spare is None:
+            raise ValueError(
+                f"a cast over every geom group ({sorted(groups)}) leaves nowhere to put a frame "
+                f"it is meant to be blind to"
+            )
+        start = int(self.model.body_geomadr[body])
+        self.model.geom_group[start : start + int(self.model.body_geomnum[body])] = spare
+
+    def _mount(self, frame: str) -> int:
+        """The body ``frame`` is attached to."""
+        kind, index = self._frame(frame)
+        if kind == mujoco.mjtObj.mjOBJ_SITE:
+            return int(self.model.site_bodyid[index])
+        if kind == mujoco.mjtObj.mjOBJ_CAMERA:
+            return int(self.model.cam_bodyid[index])
+        return int(index)
 
     def close(self) -> None:
         for renderer in self._renderers.values():
