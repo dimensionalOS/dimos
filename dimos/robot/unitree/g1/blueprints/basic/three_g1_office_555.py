@@ -185,6 +185,15 @@ scene_manager = UsdManager.blueprint(
     # Its own three joints are fixed and go out as tf, so every frame in the stage it serves is
     # one tf can place. The robots' joints stay with the managers that own them.
     mounts={name: _manager_name(blueprint) for name, blueprint in _robots.items()},
+    # It is a scene, not a robot: its frames are the world's and take no prefix. Set here rather
+    # than left out, because namespace() below would otherwise fill it in.
+    frame_id_prefix="",
+).namespace(
+    # A namespace of its own, for one reason: a manager outside every namespace hears
+    # @shared_config(UsdManager) from all three robots and refuses, having been handed four
+    # models when it answers for one. The topics a viewer reaches it on stay unnamespaced.
+    "scene",
+    expose={"render_file_request", "file_info", "tf"},
 )
 
 three_g1_office_555 = autoconnect(
