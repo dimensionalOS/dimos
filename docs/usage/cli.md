@@ -507,5 +507,5 @@ dimos rerun-bridge --help
 | Path | Contents |
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
-| `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
+| `logs/<run-id>/main.jsonl` (Git checkout) or `~/.local/state/dimos/logs/<run-id>/main.jsonl` (installed package) | Structured logs (main process + all workers) |
 | `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |

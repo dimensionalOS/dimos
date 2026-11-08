@@ -63,7 +63,7 @@ def chat_lines(msg: BaseMessage, ts: float) -> list[dict[str, Any]]:
     elif isinstance(msg, AIMessage):
         lines = [{"role": "ai", "text": text}]
         for call in msg.tool_calls:
-            args = json.dumps(call["args"], separators=(",", ":"))
+            args = json.dumps(call["args"], separators=(",", ":"), ensure_ascii=False)
             lines.append({"role": "ai", "tool": call["name"], "text": f"{call['name']}({args})"})
     elif isinstance(msg, ToolMessage):
         lines = [{"role": "tool", "tool": msg.name or "tool", "text": text}]
