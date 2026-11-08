@@ -261,6 +261,7 @@ web = [
     "watchfiles>=1.0",  # the dimos gateway's file watchers
     "jinja2>=3.1.6",
     "av>=16.1",  # browser audio decode (stream/audio/decode.py)
+    "mcap>=1.2",  # the gateway reads .mcap recordings (upload manifest, console preview)
     "soundfile",
     "aioquic>=1.2.0",  # WebTransport client for the cockpit relay bridge
 ]
