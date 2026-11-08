@@ -26,8 +26,10 @@ from dimos.robot.assets.usd import (
     asset_hash,
     graft_usd,
     require_asset_hashes,
+    trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
+    usd_with_frames,
 )
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
@@ -319,6 +321,54 @@ def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
         assert joint.GetAttribute(attribute).Get() == Gf.Vec3f(0.0, 0.0, 0.0)
     for attribute in ("physics:localRot0", "physics:localRot1"):
         assert joint.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
+
+
+def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
+    """A converted room arrives with frames for its own furniture and none for its visitors.
+
+    Three robots standing in one need three frames, because grafting two subtrees at one frame
+    is refused, so the scene has to be able to grow them.
+    """
+    root = urdf_to_usd(toy)
+
+    grown = usd_with_frames(root, {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
+    stage = _stage(graft_usd(grown, {"spot": urdf_to_usd(toy, name="arm_sub")}))
+
+    assert _prim_by_link(stage, "spot"), "the frame is a link, so graft_usd can match it"
+    assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
+
+
+def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
+    with pytest.raises(ValueError, match="is taken"):
+        usd_with_frames(
+            urdf_to_usd(toy), {"mount": ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
+        )
+
+
+def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
+    with pytest.raises(ValueError, match="no frame 'nowhere'"):
+        usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+
+
+def test_trivializing_keeps_the_lights_and_drops_the_shapes(toy: Any) -> None:
+    """A light is not a shape.
+
+    It is how the scene looks, and the one thing a viewer cannot work out for itself: told
+    none, it has to invent some, and a room that says what its sky is gets lit by a guess.
+    Dropping them with the geometry meant a scene could not hand over its lighting without
+    handing over its meshes too.
+    """
+    lit = urdf_to_usd(toy).replace(
+        'def Xform "toy"\n{',
+        'def Xform "toy"\n{\n    def DomeLight "sky"\n    {\n'
+        "        color3f inputs:color = (0.4, 0.6, 0.9)\n    }\n",
+    )
+    assert 'def DomeLight "sky"' in lit, "the fixture has to actually carry a light"
+
+    lean = trivialize_usd(lit)
+
+    assert 'def DomeLight "sky"' in lean, "the sky survives"
+    assert "def Mesh " not in lean and "def Cube " not in lean, "the shapes do not"
 
 
 def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
