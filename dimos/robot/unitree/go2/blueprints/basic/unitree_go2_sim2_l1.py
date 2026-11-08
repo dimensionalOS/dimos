@@ -18,7 +18,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.sim2 import Go2Sim
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
@@ -28,7 +28,7 @@ unitree_go2_sim2_l1 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    UrdfManager.blueprint().remappings([(UrdfManager, "coordinator_joint_state", "joint_state")]),
+    UsdManager.blueprint().remappings([(UsdManager, "coordinator_joint_state", "joint_state")]),
     SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame),
     SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame),
 ).global_config(n_workers=6, robot_model="unitree_go2")
