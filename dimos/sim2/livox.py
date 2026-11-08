@@ -47,8 +47,14 @@ class LivoxSimConfig(ModuleConfig):
     imu_frame_id: str = "imu_link"
     rate_hz: float = 10.0
     imu_rate_hz: float = 200.0
-    # Robots' meshes sit outside group 0, so the default sees only the scene, and stays cheap.
-    geom_groups: tuple[int, ...] = (0,)
+    # A lidar sees whatever a body would walk into, so these are the groups MuJoCo's own
+    # convention puts collision geometry in: 0, where a hand-written scene's planes and boxes
+    # go, and 3, where a converted one's collision meshes and every robot's do. Group 1 is left
+    # out because it holds visual-only meshes (contype 0) -- drawing a desk is not the same as
+    # being able to hit it. Seeing only group 0 was the old default: in office_555 that is 354
+    # geoms out of 4138, so the beam passed straight through every desk, chair and robot and
+    # returned the wall behind them.
+    geom_groups: tuple[int, ...] = (0, 3)
     # The Go2 rig's mount blocks some directions; only meaningful when mounted on a Go2.
     go2_occlusion: bool = False
     seed: int = 0
