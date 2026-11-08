@@ -39,6 +39,8 @@ if TYPE_CHECKING:
 
     from dimos.robot.assets.model import JointDescription, LoadedRobotModel
 
+Vector = tuple[float, float, float]
+
 logger = setup_logger()
 
 # No single position, and no UsdPhysics equivalent: their pose comes from odometry.
@@ -213,6 +215,44 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
     return str(root_layer.ExportToString())
 
 
+def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) -> str:
+    """``usd`` with each named frame added as a link on the frame it hangs off.
+
+    The USD counterpart of ``mjcf_with_frames``. A scene needs somewhere to mount things that
+    are not part of it -- three robots standing in a room need three frames, because grafting
+    two subtrees at one frame is refused and rightly so -- and a converted room arrives with
+    frames for its own furniture and none for its visitors.
+
+    Each value is ``(parent frame, xyz, rpy)``. The frame becomes a prim carrying
+    RigidBodyAPI, which is what makes it a link to everything that reads this layer: graft_usd
+    matches a mount frame on it, and the viewer places it from tf like any other.
+    """
+    if not frames:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a scene")
+    stage = pxr.Usd.Stage.Open(layer)
+    by_link = _link_prim_paths(stage)
+    for name, (parent, xyz, rpy) in frames.items():
+        parent_path = by_link.get(parent)
+        if parent_path is None:
+            raise ValueError(
+                f"cannot add the frame {name!r}: the layer has no frame {parent!r} to hang it "
+                f"off (it has {sorted(by_link)[:8]}...)"
+            )
+        path = pxr.Sdf.Path(parent_path).AppendChild(_identifier(pxr, name))
+        if stage.GetPrimAtPath(path):
+            raise ValueError(f"cannot add the frame {name!r}: {path} is taken")
+        prim = pxr.UsdGeom.Xform.Define(stage, path)
+        pxr.UsdPhysics.RigidBodyAPI.Apply(prim.GetPrim())
+        prim.GetPrim().SetDisplayName(name)
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
+        transform[:3, 3] = xyz
+        prim.AddTransformOp().Set(_matrix(pxr, transform))
+    return str(layer.ExportToString())
+
+
 def prefix_usd_frames(usd: str, prefix: str) -> str:
     """``usd`` with every link and joint name it carries moved under ``prefix``.
 
@@ -249,7 +289,7 @@ def usd_frame_names(usd: str) -> set[str]:
 
 
 def trivialize_usd(usd: str) -> str:
-    """``usd`` with every link and joint kept, and everything they carry dropped.
+    """``usd`` with every link, joint and light kept, and the shapes they carry dropped.
 
     The same description serves a robot on real hardware and a simulated one, but only the sim
     needs the shapes: on a real robot the geometry is the world itself. So this keeps the
@@ -257,6 +297,11 @@ def trivialize_usd(usd: str) -> str:
     mount point are -- and removes the visuals, the collision shapes and the meshes they
     reference. The frames come out identical either way, so one description can be the only
     one rather than a trivial second copy that drifts from it.
+
+    Lights stay. A light is not a shape: it is how the scene looks, and it is the one thing a
+    viewer cannot work out for itself -- told none, it has to invent some, and a room that said
+    what its sky and its eighteen ceiling fittings are gets lit by a guess instead. Keeping them
+    is what lets a scene hand over its lighting without handing over its geometry twice.
     """
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a layer")
@@ -275,14 +320,22 @@ def trivialize_usd(usd: str) -> str:
         return usd
     for path in doomed:
         spec = layer.GetPrimAtPath(path)
-        if spec is not None:
+        # A prim at the layer's own root has no nameParent to be removed from -- a converted
+        # scene keeps its materials and its render settings up there beside the room. Those are
+        # not geometry hanging off a frame, and removing one is the layer's business, not ours.
+        if spec is not None and spec.nameParent is not None:
             del spec.nameParent.nameChildren[spec.name]
     return str(layer.ExportToString())
 
 
 def _holds_a_frame(pxr: Any, prim: Any) -> bool:
-    """True when ``prim`` or anything under it is a link or a joint."""
+    """True when ``prim`` or anything under it is a link, a joint, or a light."""
     if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+        return True
+    # By type name rather than UsdLux.LightAPI, which _pxr does not carry: this is the same test
+    # the viewer makes, and it covers DomeLight, DistantLight, SphereLight, DiskLight and RectLight
+    # without naming each one.
+    if str(prim.GetTypeName()).endswith("Light"):
         return True
     return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
 
