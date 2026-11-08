@@ -178,17 +178,22 @@ def new_upload(
     }
 
 
-def account() -> dict[str, Any]:
-    key = cloud.api_key()
-    base = CloudConfig().url.rstrip("/")
-    result: dict[str, Any] = {
+def no_account(error: str | None = None) -> dict[str, Any]:
+    """The logged-out answer, optionally saying why it couldn't be read."""
+    return {
         "loggedIn": False,
         "email": None,
         "scopes": None,
         "source": None,
-        "cloudUrl": base,
-        "error": None,
+        "cloudUrl": CloudConfig().url.rstrip("/"),
+        "error": error,
     }
+
+
+def account() -> dict[str, Any]:
+    key = cloud.api_key()
+    base = CloudConfig().url.rstrip("/")
+    result: dict[str, Any] = no_account()
     if not key:
         return result
     result.update(loggedIn=True, source="env" if CloudConfig().api_key else "stored")
@@ -209,6 +214,33 @@ def account() -> dict[str, Any]:
     except OSError as error:
         return {**result, "error": f"Couldn't reach Dimensional cloud: {error}"}
     return {**result, "email": who.get("email"), "scopes": who.get("scopes")}
+
+
+class Cancel:
+    """A cancel signal both sides can see: the worker thread polls it, the event loop waits on it.
+
+    The loop needs its own half because a transfer can block somewhere it never looks at the flag
+    — the OS keyring, a socket with no timeout — and a cancel that only the worker can notice is
+    no cancel at all. Set from the loop thread; a worker never cancels its own upload.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.flag = threading.Event()
+        self.asked = asyncio.Event()
+
+    def set(self) -> None:
+        self.flag.set()
+        try:
+            self.loop.call_soon_threadsafe(self.asked.set)
+        except RuntimeError:  # the loop has already closed (shutdown): the flag is all that's left
+            pass
+
+    def is_set(self) -> bool:
+        return self.flag.is_set()
+
+    async def wait(self) -> None:
+        await self.asked.wait()
 
 
 class Uploads:
@@ -237,13 +269,15 @@ class Uploads:
         self.rates: dict[str, Rate] = {}
         self.wake = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.running: tuple[str, threading.Event] | None = None
+        self.running: tuple[str, Cancel] | None = None
         self.login: dict[str, Any] = dict(IDLE_LOGIN)
         self.login_cancel: threading.Event | None = None
         # held while a login attempt checks it is still current and stores its key, and while one is cancelled
         self.login_lock = threading.RLock()
         self.login_changed = threading.Event()
         self.account_cache: tuple[float, dict[str, Any]] | None = None
+        # the account lookup in flight, shared by every caller waiting on one
+        self.account_call: asyncio.Future[dict[str, Any]] | None = None
         self.stopping = False
 
     def get(self, id: str) -> dict[str, Any] | None:
@@ -359,11 +393,37 @@ class Uploads:
         cached = self.account_cache
         if not fresh and cached and time.monotonic() - cached[0] < constants.ACCOUNT_CACHE_S:
             return cached[1]
-        value = await asyncio.to_thread(account)
+        value = await self._look_up_account()
+        if value is None:
+            return no_account("Couldn't read this machine's cloud login; see the gateway log.")
         self.account_cache = (time.monotonic(), value)
         if value["loggedIn"]:
             self.logged_in()
         return value
+
+    async def _look_up_account(self) -> dict[str, Any] | None:
+        """One account lookup at a time, with a deadline; None when it didn't answer.
+
+        Reading the login touches the OS keyring, which can stall (a locked keyring waits on
+        an unlock prompt). Answering late is a nuisance; a request that never answers at all is
+        a wedged page, and one in-flight lookup per poll would queue the whole thread pool
+        behind the same stall — so callers share the lookup and all of them give up together.
+        """
+        if self.account_call is None or self.account_call.done():
+            self.account_call = asyncio.ensure_future(asyncio.to_thread(account))
+            # everyone may have given up on it by the time it fails; await still raises for
+            # whoever is still there, this only keeps asyncio from logging it as unretrieved
+            self.account_call.add_done_callback(lambda t: t.cancelled() or t.exception())
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(self.account_call), constants.ACCOUNT_TIMEOUT_S
+            )
+        except TimeoutError:
+            logger.warning(
+                "reading the cloud login didn't answer in time",
+                timeout_s=constants.ACCOUNT_TIMEOUT_S,
+            )
+            return None
 
     def announce_account(self, value: dict[str, Any]) -> dict[str, Any]:
         """Cache a just-changed account and tell the clients."""
@@ -537,7 +597,7 @@ class Uploads:
         self.save()
         self.emit(dict(upload))
         assert self.loop is not None
-        loop, cancel, started = self.loop, threading.Event(), time.monotonic()
+        loop, cancel, started = self.loop, Cancel(self.loop), time.monotonic()
         self.running = (id, cancel)
         last_phase, last_emit = "", -1.0
         # taken before the transfer reads the file, so one that grows meanwhile reads as changed afterwards
@@ -558,10 +618,25 @@ class Uploads:
                 raise CancelledUploadError()
             loop.call_soon_threadsafe(progress, phase, done, total)
 
-        try:
-            result = await asyncio.to_thread(
+        transfer = asyncio.ensure_future(
+            asyncio.to_thread(
                 self._transfer, upload["path"], upload["robotId"], upload["kind"], tick
             )
+        )
+        asked = asyncio.ensure_future(cancel.wait())
+        try:
+            await asyncio.wait({transfer, asked}, return_when=asyncio.FIRST_COMPLETED)
+            if not transfer.done():
+                # Cancelled. First give the transfer its grace to notice the flag and unwind, so
+                # one in its last stretch still reports the upload id the cloud now holds.
+                await asyncio.wait({transfer}, timeout=constants.UPLOAD_CANCEL_GRACE_S)
+            if not transfer.done():
+                # Still going: it is blocked somewhere it can never read the flag, so stop waiting
+                # for the thread and let it finish into nothing. tick() raises as soon as it
+                # reports again, and record_progress ignores an upload that is no longer uploading.
+                transfer.add_done_callback(lambda t: t.cancelled() or t.exception())
+                raise CancelledUploadError()
+            result = transfer.result()
             # TODO(core): CloudData.upload should take a cancel signal through completion and preview
             if cancel.is_set():
                 raise CancelledUploadError(result.get("upload_id"))
@@ -603,6 +678,7 @@ class Uploads:
                 updated = self.update(
                     id, state="failed", error=message, errorCode=code, finishedAt=now_ms()
                 )
+        asked.cancel()
         self.running = None
         if self.stopping:
             return
