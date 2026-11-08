@@ -176,10 +176,14 @@ class G1Chassis:
         d = self.data
         # The actor wants linear velocity in the base frame; qvel holds it in the world frame.
         rotation = d.xmat[self.trunk].reshape(3, 3)
+        # The body's own world orientation, not its free joint's value. The two differ by one
+        # integration substep -- `mj_step` computes xquat from qpos and then advances qpos -- so
+        # reading gravity from qpos and the rotation from xmat mixed a fresh orientation with a
+        # stale one, about 0.1 degrees apart. One source, and it is the one an IMU would report.
         return G1Proprioception(
             linear_velocity=rotation.T @ d.qvel[self.base.linear_velocity],
             angular_velocity=d.qvel[self.base.angular_velocity].copy(),
-            gravity=projected_gravity(d.qpos[self.base.orientation]),
+            gravity=projected_gravity(d.xquat[self.trunk]),
             joint_position=d.qpos[self._qpos_adr].copy(),
             joint_velocity=d.qvel[self._dof_adr].copy(),
         )

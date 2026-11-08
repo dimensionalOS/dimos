@@ -30,6 +30,7 @@ from dimos.simulation.g1_sim.policy import G1Policy
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sensors.mid360.lidar import HOUSING_HALF_EXTENTS, sim_mid360
 from dimos.simulation.sim_world.body import BodyShape, Rig, Sensor
+from dimos.simulation.sim_world.mujoco_sim import MujocoSim
 from dimos.simulation.sim_world.world import Sim, SimWorld, SimWorldConfig
 
 WORLD_FRAME = "odom"
@@ -121,3 +122,14 @@ class SimG1World(SimWorld):
 
     def _build(self, scene: Scene, seed: int) -> Sim:
         return Sim(scene, seed, self.rig, partial(LeggedG1, policy=self._policy))
+
+
+class SimG1Many(MujocoSim):
+    """A generated scene with several G1s in it, each driven by its own G1Sim module.
+
+    The world and the actors are separate processes' worth of work: this one owns the model and
+    steps it, and every robot's walking actor lives in the module that publishes that robot's
+    frames. See `MujocoSim` for the lockstep the two keep.
+    """
+
+    rig = G1_RIG
