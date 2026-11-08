@@ -207,6 +207,21 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
     return str(root_layer.ExportToString())
 
 
+def warm_usd() -> None:
+    """Load the USD bindings, on this thread, before anything uses them from several.
+
+    Importing `pxr` once behind a lock is not enough: pxr pulls its own submodules in lazily
+    from inside C code, the first time a layer is read rather than at import. Two threads
+    reaching that at the same instant wedge on CPython's per-module import lock, and the module
+    they belong to stops answering anything at all without raising. Reading one tiny layer here
+    walks the same path once, on one thread, so the pool that follows finds it all loaded.
+    """
+    pxr = _pxr()
+    layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
+    layer.ImportFromString('#usda 1.0\n(\n    defaultPrim = "warm"\n)\n\ndef Xform "warm"\n{\n}\n')
+    list(pxr.Usd.Stage.Open(layer).Traverse())
+
+
 def _layer_from(pxr: Any, usd: str, what: str) -> Any:
     layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
     if not layer.ImportFromString(usd):
