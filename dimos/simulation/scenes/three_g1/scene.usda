@@ -16,13 +16,25 @@ def Xform "stage" (
     prepend apiSchemas = ["PhysicsRigidBodyAPI"]
 )
 {
-    def Cube "floor" (
+    # Two shapes, not one, the way a URDF link states a <visual> and a <collision> separately.
+    # A renderer draws the visuals; the collision shape is the one carrying PhysicsCollisionAPI
+    # and is deliberately not drawn. A floor with only the collision half is invisible.
+    def Cube "visual_0"
+    {
+        double size = 1
+        color3f[] primvars:displayColor = [(0.25, 0.25, 0.28)]
+        double3 xformOp:translate = (0, 0, -0.01)
+        float3 xformOp:scale = (8, 8, 0.02)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Cube "collision_0" (
         prepend apiSchemas = ["PhysicsCollisionAPI"]
     )
     {
         double size = 1
-        float3 xformOp:scale = (8, 8, 0.02)
         double3 xformOp:translate = (0, 0, -0.01)
+        float3 xformOp:scale = (8, 8, 0.02)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
     }
 
