@@ -54,6 +54,7 @@ keyboard_teleop_a750 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
+        gripper_tasks={"manipulator": "arm_gripper"},
         model=_a750_model,
         visualization={"backend": "viser"},
     ),

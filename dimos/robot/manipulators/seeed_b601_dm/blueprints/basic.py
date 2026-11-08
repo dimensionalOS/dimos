@@ -14,37 +14,67 @@
 
 """Basic Seeed B601-DM coordinator and planner blueprints.
 
-Mock hardware by default. Pass ``--can-port`` with the Damiao USB-CAN
-bridge's serial port or a SocketCAN interface to drive the real arm.
+The arm runs on its direct Damiao connection: ``--can-port`` takes the Damiao
+USB-CAN bridge's serial port or a SocketCAN interface. ``--simulation``
+composes a ``MockJointConnection`` instead and never opens a bus.
 """
 
 from __future__ import annotations
 
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    arm_connection,
+    arm_remaps,
+)
 from dimos.robot.manipulators.seeed_b601_dm.config import (
     b601_dm_gripper_task,
     b601_dm_model_config,
 )
+from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
 from dimos.robot.manipulators.seeed_b601_dm.coordinator import SeeedB601DMCoordinator
 from dimos.robot.manipulators.seeed_b601_dm.joints import B601_DM_ARM_JOINTS
 
+B601_DM_PLANNING_MODEL = b601_dm_model_config(robot="arm")
+
+
+def _tasks() -> list[TaskConfig]:
+    return [
+        joint_trajectory_task([f"arm/{name}" for name in B601_DM_ARM_JOINTS]),
+        b601_dm_gripper_task(),
+    ]
+
+
+def seeed_b601_dm_control_blueprint() -> Blueprint:
+    """Trajectories and gripper control over the direct connection."""
+    return autoconnect(
+        SeeedB601DMCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            model=B601_DM_PLANNING_MODEL.model,
+            tasks=_tasks(),
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(B601DMConnection),
+    ).remappings(arm_remaps(B601DMConnection, SeeedB601DMCoordinator))
+
+
+def seeed_b601_dm_control() -> Blueprint:
+    """Trajectories and gripper control over the direct connection."""
+    return seeed_b601_dm_control_blueprint().remappings([])
+
+
 seeed_b601_dm_planner_coordinator = autoconnect(
     planner(
-        model=b601_dm_model_config(),
+        gripper_tasks={"manipulator": "b601_dm_gripper"},
+        model=B601_DM_PLANNING_MODEL,
         visualization={"backend": "viser"},
         trajectory_parametrization={
             "backend": "simple_trapezoid",
         },
     ),
-    SeeedB601DMCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[joint_trajectory_task(list(B601_DM_ARM_JOINTS)), b601_dm_gripper_task()],
-    ),
+    seeed_b601_dm_control_blueprint(),
 )
 
-coordinator_seeed_b601_dm = SeeedB601DMCoordinator.blueprint(
-    instance_name="ControlCoordinator",
-    tasks=[joint_trajectory_task(list(B601_DM_ARM_JOINTS)), b601_dm_gripper_task()],
-)
+coordinator_seeed_b601_dm = seeed_b601_dm_control_blueprint().remappings([])
