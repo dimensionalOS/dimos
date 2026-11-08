@@ -42,6 +42,7 @@ logger = setup_logger()
 _READY_TIMEOUT = 10.0
 _DEFAULT_ENCODING_THREADS = 4
 _READY_MESSAGE = "memory recorder ready"
+_BUILD_LOG_TAIL = 20
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,7 @@ def prepare_rust_recorder() -> Path:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    output: deque[str] = deque(maxlen=20)
+    output: deque[str] = deque(maxlen=_BUILD_LOG_TAIL)
     for raw in process.stdout:
         line = raw.decode("utf-8", errors="replace").rstrip()
         if line:
@@ -215,10 +216,13 @@ class RustRecordingSession:
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }
+        log_level = os.environ.get("DIMOS_LOG_LEVEL", "info").lower()
+        # Readiness is an INFO event; retain DEBUG/TRACE diagnostics when requested.
+        recorder_level = log_level if log_level in {"debug", "trace"} else "info"
         env = {
             **os.environ,
             "DIMOS_TRANSPORT": self.plan.backend,
-            "RUST_LOG": os.environ.get("DIMOS_LOG_LEVEL", "info").lower(),
+            "RUST_LOG": f"{log_level},dimos_memory_recorder={recorder_level}",
         }
         if self.plan.lcm_url is not None:
             env["LCM_DEFAULT_URL"] = self.plan.lcm_url

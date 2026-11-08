@@ -163,6 +163,7 @@ impl RecorderEngine {
         let (failure_tx, failure_rx) = bounded(1);
         let worker_count = u32::try_from(config.encoding_threads)
             .context("encoding thread count exceeds the supported range")?;
+        let store = store::open(&config.store, &config.streams, config.encoding_threads)?;
         let pool = worker_pool(worker_count);
         let submission = Arc::new(Mutex::new(Some(Submission {
             pool,
@@ -175,11 +176,10 @@ impl RecorderEngine {
             sequence: Arc::new(AtomicU64::new(0)),
         };
 
-        let writer_config = config.clone();
         let writer = thread::Builder::new()
             .name("mem2-writer".to_string())
             .spawn(move || {
-                let result = writer_loop(writer_config, write_rx, permit_rx);
+                let result = writer_loop(store, write_rx, permit_rx);
                 if let Err(error) = &result {
                     let _ = failure_tx.send(format!("{error:#}"));
                 }
@@ -355,12 +355,10 @@ impl Module for MemoryRecorder {
 }
 
 fn writer_loop(
-    config: RecorderConfig,
+    mut store: Box<dyn RecordingStore>,
     receiver: Receiver<EncodedBatch>,
     permits: Receiver<()>,
 ) -> Result<WriterStats> {
-    let mut store = store::open(&config.store, &config.streams, config.encoding_threads)?;
-
     let mut pending = BTreeMap::new();
     let mut ready = Vec::with_capacity(WRITE_BATCH_SIZE);
     let mut next_sequence = 0;
@@ -609,8 +607,8 @@ mod tests {
         };
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
-        let writer_config = config.clone();
-        let writer = thread::spawn(move || writer_loop(writer_config, receiver, permit_receiver));
+        let store = store::open(&config.store, &config.streams, config.encoding_threads).unwrap();
+        let writer = thread::spawn(move || writer_loop(store, receiver, permit_receiver));
         for sequence in [1, 0, 2] {
             permit_sender.send(()).unwrap();
             sender
@@ -752,6 +750,26 @@ mod tests {
         assert_eq!(message.log_time, 13_000_000_000);
         assert_eq!(message.publish_time, 12_500_000_000);
         assert_eq!(message.data.as_ref(), encoded);
+    }
+
+    #[test]
+    fn invalid_store_fails_before_engine_start_returns() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = RecorderConfig {
+            store: store::RecordingStoreConfig::Mcap {
+                path: directory.path().to_string_lossy().into_owned(),
+            },
+            encoding_threads: 1,
+            streams: vec![],
+        };
+        let error = match RecorderEngine::start(config) {
+            Err(error) => error,
+            Ok(engine) => {
+                let _ = engine.shutdown();
+                panic!("engine reported success before opening the store");
+            }
+        };
+        assert!(error.to_string().contains("failed to create"));
     }
 
     #[test]
