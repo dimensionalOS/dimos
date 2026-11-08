@@ -38,6 +38,7 @@ class MujocoView:
             d.robot_id for d in description["simulated"] if isinstance(d, SimulatedRobot)
         }
         self._joints: dict[str, int] = {}
+        self._robot_roots: dict[str, int] = {}
         self.data = mujoco.MjData(self.model)
         mujoco.mj_kinematics(self.model, self.data)
         self._frames: dict[str, tuple[int, int]] = {}
@@ -159,8 +160,14 @@ class MujocoView:
         return self._joints[name]
 
     def _root(self, robot_id: str) -> int:
-        bodies = [b for b in range(1, self.model.nbody) if self.model.body_parentid[b] == 0]
-        return next(b for b in bodies if self.model.body(b).name.startswith(f"{robot_id}/"))
+        # Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading
+        # this 200 times a second would otherwise rescan every body in the scene each time.
+        if robot_id not in self._robot_roots:
+            bodies = [b for b in range(1, self.model.nbody) if self.model.body_parentid[b] == 0]
+            self._robot_roots[robot_id] = next(
+                b for b in bodies if self.model.body(b).name.startswith(f"{robot_id}/")
+            )
+        return self._robot_roots[robot_id]
 
     def _pose_entity(self, entity: Entity, body: int) -> None:
         model, data = self.model, self.data
