@@ -21,6 +21,7 @@ from pytest_mock import MockerFixture
 
 from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.assets.model as robot_model
+from dimos.robot.assets.model import UsdModel
 from dimos.utils.data import LfsPath
 
 
@@ -998,3 +999,25 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
     transferred_joint = decode(encode(limited)).load().get_joint("arm/slide")
     assert transferred_joint is not None
     assert transferred_joint.velocity == 0.2
+
+
+def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
+    """A blueprint is built wherever it is imported, which is not always a machine with usd-core.
+
+    So adding a frame to a scene has to wait for the layer to be asked for, like reading it does.
+    """
+    scene = tmp_path / "room.usda"
+    model = UsdModel.from_file(scene).with_frames(
+        {"spot": ("room", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+
+    # Nothing has touched the file: the model is only a description of what to read.
+    assert not scene.exists()
+
+    scene.write_text(
+        '#usda 1.0\n(\n    defaultPrim = "room"\n)\n\n'
+        'def Xform "room" (prepend apiSchemas = ["PhysicsRigidBodyAPI"])\n{\n}\n'
+    )
+    pytest.importorskip("pxr")
+
+    assert 'displayName = "spot"' in model.usd
