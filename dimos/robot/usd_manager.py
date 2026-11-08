@@ -46,6 +46,7 @@ from dimos.robot.assets.usd import (
     resolve_usd_assets,
     trivialize_usd,
     usd_frame_names,
+    warm_usd,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -444,6 +445,11 @@ class UsdManager(Module):
         if not mounts:
             self._check_renames_matched(self._matched_own_renames())
             return {}
+        # Before the gather, not inside it: each subtree is read and hashed on its own thread,
+        # and the USD bindings finish loading themselves the first time a layer is read. Several
+        # threads reaching that together deadlock in the import machinery, and this manager then
+        # answers nothing, for ever, without raising.
+        await asyncio.to_thread(warm_usd)
         results = await asyncio.gather(
             *(self._subtree(frame_id, mount, chain) for frame_id, mount in mounts.items())
         )
