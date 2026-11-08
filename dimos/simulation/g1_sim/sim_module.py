@@ -46,6 +46,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.unitree.g1.model import G1_MODEL, G1_USD
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.simulation.g1_sim.body import LeggedG1
 from dimos.simulation.g1_sim.policy import G1Policy, G1Proprioception
@@ -94,6 +95,17 @@ class G1Sim(Module):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
         self.register_disposable(Disposable(self.sim_odom.subscribe(self._on_odom)))
         self.register_disposable(Disposable(self.sim_state.subscribe(self._on_state)))
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: this robot's layer, for a UsdManager mounting it into a scene.
+
+        The same answer `G1UsdSource` gives, from the module that is already this robot -- so a
+        simulated G1 is one module rather than two that have to agree about which robot they
+        are. The manager grafts it under the scene's root and the sim's tf places it, exactly
+        as a real robot's description and odometry do.
+        """
+        return [str(Path(G1_USD).parent), G1_MODEL.usd]
 
     @property
     def _child(self) -> str:
