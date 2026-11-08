@@ -38,7 +38,7 @@ def _gripper_task() -> TaskConfig:
 
 
 a1z_planner_coordinator = autoconnect(
-    planner(model=make_a1z_model_config()),
+    planner(model=make_a1z_model_config(), gripper_tasks={"manipulator": "arm_gripper"}),
     coordinator(
         hardware=[_a1z_planner_hw],
         tasks=[trajectory_task(_a1z_planner_hw), _gripper_task()],

@@ -19,9 +19,10 @@ failure path directly.
 """
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import socket
 import threading
 import time
 from typing import Any
@@ -65,6 +66,46 @@ from dimos.web.relay_bridge.wt_client import (
     RelayRejectedError,
     fetch_relay_info,
 )
+
+
+@pytest.mark.parametrize(
+    ("address", "burst"),
+    [("127.0.0.1", 32), ("::1", 32), ("192.0.2.1", 16)],
+)
+async def test_packet_tuning_follows_resolved_peer_address(
+    address: str, burst: int, mocker: MockerFixture
+) -> None:
+    loop = asyncio.get_running_loop()
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    mocker.patch.object(
+        loop,
+        "getaddrinfo",
+        return_value=[(family, socket.SOCK_DGRAM, 0, "", (address, 443))],
+    )
+    socket_transport = mocker.Mock()
+
+    async def endpoint(
+        factory: Callable[[], SessionProtocol], **kwargs: Any
+    ) -> tuple[asyncio.DatagramTransport, SessionProtocol]:
+        assert kwargs["remote_addr"] == (address, 443)
+        session = factory()
+        mocker.patch.object(session, "connect")
+        mocker.patch.object(session, "wait_connected")
+        mocker.patch.object(session, "close")
+        mocker.patch.object(session, "wait_closed")
+        return socket_transport, session
+
+    mocker.patch.object(loop, "create_datagram_endpoint", side_effect=endpoint)
+    async with wt_client._quic_connect(
+        "relay.example", 443, configuration=make_quic_configuration(insecure=False)
+    ) as session:
+        # Never larger: the relay reads at most 1472 bytes per datagram on macOS.
+        assert session._quic.configuration.max_datagram_size == 1200
+        assert session._quic.configuration.server_name == "relay.example"
+        session._quic._loss._pacer.update_rate(12_000_000, 0.001)
+        pacer = session._quic._loss._pacer
+        assert pacer.packet_time and pacer.bucket_max / pacer.packet_time == burst
+    socket_transport.close.assert_called_once()
 
 
 class StubSession:
