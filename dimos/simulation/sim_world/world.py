@@ -168,6 +168,35 @@ def _dress(spec: mujoco.MjSpec) -> None:
     spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
 
 
+def light_indoors(spec: mujoco.MjSpec) -> None:
+    """Three lights for a room with a ceiling, since a converted scene arrives with none.
+
+    A generated scene gets `_dress`'s single sun, which is right for somewhere with a sky. A
+    room is not that: one directional light leaves every surface facing away from it black, and
+    office_555 is mostly vertical surfaces. So a key from above and in front, a dimmer fill
+    from behind it with no shadows of its own, and a weak bounce from below for the undersides
+    of the desks -- which is what a floor does in a real room and what nothing else here
+    models.
+
+    Values are for a renderer doing plain diffuse shading, not a physical one: the three sum to
+    about 1.0 so a surface facing the key is near white and nothing is ever fully black.
+    """
+    for direction, diffuse, shadows in (
+        ((0.3, 0.2, -1.0), (0.55, 0.54, 0.52), True),
+        ((-0.5, -0.4, -0.7), (0.3, 0.3, 0.33), False),
+        ((0.0, 0.0, 1.0), (0.12, 0.12, 0.13), False),
+    ):
+        light = spec.worldbody.add_light()
+        light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
+        light.pos = (0.0, 0.0, 6.0)
+        light.dir = direction
+        light.diffuse = diffuse
+        light.specular = (0.05, 0.05, 0.05)
+        light.castshadow = shadows
+    spec.visual.headlight.ambient = (0.25, 0.25, 0.27)
+    spec.visual.headlight.diffuse = (0.15, 0.15, 0.15)
+
+
 def with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
     """The scene's boxes, lights and materials added to whatever spec is given."""
     _dress(spec)

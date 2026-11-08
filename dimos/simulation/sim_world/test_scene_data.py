@@ -123,3 +123,58 @@ def test_the_primitive_shapes_survive_the_trip(kind: str) -> None:
 
     index = _index(scene_files(model, data, "id", "odom", -1))
     assert [geom["type"] for geom in index["bodies"][0]["geoms"]] == [kind]  # type: ignore[index,union-attr]
+
+
+def _lit() -> tuple[mujoco.MjModel, mujoco.MjData]:
+    """A world with one light on it and a wall to catch it."""
+    spec = mujoco.MjSpec()
+    light = spec.worldbody.add_light()
+    light.name = "key"
+    light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
+    light.dir = [0.0, 0.0, -1.0]
+    light.diffuse = [0.6, 0.5, 0.4]
+    light.castshadow = True
+    wall = spec.worldbody.add_body()
+    wall.name = "wall"
+    wall.add_geom().size = [1.0, 0.1, 1.0]
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def test_the_scenes_own_lights_are_sent() -> None:
+    """The index always had a place for these and always sent an empty list.
+
+    So every scene arrived lit by nothing but the viewer's default, which is why a converted
+    room looked flat however much colour it had.
+    """
+    model, data = _lit()
+    index = _index(scene_files(model, data, "id", "odom", -1))
+
+    lights = [light for body in index["bodies"] for light in body["lights"]]  # type: ignore[index,union-attr]
+    assert len(lights) == 1
+    assert lights[0]["name"] == "key"
+    assert lights[0]["directional"] is True
+    assert lights[0]["castshadow"] is True
+    assert lights[0]["diffuse"] == pytest.approx([0.6, 0.5, 0.4], abs=1e-6)
+
+
+def test_a_body_that_only_carries_a_light_is_still_sent() -> None:
+    """The worldbody of a converted scene often has lights and no geometry of its own.
+
+    Bodies used to be sent only if they had geoms, so those lights went nowhere.
+    """
+    spec = mujoco.MjSpec()
+    lamp = spec.worldbody.add_body()
+    lamp.name = "lamp"
+    light = lamp.add_light()
+    light.name = "bulb"
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    index = _index(scene_files(model, data, "id", "odom", -1))
+
+    assert [body["name"] for body in index["bodies"]] == ["lamp"]  # type: ignore[index,union-attr]
+    assert [light["name"] for body in index["bodies"] for light in body["lights"]] == ["bulb"]  # type: ignore[index,union-attr]

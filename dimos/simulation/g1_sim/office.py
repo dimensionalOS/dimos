@@ -29,7 +29,7 @@ from dimos.simulation.scenes.office_555 import CLEAR_FLOOR, SCENE
 from dimos.simulation.sensors.lidar import SimLidar
 from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
 from dimos.simulation.sim_world.body import ROBOT_VISUAL_GROUP
-from dimos.simulation.sim_world.world import add_housings
+from dimos.simulation.sim_world.world import add_housings, light_indoors
 from dimos.simulation.usd_spec import load_usd_spec
 
 # the prefix the G1's elements take once attached, so nothing collides with the room's names
@@ -55,6 +55,9 @@ def office_model(at: tuple[float, float] = CLEAR_FLOOR) -> mujoco.MjSpec:
     tells you nothing about how the real room scans.
     """
     office = load_usd_spec(SCENE.resolve())
+    # The layer carries no lights -- the converter writes none and the MJCF had none either, so
+    # the room arrived lit by whatever the viewer defaulted to.
+    light_indoors(office)
     robot = g1_spec()
     # attach keeps the parent's solver settings and warns where they differ, and the parent here
     # is a room that never moves: every contact in the model is the robot's, so its own are the

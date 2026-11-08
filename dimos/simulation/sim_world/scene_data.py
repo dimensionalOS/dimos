@@ -30,6 +30,7 @@ from PIL import Image
 
 from dimos.simulation.sim_world.body import COLLISION_GROUP
 
+_DIRECTIONAL = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
 SCENE_DATA_FORMAT = "dimos.scene_data.v2"
 SCENE_FILE = "sim_scene.json"
 _GEOM_TYPES = {
@@ -86,6 +87,34 @@ def _png(model: mujoco.MjModel, texture: int) -> bytes:
     return out.getvalue()
 
 
+def _lights_by_body(model: mujoco.MjModel) -> dict[int, list[dict[str, Any]]]:
+    """Every active light in the model, grouped by the body that carries it.
+
+    The index has always had a place for these and always sent an empty list, so every scene
+    arrived lit by nothing but the viewer's default -- which is why a converted room looked
+    flat however much colour it had.
+
+    Grouped by `light_bodyid` rather than read off a per-body range, because a model has no
+    body->light index the way it has `body_geomadr` for geoms.
+    """
+    lights: dict[int, list[dict[str, Any]]] = {}
+    for light in range(model.nlight):
+        if not model.light_active[light]:
+            continue
+        lights.setdefault(int(model.light_bodyid[light]), []).append(
+            {
+                "name": model.light(light).name or f"light{light}",
+                "pos": model.light_pos[light].tolist(),
+                "dir": model.light_dir[light].tolist(),
+                "diffuse": model.light_diffuse[light].tolist(),
+                "directional": int(model.light_type[light]) == int(_DIRECTIONAL),
+                "castshadow": bool(model.light_castshadow[light]),
+                "cutoff": float(model.light_cutoff[light]),
+            }
+        )
+    return lights
+
+
 def scene_files(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -98,6 +127,7 @@ def scene_files(
     meshes: dict[str, dict[str, str]] = {}
     textures: dict[str, dict[str, Any]] = {}
     files: dict[str, bytes] = {}
+    by_body = _lights_by_body(model)
     for body in range(model.nbody):
         if body and model.body_rootid[body] == robot_root_body:
             continue
@@ -147,7 +177,8 @@ def scene_files(
                     entry["texrepeat"] = model.mat_texrepeat[material].tolist()
                     entry["texuniform"] = bool(model.mat_texuniform[material])
             geoms.append(entry)
-        if geoms:
+        lights = by_body.get(body, [])
+        if geoms or lights:
             name = model.body(body).name or "world"
             bodies.append(
                 {
@@ -157,7 +188,7 @@ def scene_files(
                     "quat": _xyzw(data.xquat[body]),
                     "mocap": bool(model.body_mocapid[body] >= 0),
                     "geoms": geoms,
-                    "lights": [],
+                    "lights": lights,
                 }
             )
     files[SCENE_FILE] = json.dumps(
