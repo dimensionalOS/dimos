@@ -36,17 +36,17 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-roboplan = false
-dimos-cdrgen = false
-dimos-viewer = false
-dimos-lcm = false
-lcm = false
-edgetam-dimos = false
-eclipse-zenoh = false
 can-motor-control = false
-md-babel-py = false
 dim-odom = false
+dimos-cdrgen = false
+dimos-lcm = false
+dimos-viewer = false
+eclipse-zenoh = false
+edgetam-dimos = false
+lcm = false
+md-babel-py = false
 mjcf-to-urdf = false
+roboplan = false
 
 [manifest]
 constraints = [
@@ -1969,6 +1969,7 @@ all = [
     { name = "langgraph" },
     { name = "lap" },
     { name = "manifold3d" },
+    { name = "mcap" },
     { name = "mjcf-to-urdf" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2040,6 +2041,7 @@ base = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "lap" },
+    { name = "mcap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "omegaconf" },
@@ -2117,6 +2119,7 @@ manipulation = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "lap" },
+    { name = "mcap" },
     { name = "mjcf-to-urdf" },
     { name = "moondream" },
     { name = "mujoco" },
@@ -2233,6 +2236,7 @@ unitree = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "lap" },
+    { name = "mcap" },
     { name = "moondream" },
     { name = "ollama" },
     { name = "omegaconf" },
@@ -2315,6 +2319,7 @@ web = [
     { name = "av" },
     { name = "fastapi" },
     { name = "jinja2" },
+    { name = "mcap" },
     { name = "python-multipart" },
     { name = "python-socketio" },
     { name = "soundfile" },
@@ -2602,6 +2607,7 @@ requires-dist = [
     { name = "mcap", specifier = ">=1.2.0" },
     { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
+    { name = "mcap", marker = "extra == 'web'", specifier = ">=1.2" },
     { name = "mjcf-to-urdf", marker = "extra == 'sim'", specifier = ">=0.1.1" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
