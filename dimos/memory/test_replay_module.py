@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack, closing
 from pathlib import Path
 import threading
 import time
@@ -19,12 +20,18 @@ from typing import Any
 
 import pytest
 from reactivex.disposable import Disposable
+from reactivex.subject import Subject
 
-from dimos.core.stream import Out
+from dimos.core.stream import Out, Transport
+from dimos.memory import replay_module as rm
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 
 @pytest.fixture
@@ -200,6 +207,37 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     module.stop()
     assert got["camera_info"] >= 2  # republished at 1 Hz
     assert got["odom"] == 1  # arrived within the 5 s deadline, not 39 s later
+
+
+def test_constant_timestamp_tf_republishes_every_edge(sqlite_store, mocker):
+    chain = TFMessage(
+        Transform(frame_id="base", child_frame_id="camera", ts=42.25),
+        Transform(frame_id="camera", child_frame_id="optical", ts=42.25),
+    )
+    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
+        transport = mocker.Mock(spec=Transport)
+        unsubscribe = recorder.tap("tf", TFMessage, transport)
+        assert unsubscribe is not None
+        subscriptions.callback(unsubscribe)
+        on_message = transport.subscribe.call_args.args[0]
+        on_message(chain)
+        on_message(chain)
+
+    mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+    emitted = []
+    path = sqlite_store.config.path
+    with Subject() as ticks:
+        mocker.patch.object(rm, "interval", return_value=ticks)
+        with replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True) as module:
+            module.register_disposable(Disposable(module.outputs["tf"].subscribe(emitted.append)))
+            ticks.on_next(0)
+            ticks.on_next(1)
+
+    assert [
+        [(t.frame_id, t.child_frame_id, t.ts) for t in message.transforms] for message in emitted
+    ] == [[("base", "camera", 42.25), ("camera", "optical", 42.25)]] * 2
 
 
 def test_slow_first_decode_does_not_skip_other_streams(

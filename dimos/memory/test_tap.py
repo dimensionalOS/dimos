@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 from typing import Any
 
@@ -188,29 +188,45 @@ def test_recording_delegates_to_rust_session(
 
 
 @pytest.mark.parametrize("ts", [42.25, 0.0])
-def test_records_tf_and_odom_at_source_time(tmp_path, ts):
-    tf = TFMessage(Transform(ts=ts + 1.0), Transform(ts=ts))
-    with SqliteStore(path=str(tmp_path / "memory.db")) as store:
-        with closing(TransportRecorder(store)) as recorder:
-            tf_transport, odom_transport = _Transport(), _Transport()
-            recorder.tap("tf", TFMessage, tf_transport)
-            recorder.tap("odom", PoseStamped, odom_transport)
-            tf_transport.publish(tf)
-            odom_transport.publish(PoseStamped(ts=ts))
-        assert store.stream("tf", TFMessage).first().ts == ts
-        assert store.stream("odom", PoseStamped).first().ts == ts
-        assert [transform.ts for transform in store.stream("tf", TFMessage).first().data] == [
-            ts + 1.0,
-            ts,
-        ]
+def test_records_tf_and_odom_at_source_time(sqlite_store, ts):
+    older = Transform(ts=ts, frame_id="base", child_frame_id="sensor")
+    batches = [
+        TFMessage(Transform(ts=ts + 1.0, child_frame_id="base"), older),
+        TFMessage(Transform(ts=ts + 2.0, child_frame_id="base"), older),
+    ]
+    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
+        tf_transport, odom_transport = _Transport(), _Transport()
+        for name, msg_type, transport in [
+            ("tf", TFMessage, tf_transport),
+            ("odom", PoseStamped, odom_transport),
+        ]:
+            unsubscribe = recorder.tap(name, msg_type, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
+        for batch in batches:
+            tf_transport.publish(batch)
+        odom_transport.publish(PoseStamped(ts=ts))
+
+    rows = sqlite_store.stream("tf", TFMessage).order_by("id").to_list()
+    assert [row.ts for row in rows] == [ts + 1.0, ts, ts + 2.0, ts]
+    assert [row.data.lcm_encode() for row in rows] == [
+        TFMessage(transform).lcm_encode() for batch in batches for transform in batch
+    ]
+    assert sqlite_store.stream("odom", PoseStamped).first().ts == ts
+    # Repeated older members must not make the changing TF stream look static.
+    replay = sqlite_store.replay().stream("tf")
+    assert (replay.first_ts(), replay.last_ts()) == (ts, ts + 2.0)
 
 
 @pytest.mark.parametrize("message", [TFMessage(), String("unstamped")])
-def test_missing_source_time_uses_reception_time(tmp_path, mocker, message):
-    with SqliteStore(path=str(tmp_path / "memory.db")) as store:
-        with closing(TransportRecorder(store)) as recorder:
-            transport = _Transport()
-            recorder.tap("message", type(message), transport)
-            mocker.patch.object(tap.time, "time", return_value=99.0)
-            transport.publish(message)
-        assert store.stream("message").first().ts == 99.0
+def test_missing_source_time_uses_reception_time(sqlite_store, mocker, message):
+    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
+        transport = _Transport()
+        unsubscribe = recorder.tap("message", type(message), transport)
+        assert unsubscribe is not None
+        subscriptions.callback(unsubscribe)
+        mocker.patch.object(tap.time, "time", return_value=99.0)
+        transport.publish(message)
+    row = sqlite_store.stream("message").first()
+    assert row.ts == 99.0
+    assert row.data.lcm_encode() == message.lcm_encode()

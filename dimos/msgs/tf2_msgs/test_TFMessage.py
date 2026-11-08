@@ -140,13 +140,3 @@ def test_tfmessage_lcm_encode_decode() -> None:
     assert ts2.child_frame_id == "target"
     assert ts2.transform.rotation.z == 0.707
     assert ts2.transform.rotation.w == 0.707
-
-
-def test_source_time_tracks_earliest_transform_and_empty_message() -> None:
-    message = TFMessage()
-    assert message.ts is None
-    message.add_transform(Transform(ts=43.0))
-    message.add_transform(Transform(ts=42.25))
-    assert message.ts == 42.25
-    message.add_transform(Transform(ts=0.0))
-    assert message.ts == 0.0

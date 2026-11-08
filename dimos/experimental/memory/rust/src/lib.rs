@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn tf_batches_become_individually_timestamped_observations() {
         let mut first = lcm_msgs::geometry_msgs::TransformStamped::default();
-        first.header.stamp = Time { sec: 10, nsec: 5 };
+        first.header.stamp = Time { sec: 0, nsec: 0 };
         first.child_frame_id = "first".to_string();
         let mut second = lcm_msgs::geometry_msgs::TransformStamped::default();
         second.header.stamp = Time { sec: 20, nsec: 7 };
@@ -545,16 +545,16 @@ mod tests {
         let observations = process(&stream, &data, 100.0).unwrap();
 
         assert_eq!(observations.len(), 2);
-        assert_eq!(observations[0].ts, 10.000_000_005);
+        assert_eq!(observations[0].ts, 0.0);
         assert_eq!(observations[1].ts, 20.000_000_007);
         let decoded: Vec<TFMessage> = observations
             .iter()
             .map(|observation| TFMessage::decode(&observation.data).unwrap())
             .collect();
         assert_eq!(decoded[0].transforms.len(), 1);
-        assert_eq!(decoded[0].transforms[0].child_frame_id, "first");
+        assert_eq!(decoded[0].transforms[0], message.transforms[0]);
         assert_eq!(decoded[1].transforms.len(), 1);
-        assert_eq!(decoded[1].transforms[0].child_frame_id, "second");
+        assert_eq!(decoded[1].transforms[0], message.transforms[1]);
     }
 
     #[test]
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn lcm_storage_encoding_consumes_the_decoded_image() {
-        let image = Image {
+        let mut image = Image {
             header: Header {
                 stamp: Time { sec: 42, nsec: 25 },
                 ..Header::default()
@@ -594,6 +594,11 @@ mod tests {
 
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].ts, 42.000_000_025);
+        assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
+
+        image.header.stamp = Time { sec: 0, nsec: 0 };
+        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        assert_eq!(observations[0].ts, 0.0);
         assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
     }
 
