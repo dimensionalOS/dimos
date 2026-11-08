@@ -78,3 +78,30 @@ def test_receiver_gets_every_sender_before_build() -> None:
         assert built_after_receive
     finally:
         coordinator.stop()
+
+
+def test_a_namespaced_receiver_hears_only_its_own_namespace() -> None:
+    """Namespacing exists to keep instances of the same modules apart.
+
+    Three robots, each namespaced and each offering its model, all reached one namespaced
+    manager when the match was on type alone -- so the manager held three models and no way to
+    say which robot it described.
+    """
+    from dimos.core.coordination.module_coordinator import _namespace_of, _shares_namespace
+
+    assert _namespace_of("main/usdmanager") == "main"
+    assert _namespace_of("simulation") == ""
+
+    assert _shares_namespace("main", "main"), "its own namespace"
+    assert not _shares_namespace("left", "main"), "another robot's"
+    assert not _shares_namespace("right", "main")
+
+
+def test_a_receiver_outside_any_namespace_hears_everyone() -> None:
+    # One world is built from every robot standing in it, namespaced or not.
+    from dimos.core.coordination.module_coordinator import _shares_namespace
+
+    assert _shares_namespace("main", ""), "a namespaced robot reaches the global simulation"
+    assert _shares_namespace("left", "")
+    assert _shares_namespace("", ""), "and so does a global one"
+    assert _shares_namespace("", "main"), "a global provider still reaches a namespaced receiver"
