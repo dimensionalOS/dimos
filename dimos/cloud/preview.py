@@ -48,6 +48,7 @@ from dimos.cloud.constants import (
     TIMELAPSE_MAX_S,
     WORLD_FRAMES,
 )
+from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
-def _stream(store: Store, payload: type, prefer: str) -> Any:
+def _stream(store: Store, payload: type | tuple[type, ...], prefer: str) -> Any:
     """The first stream carrying this dimos type, named like *prefer* first: a mapper's
     `global_map` is a PointCloud2 too, `goal_request` a Pose and `depth_image` an Image."""
     for name in sorted(store.list_streams(), key=lambda n: prefer not in n):
@@ -68,6 +69,29 @@ def _stream(store: Store, payload: type, prefer: str) -> Any:
         except LookupError:  # empty stream
             continue
     return None
+
+
+def _camera(store: Store) -> tuple[Any, Any]:
+    """The camera as (the stream to report, its frames as ``Image`` observations).
+
+    A camera that recorded single frames (jpeg/png) is already a stream of ``Image``. One that
+    recorded h264 — foxglove ``CompressedVideo``, what the M20 and the Go2 front camera
+    publish — is a stream of encoded packets instead: each P-frame refers to earlier ones, so
+    the packets only become pictures by running the ordered stream through a single decoder.
+    That needs PyAV; without it such a recording has no camera in its preview at all.
+
+    The two halves are kept apart because counts and timestamps must come from the packets:
+    asking a decoded stream how long it is would decode the whole recording to find out.
+    """
+    direct = _stream(store, Image, "color")
+    if direct is not None:
+        return direct, direct
+    packets = _stream(store, CompressedVideo, "front")
+    if packets is None or not HAS_AV:
+        return packets, None
+    from dimos.robot.unitree.go2.dds.video import H264Decoder  # generic, despite where it lives
+
+    return packets, packets.transform(H264Decoder(packets.first().data.format))
 
 
 def _evenly(n: int, k: int) -> set[int]:
@@ -90,7 +114,8 @@ def _pack(pc: PointCloud2, origin: np.ndarray) -> str:
 
 def build(store: Store) -> dict[str, Any] | None:
     """`dimos-spatial-preview-v2`, or None for a recording without LiDAR, camera or poses."""
-    lidar, camera = _stream(store, PointCloud2, "lidar"), _stream(store, Image, "color")
+    lidar = _stream(store, PointCloud2, "lidar")
+    camera, frames = _camera(store)
     odom = _stream(store, Pose, "odom")
     joy = _stream(store, Joy, "joy")
     poses, scans, world, ends = [], [], None, []
@@ -122,9 +147,9 @@ def build(store: Store) -> dict[str, Any] | None:
         picked = _evenly(joy.count(), PREVIEW_JOY_SAMPLES)
         sticks = [o for i, o in enumerate(joy) if i in picked]
     shots = []
-    if camera is not None:
+    if frames is not None:
         picked = _evenly(camera.count(), PREVIEW_FRAMES)
-        shots = [o for i, o in enumerate(camera) if i in picked]
+        shots = [o for i, o in enumerate(frames) if i in picked]
     ends += [t for t, _ in poses[:1] + poses[-1:]] + [o.ts for o in shots[:1] + shots[-1:]]
     if not ends:
         return None
@@ -180,9 +205,10 @@ def build(store: Store) -> dict[str, Any] | None:
 def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
     """H.264 MP4 of the first camera stream: real time up to TIMELAPSE_MAX_S, sped up to fit
     beyond. Returns {duration_s, speed, bytes, type}, or None without a camera or PyAV."""
-    camera = _stream(store, Image, "color") if HAS_AV else None
-    if camera is None:
+    camera, frames = _camera(store)
+    if frames is None or not HAS_AV:
         return None
+    # timed from the packets, pictures from the decode: see _camera
     ts = np.array([o.ts for o in camera])
     span = float(ts[-1] - ts[0])
     speed = max(1.0, span / TIMELAPSE_MAX_S)
@@ -192,9 +218,14 @@ def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
     repeats = np.bincount(at, minlength=len(ts))
     container = av.open(str(out), "w", options={"movflags": "faststart"})  # plays while downloading
     video: Any = None
-    for i, obs in enumerate(camera):
-        if not repeats[i]:
+    for obs in frames:
+        # by timestamp, not by position: a decoder emits one picture per packet at best, and
+        # drops the P-frames before the first keyframe, so the two are not the same count
+        i = min(int(np.searchsorted(ts, obs.ts, "left")), len(ts) - 1)
+        wanted = int(repeats[i])
+        if not wanted:
             continue
+        repeats[i] = 0  # reordered frames can share a timestamp; the slot is filled once
         img = obs.data
         if video is None:
             video = container.add_stream("libx264", rate=TIMELAPSE_FPS)
@@ -207,8 +238,12 @@ def timelapse(store: Store, out: Path) -> dict[str, Any] | None:
             ),
             format="bgr24",
         )
-        for _ in range(repeats[i]):
+        for _ in range(wanted):
             container.mux(video.encode(frame))
+    if video is None:  # a camera stream that yielded no decodable picture
+        container.close()
+        out.unlink(missing_ok=True)
+        return None
     container.mux(video.encode())
     container.close()
     return {
