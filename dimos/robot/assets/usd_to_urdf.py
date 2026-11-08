@@ -87,9 +87,12 @@ def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
     default_prim = stage.GetDefaultPrim()
     robot_name = name or (default_prim.GetName() if default_prim else "robot")
     root = ET.Element("robot", name=robot_name)
+    # Decided once for the whole layer, not per prim: a model that marks collision properly is
+    # never second-guessed, and one that marks none at all falls back to MuJoCo's own grouping.
+    by_group = not _marks_collision(pxr, stage)
 
     for link_name, prim in links.items():
-        _write_link(pxr, root, link_name, prim)
+        _write_link(pxr, root, link_name, prim, by_group=by_group)
     # A USD conveys parent and child by nesting; a UsdPhysics joint only adds how it moves.
     # So a link nested inside another with no joint between them is welded, and URDF has to
     # be told that outright or the tree comes out disconnected and will not load.
@@ -286,23 +289,53 @@ def _passthrough_of(prim: Any) -> list[str]:
     return [str(fragment) for fragment in urdf.get(PASSTHROUGH_KEY.split(":", 1)[1], ())]
 
 
-def _write_link(pxr: Any, root: ET.Element, link_name: str, prim: Any) -> None:
+def _write_link(pxr: Any, root: ET.Element, link_name: str, prim: Any, *, by_group: bool) -> None:
     element = ET.SubElement(root, "link", name=link_name)
     for child in prim.GetChildren():
         if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
             continue  # a nested link or a joint, not this link's own geometry
-        _write_geometry(pxr, element, child)
+        _write_geometry(pxr, element, child, by_group=by_group)
     for fragment in _passthrough_of(prim):
         _append_fragment(element, fragment)
 
 
-def _write_geometry(pxr: Any, link: ET.Element, prim: Any) -> None:
+# MuJoCo's own convention in every menagerie model: geoms in group 3 are the collision shapes.
+# Only consulted for a layer that marks no collision at all -- see _collides.
+_MJC_COLLISION_GROUP = 3
+
+
+def _marks_collision(pxr: Any, stage: Any) -> bool:
+    """Whether any prim in the layer carries CollisionAPI."""
+    return any(prim.HasAPI(pxr.UsdPhysics.CollisionAPI) for prim in stage.Traverse())
+
+
+def _collides(pxr: Any, prim: Any, *, by_group: bool) -> bool:
+    """Whether this geometry prim is a collision volume rather than something to look at.
+
+    CollisionAPI where the layer uses it. A model converted from an MJCF that switches collision
+    off wholesale -- `contype="0" conaffinity="0"` on the robot's default class, which is how the
+    G1 is set up, since its policy does not need self-collision -- carries no CollisionAPI at all
+    and would hand RoboPlan a robot with no collision scene. Those models still say which shapes
+    are the collision ones, in MuJoCo's own `mjc:group`, so that is the fallback.
+
+    It is only a fallback: a layer that marks collision properly is never second-guessed, which
+    matters because the group *number* is per-model (the M20's vendor MJCF collides on group 1).
+    """
+    if prim.HasAPI(pxr.UsdPhysics.CollisionAPI):
+        return True
+    if not by_group:
+        return False
+    group = prim.GetAttribute("mjc:group")
+    return bool(group) and group.Get() == _MJC_COLLISION_GROUP
+
+
+def _write_geometry(pxr: Any, link: ET.Element, prim: Any, *, by_group: bool) -> None:
     """One geometry prim as a <visual> or a <collision>."""
     shape = _shape_of(pxr, prim)
     if shape is None:
         return
-    # Collision geometry is the half RoboPlan needs; it is marked by CollisionAPI on the way out.
-    tag = "collision" if prim.HasAPI(pxr.UsdPhysics.CollisionAPI) else "visual"
+    # Collision geometry is the half RoboPlan needs.
+    tag = "collision" if _collides(pxr, prim, by_group=by_group) else "visual"
     element = ET.SubElement(link, tag)
     xyz, rpy = _placement_of(prim)
     if np.any(xyz) or np.any(rpy):
