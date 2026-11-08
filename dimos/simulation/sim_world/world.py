@@ -269,7 +269,15 @@ class Sim:
         self.model = build_model(scene, rig)
         self.data = mujoco.MjData(self.model)
         self.robot = body(self.model, self.data)
-        base = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, rig.base_body)
+        # The body whose shell each lens looks out of, which its cast skips: the rig's base
+        # unless the sensor names another (the G1's Mid-360 looks out of its head, which is a
+        # geom on torso_link).
+        housings = {
+            sensor.name: mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_BODY, sensor.housing_body or rig.base_body
+            )
+            for sensor in rig.sensors
+        }
         self.lidar_groups = np.isin(np.arange(6), (SCENE_GROUP, rig.lidar_group)).astype(np.uint8)
         self.lidars = [
             sensor.lidar(
@@ -277,7 +285,7 @@ class Sim:
                     self.model,
                     self.data,
                     self.lidar_groups,
-                    NO_BODY_EXCLUDED if sensor.sees_base else base,
+                    NO_BODY_EXCLUDED if sensor.sees_base else housings[sensor.name],
                 ),
                 seed + i,
             )

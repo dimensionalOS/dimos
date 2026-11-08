@@ -86,5 +86,14 @@ def sensor_pose(body: LeggedG1) -> tuple[NDArray[np.float64], NDArray[np.float64
 
 
 def office_lidar(body: LeggedG1, seed: int = 0) -> SimLidar:
-    """The G1's Mid-360 casting against the room, seeing the shell and the furniture."""
-    return MID360.lidar(MujocoRaycaster(body.model, body.data, LIDAR_GROUPS), seed)
+    """The G1's Mid-360 casting against the room, seeing the shell and the furniture.
+
+    The same cast SimWorld sets up, with the attached robot's prefix on the one body name it
+    needs: the shell the lens looks out of (see HOUSING_BODY). Without it the robot scans the
+    inside of its own head and every frame comes back empty.
+    """
+    housing = mujoco.mj_name2id(
+        body.model, mujoco.mjtObj.mjOBJ_BODY, f"{PREFIX}{MID360.housing_body}"
+    )
+    assert housing >= 0, f"no body named {PREFIX}{MID360.housing_body}"
+    return MID360.lidar(MujocoRaycaster(body.model, body.data, LIDAR_GROUPS, housing), seed)

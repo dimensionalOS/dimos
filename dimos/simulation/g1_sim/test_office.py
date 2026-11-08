@@ -87,9 +87,7 @@ def test_it_stands_on_the_office_floor(office: tuple[LeggedG1, mujoco.MjModel]) 
     height after two seconds is the room's slab taking its weight.
     """
     body, _ = office
-    body.reset(CLEAR_FLOOR[0], CLEAR_FLOOR[1], 0.0, 0.0)
-    for _ in range(100):  # 2 s at 50 Hz
-        body.tick(np.zeros(3))
+    _settle(body)
 
     position, _ = body.base_pose()
     assert abs(position[2] - STAND_HEIGHT) < 0.1, "it sank, fell or floated"
@@ -124,9 +122,12 @@ def test_the_lidar_scans_the_room(office: tuple[LeggedG1, mujoco.MjModel]) -> No
 
     office_555 is about 30 m across, so the far returns are the thing a generated box scene
     cannot produce -- its rooms are a few metres wide and its walls are all the same box.
+
+    Taken after the stance has settled, not at the reset pose. The pose is what moves the lens
+    into the head shell, so a scan at t=0 came back full while every later one was empty.
     """
     body, _ = office
-    body.reset(CLEAR_FLOOR[0], CLEAR_FLOOR[1], 0.0, 0.0)
+    _settle(body)
     origin, rotation = sensor_pose(body)
     points = office_lidar(body).cast(origin, rotation, FRAME_POINTS)
 
@@ -137,6 +138,28 @@ def test_the_lidar_scans_the_room(office: tuple[LeggedG1, mujoco.MjModel]) -> No
     assert world[:, 2].min() < 0.05, "it did not see the floor"
     assert world[:, 2].max() > 3.0, "it did not see the upper slab"
     assert (world[:, 2] < 0.1).mean() > 0.2, "little of the frame landed on the floor"
+
+
+def test_the_lens_looks_out_of_the_head_it_is_inside(
+    office: tuple[LeggedG1, mujoco.MjModel],
+) -> None:
+    """The G1's Mid-360 *is* the top of its head, so the head is its own housing, not an obstacle.
+
+    The vendor URDF puts mid360_link 0.416 m above torso_link, which is 70 mm inside the head
+    mesh, and that mesh is a geom on torso_link because the head is welded on. Cast without
+    skipping that body and every return comes back at about 0.02 m -- under the Mid-360's 0.16 m
+    blind range, so the frame is dropped whole and the robot reports no cloud at all.
+
+    It passes at the reset pose either way, which is what hid it: the lens starts just clear of
+    the shell and the settling stance pulls it in.
+    """
+    body, model = office
+    _settle(body)
+    origin, rotation = sensor_pose(body)
+    blind = MID360.lidar(MujocoRaycaster(model, body.data, LIDAR_GROUPS), 0)
+
+    assert len(blind.cast(origin, rotation, FRAME_POINTS)) == 0, "the head stopped being in the way"
+    assert len(office_lidar(body).cast(origin, rotation, FRAME_POINTS)) > FRAME_POINTS * 0.9
 
 
 def test_the_lidar_sees_the_furniture_and_not_its_collision_pieces(
@@ -150,7 +173,7 @@ def test_the_lidar_sees_the_furniture_and_not_its_collision_pieces(
     frame comes back empty.
     """
     body, model = office
-    body.reset(CLEAR_FLOOR[0], CLEAR_FLOOR[1], 0.0, 0.0)
+    _settle(body)
     origin, rotation = sensor_pose(body)
 
     furniture = _nearest_furniture(model, body.data, origin)
@@ -166,6 +189,13 @@ def test_the_lidar_sees_the_furniture_and_not_its_collision_pieces(
     with_collision = _mask(SCENE_GROUP, ROBOT_VISUAL_GROUP, COLLISION_GROUP)
     blinded = MID360.lidar(MujocoRaycaster(model, body.data, with_collision), 0)
     assert len(blinded.cast(origin, rotation, FRAME_POINTS)) == 0
+
+
+def _settle(body: LeggedG1) -> None:
+    """The G1 back on its spot and two seconds into its stance, which is where the lens ends up."""
+    body.reset(CLEAR_FLOOR[0], CLEAR_FLOOR[1], 0.0, 0.0)
+    for _ in range(100):  # 2 s at 50 Hz
+        body.tick(np.zeros(3))
 
 
 def _nearest_furniture(

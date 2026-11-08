@@ -58,6 +58,12 @@ def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
 
 
 MOUNT_XYZ, MOUNT_R = _mount()
+# The body whose shell the lens looks out of. The G1's Mid-360 *is* the top of its head: the
+# vendor URDF puts mid360_link 0.416 m above torso_link, which is 70 mm **inside** the head mesh,
+# and that mesh is a geom on torso_link because the head is welded to the torso. Cast without
+# skipping it and the robot scans the inside of its own head: every return lands at 0.02 m,
+# under the Mid-360's 0.16 m blind range, so a frame comes back with nothing in it at all.
+HOUSING_BODY = "torso_link"
 MID360 = Sensor(
     "mid360",
     MOUNT_XYZ,
@@ -65,6 +71,8 @@ MID360 = Sensor(
     sim_mid360,
     HOUSING_HALF_EXTENTS,
     lio_blind_range=LIO_BLIND_RANGE,
+    sees_base=False,
+    housing_body=HOUSING_BODY,
 )
 
 SHAPE = BodyShape(

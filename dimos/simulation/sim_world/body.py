@@ -61,6 +61,9 @@ class Sensor:
     lio_blind_range: float = 0.0
     lio_keep_every: int = 1
     sees_base: bool = True
+    # Which body that shell is, when the lens does not look out of the rig's base: the G1's
+    # Mid-360 *is* the top of its head, and the head mesh hangs off torso_link.
+    housing_body: str = ""
 
 
 @dataclass(frozen=True)
