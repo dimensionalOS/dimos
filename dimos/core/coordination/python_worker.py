@@ -479,9 +479,10 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             return WorkerResponse(result=method(*args, **kwargs))
 
         case UndeployModuleRequest(module_id=module_id):
-            instance = state.instances.pop(module_id, None)
+            instance = state.instances.get(module_id)
             if instance is not None:
                 instance.stop()
+                del state.instances[module_id]
             return WorkerResponse(result=True)
 
         case SuppressConsoleRequest():

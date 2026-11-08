@@ -17,10 +17,18 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.agents.annotation import skill
-from dimos.core.coordination.python_worker import Actor, MethodCallProxy, PythonWorker
+from dimos.core.coordination.python_worker import (
+    Actor,
+    MethodCallProxy,
+    PythonWorker,
+    _handle_request,
+    _WorkerState,
+)
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.coordination.worker_messages import UndeployModuleRequest
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
@@ -146,6 +154,24 @@ def test_worker_manager_basic(create_worker_manager):
     assert result == 2
 
     module.stop()
+
+
+def test_undeploy_keeps_instance_until_stop_succeeds(mocker: MockerFixture) -> None:
+    module = mocker.Mock(spec=Module)
+    module.stop.side_effect = [RuntimeError("stop failed"), RuntimeError("stop failed"), None]
+    state = _WorkerState(instances={7: module}, worker_id=1)
+    request = UndeployModuleRequest(module_id=7)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="stop failed"):
+            _handle_request(request, state)
+        assert state.instances == {7: module}
+
+    response = _handle_request(request, state)
+
+    assert response.result is True
+    assert state.instances == {}
+    assert module.stop.call_count == 3
 
 
 def test_worker_manager_stops_workers_concurrently_and_only_once(mocker, monkeypatch):

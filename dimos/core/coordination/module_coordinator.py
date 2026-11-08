@@ -629,14 +629,8 @@ class ModuleCoordinator(Resource):
         # second stop() call, so the worker would report the module gone while the
         # old instance still answers on the RPC name its replacement is about to use.
         python_wm = cast("WorkerManagerPython", self._managers["python"])
-        try:
-            python_wm.undeploy(proxy)
-        except Exception:
-            logger.error(
-                "Error undeploying module from worker",
-                module=name,
-                exc_info=True,
-            )
+        # Propagate failures so restart cannot replace an instance that may still be running.
+        python_wm.undeploy(proxy)
         try:
             proxy.stop_rpc_client()
         except Exception:
