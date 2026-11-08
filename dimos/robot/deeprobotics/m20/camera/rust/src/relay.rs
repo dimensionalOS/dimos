@@ -22,6 +22,7 @@
 //! units (one video slice each) and publishes one message per unit, every frame.
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -32,6 +33,7 @@ use lcm_msgs::foxglove_msgs::CompressedVideo;
 use lcm_msgs::sensor_msgs::CameraInfo;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 /// One camera: the V4L2 device it captures, where it sits, and where its messages go.
@@ -116,6 +118,21 @@ fn pipeline_args(camera: &Camera, encode: &Encode) -> Vec<String> {
     .collect()
 }
 
+/// Access units waiting to be published: about two seconds at 30 fps. Reading never waits on publishing, so this is
+/// the slack that absorbs a slow publish; past it, frames are dropped (see `stream`).
+const QUEUED_FRAMES: usize = 60;
+/// Below this fraction of the pipeline's configured rate the stream counts as sick. Well under a half, because a UVC
+/// camera legitimately halves its rate in low light (30 -> 15) and that must not restart anything; the stuck encoder
+/// this guards against managed ~5 fps of 30.
+const SICK_FPS_FRACTION: f64 = 0.25;
+/// Sick windows in a row before the pipeline is restarted: one is a hiccup, two is the encoder stuck.
+const SICK_WINDOWS: u32 = 2;
+
+/// Whether a measured rate is too far under the rate the pipeline was told to capture at.
+fn sick(measured_fps: f64, configured_fps: u32) -> bool {
+    measured_fps < f64::from(configured_fps) * SICK_FPS_FRACTION
+}
+
 async fn stream(camera: &Camera, encode: &Encode, stall: Duration, stats: Duration) -> Result<()> {
     let args = pipeline_args(camera, encode);
     let mut child = Command::new("gst-launch-1.0")
@@ -129,47 +146,83 @@ async fn stream(camera: &Camera, encode: &Encode, stall: Duration, stats: Durati
     let mut stdout = child.stdout.take().context("the pipeline has no stdout")?;
     info!(camera = %camera.name, device = %camera.device, "M20 camera pipeline started");
 
-    let mut splitter = AccessUnits::default();
-    let mut buffer = [0u8; 64 * 1024];
-    let (mut frames, mut keyframes, mut bytes, mut window) = (0u32, 0u32, 0usize, Instant::now());
-    loop {
-        let read = match tokio::time::timeout(stall, stdout.read(&mut buffer)).await {
-            Err(_) => bail!("no frame for {stall:?}"),
-            Ok(result) => result.context("reading the pipeline's output")?,
-        };
-        if read == 0 {
-            // the pipeline closed its stdout: it exited
-            return Ok(());
-        }
-        for unit in splitter.push(&buffer[..read]) {
-            let keyframe = has_keyframe(&unit);
-            frames += 1;
-            keyframes += keyframe as u32;
-            bytes += unit.len();
-            let ts = wall_s();
-            let message = CompressedVideo {
-                timestamp: Time {
-                    sec: ts.trunc() as i32,
-                    nanosec: (ts.fract() * 1e9) as i32,
-                },
-                frame_id: camera.frame_id.clone(),
-                data: unit,
-                format: "h264".into(),
-            };
-            camera.video.publish(&message).await?;
-            if window.elapsed() >= stats {
-                let seconds = window.elapsed().as_secs_f64();
-                info!(
-                    camera = %camera.name,
-                    fps = frames as f64 / seconds,
-                    keyframes_per_s = keyframes as f64 / seconds,
-                    mbit_per_s = bytes as f64 * 8e-6 / seconds,
-                    "M20 camera stats",
-                );
-                (frames, keyframes, bytes, window) = (0, 0, 0, Instant::now());
+    // Reading the pipeline and publishing are separate tasks on purpose: a publish that waits must never stop the
+    // pipe being drained. fdsink blocks on a full pipe, and the Rockchip encoder answers that back pressure by
+    // spinning a core and never recovering — both cameras limped at ~5 fps with no keyframes for hours, which looks
+    // to a viewer like no camera at all. Dropping a frame costs the picture until the next keyframe (a GOP, ~1 s);
+    // wedging the encoder costs every frame until someone restarts the service.
+    let dropped = Arc::new(AtomicU32::new(0));
+    let (units, mut queued) = mpsc::channel::<Vec<u8>>(QUEUED_FRAMES);
+    let reader = tokio::spawn({
+        let dropped = Arc::clone(&dropped);
+        async move {
+            let mut splitter = AccessUnits::default();
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let read = match tokio::time::timeout(stall, stdout.read(&mut buffer)).await {
+                    Err(_) => bail!("no frame for {stall:?}"),
+                    Ok(result) => result.context("reading the pipeline's output")?,
+                };
+                if read == 0 {
+                    // the pipeline closed its stdout: it exited
+                    return Ok(());
+                }
+                for unit in splitter.push(&buffer[..read]) {
+                    if units.try_send(unit).is_err() {
+                        dropped.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
             }
         }
+    });
+
+    let (mut frames, mut keyframes, mut bytes, mut window) = (0u32, 0u32, 0usize, Instant::now());
+    let mut sick_windows = 0u32;
+    while let Some(unit) = queued.recv().await {
+        let keyframe = has_keyframe(&unit);
+        frames += 1;
+        keyframes += keyframe as u32;
+        bytes += unit.len();
+        let ts = wall_s();
+        let message = CompressedVideo {
+            timestamp: Time {
+                sec: ts.trunc() as i32,
+                nanosec: (ts.fract() * 1e9) as i32,
+            },
+            frame_id: camera.frame_id.clone(),
+            data: unit,
+            format: "h264".into(),
+        };
+        camera.video.publish(&message).await?;
+        if window.elapsed() >= stats {
+            let seconds = window.elapsed().as_secs_f64();
+            let fps = f64::from(frames) / seconds;
+            info!(
+                camera = %camera.name,
+                fps,
+                keyframes_per_s = f64::from(keyframes) / seconds,
+                mbit_per_s = bytes as f64 * 8e-6 / seconds,
+                dropped = dropped.swap(0, Ordering::Relaxed),
+                "M20 camera stats",
+            );
+            // The stall timeout only catches a pipeline that stops entirely; a stuck encoder keeps dribbling frames,
+            // so watch the rate too and restart on a stream that is up but not delivering.
+            sick_windows = if sick(fps, encode.fps) {
+                sick_windows + 1
+            } else {
+                0
+            };
+            if sick_windows >= SICK_WINDOWS {
+                bail!(
+                    "{fps:.1} fps of the {} asked for, {SICK_WINDOWS} windows running",
+                    encode.fps
+                );
+            }
+            (frames, keyframes, bytes, window) = (0, 0, 0, Instant::now());
+        }
     }
+    // the reader owns the only sender, so the channel closing means it has finished: its result is the stream's
+    reader.await.context("the pipeline reader")?
 }
 
 /// Whether an Annex-B access unit holds an IDR slice (NAL unit type 5): a decoder can start here.
@@ -255,4 +308,29 @@ pub fn wall_s() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stream_at_its_asked_for_rate_is_well() {
+        assert!(!sick(29.4, 30));
+        assert!(!sick(30.0, 30));
+    }
+
+    #[test]
+    fn low_light_halving_is_not_sick() {
+        // a UVC camera drops to 15 fps of 30 on its own in low light: real, and no reason to restart
+        assert!(!sick(15.0, 30));
+        assert!(!sick(14.0, 30));
+    }
+
+    #[test]
+    fn the_stuck_encoder_is_sick() {
+        // what the Rockchip encoder actually did once fdsink blocked: ~5 fps of the 30 asked for
+        assert!(sick(4.7, 30));
+        assert!(sick(0.0, 30));
+    }
 }
