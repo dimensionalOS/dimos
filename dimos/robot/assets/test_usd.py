@@ -576,3 +576,41 @@ def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
     missing = unhashed_assets(usd)
 
     assert list(missing.values()) == ["/hashy/base_link/visual_0"]
+
+
+def test_a_texture_is_an_asset_the_hash_check_sees(tmp_path: Any) -> None:
+    """A texture names its image in an `asset` attribute, which is neither an arc nor assetInfo.
+
+    So the check that exists to refuse an unidentified asset walked straight past every texture:
+    a layer with three untextured-after-transport PNGs in it passed, which is the same vacuous
+    pass that reading only reference arcs used to give on every mesh.
+    """
+    from pxr import Sdf, Usd, UsdGeom, UsdShade
+
+    image = tmp_path / "wood.png"
+    image.write_bytes(b"not really a png, but it is a file")
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/scene")
+    stage.SetDefaultPrim(root.GetPrim())
+    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
+    texture.CreateIdAttr("UsdUVTexture")
+    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
+
+    assert str(image) in unhashed_assets(stage.GetRootLayer().ExportToString())
+
+
+def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
+    """And it is satisfiable the same way a mesh is, by naming the hash in assetInfo."""
+    from pxr import Sdf, Usd, UsdGeom, UsdShade
+
+    image = tmp_path / "wood.png"
+    image.write_bytes(b"not really a png, but it is a file")
+    stage = Usd.Stage.CreateInMemory()
+    root = UsdGeom.Xform.Define(stage, "/scene")
+    stage.SetDefaultPrim(root.GetPrim())
+    texture = UsdShade.Shader.Define(stage, "/scene/Looks/wood/texture")
+    texture.CreateIdAttr("UsdUVTexture")
+    texture.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(str(image))
+    texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
+
+    assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}

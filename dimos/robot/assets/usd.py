@@ -593,13 +593,30 @@ def referenced_asset_paths(usd: str) -> set[str]:
 
 
 def _asset_paths_of(spec: Any) -> list[str]:
-    """Every asset path this prim spec names, by reference or by assetInfo."""
+    """Every asset path this prim spec names: a reference, assetInfo, or an asset attribute."""
     items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
     paths = [ref.assetPath for ref in items if ref.assetPath]
     identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
     if identifier is not None and str(identifier.path):
         paths.append(str(identifier.path))
+    paths += [str(value.path) for _, value in asset_attributes(spec)]
     return paths
+
+
+def asset_attributes(spec: Any) -> list[tuple[Any, Any]]:
+    """This prim spec's asset-valued attributes, with their paths.
+
+    A texture is neither a reference nor a mesh: a `UsdUVTexture` names its image in
+    `inputs:file`, an ordinary attribute of type `asset`. Walking only arcs and assetInfo left
+    every texture unseen -- and unhashed, so the check that exists to refuse an unidentified
+    asset passed over it in silence.
+    """
+    found = []
+    for attribute in spec.attributes:
+        value = attribute.default
+        if value is not None and type(value).__name__ == "AssetPath" and str(value.path):
+            found.append((attribute, value))
+    return found
 
 
 def unhashed_assets(usd: str) -> dict[str, str]:
@@ -618,14 +635,16 @@ def unhashed_assets(usd: str) -> dict[str, str]:
 def _referenced_assets(pxr: Any, prim: Any) -> list[str]:
     """The asset paths this prim names, as authored.
 
-    Both ways a prim can name one: a reference arc, for a prim that really does compose another
-    USD layer, and assetInfo, which is how a mesh names the file it is. Reading only arcs would
-    make the hash check below pass vacuously on every mesh.
+    Three ways a prim can name one: a reference arc, for a prim that really does compose
+    another USD layer; assetInfo, which is how a mesh names the file it is; and an asset-valued
+    attribute, which is how a texture names its image. Reading only arcs would make the hash
+    check pass vacuously on every mesh, and reading only those two passed over every texture.
     """
     assets = []
     for spec in prim.GetPrimStack():
         items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
         assets += [ref.assetPath for ref in items if ref.assetPath]
+        assets += [str(value.path) for _, value in asset_attributes(spec)]
     identifier = (prim.GetAssetInfo() or {}).get("identifier")
     if identifier is not None and str(identifier.path):
         assets.append(str(identifier.path))
