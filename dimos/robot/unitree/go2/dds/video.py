@@ -45,14 +45,24 @@ if TYPE_CHECKING:
 
 
 class H264Decoder(Transformer[CompressedVideo, Image]):
-    """Decode an ordered ``CompressedVideo`` (h264) stream into BGR ``Image`` frames."""
+    """Decode an ordered ``CompressedVideo`` stream into BGR ``Image`` frames.
+
+    Works for either ``CompressedVideo`` — this package's and
+    ``dimos.msgs.foxglove_msgs.CompressedVideo`` (the M20's cameras) — since both carry the
+    encoded packet the same way. *codec* names the inter-frame codec to decode with; it comes
+    from the packets' own ``format``, so an h265 or vp9 stream decodes too.
+    """
+
+    def __init__(self, codec: str = "h264") -> None:
+        self.codec = codec
 
     def __call__(
         self, upstream: Iterator[Observation[CompressedVideo]]
     ) -> Iterator[Observation[Image]]:
         import av  # optional dep (go2/unitree extra)
 
-        decoder = av.codec.CodecContext.create("h264", "r")
+        # Any: create() only narrows to a VideoCodecContext for a literal codec name
+        decoder: Any = av.codec.CodecContext.create(self.codec, "r")
         last: Observation[CompressedVideo] | None = None
         for obs in upstream:
             packet = obs.data
