@@ -50,7 +50,8 @@ from dimos.simulation.sim_world.world import Sim, SimWorld, SimWorldConfig
 STEP_LIMIT = 0.02
 # the real M20 with the sim policy's step, so the sim's planners route around what it cannot climb
 SIM_M20 = replace(M20, steppable=STEP_LIMIT)
-# the base's height standing in the policy's default pose (the vendor MJCF's home keyframe)
+# the base's height standing in the policy's default pose (measured off the vendor MJCF's home
+# keyframe, which the USD does not carry: the policy states its own default pose)
 STAND_HEIGHT = 0.566
 # the trunk top, at its highest while walking
 CLEARANCE_HEIGHT = 0.66
@@ -131,7 +132,7 @@ def _add_guard(spec: mujoco.MjSpec, sensor: Sensor) -> None:
 
 
 def _spec() -> mujoco.MjSpec:
-    """The vendor M20 with its collision shapes opaque, in the sim's hidden collision group."""
+    """The M20 with its collision shapes opaque, in the sim's hidden collision group."""
     spec = m20_spec()
     spec.material("collision_material").rgba = COLLISION_RGBA
     for geom in spec.geoms:

@@ -325,9 +325,16 @@ cuda = [
 ]
 
 sim = [
-    # Simulation
-    "mujoco>=3.3.4",
-    "mjcf-to-urdf>=0.1.1",
+    # Simulation. mujoco-usd brings mujoco-core (the `mujoco` module) and MuJoCo's own USD
+    # decoder plugin, which is what lets a robot be described in USD and nothing else: see
+    # dimos/simulation/m20_sim/body.py. It pins usd-core exactly, so it is the thing that
+    # decides which pxr the whole tree gets.
+    #
+    # It needs Python >= 3.11 and we still support 3.10, which is what the arm robots ship.
+    # They do not run MuJoCo, so they keep MuJoCo 3 without the USD decoder: a sim built from a
+    # USD description is a 3.11+ thing, and says so where it reads the layer.
+    "mujoco-usd>=4.0.0; python_version >= '3.11'",
+    "mujoco>=3.3.4; python_version < '3.11'",
     "playground>=0.0.5",
     "pygame>=2.6.1",
 ]
@@ -464,8 +471,8 @@ tests = [
     # in the manipulation extra includes core, RRT, Cartesian and TOPPRA.
     # Tests-only installs need core for native point-cloud Narrowphase queries.
     "roboplan-core>=0.7.0,<0.8.0",
-    "mujoco>=3.3.4",
-    "mjcf-to-urdf>=0.1.1",
+    "mujoco-usd>=4.0.0; python_version >= '3.11'",
+    "mujoco>=3.3.4; python_version < '3.11'",
     "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
@@ -542,7 +549,7 @@ docs = {requires-python = ">=3.11"}
 required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mjcf-to-urdf = false }
+exclude-newer-package = { dimos-cdrgen = false, dimos-viewer = false, dimos-lcm = false, lcm = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false, eclipse-zenoh = false, mujoco-usd = false, mujoco-core = false, newton-usd-schemas = false }
 constraint-dependencies = [
     # TODO(PY311): drop this fork. onnxruntime(-gpu) 1.24 dropped cp310
     # wheels, so 3.10 environments resolve 1.23.x (matching what a 3.10
@@ -767,6 +774,7 @@ module = [
     "mcap",
     "mcap.*",
     "mujoco",
+    "mujoco._usd",
     "mujoco_playground.*",
     "nav_msgs.*",
     "openevals.*",
