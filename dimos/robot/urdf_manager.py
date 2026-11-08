@@ -654,8 +654,15 @@ class UrdfManager(Module):
         The description keeps its own names -- they are what the hardware speaks, and what a
         JointState arrives keyed by. Only what goes out is renamed, so anything reading tf for
         a frame of this robot has to ask through here.
+
+        A namespaced manager puts its namespace in front, the same prefix every other module
+        puts on its frames. Without it two robots in one world both publish "pelvis", and the
+        links hanging off them land in a tree of their own with no route to the world: tf then
+        has two roots and can draw neither robot where it stands.
         """
-        return self._frames.get(link_or_joint, link_or_joint)
+        renamed = self._frames.get(link_or_joint, link_or_joint)
+        prefix = self.config.frame_id_prefix
+        return f"{prefix}/{renamed}" if prefix else renamed
 
 
 def _is_circular_mount(exc: BaseException) -> bool:
