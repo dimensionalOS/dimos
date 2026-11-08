@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The URDF of an MJCF robot, so a URDF consumer (UrdfManager, renderers) stays in sync with what MuJoCo simulates.
+"""The URDF of an MJCF robot, so a URDF consumer (UsdManager, renderers) stays in sync with what MuJoCo simulates.
 
 Each body becomes a link of the same name (the root may be renamed), each hinge/slide joint a revolute/prismatic
 joint of the same name, a body without joints a fixed joint, and each named site (a sensor's frame, see
