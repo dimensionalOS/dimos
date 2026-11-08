@@ -38,6 +38,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# An xyz or an rpy triple. Spelled out here rather than imported from assets/usd.py, which
+# needs usd-core: pydantic resolves this annotation by name when it builds a model around
+# UsdModel, and a name it cannot reach is a model that will not finish defining itself.
+Vector = tuple[float, float, float]
+
 
 @dataclass(frozen=True)
 class JointDescription:
