@@ -389,6 +389,75 @@ def test_a_layer_that_marks_collision_is_not_second_guessed() -> None:
     assert link.find("collision/geometry/cylinder") is None
 
 
+_SCENE_USDA = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+def Xform "room"
+{
+    def Xform "desk" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def PhysicsFixedJoint "desk_joint"
+        {
+            rel physics:body0 = </room>
+            rel physics:body1 = </room/desk>
+        }
+    }
+
+    def Xform "chair" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def PhysicsFixedJoint "chair_joint"
+        {
+            rel physics:body0 = </room>
+            rel physics:body1 = </room/chair>
+        }
+    }
+}
+"""
+
+
+def test_a_scene_is_rooted_at_the_prim_every_joint_hangs_off() -> None:
+    """An MJCF worldbody is not a rigid body, so a converted scene has no link that is a root.
+
+    Every item is some weld's child, so the search for "the link no joint claims" comes back
+    empty and the fallback took whichever link happened to be first -- office_555 rooted its 448
+    pieces of furniture at `box_1`, a cardboard box. The prim all the welds name is the root,
+    whether or not it is itself a link.
+    """
+    from dimos.robot.assets.usd_to_urdf import usd_root_link
+
+    assert usd_root_link(_SCENE_USDA) == "room"
+
+
+# The chair hangs off a second, real prim, so the layer has two candidate roots.
+_TWO_PARENTS_USDA = _SCENE_USDA.replace(
+    "rel physics:body0 = </room>\n            rel physics:body1 = </room/chair>",
+    "rel physics:body0 = </room/alcove>\n            rel physics:body1 = </room/chair>",
+).replace(
+    '    def Xform "chair" (',
+    '    def Xform "alcove"\n    {\n    }\n\n    def Xform "chair" (',
+)
+
+
+def test_two_candidate_roots_are_not_guessed_between() -> None:
+    """The rule only holds when one prim really is what everything hangs off.
+
+    Two different parents means the layer is not a flat scene, and picking either would be a
+    guess dressed up as a root. It falls back to the old behaviour instead, which at least does
+    not invent a hierarchy.
+    """
+    from dimos.robot.assets.usd_to_urdf import usd_root_link
+
+    # It falls back to a link, as it always did. What it must not do is hand back a non-link
+    # parent it picked between -- that would be a guess dressed up as a root.
+    assert usd_root_link(_TWO_PARENTS_USDA) in {"desk", "chair"}
+
+
 def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
     """USD conveys the tree by nesting; a URDF with two unconnected links will not load.
 
