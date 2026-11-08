@@ -43,7 +43,8 @@ def _zenoh(channel: str, payload_type: type[Any] = PoseStamped) -> ZenohTranspor
 
 
 @pytest.fixture(autouse=True)
-def recording_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def recording_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker) -> None:
+    mocker.patch("dimos.protocol.service.lcmservice.lcm_mod.LCM")
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_engine", "rust")
     monkeypatch.setattr(global_config, "record_topics", "*")
@@ -75,10 +76,23 @@ def test_plan_uses_actual_lcm_channels_and_memory_codecs(tmp_path: Path) -> None
 def test_plan_uses_mcap_artifact_for_zenoh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "record", "mcap")
 
-    plan = rust_cli_recorder.make_plan({("odom", PoseStamped): _zenoh("dimos/odom/PoseStamped")})
+    plan = rust_cli_recorder.make_plan(
+        {("odom/path", PoseStamped): _zenoh("dimos/odom/PoseStamped")}
+    )
 
     assert plan.backend == "zenoh"
     assert plan.path == tmp_path / "memory.mcap"
+    assert plan.streams[0].name == "odom/path"
+
+
+def test_plan_rejects_sqlite_names_before_artifact_changes(tmp_path):
+    artifact = tmp_path / "memory.db"
+    artifact.write_bytes(b"existing recording")
+
+    with pytest.raises(ValueError, match="Invalid stream name"):
+        rust_cli_recorder.make_plan({("odom/path", PoseStamped): _lcm("/odom")})
+
+    assert artifact.read_bytes() == b"existing recording"
 
 
 def test_plan_rejects_unsupported_transport_before_creating_artifact(
@@ -187,7 +201,6 @@ def _plan(tmp_path: Path) -> RustRecordingPlan:
                 codec="lcm",
             )
         ],
-        payload_types={"odom": PoseStamped},
         path=tmp_path / "memory.db",
     )
 
@@ -333,7 +346,9 @@ def test_preparation_failure_does_not_create_artifact(tmp_path, mocker):
 
 
 def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
-    executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
+    executable = (
+        tmp_path / "dimos/experimental/memory/rust/result-registry-v1/bin/dimos-memory-recorder"
+    )
     executable.parent.mkdir(parents=True)
     executable.touch()
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
@@ -343,7 +358,12 @@ def test_prepare_reuses_executable_in_matching_source_cache(tmp_path, mocker):
 
 
 def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
-    executable = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
+    legacy = tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
+    legacy.parent.mkdir(parents=True)
+    legacy.touch()
+    executable = (
+        tmp_path / "dimos/experimental/memory/rust/result-registry-v1/bin/dimos-memory-recorder"
+    )
     mocker.patch("dimos.core.native_module.get_project_root", return_value=tmp_path)
     process = mocker.Mock()
     process.stdout = []
@@ -358,4 +378,4 @@ def test_prepare_builds_in_matching_source_cache(tmp_path, mocker):
     popen = mocker.patch.object(rust_cli_recorder.subprocess, "Popen", side_effect=build)
     assert rust_cli_recorder.prepare_rust_recorder() == executable
     assert popen.call_args.kwargs["cwd"] == str(tmp_path / "dimos/experimental/memory/rust")
-    assert popen.call_args.args[0] == "nix build -L path:."
+    assert popen.call_args.args[0] == "nix build -L path:. --out-link result-registry-v1"

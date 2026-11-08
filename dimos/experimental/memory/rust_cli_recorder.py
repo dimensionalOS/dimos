@@ -32,6 +32,7 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import session_config
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.tap import matching, recording_dir
+from dimos.memory.utils.validation import validate_identifier
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -49,7 +50,6 @@ class RustRecordingPlan:
     backend: str
     topics: dict[str, str]
     streams: list[RustStreamSpec]
-    payload_types: dict[str, type[Any]]
     path: Path
     lcm_url: str | None = None
 
@@ -95,7 +95,6 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     unsupported_transports: list[str] = []
     streams: list[RustStreamSpec] = []
     topics: dict[str, str] = {}
-    payload_types: dict[str, type[Any]] = {}
     backends: set[str] = set()
     lcm_urls: set[str] = set()
 
@@ -124,6 +123,8 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             continue
 
         backends.add(backend)
+        if global_config.record == "sqlite":
+            validate_identifier(name)
         port = f"stream_{index}"
         streams.append(
             RustStreamSpec(
@@ -134,7 +135,6 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
             )
         )
         topics[port] = transport.channel
-        payload_types[name] = payload_type
 
     if unsupported_transports:
         details = ", ".join(sorted(unsupported_transports))
@@ -166,7 +166,6 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
         lcm_url=next(iter(lcm_urls), None),
         topics=topics,
         streams=streams,
-        payload_types=payload_types,
         path=recording_dir() / f"memory.{suffix}",
     )
 

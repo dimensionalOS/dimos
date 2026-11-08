@@ -200,7 +200,7 @@ mod tests {
             payload_type: "dimos.msgs.std_msgs.String.String".into(),
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
-            json_schema: None,
+            json_schema: Some(serde_json::json!({"type": "object"})),
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)

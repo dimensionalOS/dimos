@@ -625,7 +625,7 @@ def test_source_config_is_lazy_and_subclass_location_independent(tmp_path, mocke
     cwd, executable = config.resolve_paths()
     assert cwd == str(tmp_path / "dimos/experimental/memory/rust")
     assert executable == str(
-        tmp_path / "dimos/experimental/memory/rust/result/bin/dimos-memory-recorder"
+        tmp_path / "dimos/experimental/memory/rust/result-registry-v1/bin/dimos-memory-recorder"
     )
     assert "source_dir" not in config.to_config_dict()
 

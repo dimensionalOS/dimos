@@ -34,6 +34,7 @@ impl SqliteRecordingStore {
         for stream in streams {
             validate_identifier(&stream.name)?;
         }
+        // Keep registry DDL compatible with dimos/memory/registry.py::RegistryStore.
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS _streams (name TEXT PRIMARY KEY, config TEXT NOT NULL)",
         )?;
@@ -233,7 +234,7 @@ mod tests {
         let tables: i64 = store
             .connection
             .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE name IN ('active', 'invalid')",
+                "SELECT count(*) FROM sqlite_master WHERE name GLOB 'active*' OR name GLOB 'invalid*'",
                 [],
                 |row| row.get(0),
             )
@@ -247,7 +248,7 @@ mod tests {
     fn append_preserves_existing_registered_configuration() {
         let file = NamedTempFile::new().unwrap();
         let active = stream("active");
-        let original = r#"{"payload_module":"custom.Payload","codec_id":"lcm","extra":true}"#;
+        let original = r#"{"payload_module":"dimos.msgs.std_msgs.String.String","codec_id":"lcm","page_size":64,"eager_blobs":true}"#;
         let mut store = SqliteRecordingStore::open(file.path().to_str().unwrap(), &[]).unwrap();
         store
             .connection
