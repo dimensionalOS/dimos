@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { ToolResult } from "#dimos/agents/shared/protocol/conversation/state.ts";
 import { BashCard } from "#dimos/agents/frontends/tui/cards/bash.ts";
+import { MovedSchema } from "#dimos/agents/shared/protocol/tools/details.ts";
 import { ProcessTerminal, TuiMainScreen, visibleWidth } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { once } from "node:events";
@@ -8,6 +9,56 @@ import { setTimeout as delay } from "node:timers/promises";
 import { spawn } from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
 import { test } from "node:test";
+import { Value } from "typebox/value";
+
+test("shell card renders completion, failure and background statuses", async (t) => {
+  initTheme("dark", false);
+  const tui = new TuiMainScreen(new ProcessTerminal());
+  tui.requestRender = () => {};
+  const { background } = Value.Parse(MovedSchema, { background: { task: 1 } });
+  for (const scenario of [
+    {
+      name: "success without an exit code",
+      exitCode: null,
+      isError: false,
+      background: undefined,
+      status: /\nDone · /,
+    },
+    { name: "timeout", exitCode: null, isError: true, background: undefined, status: /\nFailed · / },
+    { name: "nonzero exit", exitCode: 2, isError: false, background: undefined, status: /\nFailed · / },
+    { name: "error with zero exit", exitCode: 0, isError: true, background: undefined, status: /\nFailed · / },
+    { name: "moved to background", exitCode: null, isError: false, background, status: /\nIn the background · / },
+  ]) {
+    await t.test(scenario.name, (t) => {
+      const card = new BashCard(
+        { type: "toolCall", id: "call-status", name: "bash", arguments: { command: "command" } },
+        tui,
+        process.cwd(),
+      );
+      t.after(() => card.dispose());
+      card.end({
+        role: "toolResult",
+        toolCallId: "call-status",
+        toolName: "bash",
+        content: [],
+        details: {
+          tool: "bash",
+          details: {
+            truncation: null,
+            fullOutputPath: null,
+            exitCode: scenario.exitCode,
+            render: null,
+            limit: null,
+            background: scenario.background,
+          },
+        },
+        isError: scenario.isError,
+        timestamp: 0,
+      } satisfies ToolResult);
+      assert.match(stripVTControlCharacters(card.render(90).join("\n")), scenario.status);
+    });
+  }
+});
 
 test("shell card streams real output, bounds running rows, collapses on exit and disposes its timer", async (t) => {
   initTheme("dark", false);
