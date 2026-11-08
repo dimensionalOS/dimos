@@ -123,8 +123,11 @@ def _add_joints(
         _joint(robot, f"{child}_fixed", "fixed", parent, child, body_on_parent)
         return
     for index, joint in enumerate(joints):
-        kind = model.jnt_type[joint]
-        if kind not in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+        # A numpy scalar compares equal to one of MuJoCo's enums but is not `in` a tuple of
+        # them: since MuJoCo 4 those enums are pybind11 objects rather than IntEnum, and only
+        # one direction of the comparison answers. int() makes both agree.
+        kind = int(model.jnt_type[joint])
+        if kind not in (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)):
             raise ValueError(
                 f"joint {model.joint(joint).name!r}: only hinge and slide joints have a URDF form"
             )
@@ -217,9 +220,9 @@ def _add_geom(link: ET.Element, model: mujoco.MjModel, geom: int, meshes: dict[i
         shapes.append((pose, "mesh", {"filename": str(meshes[int(model.geom_dataid[geom])])}))
     elif kind == mujoco.mjtGeom.mjGEOM_BOX:
         shapes.append((pose, "box", {"size": _numbers(2 * size)}))
-    elif kind in (mujoco.mjtGeom.mjGEOM_SPHERE, mujoco.mjtGeom.mjGEOM_ELLIPSOID):
+    elif kind in (int(mujoco.mjtGeom.mjGEOM_SPHERE), int(mujoco.mjtGeom.mjGEOM_ELLIPSOID)):
         shapes.append((pose, "sphere", {"radius": _number(size[0])}))
-    elif kind in (mujoco.mjtGeom.mjGEOM_CYLINDER, mujoco.mjtGeom.mjGEOM_CAPSULE):
+    elif kind in (int(mujoco.mjtGeom.mjGEOM_CYLINDER), int(mujoco.mjtGeom.mjGEOM_CAPSULE)):
         shapes.append(
             (pose, "cylinder", {"radius": _number(size[0]), "length": _number(2 * size[1])})
         )
