@@ -18,9 +18,10 @@ and /api/info discovery of its WebTransport endpoint."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 import contextlib
 from dataclasses import dataclass, replace
+from ipaddress import ip_address
 import itertools
 import json
 import socket
@@ -52,6 +53,12 @@ from dimos.web.relay_bridge.protocol import (
     RobotManifest,
     Role,
     encode_datagram,
+)
+from dimos.web.relay_bridge.topic_protocol import TopicCapabilities
+from dimos.web.relay_bridge.topic_transport import (
+    LatestTopicWriter,
+    OrderedTopicWriter,
+    TopicByteBudget,
 )
 
 logger = setup_logger()
@@ -156,12 +163,20 @@ async def _quic_connect(
     on macOS, and that socket then receives the IPv4 server's replies."""
     loop = asyncio.get_running_loop()
     family, _, _, _, addr = (await loop.getaddrinfo(host, port, type=socket.SOCK_DGRAM))[0]
+    loopback = ip_address(addr[0]).is_loopback
+    # Resolve first: a hostname alone must not opt a network path into local
+    # pacing. Packets stay at aioquic's 1200 bytes everywhere: the relay's
+    # QUIC stack reads at most 1472 bytes per datagram on macOS, so larger
+    # loopback packets arrive truncated and the handshake never completes.
+    # Loopback only earns the larger burst; other paths keep the sixteen-packet cap.
     connection = QuicConnection(configuration=replace(configuration, server_name=host))
     # Connected socket: an ICMP port-unreachable (the relay process died)
     # then surfaces as error_received instead of being invisible until the
     # idle timeout.
     transport, protocol = await loop.create_datagram_endpoint(
-        lambda: SessionProtocol(connection), family=family, remote_addr=(addr[0], addr[1])
+        lambda: SessionProtocol(connection, packet_burst=32 if loopback else 16),
+        family=family,
+        remote_addr=(addr[0], addr[1]),
     )
     try:
         protocol.connect(addr)
@@ -315,6 +330,9 @@ class RelayClient:
         robot: RobotInfo | None = None,
         manifest: RobotManifest | None = None,
         token: str | None = None,
+        topic_source: str | None = None,
+        topic_capabilities: TopicCapabilities | None = None,
+        topics: bool = False,
     ) -> None:
         """Register with the relay; returns once its welcome datagram arrives.
 
@@ -333,7 +351,18 @@ class RelayClient:
         if token is not None and len(token) > MAX_TOKEN_LEN:
             # Before the model: pydantic's error would quote the value.
             raise ProtocolError(f"hello token is {len(token)} characters (limit {MAX_TOKEN_LEN})")
-        msg = Hello(v=PROTOCOL_VERSION, role=self.role, robot=robot, manifest=manifest, token=token)
+        msg = Hello(
+            v=PROTOCOL_VERSION,
+            role=self.role,
+            robot=robot,
+            manifest=manifest,
+            token=token,
+            topicSource=topic_source,
+            topicCapabilities=topic_capabilities,
+            topicsVersion=1 if topics or topic_source is not None else None,
+        )
+        if topic_source is not None:
+            self._session.enable_topic_provider()
         control_payload: bytes | None = None
         if self.role == "robot":
             control_payload = encode_datagram(msg)
@@ -491,6 +520,18 @@ class RelayClient:
         finally:
             closed.cancel()
 
+    def topic_writer(
+        self,
+        route: str,
+        delivery: Delivery,
+        budget: TopicByteBudget,
+        on_error: Callable[[str], None],
+    ) -> OrderedTopicWriter | LatestTopicWriter:
+        """Build an explicitly started writer for an authorized dynamic route."""
+        if delivery == "reliable":
+            return OrderedTopicWriter(self._session, route, budget, on_error)
+        return LatestTopicWriter(self._session, route, budget, on_error)
+
     async def control_messages(self) -> AsyncIterator[Msg | DataFrame]:
         """Control messages pushed by the relay (subs snapshots, robots, ...).
 
@@ -513,6 +554,27 @@ class RelayClient:
                 finally:
                     get.cancel()
                 yield msg
+        finally:
+            closed.cancel()
+
+    async def topic_publications(self, *, guarded: bool = False) -> AsyncIterator[DataFrame]:
+        """Bounded, never-conflated binary puts on the separate bulk stream.
+
+        Only negotiated topic providers use this consumer. Control and
+        watchdog processing never wait behind its Zenoh puts.
+        """
+        closed = asyncio.ensure_future(self._session.wait_closed())
+        queue = self._session.topic_guard_frames if guarded else self._session.topic_publications
+        try:
+            while not self._session.closed.is_set():
+                get = asyncio.ensure_future(queue.get())
+                try:
+                    await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
+                    if not get.done() or self._session.closed.is_set():
+                        return
+                    yield get.result()
+                finally:
+                    get.cancel()
         finally:
             closed.cancel()
 

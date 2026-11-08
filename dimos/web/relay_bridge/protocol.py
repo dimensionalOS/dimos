@@ -36,7 +36,7 @@ kill a session. Framing-level corruption (absurd length prefixes) raises
 ProtocolError and kills only the affected stream.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import struct
 from typing import Annotated, Any, Literal
@@ -67,6 +67,12 @@ from dimos.web.relay_bridge.manifest import (
     PanelSpec as PanelSpec,
     Publish as Publish,
 )
+from dimos.web.relay_bridge.topic_protocol import (
+    TopicCapabilities,
+    TopicMsg,
+    TopicSource,
+    TopicVersion,
+)
 
 logger = setup_logger()
 
@@ -95,7 +101,8 @@ logger = setup_logger()
 # misread in both directions). v2: a reliable channel packs all its frames
 # onto one persistent stream. Bump on any change an old peer would silently
 # misparse.
-PROTOCOL_VERSION = 7
+# v8: authenticated topic sources, dynamic routes and ordered upstream streams.
+PROTOCOL_VERSION = 8
 
 # The reserved data-frame channel carrying robot-leg control messages (v5+:
 # the robot's hello; the relay never forwards @-prefixed frames to viewers).
@@ -210,6 +217,13 @@ class Hello(_WireModel):
     manifest: RobotManifest | None = None
     # Robot key or viewer token for a relay started with --auth-file.
     token: _WireOptToken = None
+    topicSource: Annotated[TopicSource | None, BeforeValidator(_optional_reject_wire_null)] = None
+    topicsVersion: Annotated[TopicVersion | None, BeforeValidator(_optional_reject_wire_null)] = (
+        None
+    )
+    topicCapabilities: Annotated[
+        TopicCapabilities | None, BeforeValidator(_optional_reject_wire_null)
+    ] = None
 
     @field_validator("robot", "manifest", mode="before")
     @classmethod
@@ -456,6 +470,7 @@ Msg = (
     | RtcOffer
     | RtcAnswer
     | RtcStalled
+    | TopicMsg
 )
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8
@@ -466,8 +481,8 @@ _MSG_TA: TypeAdapter[Msg] = TypeAdapter(Annotated[Msg, Field(discriminator="t")]
 class FrameHeader(_WireModel):
     """Data-plane frame header.
 
-    `delivery` tells the relay how to forward frames on channels the robot's
-    manifest does not declare (the manifest's delivery wins when present).
+    `delivery` applies to authorized topic routes; declared channels use
+    manifest delivery. Unknown channels are never forwarded.
     `meta` carries encoding-specific extras.
     """
 
@@ -485,6 +500,8 @@ class FrameHeader(_WireModel):
 class DataFrame:
     header: FrameHeader
     payload: bytes
+    # Local monotonic ingress time, never serialized or trusted from the wire.
+    received_at: float | None = field(default=None, compare=False, repr=False)
 
 
 def msg_from_dict(data: dict[str, Any]) -> Msg:
@@ -610,9 +627,14 @@ class DataFrameStreamReader:
     before it) and the reader rejects all further input.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_payload_bytes: int = MAX_DATA_FRAME_BYTES) -> None:
         self._buf = bytearray()
         self._failed: str | None = None
+        self._max_payload_bytes = max_payload_bytes
+
+    @property
+    def buffered_bytes(self) -> int:
+        return len(self._buf)
 
     def push(self, chunk: bytes) -> list[DataFrame]:
         if self._failed is not None:
@@ -624,6 +646,8 @@ class DataFrameStreamReader:
             try:
                 while True:
                     lens = peek_data_frame_lengths(view[pos:])
+                    if lens is not None and lens[1] > self._max_payload_bytes:
+                        raise ProtocolError("data payload exceeds stream bound")
                     if lens is None or len(view) - pos < lens[2]:
                         break
                     frames.append(decode_data_frame(view[pos : pos + lens[2]]))
