@@ -27,7 +27,7 @@ from dimos.robot.manipulators.openarm.blueprints.mini_teleop import (
     teleop_openarm_mini,
     teleop_openarm_mini_follower,
 )
-from dimos.robot.manipulators.openarm.config import OPENARM_ARM_JOINTS, OPENARM_JOINTS
+from dimos.robot.manipulators.openarm.config import OPENARM_JOINTS
 
 _CAMERAS = ("left_wrist", "right_wrist")
 
@@ -39,7 +39,8 @@ _state = FeatureSpec(
     shape=(len(OPENARM_JOINTS),),
     names=list(OPENARM_JOINTS),
 )
-# The leaders drive the 14 arm joints only; the grippers are observed, not commanded.
+# Arm targets and gripper openings both reach the coordinator, so the action
+# covers every joint; the leaders must be calibrated with their gripper triggers.
 _profile = CollectionProfile(
     observations={
         **{
@@ -60,8 +61,6 @@ _profile = CollectionProfile(
             update={
                 "stream": "coordinator_joint_command",
                 "source_kind": "joint_position_updates",
-                "shape": (len(OPENARM_ARM_JOINTS),),
-                "names": list(OPENARM_ARM_JOINTS),
             },
             deep=True,
         )

@@ -177,6 +177,24 @@ side and rate-limited by the trajectory task on the follower side. The
 published coordinator joint names are `openarm_left_joint1` through
 `openarm_left_joint7` and `openarm_right_joint1` through `openarm_right_joint7`.
 
+## Gripper trigger
+
+Servo 8 on each leader is the gripper trigger. `calibrate` records it when it
+answers (released trigger = zero) and skips it otherwise, so a leader without
+a trigger still drives the arm. The live readout after calibration prints
+`trigger=<rad> opening=<0..1>`: squeeze the trigger fully and read the
+trigger angle, then pass it as the travel so a full squeeze closes the
+gripper:
+
+```bash
+dimos run teleop-openarm-mini --port-left <feetech-port> \
+  --openarmminiteleopmodule.gripper-travel-radians 0.9
+```
+
+The module publishes `left_gripper_command` and `right_gripper_command`
+(normalized opening, 1 = open) for the sides with a calibrated trigger; the
+follower blueprints bind them to one gripper task per arm.
+
 ## Driving the real OpenArm follower
 
 The same blueprint drives the physical bimanual OpenArm 2.0 when both CAN ports
@@ -239,8 +257,10 @@ link drops, the follower holds its last target.
 `openarm-mini-collection` wraps the one-machine teleop stack in the collection
 recorder, as `openyam-quest-collection` does for Quest. It records the measured
 follower joints (`coordinator_joint_state`, 14 arm joints and 2 grippers), the
-coordinator's attempted position commands (`coordinator_joint_command`, the 14
-arm joints the leaders drive) and two 640x480 wrist cameras. The follower is
+coordinator's attempted position commands (`coordinator_joint_command`, same 16
+joints: arm targets from the leaders, gripper openings from their triggers) and
+two 640x480 wrist cameras. Both leaders need a calibrated trigger, or the
+action stream lacks the gripper joints and preparation fails. The follower is
 in-memory unless both CAN ports are given.
 
 ```bash
@@ -261,10 +281,8 @@ and `teleop-openarm-mini-leader` on the operator machine as in the previous
 section. The episode panel controls takes, not teleop; the arms keep following
 the leaders between episodes.
 
-Grippers are observed but not commanded: the Mini leaders have no gripper
-input, so `action` has 14 values and `observation.state` 16. Commands are
-attempted targets, not proof of arrival. Prepare the recording as for any
-collection:
+Commands are attempted targets, not proof of arrival. Prepare the recording as
+for any collection:
 
 ```bash
 dimos imitation inspect recordings/openarm-001

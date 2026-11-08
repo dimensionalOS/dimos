@@ -30,6 +30,8 @@ import typer
 
 from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
+    OPENARM_MINI_GRIPPER_MOTOR_NAME,
+    OPENARM_MINI_MOTOR_NAMES,
     OpenArmMiniCalibration,
     OpenArmMiniMotorCalibration,
     OpenArmMiniSide,
@@ -47,6 +49,7 @@ from dimos.teleop.openarm_mini.feetech import (
 DEFAULT_MOTOR_IDS = {
     joint_name: index + 1 for index, joint_name in enumerate(OPENARM_MINI_ARM_JOINT_NAMES)
 }
+GRIPPER_MOTOR_ID = {OPENARM_MINI_GRIPPER_MOTOR_NAME: len(OPENARM_MINI_ARM_JOINT_NAMES) + 1}
 DEFAULT_FLIPS_BY_SIDE: dict[OpenArmMiniSide, frozenset[str]] = {
     "left": frozenset(("joint_1", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7")),
     "right": frozenset(("joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6")),
@@ -149,8 +152,8 @@ def _calibrate_side(
     reader.connect()
     try:
         print(f"\nCalibrating {side} OpenArm Mini leader on {port}")
-        print("Place the leader in its natural zero pose; reading arm-joint motors now.")
-        raw_positions = reader.read_raw_positions(DEFAULT_MOTOR_IDS)
+        print("Place the leader in its natural zero pose, trigger released; reading motors now.")
+        raw_positions = _read_leader(reader)
         calibration = _capture_zero_calibration(
             side,
             raw_positions,
@@ -172,19 +175,22 @@ def _live_readout(side: OpenArmMiniSide, port: str, path: Path, baudrate: int) -
     reader.connect()
     try:
         print(f"\nLive calibrated {side} arm readout from {port}; press Ctrl-C to stop.")
+        motor_ids = {motor_name: motor.id for motor_name, motor in calibration.motors.items()}
         while True:
-            raw_positions = reader.read_raw_positions(DEFAULT_MOTOR_IDS)
+            raw_positions = reader.read_raw_positions(motor_ids)
             calibrated_readings = {
-                joint_name: _calibrated_motor_radians(raw_position, calibration.motors[joint_name])
-                for joint_name, raw_position in raw_positions.items()
+                motor_name: _calibrated_motor_radians(raw_position, calibration.motors[motor_name])
+                for motor_name, raw_position in raw_positions.items()
             }
             command = map_side_readings(side, calibrated_readings)
-            print(
-                " ".join(
-                    f"{joint_name}={position:+.3f}rad"
-                    for joint_name, position in command.positions_by_joint.items()
-                )
-            )
+            fields = [
+                f"{joint_name}={position:+.3f}rad"
+                for joint_name, position in command.positions_by_joint.items()
+            ]
+            if command.gripper_opening is not None:
+                trigger = calibrated_readings[OPENARM_MINI_GRIPPER_MOTOR_NAME]
+                fields.append(f"trigger={trigger:+.3f}rad opening={command.gripper_opening:.2f}")
+            print(" ".join(fields))
             time.sleep(0.25)
     except KeyboardInterrupt:
         print("\nStopped live readout.")
@@ -201,17 +207,29 @@ def _capture_zero_calibration(
     invalid_flips = set(flips) - set(OPENARM_MINI_ARM_JOINT_NAMES)
     if invalid_flips:
         raise RuntimeError(f"unknown OpenArm Mini flip joints: {sorted(invalid_flips)}")
+    motor_ids = DEFAULT_MOTOR_IDS | GRIPPER_MOTOR_ID
     return OpenArmMiniCalibration(
         side=side,
         motors={
-            joint_name: OpenArmMiniMotorCalibration(
-                id=DEFAULT_MOTOR_IDS[joint_name],
-                homing_offset=raw_positions[joint_name],
-                flip=joint_name in flips,
+            motor_name: OpenArmMiniMotorCalibration(
+                id=motor_ids[motor_name],
+                homing_offset=raw_positions[motor_name],
+                flip=motor_name in flips,
             )
-            for joint_name in OPENARM_MINI_ARM_JOINT_NAMES
+            for motor_name in OPENARM_MINI_MOTOR_NAMES
+            if motor_name in raw_positions
         },
     )
+
+
+def _read_leader(reader: Any) -> dict[str, int]:
+    """Raw arm-joint ticks, plus the gripper trigger when a servo answers at its id."""
+    raw_positions = dict(reader.read_raw_positions(DEFAULT_MOTOR_IDS))
+    try:
+        raw_positions.update(reader.read_raw_positions(GRIPPER_MOTOR_ID))
+    except RuntimeError:
+        print("No gripper trigger servo answered; calibrating arm joints only.")
+    return raw_positions
 
 
 def _format_calibration_confirmation(calibration: OpenArmMiniCalibration) -> str:
@@ -220,9 +238,12 @@ def _format_calibration_confirmation(calibration: OpenArmMiniCalibration) -> str
         f"{'Joint':<10} {'ID':>2} {'Zero Raw':>8} {'Flip':>5}",
         "-" * 31,
     ]
-    for joint_name in OPENARM_MINI_ARM_JOINT_NAMES:
-        motor = calibration.motors[joint_name]
-        lines.append(f"{joint_name:<10} {motor.id:>2} {motor.homing_offset:>8} {motor.flip!s:>5}")
+    for motor_name in OPENARM_MINI_MOTOR_NAMES:
+        motor = calibration.motors.get(motor_name)
+        if motor is not None:
+            lines.append(
+                f"{motor_name:<10} {motor.id:>2} {motor.homing_offset:>8} {motor.flip!s:>5}"
+            )
     return "\n".join(lines)
 
 
@@ -241,11 +262,12 @@ def _parse_flip_overrides(value: str | None, side: OpenArmMiniSide) -> set[str]:
 
 def _validate_raw_positions(raw_positions: dict[str, int]) -> None:
     missing = set(OPENARM_MINI_ARM_JOINT_NAMES) - set(raw_positions)
-    extra = set(raw_positions) - set(OPENARM_MINI_ARM_JOINT_NAMES)
+    extra = set(raw_positions) - set(OPENARM_MINI_MOTOR_NAMES)
     if missing or extra:
         raise RuntimeError(
-            "OpenArm Mini raw readings must contain exactly arm joints "
-            f"{list(OPENARM_MINI_ARM_JOINT_NAMES)}; missing={sorted(missing)}, extra={sorted(extra)}"
+            "OpenArm Mini raw readings must contain arm joints "
+            f"{list(OPENARM_MINI_ARM_JOINT_NAMES)} and optionally "
+            f"{OPENARM_MINI_GRIPPER_MOTOR_NAME!r}; missing={sorted(missing)}, extra={sorted(extra)}"
         )
 
 

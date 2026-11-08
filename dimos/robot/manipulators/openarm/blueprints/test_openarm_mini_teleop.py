@@ -55,10 +55,24 @@ def _teleop_config_after_cli_override(
     return OpenArmMiniTeleopModuleConfig(**module_kwargs)
 
 
+def _tasks_of(blueprint: Blueprint) -> list[TaskConfig]:
+    tasks = _module_kwargs(blueprint, OpenArmTeleopCoordinator)["tasks"]
+    assert all(isinstance(task, TaskConfig) for task in tasks)
+    return list(tasks)
+
+
 def _trajectory_task_of(blueprint: Blueprint) -> TaskConfig:
-    (task,) = _module_kwargs(blueprint, OpenArmTeleopCoordinator)["tasks"]
-    assert isinstance(task, TaskConfig)
+    (task,) = [task for task in _tasks_of(blueprint) if task.type == "trajectory"]
     return task
+
+
+def _assert_gripper_tasks(blueprint: Blueprint) -> None:
+    grippers = [task for task in _tasks_of(blueprint) if task.type == "gripper"]
+    assert [(task.name, task.joint_names, task.stream_bind) for task in grippers] == [
+        ("left_arm_gripper", ["left_arm/gripper"], {"gripper_command": "left_gripper_command"}),
+        ("right_arm_gripper", ["right_arm/gripper"], {"gripper_command": "right_gripper_command"}),
+    ]
+    assert all(task.priority == 20 for task in grippers)
 
 
 def test_combined_blueprint_streams_leader_joints_into_one_trajectory_task() -> None:
@@ -76,6 +90,7 @@ def test_combined_blueprint_streams_leader_joints_into_one_trajectory_task() -> 
     assert task.type == "trajectory"
     assert task.joint_names == _BOTH_ARMS
     assert list(task.params["velocity_limits"]) == _BOTH_ARMS
+    _assert_gripper_tasks(blueprint)
     assert _module_kwargs(blueprint, _OpenArmManipulationModule)["visualization"] == {
         "backend": "viser"
     }
@@ -123,6 +138,7 @@ def test_follower_blueprint_consumes_joint_command_for_both_arms() -> None:
     assert _module_types(blueprint) == [OpenArmTeleopCoordinator, _OpenArmManipulationModule]
     assert _is_name_unique(blueprint, "joint_command")
     assert _trajectory_task_of(blueprint).joint_names == _BOTH_ARMS
+    _assert_gripper_tasks(blueprint)
     assert blueprint.global_config_overrides["zenoh_connect"] == mini_teleop.OPENARM_ROUTER
     assert mini_teleop.OPENARM_ROUTER == "tcp/127.0.0.1:7447"
     visualization = _module_kwargs(blueprint, _OpenArmManipulationModule)["visualization"]

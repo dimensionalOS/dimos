@@ -87,9 +87,20 @@ def test_invalid_calibration_rejects_missing_motor() -> None:
         OpenArmMiniCalibration(side="left", motors=motors)
 
 
-def test_invalid_calibration_rejects_gripper_or_legacy_fields() -> None:
+def test_calibration_accepts_an_optional_gripper_trigger() -> None:
+    assert _valid_calibration().has_gripper is False
+
     motors = _valid_calibration().motors.copy()
     motors["gripper"] = OpenArmMiniMotorCalibration(id=8, homing_offset=2048, flip=False)
+    calibration = OpenArmMiniCalibration(side="left", motors=motors)
+
+    assert calibration.has_gripper is True
+    assert calibration.motors["gripper"].id == 8
+
+
+def test_invalid_calibration_rejects_unknown_motor_or_legacy_fields() -> None:
+    motors = _valid_calibration().motors.copy()
+    motors["wrist"] = OpenArmMiniMotorCalibration(id=9, homing_offset=2048, flip=False)
 
     with pytest.raises(OpenArmMiniCalibrationError, match="extra"):
         OpenArmMiniCalibration(side="left", motors=motors)

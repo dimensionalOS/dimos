@@ -21,10 +21,17 @@ from dataclasses import dataclass
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openarm.config import openarm_urdf_joints
-from dimos.teleop.openarm_mini.calibration import OPENARM_MINI_ARM_JOINT_NAMES, OpenArmMiniSide
+from dimos.teleop.openarm_mini.calibration import (
+    OPENARM_MINI_ARM_JOINT_NAMES,
+    OPENARM_MINI_GRIPPER_MOTOR_NAME,
+    OpenArmMiniSide,
+)
 
 LEADER_JOINT_NAMES = OPENARM_MINI_ARM_JOINT_NAMES
 LEADER_MOTOR_NAMES = LEADER_JOINT_NAMES
+# Normalized gripper opening the gripper task consumes; a released trigger is open.
+GRIPPER_OPEN = 1.0
+GRIPPER_CLOSED = 0.0
 
 # Mirrors the measured OpenArm v1.0 follower limits from
 # dimos.hardware.manipulators.openarm.adapter. The sender-side clamp improves
@@ -58,6 +65,8 @@ class OpenArmMiniSideCommand:
 
     side: OpenArmMiniSide
     positions_by_joint: dict[str, float]
+    # None when the leader has no calibrated gripper trigger.
+    gripper_opening: float | None = None
 
 
 def map_side_readings(
@@ -67,9 +76,12 @@ def map_side_readings(
     target_joint_names: Sequence[str] | None = None,
     previous_positions_by_joint: dict[str, float] | None = None,
     max_joint_jump_radians: float | None = None,
+    gripper_travel_radians: float = 1.0,
 ) -> OpenArmMiniSideCommand:
-    """Map calibrated leader arm radians into OpenArm follower joint positions."""
+    """Map calibrated leader radians into follower joint positions and a gripper opening."""
     _validate_readings(readings)
+    if gripper_travel_radians <= 0.0:
+        raise ValueError("gripper_travel_radians must be positive")
 
     follower_joint_names = tuple(target_joint_names or openarm_urdf_joints(side))
     if len(follower_joint_names) != len(LEADER_JOINT_NAMES):
@@ -87,9 +99,15 @@ def map_side_readings(
         previous_positions_by_joint,
         max_joint_jump_radians,
     )
+    gripper_opening = None
+    trigger = readings.get(OPENARM_MINI_GRIPPER_MOTOR_NAME)
+    if trigger is not None:
+        squeeze = _clamp(abs(trigger) / gripper_travel_radians, 0.0, 1.0)
+        gripper_opening = GRIPPER_OPEN - squeeze * (GRIPPER_OPEN - GRIPPER_CLOSED)
     return OpenArmMiniSideCommand(
         side=side,
         positions_by_joint=positions_by_joint,
+        gripper_opening=gripper_opening,
     )
 
 

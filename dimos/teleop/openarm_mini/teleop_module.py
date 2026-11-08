@@ -35,6 +35,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.config import openarm_urdf_joints
 from dimos.teleop.openarm_mini.calibration import (
     OpenArmMiniCalibrationError,
@@ -47,7 +48,11 @@ from dimos.teleop.openarm_mini.feetech import (
     OpenArmMiniDependencyError,
     OpenArmMiniLeaderReader,
 )
-from dimos.teleop.openarm_mini.mapping import combine_side_commands, map_side_readings
+from dimos.teleop.openarm_mini.mapping import (
+    OpenArmMiniSideCommand,
+    combine_side_commands,
+    map_side_readings,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -70,6 +75,8 @@ class OpenArmMiniTeleopModuleConfig(ModuleConfig):
     right_calibration_path: Path | None = None
     baudrate: int = Field(default=OPENARM_MINI_DEFAULT_BAUDRATE, gt=0)
     max_joint_jump_radians: float = 0.75
+    # Trigger angle from released to fully squeezed; read it off the calibrate live readout.
+    gripper_travel_radians: float = Field(default=1.0, gt=0.0)
     authority_active: bool = True
     # Unset: the sides whose serial port is configured drive the follower.
     enabled_sides: Annotated[tuple[OpenArmMiniSide, ...], Field(min_length=1)] | None = None
@@ -131,6 +138,8 @@ class OpenArmMiniTeleopModule(Module):
 
     config: OpenArmMiniTeleopModuleConfig  # type: ignore[assignment]
     joint_command: Out[JointState]
+    left_gripper_command: Out[Float32]
+    right_gripper_command: Out[Float32]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -213,12 +222,13 @@ class OpenArmMiniTeleopModule(Module):
         self._last_read_error = None
         self._teleop_connected = False
 
-    def get_current_command(self) -> JointState | None:
+    def get_current_commands(self) -> list[OpenArmMiniSideCommand] | None:
+        """Read every enabled leader once; None when a read fails or authority is off."""
         openarm_mini = self.openarm_mini_config
         if not self._teleop_connected or not openarm_mini.authority_active:
             return None
 
-        side_commands = []
+        side_commands: list[OpenArmMiniSideCommand] = []
         next_previous_positions_by_side: dict[OpenArmMiniSide, dict[str, float]] = {}
         try:
             for side in openarm_mini.sides():
@@ -229,6 +239,7 @@ class OpenArmMiniTeleopModule(Module):
                     target_joint_names=openarm_mini.target_joint_names(side),
                     previous_positions_by_joint=self._previous_positions_by_side.get(side),
                     max_joint_jump_radians=openarm_mini.max_joint_jump_radians,
+                    gripper_travel_radians=openarm_mini.gripper_travel_radians,
                 )
                 side_commands.append(side_command)
                 next_previous_positions_by_side[side] = side_command.positions_by_joint
@@ -244,16 +255,29 @@ class OpenArmMiniTeleopModule(Module):
 
         self._last_read_error = None
         self._previous_positions_by_side = next_previous_positions_by_side
-        return combine_side_commands(side_commands)
+        return side_commands
+
+    def get_current_command(self) -> JointState | None:
+        side_commands = self.get_current_commands()
+        return None if side_commands is None else combine_side_commands(side_commands)
 
     def tick(self) -> None:
-        """Run one synchronous OpenArm Mini polling iteration."""
+        """One polling iteration: arm joints as one JointState, gripper openings per side."""
         if self._stop_event.is_set():
             return
-        command = self.get_current_command()
-        if command is None or self._stop_event.is_set():
+        side_commands = self.get_current_commands()
+        if side_commands is None or self._stop_event.is_set():
             return
-        self.joint_command.publish(command)
+        self.joint_command.publish(combine_side_commands(side_commands))
+        gripper_outputs: Mapping[OpenArmMiniSide, Out[Float32]] = {
+            "left": self.left_gripper_command,
+            "right": self.right_gripper_command,
+        }
+        for side_command in side_commands:
+            if side_command.gripper_opening is not None:
+                gripper_outputs[side_command.side].publish(
+                    Float32(data=side_command.gripper_opening)
+                )
 
     def _run_loop(self) -> None:
         next_tick_time = time.monotonic()

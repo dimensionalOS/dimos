@@ -45,7 +45,9 @@ OPENARM_MINI_ARM_JOINT_NAMES = (
     "joint_6",
     "joint_7",
 )
-OPENARM_MINI_MOTOR_NAMES = OPENARM_MINI_ARM_JOINT_NAMES
+# Servo 8 is the gripper trigger; a leader without it calibrates arm joints only.
+OPENARM_MINI_GRIPPER_MOTOR_NAME = "gripper"
+OPENARM_MINI_MOTOR_NAMES = (*OPENARM_MINI_ARM_JOINT_NAMES, OPENARM_MINI_GRIPPER_MOTOR_NAME)
 
 
 def default_calibration_path(side: OpenArmMiniSide) -> Path:
@@ -58,7 +60,7 @@ class OpenArmMiniCalibrationError(RuntimeError):
 
 
 class OpenArmMiniMotorCalibration(BaseConfig):
-    """Calibration values for one arm-joint Feetech motor."""
+    """Calibration values for one Feetech motor; the gripper's zero is its released trigger."""
 
     id: StrictInt
     homing_offset: StrictInt
@@ -81,16 +83,21 @@ class OpenArmMiniCalibration(BaseConfig):
     @model_validator(mode="after")
     def _validate_calibration(self) -> Self:
         missing = set(OPENARM_MINI_ARM_JOINT_NAMES) - set(self.motors)
-        extra = set(self.motors) - set(OPENARM_MINI_ARM_JOINT_NAMES)
+        extra = set(self.motors) - set(OPENARM_MINI_MOTOR_NAMES)
         if missing or extra:
             raise OpenArmMiniCalibrationError(
-                "OpenArm Mini calibration must contain exactly arm joints "
-                f"{list(OPENARM_MINI_ARM_JOINT_NAMES)}; missing={sorted(missing)}, extra={sorted(extra)}"
+                "OpenArm Mini calibration must contain arm joints "
+                f"{list(OPENARM_MINI_ARM_JOINT_NAMES)} and optionally "
+                f"{OPENARM_MINI_GRIPPER_MOTOR_NAME!r}; missing={sorted(missing)}, extra={sorted(extra)}"
             )
         for motor_name, motor in self.motors.items():
             if motor.id <= 0:
                 raise OpenArmMiniCalibrationError(f"{motor_name} has invalid id {motor.id}")
         return self
+
+    @property
+    def has_gripper(self) -> bool:
+        return OPENARM_MINI_GRIPPER_MOTOR_NAME in self.motors
 
 
 def calibration_file(path: Path) -> Path:

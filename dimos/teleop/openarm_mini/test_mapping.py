@@ -106,3 +106,22 @@ def test_gripper_reading_is_not_required() -> None:
     command = map_side_readings("right", _readings())
 
     assert list(command.positions_by_joint) == [f"openarm_right_joint{i}" for i in range(1, 8)]
+    assert command.gripper_opening is None
+
+
+def test_gripper_trigger_maps_released_to_open_and_squeezed_to_closed() -> None:
+    released = map_side_readings(
+        "right", _readings() | {"gripper": 0.0}, gripper_travel_radians=0.8
+    )
+    half = map_side_readings("right", _readings() | {"gripper": -0.4}, gripper_travel_radians=0.8)
+    squeezed = map_side_readings(
+        "right", _readings() | {"gripper": 1.2}, gripper_travel_radians=0.8
+    )
+
+    assert released.gripper_opening == 1.0
+    assert half.gripper_opening == pytest.approx(0.5)
+    assert squeezed.gripper_opening == 0.0
+    assert "gripper" not in released.positions_by_joint
+
+    with pytest.raises(ValueError, match="gripper_travel_radians"):
+        map_side_readings("right", _readings() | {"gripper": 0.1}, gripper_travel_radians=0.0)

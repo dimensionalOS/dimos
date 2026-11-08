@@ -27,6 +27,8 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
     _OpenArmManipulationModule,
 )
 from dimos.robot.manipulators.openarm.config import (
+    OPENARM_GRIPPER_JOINTS,
+    OPENARM_SIDES,
     openarm_bimanual_model_config,
     openarm_urdf_joints,
 )
@@ -61,11 +63,28 @@ def _trajectory_task(sides: tuple[OpenArmMiniSide, ...]) -> TaskConfig:
     )
 
 
+def _gripper_tasks() -> list[TaskConfig]:
+    return [
+        TaskConfig(
+            name=f"{side}_arm_gripper",
+            type="gripper",
+            joint_names=[joint_name],
+            priority=20,
+            stream_bind={"gripper_command": f"{side}_gripper_command"},
+        )
+        for side, joint_name in zip(OPENARM_SIDES, OPENARM_GRIPPER_JOINTS, strict=True)
+    ]
+
+
+def _follower_tasks() -> list[TaskConfig]:
+    return [_trajectory_task(("left", "right")), *_gripper_tasks()]
+
+
 teleop_openarm_mini = autoconnect(
     OpenArmMiniTeleopModule.blueprint(),
     OpenArmTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        tasks=[_trajectory_task(("left", "right"))],
+        tasks=_follower_tasks(),
     ),
     _OpenArmManipulationModule.blueprint(
         model=openarm_bimanual_model_config(),
@@ -82,7 +101,7 @@ teleop_openarm_mini_leader = OpenArmMiniTeleopModule.blueprint().global_config(
 teleop_openarm_mini_follower = autoconnect(
     OpenArmTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
-        tasks=[_trajectory_task(("left", "right"))],
+        tasks=_follower_tasks(),
     ),
     _OpenArmManipulationModule.blueprint(
         model=openarm_bimanual_model_config(),

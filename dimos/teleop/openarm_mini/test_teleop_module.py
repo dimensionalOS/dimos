@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.openarm_mini import teleop_module
 from dimos.teleop.openarm_mini.calibration import (
     FEETECH_POSITION_SPAN,
@@ -398,6 +399,34 @@ def test_teleop_module_returns_none_when_bus_read_raises_runtime_error(
         command = module.get_current_command()
 
     assert command is None
+
+
+def test_tick_publishes_gripper_openings_only_for_sides_with_a_trigger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    left_path, right_path = _write_calibrations(tmp_path)
+    buses = {
+        "left": _FakeBus(_readings() | {"gripper": -0.25}),
+        "right": _FakeBus(_readings()),
+    }
+    _patch_buses(monkeypatch, buses)
+
+    with _connected_module(
+        _configured_config(left_path, right_path, gripper_travel_radians=0.5)
+    ) as module:
+        joint_publish = mocker.patch.object(module.joint_command, "publish")
+        left_publish = mocker.patch.object(module.left_gripper_command, "publish")
+        right_publish = mocker.patch.object(module.right_gripper_command, "publish")
+        module.tick()
+
+    joint_publish.assert_called_once()
+    assert "gripper" not in joint_publish.call_args.args[0].name
+    left_publish.assert_called_once()
+    assert isinstance(left_publish.call_args.args[0], Float32)
+    assert left_publish.call_args.args[0].data == pytest.approx(0.5)
+    right_publish.assert_not_called()
 
 
 def test_tick_publishes_direct_joint_command(

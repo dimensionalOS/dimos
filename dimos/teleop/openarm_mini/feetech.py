@@ -22,7 +22,6 @@ from typing import Any
 
 from dimos.teleop.openarm_mini.calibration import (
     FEETECH_POSITION_SPAN,
-    OPENARM_MINI_ARM_JOINT_NAMES,
     OpenArmMiniCalibration,
     OpenArmMiniMotorCalibration,
     OpenArmMiniSide,
@@ -141,17 +140,14 @@ class OpenArmMiniLeaderReader:
         self._reader.disconnect()
 
     def read_positions(self) -> dict[str, float]:
-        motor_ids_by_name = {
-            joint_name: self._calibration.motors[joint_name].id
-            for joint_name in OPENARM_MINI_ARM_JOINT_NAMES
-        }
-        raw_positions = self._reader.read_raw_positions(motor_ids_by_name)
+        """Calibrated radians for every calibrated motor, the gripper trigger included."""
+        motors = self._calibration.motors
+        raw_positions = self._reader.read_raw_positions(
+            {motor_name: motor.id for motor_name, motor in motors.items()}
+        )
         return {
-            joint_name: _calibrated_motor_radians(
-                raw_positions[joint_name],
-                self._calibration.motors[joint_name],
-            )
-            for joint_name in OPENARM_MINI_ARM_JOINT_NAMES
+            motor_name: _calibrated_motor_radians(raw_positions[motor_name], motor)
+            for motor_name, motor in motors.items()
         }
 
 

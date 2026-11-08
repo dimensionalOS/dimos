@@ -32,7 +32,7 @@ from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OpenArmTeleopCoordinator,
     _OpenArmManipulationModule,
 )
-from dimos.robot.manipulators.openarm.config import OPENARM_ARM_JOINTS, OPENARM_JOINTS
+from dimos.robot.manipulators.openarm.config import OPENARM_JOINTS
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 
 
@@ -59,7 +59,7 @@ def test_collection_uses_normal_module_configuration(blueprint: Blueprint, tmp_p
     assert parsed.module_configs["right_wrist"]["hardware"]["camera_index"] == "/dev/video2"
 
 
-def test_state_observes_every_joint_and_action_is_the_commanded_arm_joints() -> None:
+def test_state_and_action_cover_every_joint_from_the_coordinator_streams() -> None:
     recorder = next(
         atom for atom in openarm_mini_collection.active_blueprints if atom.name == "recorder"
     )
@@ -70,7 +70,7 @@ def test_state_observes_every_joint_and_action_is_the_commanded_arm_joints() -> 
     (action,) = schema.action.values()
     assert action.stream == "coordinator_joint_command"
     assert action.source_kind == "joint_position_updates"
-    assert action.names == list(OPENARM_ARM_JOINTS)
+    assert action.names == list(OPENARM_JOINTS)
     assert schema.observation["observation.images.left_wrist"].stream == "left_wrist_image"
     assert schema.observation["observation.images.right_wrist"].stream == "right_wrist_image"
     assert recorder.kwargs["input_types"].keys() == {
