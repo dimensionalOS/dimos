@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -137,6 +138,12 @@ class Mount:
 
         if isinstance(value, Mount):
             return value
+        if isinstance(value, Mapping) and "remote_name" in value:
+            # A Mount that has already been normalized once. The config is validated again in
+            # the worker the manager is deployed into, and what arrives there is the plain dict
+            # this one was dumped to -- so without this branch every mount a blueprint actually
+            # deploys is rejected, and mounts only ever work in-process.
+            return cls(**value)
         if isinstance(value, Blueprint):
             return cls._from_blueprint(value)
         if isinstance(value, str):
