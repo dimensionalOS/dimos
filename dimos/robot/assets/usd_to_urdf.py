@@ -113,15 +113,34 @@ def usd_root_link(usd: str) -> str:
     pxr = _pxr()
     stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
     links = _links_of(pxr, stage)
-    children = {
-        _body_name(prim, "physics:body1") for prim in _joint_prims(pxr, stage)
-    } | _nested_link_names(pxr, links)
+    joints = list(_joint_prims(pxr, stage))
+    children = {_body_name(prim, "physics:body1") for prim in joints} | _nested_link_names(
+        pxr, links
+    )
     roots = [name for name in links if name not in children]
     if not roots:
-        return next(iter(links), "")
+        return _world_root(pxr, stage, joints) or next(iter(links), "")
     if len(roots) > 1:
         logger.warning(f"this layer has more than one root link ({roots}); taking the first")
     return roots[0]
+
+
+def _world_root(pxr: Any, stage: Any, joints: list[Any]) -> str:
+    """The prim every joint hangs off, when it is not itself a link.
+
+    A scene converted from an MJCF welds each item to the worldbody, and a worldbody is not a
+    rigid body, so it is not a link and every actual link is some joint's child -- `roots` comes
+    out empty and the fallback took whichever link happened to be first. office_555 rooted its
+    448 pieces of furniture at `box_1`, a cardboard box.
+
+    Marking that prim as a rigid body in the layer would be the other fix, and it is worse:
+    MuJoCo then treats the world as dynamic and refuses the ground plane outright ("plane only
+    allowed in static bodies"). So the rule lives here instead -- the one prim every joint names
+    as its parent is the root, link or not.
+    """
+    parents = {name for prim in joints if (name := _body_name(prim, "physics:body0"))}
+    assert pxr and stage  # the stage these joints came from
+    return next(iter(parents)) if len(parents) == 1 else ""
 
 
 def _nested_link_names(pxr: Any, links: dict[str, Any]) -> set[str]:
