@@ -49,6 +49,7 @@ from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import WorldView, open_view
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.mujoco.menagerie import menagerie_path
+from dimos.utils.logging_config import setup_logger
 
 # Where it starts: pelvis height, and per joint (Menagerie's order, which is the motors' order) the pose it stands in
 # and the PD gains that hold it there until the first motor_command.
@@ -91,6 +92,9 @@ SERVOS = (
 )
 
 
+logger = setup_logger()
+
+
 # The MJCF body the URDF is rooted at, and so the frame odometry moves.
 ROOT_BODY = "pelvis"
 
@@ -101,6 +105,10 @@ class G1SimConfig(ModuleConfig):
     frame_id: str = "g1_pelvis"
     # What the robot's pose is given in. The world frame, as the Go2 twin uses.
     odom_frame_id: str = "world"
+    # Put in front of this robot's own frames. Empty for a lone robot, whose frames are the bare
+    # link names its URDF uses. Several robots in one world each need their own, or they publish
+    # the same "pelvis" and tf sees one frame with three robots claiming it.
+    frame_prefix: str = ""
     # As G1WholeBodyConnection: full damping at once, stiffness and torque fading in over this long.
     soft_start_seconds: float = 3.0
     # As G1WholeBodyConnection's, but per sim second.
@@ -195,7 +203,9 @@ class G1Sim(Module):
             position=position.tolist(),
             orientation=orientation.tolist(),
         )
-        self.tf.publish(TFMessage(Transform.from_pose(ROOT_BODY, odom)))
+        self.tf.publish(
+            TFMessage(Transform.from_pose(f"{self.config.frame_prefix}{ROOT_BODY}", odom))
+        )
         self.odom.publish(odom)
 
     async def _publish(self) -> None:
