@@ -55,6 +55,10 @@ class LivoxSimConfig(ModuleConfig):
     # geoms out of 4138, so the beam passed straight through every desk, chair and robot and
     # returned the wall behind them.
     geom_groups: tuple[int, ...] = (0, 3)
+    # Further frames the beam passes through, beyond the one the sensor is mounted on (which it
+    # never sees, the way a real one cannot see its own housing). For a radome, a mast, or a
+    # wall a test wants out of the way.
+    blind_to: tuple[str, ...] = ()
     # The Go2 rig's mount blocks some directions; only meaningful when mounted on a Go2.
     go2_occlusion: bool = False
     seed: int = 0
@@ -78,7 +82,7 @@ class LivoxSim(Module):
         site = sensor_frame(description, self.frame_id)
         view = open_view(description)
         sensor = sim_mid360(
-            view.raycaster(self.config.geom_groups),
+            view.raycaster(self.config.geom_groups, mounted_at=site, blind_to=self.config.blind_to),
             self.config.seed,
             OcclusionMap.load(get_data("go2_sim") / "go2_mid360_occlusion.npz")
             if self.config.go2_occlusion
