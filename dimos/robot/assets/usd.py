@@ -216,14 +216,22 @@ def _rebase_relationships(
 def _link_prim_paths(stage: Any) -> dict[str, str]:
     """URDF link name -> prim path, for every prim carrying ``UsdPhysics.RigidBodyAPI``.
 
-    Narrower than "any Xform": it leaves out the defaultPrim and the joints, either of which
-    could shadow a link sharing its name. The name is displayName, or the prim name without one.
+    Narrower than "any Xform": it leaves out the joints, which could shadow a link sharing a
+    name. The name is displayName, or the prim name without one.
+
+    The defaultPrim is included last and only under a name no link has taken, so a link still
+    wins any clash. It has to be here because it is what a scene is rooted at: a converted room
+    is a plain Xform holding 450 bodies, so without this there is nowhere to mount a robot in
+    one -- and `usd_root_link` names it as the root, which would then not be attachable.
     """
     pxr = _pxr()
     paths: dict[str, str] = {}
     for prim in stage.Traverse():
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
             paths[prim.GetDisplayName() or prim.GetName()] = str(prim.GetPath())
+    root = stage.GetDefaultPrim()
+    if root:
+        paths.setdefault(root.GetDisplayName() or root.GetName(), str(root.GetPath()))
     return paths
 
 
