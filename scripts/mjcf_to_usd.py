@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -120,6 +121,19 @@ def mesh_files(mjcf: Path) -> dict[str, str]:
     return files
 
 
+def _mesh_of(prim_name: str, files: dict[str, str]) -> str | None:
+    """The mesh file a prim's name refers to, allowing for the converter's de-duplication.
+
+    Two geoms on one body that use the same mesh become two prims, and the converter names the
+    second ``<mesh>_1``. Both are the same file. Without this every such prim stays baked, which
+    on the G1 is 23 of 58.
+    """
+    if prim_name in files:
+        return files[prim_name]
+    stripped = re.sub(r"_\d+$", "", prim_name)
+    return files.get(stripped) if stripped != prim_name else None
+
+
 def rereference(
     stage: Any, files: dict[str, str], meshes: Path, out_dir: Path, pxr: Any
 ) -> tuple[int, int]:
@@ -136,14 +150,24 @@ def rereference(
     for prim in list(stage.Traverse()):
         if not prim.IsA(pxr.UsdGeom.Mesh):
             continue
-        file = files.get(prim.GetName())
+        file = _mesh_of(prim.GetName(), files)
         if file is None:
             logger.warning(f"{prim.GetPath()} has no mesh of that name in the MJCF; left baked")
             skipped += 1
             continue
-        path = (meshes / file).resolve()
-        if not path.is_file():
-            logger.warning(f"{path} is missing; {prim.GetPath()} left baked")
+        # --meshes is authoritative, so a `file=` that carries a directory (because the MJCF
+        # set meshdir, or names the vendor checkout by relative path) is matched by its
+        # basename rather than pasted onto the directory a second time.
+        path = next(
+            (
+                candidate
+                for candidate in ((meshes / file).resolve(), (meshes / Path(file).name).resolve())
+                if candidate.is_file()
+            ),
+            None,
+        )
+        if path is None:
+            logger.warning(f"no {file} under {meshes}; {prim.GetPath()} left baked")
             skipped += 1
             continue
         # Everything per-vertex goes: the reference supplies it, and it is what made the layer
