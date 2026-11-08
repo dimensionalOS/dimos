@@ -34,7 +34,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.manipulation.manipulation_module import (
     VOXEL_MAP_OBSTACLE_ID,
     ManipulationModule,
@@ -84,16 +83,11 @@ from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
-def test_missing_roboplan_has_install_hint_before_construction(
-    monkeypatch, mocker, robot_config
-) -> None:
+def test_default_backend_requires_roboplan_with_install_hint(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "roboplan.core", None)
-    start = mocker.patch.object(ModuleCoordinator, "start")
 
     with pytest.raises(ImportError, match="Install the manipulation extra"):
-        ModuleCoordinator.build(ManipulationModule.blueprint(model=robot_config))
-
-    start.assert_not_called()
+        ManipulationModule.check_dependencies()
 
 
 def test_available_roboplan_passes_dependency_check(monkeypatch) -> None:

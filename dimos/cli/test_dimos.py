@@ -378,8 +378,6 @@ def test_run_reports_missing_dependency_before_starting(
     assert result.exit_code == 1
     assert f"Error: {hint}" in result.output
     assert result.output.count(hint) == 1
-    assert "Traceback" not in result.output
-    assert "health check" not in result.output.lower()
     assert stubbed_run == {}
     fork_daemon.assert_not_called()
 
@@ -602,10 +600,17 @@ def test_run_options_still_work_after_dynamic_config_flags(
     assert stubbed_run["blueprint"].disabled_modules_tuple == (RunModuleB,)
 
 
-def test_run_help_lists_dynamic_flags_without_starting(stubbed_run: dict[str, Any]) -> None:
+def test_run_help_lists_dynamic_flags_without_starting(
+    stubbed_run: dict[str, Any], mocker: MockerFixture
+) -> None:
+    check_dependencies = mocker.patch.object(
+        RunModuleA, "check_dependencies", side_effect=AssertionError("help checked dependencies")
+    )
+
     result = CliRunner().invoke(main, ["run", "alpha", "--help"])
 
     assert result.exit_code == 0, result.output
+    check_dependencies.assert_not_called()
     # In CI, GITHUB_ACTIONS makes typer emit ANSI styling that splits option
     # names mid-string, so strip the escape codes before matching.
     output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)

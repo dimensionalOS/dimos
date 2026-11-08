@@ -751,8 +751,10 @@ def build_coordinator():
 
 
 @pytest.fixture
-def dynamic_coordinator():
-    mc = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
+def dynamic_coordinator(monkeypatch, tmp_path):
+    monkeypatch.setattr("dimos.core.coordination.module_coordinator.RUNTIME_MODULES_DIR", tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    mc = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none", dtop=False))
     mc.start()
     yield mc
     mc.stop()
@@ -872,17 +874,18 @@ def test_dependency_checks_receive_resolved_config_and_skip_disabled_modules(moc
     check_b.assert_not_called()
 
 
-def test_dynamic_load_checks_dependencies_before_adding_workers(mocker) -> None:
+def test_dynamic_load_checks_dependencies_before_adding_workers(
+    dynamic_coordinator, mocker
+) -> None:
     mocker.patch.object(ModuleA, "check_dependencies", side_effect=ImportError("install extra"))
     add_workers = mocker.patch.object(WorkerManagerPython, "add_workers")
-    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0))
-    try:
-        with pytest.raises(ImportError, match="install extra"):
-            coordinator._load_blueprint(ModuleA.blueprint().global_config(n_workers=1))
-    finally:
-        coordinator.stop()
+    transports = mocker.patch("dimos.core.coordination.module_coordinator._materialize_transports")
+
+    with pytest.raises(ImportError, match="install extra"):
+        dynamic_coordinator.load_blueprint(ModuleA.blueprint().global_config(n_workers=1))
 
     add_workers.assert_not_called()
+    transports.assert_not_called()
 
 
 @pytest.mark.parametrize("dedicated", [False, True], ids=["pool-worker", "dedicated-worker"])
