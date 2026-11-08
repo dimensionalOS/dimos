@@ -920,6 +920,42 @@ def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
     assert next(iter(module._published_assets)) in scene
 
 
+def test_a_subtree_texture_is_rebased_the_same_as_its_mesh(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """A texture names its image in a plain `asset` attribute, not a reference or assetInfo.
+
+    Rebasing only arcs and assetInfo left it pointing at a path relative to the mounted
+    module's directory, which is nowhere here -- so it was published under a name whose real
+    path did not exist, and every request for it was answered with silence.
+    """
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    shader = (
+        '    def Shader "skin" (\n'
+        "        assetInfo = {\n"
+        f'            string version = "sha256:{"0" * 64}"\n'
+        "        }\n"
+        "    )\n"
+        "    {\n"
+        '        uniform token info:id = "UsdUVTexture"\n'
+        "        asset inputs:file = @textures/skin.png@\n"
+        "    }\n"
+    )
+    subtree = subtree[: subtree.rindex("}")] + shader + "}\n"
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(subtree, asset_root="/opt/arm/desc")
+    )
+
+    _scene(module)
+
+    assert sorted(module._published_assets.values()) == [
+        "/opt/arm/desc/meshes/arm.stl",
+        "/opt/arm/desc/textures/skin.png",
+    ]
+
+
 def test_a_published_asset_is_named_from_where_it_first_appears(
     make_manager: Callable[..., UsdManager],
 ) -> None:
