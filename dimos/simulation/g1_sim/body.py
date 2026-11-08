@@ -51,26 +51,36 @@ def g1_spec() -> mujoco.MjSpec:
     world = spec.worldbody
     for element in [*world.geoms, *world.lights]:
         spec.delete(element)
-    _let_the_feet_touch_the_ground(spec)
+    _give_it_a_body_that_collides(spec)
     return spec
 
 
-def _let_the_feet_touch_the_ground(spec: mujoco.MjSpec) -> None:
-    """Switch collision back on for the two sole boxes, and nothing else.
+def _give_it_a_body_that_collides(spec: mujoco.MjSpec) -> None:
+    """Switch collision on for the geoms the vendor drew as its collision volumes.
 
     The vendor MJCF turns collision off for the whole robot -- `contype="0" conaffinity="0"` on
     its default class, because the walking policy does not need self-collision -- and then names
     two explicit `<pair>` elements, left_foot/floor and right_foot/floor, to put the soles back
-    in contact with the world. MuJoCo's USD converter says outright that `pairs are not
-    supported`, so they do not survive and the robot falls through the floor: 0.86 m to -77 m in
-    four seconds, which is free fall and nothing else.
+    in contact with the ground. MuJoCo's USD converter says outright that `pairs are not
+    supported`, so they do not survive, and the robot falls through the floor: 0.86 m to -77 m
+    in four seconds, which is 0.5 * 9.81 * 16 and nothing else.
 
-    A pair cannot be restored here anyway -- it names a floor geom that only exists once a scene
-    has been built around the robot. Switching the two soles on instead says the same thing
-    without naming anything outside the robot, and leaves every other geom non-colliding exactly
-    as the vendor intended.
+    A pair cannot be restored here anyway: it names a floor geom that only exists once a scene
+    has been built around the robot. Switching the collision geoms on instead says the same
+    thing without naming anything outside the robot.
+
+    The soles and nothing else, which is what the vendor's two pairs said. Switching on every
+    group-3 geom instead was tried and measured, and it is worse: the thigh and shin capsules
+    catch on each other and the gait locks up, so the robot walks **-0.12 m** in four seconds on
+    a bare floor rather than 2.76 m. It survives the furniture only by being unable to move.
+
+    The cost of leaving it at the soles is that the G1 has no body to bump into things with: in
+    the procedural office scene it walks through a desk until a sole catches an edge and trips,
+    about five seconds in. That is a real limitation of the vendor's collision model rather than
+    of the conversion, and fixing it means collision volumes the walking policy can live with.
     """
-    soles = [geom for geom in spec.geoms if geom.name.rsplit("/", 1)[-1] in FOOT_GEOMS]
+    collidable = [geom for geom in spec.geoms if geom.group == COLLISION_GROUP]
+    soles = [geom for geom in collidable if geom.name.rsplit("/", 1)[-1] in FOOT_GEOMS]
     if len(soles) != len(FOOT_GEOMS):
         raise ValueError(f"expected the G1 to have soles named {FOOT_GEOMS}, found {len(soles)}")
     for sole in soles:
