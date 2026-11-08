@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import ExitStack, closing
+import shlex
+
 from typer.testing import CliRunner
 
 from dimos.core.stream import Transport
@@ -23,16 +26,15 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 def test_summary_reports_missing_poses_on_fresh_recording(tmp_path, mocker):
-    path = tmp_path / "memory.db"
+    path = tmp_path / "recording with spaces" / "memory.db"
     transport = mocker.Mock(spec=Transport)
     with SqliteStore(path=str(path)) as store:
-        recorder = TransportRecorder(store)
-        try:
-            recorder.tap("odom", PoseStamped, transport)
+        with closing(TransportRecorder(store)) as recorder, ExitStack() as subscriptions:
+            unsubscribe = recorder.tap("odom", PoseStamped, transport)
+            assert unsubscribe is not None
+            subscriptions.callback(unsubscribe)
             on_message = transport.subscribe.call_args.args[0]
             on_message(PoseStamped(ts=42.25, position=(1, 2, 3)))
-        finally:
-            recorder.close()
 
     # Summary must inspect metadata without decoding recorded sensor payloads.
     mocker.patch.object(LcmCodec, "decode", side_effect=AssertionError("unexpected payload read"))
@@ -40,14 +42,20 @@ def test_summary_reports_missing_poses_on_fresh_recording(tmp_path, mocker):
 
     assert result.exit_code == 0, result.output
     assert "odom" in result.output
-    assert "no attached poses (run pose-fill)" in result.output
+    assert "no attached poses" in result.output
+    assert f"dimos map pose-fill {shlex.quote(str(path))}" in " ".join(result.output.split())
 
 
-def test_summary_omits_missing_poses_hint_when_any_stream_has_poses(tmp_path):
-    path = tmp_path / "memory.db"
-    with SqliteStore(path=str(path)) as store:
-        store.stream("unposed", float).append(1.0, ts=1.0)
-        store.stream("posed", float).append(1.0, ts=1.0, pose=(1, 2, 3))
+def test_summary_omits_missing_poses_hint_when_any_stream_has_poses(sqlite_store):
+    path = sqlite_store.config.path
+    assert not sqlite_store.has_poses()
+    empty = CliRunner().invoke(mem_app, ["summary", path])
+    assert empty.exit_code == 0, empty.output
+    assert "no attached poses" not in empty.output
+    sqlite_store.stream("unposed", float).append(1.0, ts=1.0)
+    assert not sqlite_store.has_poses()
+    sqlite_store.stream("posed", float).append(1.0, ts=1.0, pose=(1, 2, 3))
+    assert sqlite_store.has_poses()
 
     result = CliRunner().invoke(mem_app, ["summary", str(path)])
 

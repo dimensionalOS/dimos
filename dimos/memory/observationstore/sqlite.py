@@ -396,24 +396,19 @@ class SqliteObservationStore(ObservationStore[T]):
         with self._lock:
             self._conn.rollback()
 
-    def has_poses(self) -> bool:
-        """Whether this stream has any attached poses in its spatial index."""
-        with self._lock:
-            return (
-                self._conn.execute(f'SELECT 1 FROM "{self._name}_rtree" LIMIT 1').fetchone()
-                is not None
-            )
-
     def _warn_missing_poses(self, q: StreamQuery) -> None:
-        if not any(isinstance(f, NearFilter) for f in q.filters) or self.has_poses():
+        if not any(isinstance(f, NearFilter) for f in q.filters):
             return
         with self._lock:
-            populated = self._conn.execute(f'SELECT 1 FROM "{self._name}" LIMIT 1').fetchone()
-        if populated is not None:
+            missing_poses = self._conn.execute(
+                f'SELECT EXISTS(SELECT 1 FROM "{self._name}") '
+                f'AND NOT EXISTS(SELECT 1 FROM "{self._name}_rtree")'
+            ).fetchone()[0]
+        if missing_poses:
             warnings.warn(
                 f"Stream {self._name!r} has no attached poses; near() cannot return results. "
                 f"Run dimos map pose-fill <recording.db> --target {self._name} "
-                "with the appropriate --pose-source (default: odom); this writes a new posed DB.",
+                "with the appropriate --pose-source; this writes a new posed DB.",
                 UserWarning,
                 stacklevel=3,
             )

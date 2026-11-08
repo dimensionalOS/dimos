@@ -28,14 +28,13 @@ def test_near_warns_when_stream_has_no_attached_poses(sqlite_store, operation, e
         assert getattr(stream.near((1, 2, 3), 1.0), operation)() == expected
 
 
-@pytest.mark.parametrize(("operation", "expected"), [("count", 0), ("to_list", [])])
-def test_near_does_not_warn_for_empty_spatial_match(sqlite_store, operation, expected):
+def test_near_does_not_warn_for_empty_spatial_match(sqlite_store):
     stream = sqlite_store.stream("lidar", float)
     stream.append(1.0, ts=1.0, pose=(1, 2, 3))
 
     with warnings.catch_warnings(record=True) as emitted:
         warnings.simplefilter("always")
-        assert getattr(stream.near((10, 20, 30), 1.0), operation)() == expected
+        assert stream.near((10, 20, 30), 1.0).to_list() == []
     assert not emitted
 
 

@@ -58,17 +58,16 @@ def log_recording_closed(path: Path) -> None:
     """Explain the missing pose metadata and the supported post-processing step."""
     if path.suffix == ".mcap":
         logger.info(
-            "Recording closed: %s. No attached poses; spatial queries need pose metadata. "
+            "Recording closed. No attached poses; spatial queries need pose metadata. "
             "dimos map pose-fill currently accepts SQLite recordings only (--record sqlite).",
-            path,
+            path=str(path),
         )
         return
     logger.info(
-        "Recording closed: %s. No attached poses; run: dimos map pose-fill %s "
-        "(writes a new *_posed.db; defaults to --target lidar --pose-source odom; "
-        "adjust these options for your streams).",
-        path,
-        shlex.quote(str(path)),
+        "Recording closed. No attached poses; pose-fill writes a new posed DB. "
+        "Adjust --target and --pose-source for your streams.",
+        path=str(path),
+        pose_fill_command=f"dimos map pose-fill {shlex.quote(str(path))}",
     )
 
 

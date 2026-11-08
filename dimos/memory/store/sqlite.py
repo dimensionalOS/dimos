@@ -216,6 +216,18 @@ class SqliteStore(Store):
         db_names = set(self._registry.list_streams())
         return sorted(db_names | set(self._streams.keys()))
 
+    def has_poses(self) -> bool:
+        """Whether any registered stream has attached poses in its spatial index."""
+        with self._registry_lock:
+            for name in self._registry.list_streams():
+                validate_identifier(name)
+                if (
+                    self._registry_conn.execute(f'SELECT 1 FROM "{name}_rtree" LIMIT 1').fetchone()
+                    is not None
+                ):
+                    return True
+        return False
+
     def delete_stream(self, name: str) -> None:
         super().delete_stream(name)
         with self._registry_lock:

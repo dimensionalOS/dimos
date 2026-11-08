@@ -226,8 +226,9 @@ def test_launch_config_uses_default_or_configured_threads(
 
 
 def test_process_exit_before_ready_fails_startup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
+    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     process = _FakeProcess(stdout=b"", returncode=3)
     monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: tmp_path / "recorder")
     monkeypatch.setattr(
@@ -237,9 +238,13 @@ def test_process_exit_before_ready_fails_startup(
 
     with pytest.raises(RuntimeError, match="startup failed: process exited with status 3"):
         RustRecordingSession(_plan(tmp_path)).start()
+    hint.assert_not_called()
 
 
-def test_readiness_timeout_fails_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_readiness_timeout_fails_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     process = _FakeProcess(stdout=b"")
     monkeypatch.setattr(rust_cli_recorder, "_READY_TIMEOUT", 0.01)
     monkeypatch.setattr(rust_cli_recorder, "prepare_rust_recorder", lambda: tmp_path / "recorder")
@@ -252,12 +257,14 @@ def test_readiness_timeout_fails_startup(tmp_path: Path, monkeypatch: pytest.Mon
         RustRecordingSession(_plan(tmp_path)).start()
 
     assert process.signals == [signal.SIGTERM]
+    hint.assert_not_called()
 
 
 def test_unexpected_runtime_exit_is_logged_without_raising(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
     process = _FakeProcess()
+    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     error = mocker.patch.object(rust_cli_recorder.logger, "error")
     session = _start_fake_session(tmp_path, monkeypatch, process)
 
@@ -266,11 +273,13 @@ def test_unexpected_runtime_exit_is_logged_without_raising(
     session.stop()
 
     error.assert_called_once_with("Experimental Rust recorder exited", status=9)
+    hint.assert_not_called()
 
 
 def test_stop_kills_process_that_does_not_flush(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
+    hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     process = _FakeProcess(ignore_term=True)
     monkeypatch.setattr(rust_cli_recorder, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.01)
     session = _start_fake_session(tmp_path, monkeypatch, process)
@@ -279,6 +288,7 @@ def test_stop_kills_process_that_does_not_flush(
 
     assert process.signals == [signal.SIGTERM]
     assert process.killed
+    hint.assert_not_called()
 
 
 def test_custom_lcm_url_reaches_recorder_child(tmp_path, monkeypatch, mocker):
