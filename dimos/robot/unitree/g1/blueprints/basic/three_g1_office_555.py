@@ -42,7 +42,7 @@ from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
@@ -132,18 +132,19 @@ def _walker(name: str):
     )
 
 
-# One link per robot, all fixed to the world, for the scene manager to graft a robot onto. A
-# mounts dict is keyed by frame, so three robots need three frames: grafted at one they would all
-# land on the same prim and come out as a single G1 with the frame count of three.
-MOUNT_URDF = "".join(
-    ['<robot name="office_555"><link name="world" />']
-    + [
-        f'<link name="{name}" />'
-        f'<joint name="world_to_{name}" type="fixed">'
-        f'<parent link="world" /><child link="{name}" /></joint>'
-        for name in SPOTS
-    ]
-    + ["</robot>"]
+# The room itself, with a frame per robot added for the scene manager to graft onto. A mounts
+# dict is keyed by frame, so three robots need three frames: grafted at one they would all land
+# on the same prim and come out as a single G1 with the frame count of three.
+#
+# The office USD rather than a stub of frames, because it is the one place that says what this
+# world is -- its geometry, and its sun, its dome light and its eighteen ceiling fittings. Served
+# as a stub, none of that reached the viewer, which then lit the room with a guess of its own and
+# showed flat black through its windows. Its meshes are file references with hashes already, the
+# same form a robot's are, so the viewer reads them by the path it already has.
+# "office_555" is the scene's root link: a converted room is one Xform holding its furniture,
+# and the furniture is what carries the frames, so a visitor hangs off the root itself.
+SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
+    {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
 
@@ -203,7 +204,7 @@ _robots = {name: _robot(name, xy) for name, xy in SPOTS.items()}
 # three tf trees -- with no robot geometry drawn at all. This one holds the mounts, so get_scene
 # collects all three descriptions into that single stage, each under its own namespace's frames.
 scene_manager = UsdManager.blueprint(
-    model=RobotModel.from_urdf_string(MOUNT_URDF),
+    model=SCENE_WITH_MOUNTS,
     # Its own three joints are fixed and sit at the origin, so the viewer places those frames
     # from the stage itself. Nothing sends it a joint state and it poses nothing: each robot's
     # own manager publishes that robot's joints, and G1Sim publishes world -> <robot>/pelvis.
