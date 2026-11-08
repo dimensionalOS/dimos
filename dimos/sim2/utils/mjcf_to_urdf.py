@@ -47,22 +47,30 @@ def mjcf_to_urdf(
     The robot is named `name`, else the MJCF's model name, else the file's stem.
     """
     mjcf = Path(mjcf).resolve()
-    options = f"{mjcf}\0{mjcf.stat().st_mtime_ns}\0{name}\0{root_link}"
+    source = f"{mjcf}\0{mjcf.stat().st_mtime_ns}"
+    options = f"{source}\0{name}\0{root_link}"
     key = hashlib.sha256(options.encode()).hexdigest()[:16]
-    directory = (out_dir or _CACHE) / f"{mjcf.stem}-{key}"
+    # The meshes are the MJCF's, whatever the robot ends up called: naming them per robot is what made three
+    # G1s in one scene name 105 files instead of 35, so the viewer fetched the same geometry three times over
+    # and the robots filled in one at a time instead of together.
+    meshes_key = hashlib.sha256(source.encode()).hexdigest()[:16]
+    root = out_dir or _CACHE
+    directory = root / f"{mjcf.stem}-{key}"
+    mesh_dir = root / f"{mjcf.stem}-{meshes_key}-meshes"
     urdf = directory / f"{mjcf.stem}.urdf"
     if not urdf.exists():
         directory.mkdir(parents=True, exist_ok=True)
+        mesh_dir.mkdir(parents=True, exist_ok=True)
         model = mujoco.MjModel.from_xml_path(str(mjcf))
         model_name = bytes(model.names).split(b"\0")[0].decode()
-        xml = _urdf(model, name or model_name or mjcf.stem, root_link, directory)
+        xml = _urdf(model, name or model_name or mjcf.stem, root_link, mesh_dir)
         partial = urdf.with_suffix(".partial")
         partial.write_text(xml)
         partial.replace(urdf)
     return RobotModel.from_file(urdf)
 
 
-def _urdf(model: mujoco.MjModel, name: str, root_link: str | None, directory: Path) -> str:
+def _urdf(model: mujoco.MjModel, name: str, root_link: str | None, mesh_dir: Path) -> str:
     roots = [b for b in range(1, model.nbody) if model.body_parentid[b] == 0]
     if len(roots) != 1:
         raise ValueError(f"{name}: a robot MJCF has one root body, this one has {len(roots)}")
@@ -70,7 +78,7 @@ def _urdf(model: mujoco.MjModel, name: str, root_link: str | None, directory: Pa
     if root_link is not None:
         links[roots[0]] = root_link
     robot = ET.Element("robot", name=name)
-    meshes = {m: _write_mesh(model, m, directory) for m in range(model.nmesh)}
+    meshes = {m: _write_mesh(model, m, mesh_dir) for m in range(model.nmesh)}
     for body in range(1, model.nbody):
         link = ET.SubElement(robot, "link", name=links[body])
         _add_inertial(link, model, body)
@@ -261,9 +269,15 @@ def _write_mesh(model: mujoco.MjModel, mesh: int, directory: Path) -> Path:
     faces = model.mesh_face[face_start : face_start + face_count] + 1
     name = model.mesh(mesh).name or f"mesh_{mesh}"
     path = directory / f"{name}.obj"
+    # The directory is keyed on the MJCF, so a file already there is this mesh: rewriting it would only hand a
+    # torn read to whoever is already serving it for another robot off the same model.
+    if path.exists():
+        return path
     lines = [f"v {x:.6g} {y:.6g} {z:.6g}" for x, y, z in vertices]
     lines += [f"f {a} {b} {c}" for a, b, c in faces]
-    path.write_text("\n".join(lines) + "\n")
+    partial = path.with_suffix(".partial")
+    partial.write_text("\n".join(lines) + "\n")
+    partial.replace(path)
     return path
 
 
