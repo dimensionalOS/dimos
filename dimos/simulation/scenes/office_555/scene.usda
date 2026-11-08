@@ -153,7 +153,7 @@ over "Flattened_Prototype_3"
 }
 
 def Xform "office_555" (
-    apiSchemas = ["GeomModelAPI", "PhysicsRigidBodyAPI"]
+    apiSchemas = ["GeomModelAPI"]
     assetInfo = {
         string name = "office_555"
     }
@@ -161,7 +161,6 @@ def Xform "office_555" (
 )
 {
     float3[] extentsHint = [(-31, -18.5, -1.5), (11.6, 17.5, 8.15), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (-21.25888, -15.50448, -2.3268e-17), (8.6, 14.4665, 6.84)]
-    bool physics:rigidBodyEnabled = 0
 
     def Scope "Geometry"
     {
@@ -117942,7 +117941,7 @@ def Xform "office_555" (
         def Material "concrete_0" (
             apiSchemas = ["MaterialXConfigAPI"]
             instanceable = true
-            add references = </Flattened_Prototype_5>
+            add references = </Flattened_Prototype_4>
         )
         {
             string config:mtlx:version = "1.39"
@@ -118001,7 +118000,7 @@ def Xform "office_555" (
         def Material "wood_1" (
             apiSchemas = ["MaterialXConfigAPI"]
             instanceable = true
-            add references = </Flattened_Prototype_4>
+            add references = </Flattened_Prototype_5>
         )
         {
             string config:mtlx:version = "1.39"
