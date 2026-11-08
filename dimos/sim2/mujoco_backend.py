@@ -43,7 +43,12 @@ if TYPE_CHECKING:
 # waits. Lag past one burst is dropped: a controller's command must not land a whole control period late.
 _MAX_BURST_SECONDS = 0.01
 
-_SINGLE_DOF = (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE)
+# As ints, not as the enums themselves. A model array yields numpy scalars, and since MuJoCo 4
+# these enums are pybind11 objects rather than IntEnum: np.int32(3) == mjJNT_HINGE is True while
+# np.int32(3) in (mjJNT_HINGE, ...) is False, because `in` asks the comparison that does not
+# answer. Every robot's joints were dropped here, so the world announced each robot and never
+# one of its joints -- nothing to publish, nothing to pose, and nothing placed in a viewer.
+_SINGLE_DOF = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
 # Less than this since it was last sent is not a change: a resting body's solver jitter is not motion.
 _MOVED = 1e-6
 
@@ -376,7 +381,8 @@ class MujocoBackend:
         joints = [
             j
             for j in range(model.njnt)
-            if model.body_rootid[model.jnt_bodyid[j]] == body and model.jnt_type[j] in _SINGLE_DOF
+            if model.body_rootid[model.jnt_bodyid[j]] == body
+            and int(model.jnt_type[j]) in _SINGLE_DOF
         ]
         prefix = f"{name}/" if name in self._robots else ""
         return joints, [model.joint(j).name.removeprefix(prefix) for j in joints]
