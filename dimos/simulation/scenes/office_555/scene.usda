@@ -137422,7 +137422,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.95, 0.84999996)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137456,7 +137456,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.95, 0.84999996)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137490,7 +137490,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.95, 0.84999996)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137524,7 +137524,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.95, 0.84999996)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137558,7 +137558,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.95, 0.84999996)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137592,7 +137592,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.95, 0.84999996)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137672,7 +137672,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137752,7 +137752,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137832,7 +137832,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137912,7 +137912,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -137992,7 +137992,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138072,7 +138072,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138152,7 +138152,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138232,7 +138232,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138312,7 +138312,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138392,7 +138392,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138472,7 +138472,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
@@ -138552,7 +138552,7 @@ def Xform "office_555" (
                 color3f inputs:color = (1, 0.94666666, 0.85333335)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
-                bool inputs:shadow:enable = 0
+                bool inputs:shadow:enable = 1
                 bool treatAsPoint = 1
                 quatf xformOp:orient = (1, 0, 0, 0)
                 double3 xformOp:translate = (0, 0, 0)
