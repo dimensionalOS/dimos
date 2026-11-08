@@ -489,7 +489,10 @@ def warm_usd() -> None:
     pxr = _pxr()
     layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
     layer.ImportFromString('#usda 1.0\n(\n    defaultPrim = "warm"\n)\n\ndef Xform "warm"\n{\n}\n')
-    list(pxr.Usd.Stage.Open(layer).Traverse())
+    # The stage has to outlive the traversal: a range over prims of a stage nobody holds walks
+    # into expired prims, which USD reports as an error rather than an empty range.
+    stage = pxr.Usd.Stage.Open(layer)
+    list(stage.Traverse())
 
 
 def _layer_from(pxr: Any, usd: str, what: str) -> Any:
