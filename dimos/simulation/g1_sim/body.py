@@ -24,14 +24,9 @@ from numpy.typing import NDArray
 
 from dimos.msgs.sim_msgs.Contacts import Part
 from dimos.robot.unitree.g1.model import G1_USD
-from dimos.simulation.g1_sim.policy import G1Policy, G1Proprioception
-from dimos.simulation.go2_legged.robot import (
-    BASE_ANGULAR_VELOCITY,
-    BASE_LINEAR_VELOCITY,
-    BASE_QUAT,
-    projected_gravity,
-    yaw_of,
-)
+from dimos.simulation.g1_sim.policy import DEFAULT_POSE, G1Policy, G1Proprioception
+from dimos.simulation.go2_legged.robot import projected_gravity, yaw_of
+from dimos.simulation.sim_world.body import BaseAddress
 from dimos.simulation.usd_spec import load_usd_spec
 
 # the policy acts at 50 Hz
@@ -88,8 +83,13 @@ def _give_it_a_body_that_collides(spec: mujoco.MjSpec) -> None:
         sole.conaffinity = 1
 
 
-class LeggedG1:
-    """A G1 in a compiled model, stepped one policy tick at a time from a velocity command."""
+class G1Chassis:
+    """One G1 inside a compiled model: where it floats, what it reads, what its actuators take.
+
+    Everything here is the robot *in the world*, so it belongs to whoever owns the MjData. The
+    actor that decides the targets does not: it reads an observation and answers with 29
+    numbers, which is a message, and in a multi-robot sim it runs in the robot's own module.
+    """
 
     dt = CONTROL_DT
 
@@ -97,7 +97,6 @@ class LeggedG1:
         self,
         model: mujoco.MjModel,
         data: mujoco.MjData,
-        policy: G1Policy,
         prefix: str = "",
     ) -> None:
         # A robot attached into a scene takes a prefix on every name, so that two of them, or a
@@ -105,9 +104,11 @@ class LeggedG1:
         # looks up goes through it.
         self.model = model
         self.data = data
-        self.policy = policy
         self.prefix = prefix
         self.trunk = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}{BASE_BODY}")
+        # Where this robot floats, rather than wherever the model's first free joint is. With
+        # three G1s in one model the constants would hand all three the first one's pose.
+        self.base = BaseAddress.of(model, self.trunk)
         foot_bodies = [
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}{name}")
             for name in FOOT_BODIES
@@ -128,44 +129,57 @@ class LeggedG1:
         self._actuator_ids = np.array(
             [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in self._joint_names]
         )
-        self._target = policy.default_pose.copy()
 
     def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
-        """Stand in the policy's default pose with the soles on z_feet, at rest."""
+        """Stand in the default pose with the soles on z_feet, at rest.
+
+        It writes only this robot's own addresses. `mj_resetData` would clear the whole model,
+        which with two G1s in it means resetting one teleports the other.
+        """
         m, d = self.model, self.data
-        mujoco.mj_resetData(m, d)  # type: ignore[attr-defined]
-        d.qpos[0:2] = [x, y]
-        d.qpos[BASE_QUAT] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
-        d.qpos[self._qpos_adr] = self.policy.default_pose
+        d.qpos[self.base.position] = [x, y, 0.0]
+        d.qpos[self.base.orientation] = [np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
+        d.qvel[self.base.linear_velocity] = 0.0
+        d.qvel[self.base.angular_velocity] = 0.0
+        d.qpos[self._qpos_adr] = DEFAULT_POSE
+        d.qvel[self._dof_adr] = 0.0
+        d.ctrl[self._actuator_ids] = DEFAULT_POSE
         mujoco.mj_forward(m, d)
         lowest = min(float(d.geom_xpos[g][2] - m.geom_rbound[g]) for g in self.feet)
-        d.qpos[2] += z_feet - lowest
+        d.qpos[self.base.position.start + 2] += z_feet - lowest
         mujoco.mj_forward(m, d)
-        self._target = self.policy.default_pose.copy()
-        self.policy.reset()
 
-    def tick(
-        self, command: NDArray[np.float64], on_substep: Callable[[], None] | None = None
-    ) -> None:
-        """Advance one policy tick toward a velocity command."""
-        self._target = self.policy.act(self._observe(), command)
-        d = self.data
+    def apply(self, target: NDArray[np.float64]) -> None:
+        """Hand the actuators a joint target, without stepping the world.
+
+        Stepping is the world's job, not a robot's: three G1s share one MjData and whoever
+        called `mj_step` first would carry the other two along at its own control rate.
+
+        The G1's actuators are position servos, so the target goes straight to ctrl -- unlike
+        the M20, whose torque motors need the PD loop written out here.
+        """
+        self.data.ctrl[self._actuator_ids] = target
+
+    def target(self) -> NDArray[np.float64]:
+        """What the actuators are currently holding."""
+        held: NDArray[np.float64] = self.data.ctrl[self._actuator_ids].copy()
+        return held
+
+    def step(self, on_substep: Callable[[], None] | None = None) -> None:
+        """The substeps of one control tick, for a world with only this robot in it."""
         for _ in range(self.substeps):
-            # The G1's actuators are position servos, so the target goes straight to ctrl --
-            # unlike the M20, whose torque motors need the PD loop written out here.
-            d.ctrl[self._actuator_ids] = self._target
-            mujoco.mj_step(self.model, d)
+            mujoco.mj_step(self.model, self.data)
             if on_substep is not None:
                 on_substep()
 
-    def _observe(self) -> G1Proprioception:
+    def observe(self) -> G1Proprioception:
         d = self.data
         # The actor wants linear velocity in the base frame; qvel holds it in the world frame.
         rotation = d.xmat[self.trunk].reshape(3, 3)
         return G1Proprioception(
-            linear_velocity=rotation.T @ d.qvel[BASE_LINEAR_VELOCITY],
-            angular_velocity=d.qvel[BASE_ANGULAR_VELOCITY].copy(),
-            gravity=projected_gravity(d.qpos[BASE_QUAT]),
+            linear_velocity=rotation.T @ d.qvel[self.base.linear_velocity],
+            angular_velocity=d.qvel[self.base.angular_velocity].copy(),
+            gravity=projected_gravity(d.qpos[self.base.orientation]),
             joint_position=d.qpos[self._qpos_adr].copy(),
             joint_velocity=d.qvel[self._dof_adr].copy(),
         )
@@ -184,8 +198,8 @@ class LeggedG1:
     def base_velocity(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Linear velocity in the world frame and angular velocity in the base frame."""
         return (
-            self.data.qvel[BASE_LINEAR_VELOCITY].copy(),
-            self.data.qvel[BASE_ANGULAR_VELOCITY].copy(),
+            self.data.qvel[self.base.linear_velocity].copy(),
+            self.data.qvel[self.base.angular_velocity].copy(),
         )
 
     def part(self, geom: int) -> Part:
@@ -196,8 +210,42 @@ class LeggedG1:
         return "limb"
 
     def yaw(self) -> float:
-        return yaw_of(self.data.qpos[BASE_QUAT])
+        return yaw_of(self.data.qpos[self.base.orientation])
 
     def upright(self) -> float:
         """z of the trunk's up axis, 1 when level."""
         return float(self.data.xmat[self.trunk][8])
+
+
+class LeggedG1(G1Chassis):
+    """A G1 and the actor driving it, in one process: the single-robot sim's robot."""
+
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        policy: G1Policy,
+        prefix: str = "",
+    ) -> None:
+        super().__init__(model, data, prefix)
+        # Cloned, not kept: the caller may well hand the same actor to the next robot, and the
+        # gait phase is per robot. The network itself is shared, so this costs nothing.
+        self.policy = policy.clone()
+        self._target = DEFAULT_POSE.copy()
+
+    def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
+        super().reset(x, y, z_feet, yaw)
+        self._target = DEFAULT_POSE.copy()
+        self.policy.reset()
+
+    def control(self, command: NDArray[np.float64]) -> None:
+        """Run the actor once and hand its target to the actuators, without stepping."""
+        self._target = self.policy.act(self.observe(), command)
+        self.apply(self._target)
+
+    def tick(
+        self, command: NDArray[np.float64], on_substep: Callable[[], None] | None = None
+    ) -> None:
+        """One policy tick and the substeps that follow it."""
+        self.control(command)
+        self.step(on_substep)

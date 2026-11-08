@@ -306,6 +306,9 @@ class Sim:
         self._housings = {mujoco.mj_name2id(self.model, geom, s.name) for s in rig.sensors}
 
     def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
+        # Clearing the whole model is the world's call, not the robot's: a robot only places
+        # itself, so that one of several in a model can be reset without moving the others.
+        mujoco.mj_resetData(self.model, self.data)  # type: ignore[attr-defined]
         self.robot.reset(x, y, z_feet, yaw)
         self.t = 0.0
         self._tick = 0

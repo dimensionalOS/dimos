@@ -36,6 +36,31 @@ COLLISION_GROUP = 3
 
 
 @dataclass(frozen=True)
+class BaseAddress:
+    """Where one robot's free joint sits in the model's qpos and qvel.
+
+    A model with a single robot puts it first, which is why these were written out as the
+    constants `BASE_QUAT` and friends. Put a second robot in the same model and its free joint
+    starts further along, so those constants read the *first* robot's pose for every robot --
+    silently, since the arrays are the right shape either way.
+    """
+
+    position: slice
+    orientation: slice
+    linear_velocity: slice
+    angular_velocity: slice
+
+    @classmethod
+    def of(cls, model: mujoco.MjModel, body: int) -> BaseAddress:
+        """The addresses of the free joint `body` floats on."""
+        joint = int(model.body_jntadr[body])
+        if joint < 0 or model.jnt_type[joint] != mujoco.mjtJoint.mjJNT_FREE:
+            raise ValueError(f"body {model.body(body).name!r} does not float on a free joint")
+        q, v = int(model.jnt_qposadr[joint]), int(model.jnt_dofadr[joint])
+        return cls(slice(q, q + 3), slice(q + 3, q + 7), slice(v, v + 3), slice(v + 3, v + 6))
+
+
+@dataclass(frozen=True)
 class BodyShape:
     """The robot's outside. The top box, in the base frame, bounds its highest point at any tilt."""
 

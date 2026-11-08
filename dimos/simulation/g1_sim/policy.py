@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,22 +44,29 @@ class G1Proprioception:
     joint_velocity: NDArray[np.float64]
 
 
-class G1Policy:
-    """The trained G1 actor, stepped at CONTROL_DT with its own gait phase."""
+# The vendor MJCF's `home` keyframe, which is where the actor's zero action sits. It is stated
+# here because a USD layer does not carry keyframes -- MuJoCo's own converter says so outright
+# ("keys are not supported"). The chassis stands in it and the actor acts from it, so it sits at
+# module level rather than on either of them.
+DEFAULT_POSE = np.array(
+    [
+        *[-0.312, 0, 0, 0.669, -0.363, 0],  # left leg
+        *[-0.312, 0, 0, 0.669, -0.363, 0],  # right leg
+        *[0, 0, 0.073],  # waist
+        *[0.2, 0.2, 0, 0.6, 0, 0, 0],  # left arm
+        *[0.2, -0.2, 0, 0.6, 0, 0, 0],  # right arm
+    ]
+)
 
-    # The vendor MJCF's `home` keyframe, which is where the actor's zero action sits. It is
-    # stated here because a USD layer does not carry keyframes -- MuJoCo's own converter says
-    # so outright ("keys are not supported") -- and the pose is part of how the policy is
-    # driven rather than part of what the robot is.
-    default_pose = np.array(
-        [
-            *[-0.312, 0, 0, 0.669, -0.363, 0],  # left leg
-            *[-0.312, 0, 0, 0.669, -0.363, 0],  # right leg
-            *[0, 0, 0.073],  # waist
-            *[0.2, 0.2, 0, 0.6, 0, 0, 0],  # left arm
-            *[0.2, -0.2, 0, 0.6, 0, 0, 0],  # right arm
-        ]
-    )
+
+class G1Policy:
+    """The trained G1 actor, stepped at CONTROL_DT with its own gait phase.
+
+    The gait phase and the last action are **per robot**. Three G1s sharing one of these take
+    turns overwriting each other's phase and all three fall over; measured, not supposed.
+    """
+
+    default_pose = DEFAULT_POSE
     action_scale = 0.5
     # The trained scalings; the actor sees a command twice the commanded planar velocity.
     command_scale = np.array([2.0, 2.0, 1.0])
@@ -83,6 +91,18 @@ class G1Policy:
     def load(cls, control_dt: float) -> G1Policy:
         """The actor shipped with the sim data."""
         return cls(get_data("mujoco_sim") / "unitree_g1_policy.onnx", control_dt)
+
+    def clone(self) -> G1Policy:
+        """A second actor on the same loaded network, with a gait phase of its own.
+
+        The network is read-only and takes a second to load, so copies share it. The phase and
+        the last action are not: two robots driven by one of these take turns overwriting each
+        other's, and -- measured, three G1s on a flat floor -- all of them fall over within four
+        seconds with nothing in the logs to say why.
+        """
+        twin = copy.copy(self)
+        twin.reset()
+        return twin
 
     def reset(self) -> None:
         self._last_action = np.zeros(JOINTS)
