@@ -39,8 +39,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm", "json"}
-# Older managed binaries rely on Python to register streams before launch.
-_RECORDER_OUT_LINK = "result-registry-v1"
 
 
 class RustStreamSpec(BaseModel):
@@ -107,8 +105,9 @@ class RustRecorderConfig(NativeModuleConfig):
     internally resolved ``streams`` list over stdin.
     """
 
-    executable: str = f"{_RECORDER_OUT_LINK}/bin/dimos-memory-recorder"
-    build_command: str | None = f"nix build -L path:. --out-link {_RECORDER_OUT_LINK}"
+    # Older managed binaries rely on Python to register streams before launch.
+    executable: str = "result-registry-v1/bin/dimos-memory-recorder"
+    build_command: str | None = "nix build -L path:. --out-link result-registry-v1"
     source_dir: str | None = "dimos/experimental/memory/rust"
     stdin_config: bool = True
 
