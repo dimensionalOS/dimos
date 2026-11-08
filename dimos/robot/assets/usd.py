@@ -338,6 +338,13 @@ def resolve_usd_assets(usd: str, root: str) -> str:
             # assetInfo is a proxy, not a dict: set the key on it rather than assigning a copy.
             spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
             changed = True
+        # A texture names its image in an ordinary asset attribute, which is neither a reference
+        # nor assetInfo. Rebasing only those two left every texture pointing at a path relative
+        # to a directory that no longer figures anywhere, so it resolved against nothing.
+        for attribute, value in asset_attributes(spec):
+            if not Path(str(value.path)).is_absolute():
+                attribute.default = pxr.Sdf.AssetPath(str(base / str(value.path)))
+                changed = True
         stack.extend(spec.nameChildren)
     return str(layer.ExportToString()) if changed else usd
 
