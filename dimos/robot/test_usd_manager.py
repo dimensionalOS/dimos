@@ -921,7 +921,7 @@ def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
 
 
 def test_a_subtree_texture_is_rebased_the_same_as_its_mesh(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
 ) -> None:
     """A texture names its image in a plain `asset` attribute, not a reference or assetInfo.
 
