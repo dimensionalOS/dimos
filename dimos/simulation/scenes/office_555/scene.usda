@@ -153,7 +153,7 @@ over "Flattened_Prototype_3"
 }
 
 def Xform "office_555" (
-    apiSchemas = ["GeomModelAPI"]
+    apiSchemas = ["GeomModelAPI", "PhysicsRigidBodyAPI"]
     assetInfo = {
         string name = "office_555"
     }
@@ -161,6 +161,7 @@ def Xform "office_555" (
 )
 {
     float3[] extentsHint = [(-31, -18.5, -1.5), (11.6, 17.5, 8.15), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (-21.25888, -15.50448, -2.3268e-17), (8.6, 14.4665, 6.84)]
+    bool physics:rigidBodyEnabled = 0
 
     def Scope "Geometry"
     {
@@ -224,7 +225,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_1>
@@ -268,7 +269,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_2>
@@ -312,7 +313,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_3>
@@ -356,7 +357,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_4>
@@ -400,7 +401,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_5>
@@ -444,7 +445,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_6>
@@ -488,7 +489,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_7>
@@ -532,7 +533,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_8>
@@ -576,7 +577,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_9>
@@ -620,7 +621,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_10>
@@ -664,7 +665,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_11_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_11>
@@ -708,7 +709,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_12_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_12>
@@ -752,7 +753,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_13_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_13>
@@ -796,7 +797,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_14_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_14>
@@ -840,7 +841,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_15_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_15>
@@ -884,7 +885,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_16_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_16>
@@ -928,7 +929,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_17_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_17>
@@ -972,7 +973,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_18_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_18>
@@ -1016,7 +1017,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_19_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_19>
@@ -1060,7 +1061,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_20_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_20>
@@ -1104,7 +1105,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_21_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_21>
@@ -1148,7 +1149,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_22_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_22>
@@ -1192,7 +1193,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_23_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_23>
@@ -1236,7 +1237,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_24_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_24>
@@ -1280,7 +1281,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_25_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_25>
@@ -1324,7 +1325,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_26_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_26>
@@ -1368,7 +1369,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_27_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_27>
@@ -1412,7 +1413,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_28_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_28>
@@ -1456,7 +1457,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_29_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_29>
@@ -1500,7 +1501,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_30_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_30>
@@ -1544,7 +1545,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_31_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_31>
@@ -1588,7 +1589,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_32_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_32>
@@ -1632,7 +1633,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_33_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_33>
@@ -1676,7 +1677,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_34_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_34>
@@ -1720,7 +1721,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_35_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_35>
@@ -1764,7 +1765,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_36_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_36>
@@ -1808,7 +1809,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_37_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_37>
@@ -1852,7 +1853,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_38_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_38>
@@ -1896,7 +1897,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_39_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_39>
@@ -1940,7 +1941,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_40_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_40>
@@ -1984,7 +1985,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_41_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_41>
@@ -2028,7 +2029,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_42_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_42>
@@ -2072,7 +2073,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_43_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_43>
@@ -2116,7 +2117,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_44_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_44>
@@ -2160,7 +2161,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_45_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_45>
@@ -2204,7 +2205,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_46_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_46>
@@ -2248,7 +2249,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_47_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_47>
@@ -2292,7 +2293,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_48_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_48>
@@ -2336,7 +2337,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_49_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_49>
@@ -2380,7 +2381,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_50_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_50>
@@ -2424,7 +2425,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_51_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_51>
@@ -2468,7 +2469,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_52_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_52>
@@ -2512,7 +2513,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_53_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_53>
@@ -2556,7 +2557,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_54_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_54>
@@ -2600,7 +2601,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_55_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_55>
@@ -2644,7 +2645,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_56_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_56>
@@ -2688,7 +2689,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_57_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_57>
@@ -2732,7 +2733,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_58_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_58>
@@ -2776,7 +2777,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_59_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_59>
@@ -2820,7 +2821,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_60_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_60>
@@ -2864,7 +2865,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_61_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_61>
@@ -2908,7 +2909,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_62_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_62>
@@ -2952,7 +2953,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_63_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_63>
@@ -2996,7 +2997,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_64_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_64>
@@ -3040,7 +3041,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_65_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_65>
@@ -3084,7 +3085,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_66_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_66>
@@ -3128,7 +3129,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_67_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_67>
@@ -3172,7 +3173,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_68_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_68>
@@ -3216,7 +3217,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_69_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_69>
@@ -3260,7 +3261,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_70_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_70>
@@ -3304,7 +3305,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_71_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_71>
@@ -3803,7 +3804,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_1>
@@ -4048,7 +4049,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_1>
@@ -4808,7 +4809,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_1>
@@ -5307,7 +5308,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_2>
@@ -5552,7 +5553,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_2>
@@ -6312,7 +6313,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_2>
@@ -6811,7 +6812,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_3>
@@ -7056,7 +7057,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_3>
@@ -7816,7 +7817,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_3>
@@ -8315,7 +8316,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_4>
@@ -8560,7 +8561,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_4>
@@ -9320,7 +9321,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_4>
@@ -9819,7 +9820,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_5>
@@ -10064,7 +10065,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_5>
@@ -10824,7 +10825,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_5>
@@ -11323,7 +11324,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_6>
@@ -11568,7 +11569,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_6>
@@ -12328,7 +12329,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_6>
@@ -12827,7 +12828,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_7>
@@ -13072,7 +13073,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_7>
@@ -13832,7 +13833,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_7>
@@ -14331,7 +14332,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_8>
@@ -14576,7 +14577,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_8>
@@ -15336,7 +15337,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_8>
@@ -15835,7 +15836,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_9>
@@ -16080,7 +16081,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_9>
@@ -16840,7 +16841,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_9>
@@ -17339,7 +17340,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_10>
@@ -17584,7 +17585,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_10>
@@ -18344,7 +18345,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_10>
@@ -18843,7 +18844,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_11_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_11>
@@ -19088,7 +19089,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_11_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_11>
@@ -19848,7 +19849,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_11_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_11>
@@ -20347,7 +20348,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_12_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_12>
@@ -20592,7 +20593,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_12_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_12>
@@ -21352,7 +21353,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_12_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_12>
@@ -21685,7 +21686,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_1>
@@ -22018,7 +22019,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_2>
@@ -22517,7 +22518,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_13_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_13>
@@ -22762,7 +22763,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_13_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_13>
@@ -23522,7 +23523,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_13_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_13>
@@ -24021,7 +24022,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_14_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_14>
@@ -24266,7 +24267,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_14_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_14>
@@ -25026,7 +25027,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_14_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_14>
@@ -25525,7 +25526,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_15_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_15>
@@ -26118,7 +26119,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "shelving_unit_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/shelving_unit_1>
@@ -26878,7 +26879,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_15_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_15>
@@ -27638,7 +27639,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_16_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_16>
@@ -28442,7 +28443,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_1>
@@ -29202,7 +29203,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_17_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_17>
@@ -29962,7 +29963,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_18_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_18>
@@ -30613,7 +30614,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "trash_can_round_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/trash_can_round_1>
@@ -31047,7 +31048,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_desk_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_desk_1>
@@ -31807,7 +31808,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_19_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_19>
@@ -32255,7 +32256,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "table_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/table_1>
@@ -33015,7 +33016,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_20_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_20>
@@ -33775,7 +33776,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_21_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_21>
@@ -34274,7 +34275,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_16_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_16>
@@ -34519,7 +34520,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_15_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_15>
@@ -35279,7 +35280,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_22_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_22>
@@ -35778,7 +35779,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_17_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_17>
@@ -36023,7 +36024,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_16_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_16>
@@ -36783,7 +36784,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_23_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_23>
@@ -37217,7 +37218,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_desk_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_desk_2>
@@ -37462,7 +37463,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_17_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_17>
@@ -37707,7 +37708,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_18_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_18>
@@ -38467,7 +38468,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_24_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_24>
@@ -39293,7 +39294,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_1>
@@ -40141,7 +40142,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "drawer_cabinet_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/drawer_cabinet_1>
@@ -40923,7 +40924,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "sofa_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/sofa_1>
@@ -41371,7 +41372,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "table_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/table_2>
@@ -41413,7 +41414,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "beanbag_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/beanbag_1>
@@ -41455,7 +41456,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "beanbag_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/beanbag_2>
@@ -41497,7 +41498,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "beanbag_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/beanbag_3>
@@ -41996,7 +41997,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_18_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_18>
@@ -42241,7 +42242,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_19_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_19>
@@ -43001,7 +43002,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_25_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_25>
@@ -43739,7 +43740,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "bookcase_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/bookcase_1>
@@ -44521,7 +44522,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "houseplant_tall_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/houseplant_tall_1>
@@ -44854,7 +44855,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_3>
@@ -45187,7 +45188,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_4>
@@ -45520,7 +45521,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_5>
@@ -45853,7 +45854,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_6>
@@ -46186,7 +46187,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_7>
@@ -46990,7 +46991,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_2>
@@ -47794,7 +47795,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_3>
@@ -48598,7 +48599,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_4>
@@ -49097,7 +49098,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_19_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_19>
@@ -49342,7 +49343,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_20_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_20>
@@ -50102,7 +50103,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_26_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_26>
@@ -50862,7 +50863,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_27_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_27>
@@ -51622,7 +51623,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_28_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_28>
@@ -51955,7 +51956,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_8>
@@ -52288,7 +52289,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_9>
@@ -52621,7 +52622,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_10>
@@ -53120,7 +53121,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_20_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_20>
@@ -53365,7 +53366,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_21_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_21>
@@ -54125,7 +54126,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_29_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_29>
@@ -54718,7 +54719,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "shelving_unit_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/shelving_unit_2>
@@ -55311,7 +55312,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "shelving_unit_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/shelving_unit_3>
@@ -56137,7 +56138,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_2>
@@ -56985,7 +56986,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "tool_cart_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/tool_cart_1>
@@ -57811,7 +57812,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_3>
@@ -58637,7 +58638,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_4>
@@ -58683,7 +58684,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cylinder_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cylinder_1>
@@ -59531,7 +59532,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "drawer_cabinet_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/drawer_cabinet_2>
@@ -59965,7 +59966,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_desk_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_desk_3>
@@ -60464,7 +60465,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_21_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_21>
@@ -61224,7 +61225,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_30_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_30>
@@ -62028,7 +62029,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_5>
@@ -62832,7 +62833,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_6>
@@ -63165,7 +63166,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_11_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_11>
@@ -64013,7 +64014,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "drawer_cabinet_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/drawer_cabinet_3>
@@ -64346,7 +64347,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_12_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_12>
@@ -64794,7 +64795,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "table_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/table_3>
@@ -65642,7 +65643,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monobloc_chair_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monobloc_chair_1>
@@ -65975,7 +65976,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_13_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_13>
@@ -66757,7 +66758,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "sofa_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/sofa_2>
@@ -67539,7 +67540,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "sofa_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/sofa_3>
@@ -68299,7 +68300,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_31_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_31>
@@ -69059,7 +69060,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_32_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_32>
@@ -69819,7 +69820,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_33_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_33>
@@ -70579,7 +70580,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_34_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_34>
@@ -71339,7 +71340,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_35_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_35>
@@ -72099,7 +72100,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_36_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_36>
@@ -72859,7 +72860,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_37_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_37>
@@ -73619,7 +73620,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_38_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_38>
@@ -74379,7 +74380,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_39_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_39>
@@ -75139,7 +75140,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_40_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_40>
@@ -75587,7 +75588,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "bench_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/bench_1>
@@ -76347,7 +76348,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "houseplant_round_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/houseplant_round_1>
@@ -77085,7 +77086,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "bookcase_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/bookcase_2>
@@ -77418,7 +77419,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_14_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_14>
@@ -78222,7 +78223,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_7>
@@ -78266,7 +78267,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_72_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_72>
@@ -78917,7 +78918,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "trash_can_round_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/trash_can_round_2>
@@ -79743,7 +79744,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_5>
@@ -80076,7 +80077,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_15_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_15>
@@ -80524,7 +80525,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "table_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/table_4>
@@ -81372,7 +81373,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "drawer_cabinet_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/drawer_cabinet_4>
@@ -82252,7 +82253,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "south_stairs_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/south_stairs_1>
@@ -83584,7 +83585,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "corner_stairs_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/corner_stairs_1>
@@ -83628,7 +83629,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_73_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_73>
@@ -83672,7 +83673,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_74_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_74>
@@ -83716,7 +83717,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_75_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_75>
@@ -83760,7 +83761,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_76_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_76>
@@ -83804,7 +83805,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_77_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_77>
@@ -83848,7 +83849,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_78_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_78>
@@ -83892,7 +83893,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_79_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_79>
@@ -83936,7 +83937,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_80_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_80>
@@ -83980,7 +83981,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_81_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_81>
@@ -84024,7 +84025,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_82_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_82>
@@ -84044,7 +84045,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-20.55, -12.77, 4.7)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "south_stairwell_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/south_stairwell_1>
@@ -84064,7 +84065,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-19, 6.59, 4.7)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "corner_stairwell_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/corner_stairwell_1>
@@ -84512,7 +84513,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "kitchen_island_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/kitchen_island_1>
@@ -85360,7 +85361,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monobloc_chair_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monobloc_chair_2>
@@ -86208,7 +86209,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monobloc_chair_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monobloc_chair_3>
@@ -87056,7 +87057,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "counter_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/counter_1>
@@ -87904,7 +87905,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "counter_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/counter_2>
@@ -88752,7 +88753,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "counter_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/counter_3>
@@ -89106,7 +89107,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "fridge_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/fridge_1>
@@ -89844,7 +89845,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "bookcase_closed_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/bookcase_closed_1>
@@ -90343,7 +90344,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_22_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_22>
@@ -90588,7 +90589,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_22_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_22>
@@ -91348,7 +91349,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_41_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_41>
@@ -91847,7 +91848,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_23_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_23>
@@ -92092,7 +92093,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "monitor_23_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/monitor_23>
@@ -92852,7 +92853,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_42_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_42>
@@ -93634,7 +93635,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "sofa_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/sofa_4>
@@ -94416,7 +94417,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "sofa_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/sofa_5>
@@ -94864,7 +94865,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "table_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/table_5>
@@ -95624,7 +95625,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_43_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_43>
@@ -96384,7 +96385,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_44_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_44>
@@ -97144,7 +97145,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_45_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_45>
@@ -97904,7 +97905,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_46_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_46>
@@ -98237,7 +98238,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_16_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_16>
@@ -98570,7 +98571,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_17_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_17>
@@ -98903,7 +98904,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_18_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_18>
@@ -99685,7 +99686,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "sofa_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/sofa_6>
@@ -100489,7 +100490,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "wooden_crate_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/wooden_crate_8>
@@ -100988,7 +100989,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "desk_24_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/desk_24>
@@ -101321,7 +101322,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cardboard_box_19_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cardboard_box_19>
@@ -101820,7 +101821,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "bench_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/bench_2>
@@ -102602,7 +102603,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "houseplant_tall_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/houseplant_tall_2>
@@ -103050,7 +103051,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "meeting_table_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/meeting_table_1>
@@ -103810,7 +103811,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_47_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_47>
@@ -104570,7 +104571,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_48_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_48>
@@ -105330,7 +105331,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_49_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_49>
@@ -106090,7 +106091,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "office_chair_50_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/office_chair_50>
@@ -106741,7 +106742,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "trash_can_round_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/trash_can_round_3>
@@ -106787,7 +106788,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "cylinder_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/cylinder_2>
@@ -107613,7 +107614,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_6>
@@ -108439,7 +108440,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "steel_shelves_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/steel_shelves_7>
@@ -109287,7 +109288,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "drawer_cabinet_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/drawer_cabinet_5>
@@ -109331,7 +109332,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_83_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_83>
@@ -109375,7 +109376,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_84_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_84>
@@ -109419,7 +109420,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_85_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_85>
@@ -109463,7 +109464,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_86_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_86>
@@ -109507,7 +109508,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_87_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_87>
@@ -109551,7 +109552,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_88_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_88>
@@ -109595,7 +109596,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_89_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_89>
@@ -109639,7 +109640,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_90_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_90>
@@ -109683,7 +109684,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_91_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_91>
@@ -109727,7 +109728,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_92_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_92>
@@ -109771,7 +109772,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_93_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_93>
@@ -109815,7 +109816,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_94_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_94>
@@ -109859,7 +109860,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_95_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_95>
@@ -109903,7 +109904,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_96_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_96>
@@ -109947,7 +109948,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_97_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_97>
@@ -109991,7 +109992,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_98_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_98>
@@ -110035,7 +110036,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_99_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_99>
@@ -110079,7 +110080,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_100_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_100>
@@ -110123,7 +110124,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_101_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_101>
@@ -110167,7 +110168,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_102_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_102>
@@ -110211,7 +110212,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_103_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_103>
@@ -110255,7 +110256,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_104_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_104>
@@ -110299,7 +110300,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_105_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_105>
@@ -110343,7 +110344,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_106_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_106>
@@ -110387,7 +110388,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_107_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_107>
@@ -110431,7 +110432,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_108_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_108>
@@ -110475,7 +110476,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_109_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_109>
@@ -110519,7 +110520,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_110_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_110>
@@ -110563,7 +110564,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_111_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_111>
@@ -110607,7 +110608,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_112_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_112>
@@ -110651,7 +110652,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_113_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_113>
@@ -110695,7 +110696,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_114_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_114>
@@ -110739,7 +110740,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_115_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_115>
@@ -110783,7 +110784,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_116_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_116>
@@ -110827,7 +110828,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_117_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_117>
@@ -110871,7 +110872,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_118_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_118>
@@ -110915,7 +110916,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_119_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_119>
@@ -110959,7 +110960,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_120_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_120>
@@ -111003,7 +111004,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_121_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_121>
@@ -111047,7 +111048,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_122_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_122>
@@ -111091,7 +111092,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_123_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_123>
@@ -111135,7 +111136,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_124_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_124>
@@ -111179,7 +111180,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_125_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_125>
@@ -111223,7 +111224,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_126_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_126>
@@ -111267,7 +111268,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_127_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_127>
@@ -111311,7 +111312,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_128_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_128>
@@ -111355,7 +111356,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_129_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_129>
@@ -111399,7 +111400,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_130_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_130>
@@ -111443,7 +111444,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_131_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_131>
@@ -111487,7 +111488,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_132_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_132>
@@ -111531,7 +111532,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_133_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_133>
@@ -111575,7 +111576,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_134_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_134>
@@ -111619,7 +111620,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_135_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_135>
@@ -111663,7 +111664,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_136_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_136>
@@ -111707,7 +111708,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_137_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_137>
@@ -111751,7 +111752,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_138_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_138>
@@ -111795,7 +111796,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_139_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_139>
@@ -111839,7 +111840,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_140_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_140>
@@ -111883,7 +111884,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_141_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_141>
@@ -111927,7 +111928,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_142_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_142>
@@ -111971,7 +111972,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_143_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_143>
@@ -112015,7 +112016,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_144_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_144>
@@ -112059,7 +112060,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_145_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_145>
@@ -112103,7 +112104,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_146_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_146>
@@ -112147,7 +112148,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_147_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_147>
@@ -112191,7 +112192,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_148_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_148>
@@ -112235,7 +112236,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_149_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_149>
@@ -112279,7 +112280,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_150_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_150>
@@ -112323,7 +112324,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_151_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_151>
@@ -112367,7 +112368,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_152_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_152>
@@ -112411,7 +112412,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_153_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_153>
@@ -112455,7 +112456,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_154_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_154>
@@ -112499,7 +112500,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_155_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_155>
@@ -112543,7 +112544,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_156_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_156>
@@ -112587,7 +112588,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_157_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_157>
@@ -112631,7 +112632,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_158_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_158>
@@ -112675,7 +112676,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_159_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_159>
@@ -112719,7 +112720,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_160_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_160>
@@ -112763,7 +112764,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_161_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_161>
@@ -112807,7 +112808,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_162_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_162>
@@ -112851,7 +112852,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_163_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_163>
@@ -112895,7 +112896,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_164_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_164>
@@ -112939,7 +112940,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_165_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_165>
@@ -112983,7 +112984,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_166_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_166>
@@ -113027,7 +113028,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_167_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_167>
@@ -113071,7 +113072,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_168_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_168>
@@ -113115,7 +113116,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_169_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_169>
@@ -113159,7 +113160,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_170_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_170>
@@ -113203,7 +113204,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_171_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_171>
@@ -113247,7 +113248,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_172_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_172>
@@ -113291,7 +113292,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_173_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_173>
@@ -113335,7 +113336,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_174_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_174>
@@ -113355,7 +113356,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-4.850000000000001, -13.3, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_1>
@@ -113399,7 +113400,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_175_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_175>
@@ -113443,7 +113444,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_176_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_176>
@@ -113487,7 +113488,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_177_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_177>
@@ -113531,7 +113532,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_178_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_178>
@@ -113575,7 +113576,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_179_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_179>
@@ -113619,7 +113620,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_180_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_180>
@@ -113639,7 +113640,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (2.6499999999999986, -13.3, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_2>
@@ -113683,7 +113684,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_181_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_181>
@@ -113727,7 +113728,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_182_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_182>
@@ -113771,7 +113772,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_183_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_183>
@@ -113815,7 +113816,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_184_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_184>
@@ -113859,7 +113860,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_185_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_185>
@@ -113903,7 +113904,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_186_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_186>
@@ -113923,7 +113924,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-4.850000000000001, -8.05, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_3>
@@ -113967,7 +113968,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_187_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_187>
@@ -114011,7 +114012,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_188_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_188>
@@ -114055,7 +114056,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_189_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_189>
@@ -114099,7 +114100,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_190_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_190>
@@ -114143,7 +114144,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_191_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_191>
@@ -114187,7 +114188,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_192_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_192>
@@ -114207,7 +114208,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (2.6499999999999986, -8.05, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_4>
@@ -114251,7 +114252,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_193_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_193>
@@ -114295,7 +114296,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_194_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_194>
@@ -114339,7 +114340,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_195_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_195>
@@ -114383,7 +114384,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_196_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_196>
@@ -114427,7 +114428,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_197_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_197>
@@ -114471,7 +114472,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_198_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_198>
@@ -114491,7 +114492,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-4.850000000000001, -2.05, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_5>
@@ -114535,7 +114536,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_199_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_199>
@@ -114579,7 +114580,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_200_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_200>
@@ -114623,7 +114624,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_201_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_201>
@@ -114667,7 +114668,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_202_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_202>
@@ -114711,7 +114712,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_203_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_203>
@@ -114755,7 +114756,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_204_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_204>
@@ -114775,7 +114776,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (2.6499999999999986, -2.05, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_6>
@@ -114819,7 +114820,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_205_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_205>
@@ -114863,7 +114864,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_206_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_206>
@@ -114907,7 +114908,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_207_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_207>
@@ -114951,7 +114952,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_208_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_208>
@@ -114995,7 +114996,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_209_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_209>
@@ -115039,7 +115040,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_210_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_210>
@@ -115059,7 +115060,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-4.850000000000001, 3.95, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_7>
@@ -115103,7 +115104,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_211_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_211>
@@ -115147,7 +115148,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_212_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_212>
@@ -115191,7 +115192,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_213_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_213>
@@ -115235,7 +115236,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_214_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_214>
@@ -115279,7 +115280,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_215_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_215>
@@ -115323,7 +115324,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_216_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_216>
@@ -115343,7 +115344,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (2.6499999999999986, 3.95, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_8>
@@ -115387,7 +115388,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_217_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_217>
@@ -115431,7 +115432,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_218_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_218>
@@ -115475,7 +115476,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_219_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_219>
@@ -115519,7 +115520,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_220_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_220>
@@ -115563,7 +115564,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_221_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_221>
@@ -115607,7 +115608,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_222_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_222>
@@ -115627,7 +115628,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-4.850000000000001, 9.95, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_9>
@@ -115671,7 +115672,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_223_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_223>
@@ -115715,7 +115716,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_224_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_224>
@@ -115759,7 +115760,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_225_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_225>
@@ -115803,7 +115804,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_226_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_226>
@@ -115847,7 +115848,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_227_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_227>
@@ -115891,7 +115892,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_228_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_228>
@@ -115911,7 +115912,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (2.6499999999999986, 9.95, 7.85)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "skylight_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/skylight_10>
@@ -115955,7 +115956,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_229_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_229>
@@ -115999,7 +116000,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_230_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_230>
@@ -116043,7 +116044,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_231_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_231>
@@ -116087,7 +116088,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_232_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_232>
@@ -116131,7 +116132,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_233_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_233>
@@ -116175,7 +116176,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "box_234_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/box_234>
@@ -116195,7 +116196,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-7, 7, 5.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "ceiling_light_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/ceiling_light_1>
@@ -116215,7 +116216,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (1, 7, 5.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "ceiling_light_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/ceiling_light_2>
@@ -116235,7 +116236,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-7, -9, 5.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "ceiling_light_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/ceiling_light_3>
@@ -116255,7 +116256,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (1, -9, 5.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "ceiling_light_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/ceiling_light_4>
@@ -116275,7 +116276,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (-3, -1, 5.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "ceiling_light_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/ceiling_light_5>
@@ -116295,7 +116296,7 @@ def Xform "office_555" (
             double3 xformOp:translate = (5, -1, 5.5)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "ceiling_light_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/ceiling_light_6>
@@ -116361,7 +116362,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_1_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_1>
@@ -116427,7 +116428,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_2_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_2>
@@ -116493,7 +116494,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_3_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_3>
@@ -116559,7 +116560,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_4_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_4>
@@ -116625,7 +116626,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_5_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_5>
@@ -116691,7 +116692,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_6_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_6>
@@ -116757,7 +116758,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_7_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_7>
@@ -116823,7 +116824,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_8_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_8>
@@ -116889,7 +116890,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_9_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_9>
@@ -116955,7 +116956,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_10_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_10>
@@ -117021,7 +117022,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_11_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_11>
@@ -117087,7 +117088,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "can_light_12_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/can_light_12>
@@ -117132,7 +117133,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "slab_ground_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/slab_ground>
@@ -117320,7 +117321,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "slab_upper_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/slab_upper>
@@ -117865,7 +117866,7 @@ def Xform "office_555" (
                 uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
             }
 
-            def PhysicsFixedJoint "PhysicsFixedJoint"
+            def PhysicsFixedJoint "slab_roof_joint"
             {
                 rel physics:body0 = </office_555>
                 rel physics:body1 = </office_555/Geometry/slab_roof>
@@ -117882,7 +117883,7 @@ def Xform "office_555" (
         def Material "ground" (
             apiSchemas = ["MaterialXConfigAPI"]
             instanceable = true
-            add references = </Flattened_Prototype_5>
+            add references = </Flattened_Prototype_6>
         )
         {
             string config:mtlx:version = "1.39"
@@ -117941,7 +117942,7 @@ def Xform "office_555" (
         def Material "concrete_0" (
             apiSchemas = ["MaterialXConfigAPI"]
             instanceable = true
-            add references = </Flattened_Prototype_4>
+            add references = </Flattened_Prototype_5>
         )
         {
             string config:mtlx:version = "1.39"
@@ -118000,7 +118001,7 @@ def Xform "office_555" (
         def Material "wood_1" (
             apiSchemas = ["MaterialXConfigAPI"]
             instanceable = true
-            add references = </Flattened_Prototype_6>
+            add references = </Flattened_Prototype_4>
         )
         {
             string config:mtlx:version = "1.39"

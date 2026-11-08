@@ -88,6 +88,15 @@ def write_sidecar(source: Path, pxr: Any) -> Path:
     loaded = trimesh.load_mesh(str(source), process=False)
     if isinstance(loaded, trimesh.Scene):
         loaded = loaded.to_geometry()
+    if len(loaded.faces) == 0:
+        # Refusing beats writing an empty sidecar. A git-lfs **pointer** parses as a mesh with
+        # no faces, so running this against a worktree that has not been materialised produced
+        # 427 identical 737-byte layers and the scene then died much later, inside MuJoCo, as
+        # "at least 4 vertices required" on a mesh whose file looked present.
+        raise ValueError(
+            f"{source} has no faces. If it is {source.stat().st_size} bytes it is a git-lfs "
+            f"pointer: run `git lfs checkout` on its directory first."
+        )
 
     stage = pxr.Usd.Stage.CreateInMemory(out.name)
     mesh = pxr.UsdGeom.Mesh.Define(stage, "/mesh")
@@ -205,6 +214,37 @@ def rereference(
     return done, skipped
 
 
+def name_joints(stage: Any, pxr: Any) -> int:
+    """Give every unnamed joint prim the name of the body it moves. Returns how many.
+
+    The converter leaves a joint it was not given a name for as the bare schema name, so a scene
+    of loose furniture comes out with **every** weld called `PhysicsFixedJoint` -- office_555 has
+    448 of them. That is legal USD, since each is a child of a different body, but it makes the
+    layer useless as a frame source: `usd_frame_names` returns one name for 448 edges, a URDF
+    converted from it has 448 joints of the same name and will not load, and grafting by frame
+    name is ambiguous. The robots do not hit this because an MJCF joint is always named.
+
+    `<child>_joint` matches what the robot layers already carry (`left_ankle_roll_joint`).
+    """
+    renamed = 0
+    for prim in list(stage.Traverse()):
+        if not prim.IsA(pxr.UsdPhysics.Joint) or prim.GetName() != prim.GetTypeName():
+            continue
+        targets = prim.GetRelationship("physics:body1").GetTargets()
+        if not targets:
+            logger.warning(f"{prim.GetPath()} is unnamed and moves nothing; left as it is")
+            continue
+        child = str(targets[0]).rsplit("/", 1)[-1]
+        edit = pxr.Sdf.NamespaceEdit.Rename(prim.GetPath(), f"{child}_joint")
+        batch = pxr.Sdf.BatchNamespaceEdit()
+        batch.Add(edit)
+        if stage.GetRootLayer().Apply(batch):
+            renamed += 1
+        else:
+            logger.warning(f"could not rename {prim.GetPath()} to {child}_joint")
+    return renamed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -217,9 +257,9 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path, help="the .usda to write")
     args = parser.parse_args()
 
-    from pxr import Gf, Sdf, Usd, UsdGeom
+    from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
-    pxr = argparse.Namespace(Gf=Gf, Sdf=Sdf, Usd=Usd, UsdGeom=UsdGeom)
+    pxr = argparse.Namespace(Gf=Gf, Sdf=Sdf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics)
 
     for path in (args.mjcf, args.converted):
         if not path.is_file():
@@ -236,6 +276,7 @@ def main() -> int:
     stage = Usd.Stage.Open(str(args.converted))
     flat = Usd.Stage.Open(stage.Flatten())
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    named = name_joints(flat, pxr)
     done, skipped = rereference(flat, files, args.meshes, args.out.parent.resolve(), pxr)
 
     # The ROOT LAYER, not the stage: Stage.Export() flattens composition, which resolves the
@@ -243,6 +284,7 @@ def main() -> int:
     flat.GetRootLayer().Export(str(args.out))
     size = args.out.stat().st_size
     print(f"{done} mesh(es) re-pointed with a .usdc sidecar, {skipped} left baked")
+    print(f"{named} unnamed joint(s) named after the body they move")
     print(f"wrote {args.out} ({size / 1e6:.2f} MB)")
     if skipped:
         print("note: a baked mesh keeps the layer large; see the warnings above for why")
