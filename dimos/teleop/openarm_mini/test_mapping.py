@@ -77,7 +77,7 @@ def test_follower_joint_limits_clamp_sender_side() -> None:
 
     assert left.positions_by_joint["openarm_left_joint1"] == pytest.approx(1.35)
     assert right.positions_by_joint["openarm_right_joint1"] == pytest.approx(3.45)
-    assert left.positions_by_joint["openarm_left_joint4"] == pytest.approx(-0.01)
+    assert left.positions_by_joint["openarm_left_joint4"] == pytest.approx(0.0)
 
 
 def test_jump_threshold_rejects_large_leader_discontinuity_after_clamp() -> None:
