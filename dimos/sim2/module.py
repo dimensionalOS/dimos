@@ -27,18 +27,22 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 import tempfile
 from threading import Event, Thread
+import time
 from typing import Any, Protocol
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd import resolve_usd_assets
+from dimos.robot.usd_manager import ASSET_ROOT, SCENE_RPC, USD, Mount
 from dimos.sim2.actions import read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
@@ -57,6 +61,33 @@ class SimulationConfig(ModuleConfig):
     # UsdModel rather than handed to the engine, so a backend is only ever given USD -- the one
     # kind of description everything here agrees on.
     scene: Path | UsdModel | None = Field(default_factory=lambda m: m["g"].scene_package)
+    # The UsdManager that composes this world, which is the one place that says what is in it:
+    # the room, and everything mounted on it. Asked `get_scene` while the world is being built,
+    # and what it answers with is the world -- scene= is then the fallback for a world nobody
+    # manages, which is what the tests and `logistics.xml` are.
+    #
+    # **Not yet usable for a scene with meshes**, which is why no blueprint sets it. `get_scene`
+    # answers with an asset root of "" on purpose: every path in what it returns is a name the
+    # manager serves over render_file_request, not a path on any disk, because a scene travels
+    # over a bus as one string and each mesh is fetched by content. MuJoCo opens files. So the
+    # missing step is resolving those names to files -- either a manager rpc handing over its
+    # public-name -> real-path map, or the Simulation fetching the bytes onto disk itself. The
+    # first is a few lines and same-host only; the second is how a scene would reach a backend
+    # on another machine. Until then office_555 still passes `scene=`, and the symptom of
+    # skipping this is "at least 4 vertices required" on the first piece of furniture.
+    scene_manager: Mount | None = None
+
+    @field_validator("scene_manager", mode="before")
+    @classmethod
+    def _normalize_scene_manager(cls, value: object) -> object:
+        """Accept a class, a (namespaced) Blueprint or an instance name, as mounts= does.
+
+        The same normalisation and for the same reason: a blueprint is the useful form, because
+        it names the exact instance it deploys, and a Blueprint handed to pydantic as-is is a
+        wall of "Unexpected keyword argument: blueprints, transport_map, ...".
+        """
+        return value if value is None or isinstance(value, Mount) else Mount.of(value)
+
     backend: str = "mujoco"
     # Sim seconds per wall second.
     speed: float = 1.0
@@ -111,8 +142,52 @@ class Simulation(SharedConfigModule):
             raise ValueError(f"unknown backend {self.config.backend!r}; one of {sorted(BACKENDS)}")
         self._directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
         self._backend = load_backend(self.config.backend)(
-            self.config, self.simulated, Path(self._directory.name)
+            self.config, self._world(), self.simulated, Path(self._directory.name)
         )
+
+    def _world(self) -> UsdModel | Path | None:
+        """The world to simulate: what the scene manager composes, or config.scene without one.
+
+        Asked here rather than later because the world has to exist before the system finishes
+        starting: a sensor's `main` calls `describe()` and draws from it, so there is no moment
+        after start at which it would be soon enough.
+
+        Waits with no deadline, the way a manager waits on its own mounts, and for the same
+        reason: half a world is a room with no robots in it, and a sim that hangs waiting is
+        easier to understand than one that quietly simulates the wrong thing. Each module gets
+        its own thread in the coordinator's `safe_thread_map` (`max_workers=len(items)`), so
+        blocking this one cannot starve the modules it is waiting on.
+        """
+        mount = self.config.scene_manager
+        if mount is None:
+            return self.config.scene
+        client = (
+            RPCClient(None, None, mount.remote_name, {SCENE_RPC}, rpc=self.rpc)
+            if mount.module is None
+            else RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
+        )
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                answer = getattr(client, SCENE_RPC)([])
+            except Exception as error:
+                answer = None
+                logger.debug(f"sim2: {mount.remote_name}.{SCENE_RPC}() has not answered: {error}")
+            if answer:
+                logger.info(
+                    f"sim2: the world came from {mount.remote_name}.{SCENE_RPC}() "
+                    f"after {attempts} ask(s)"
+                )
+                # Rebased as it arrives, onto the root the manager reported: the layer says where
+                # its meshes are relative to something only that module knows.
+                return UsdModel.from_layer(resolve_usd_assets(answer[USD], answer[ASSET_ROOT]))
+            if attempts % 20 == 0:
+                logger.warning(
+                    f"sim2: still waiting on {mount.remote_name} for {SCENE_RPC}() "
+                    f"after {attempts} asks"
+                )
+            time.sleep(0.5)
 
     async def main(self) -> AsyncIterator[None]:
         assert self._backend is not None

@@ -27,6 +27,7 @@ from dimos.sim2.spec import Simulated
 from dimos.sim2.world_observations import WorldWriter
 
 if TYPE_CHECKING:
+    from dimos.robot.assets.model import UsdModel
     from dimos.sim2.module import SimulationConfig
 
 BACKENDS = {"mujoco": "dimos.sim2.mujoco_backend.MujocoBackend"}
@@ -43,9 +44,18 @@ class SimulationBackend(Protocol):
     world: WorldWriter
 
     def __init__(
-        self, config: "SimulationConfig", simulated: Mapping[str, Simulated], directory: Path
+        self,
+        config: "SimulationConfig",
+        world: "UsdModel | Path | None",
+        simulated: Mapping[str, Simulated],
+        directory: Path,
     ) -> None:
-        """Build the world from config.scene and simulated, writing any files into directory."""
+        """Build `world` -- USD, or a file holding it -- and `simulated`, writing files into directory.
+
+        The world is handed over rather than looked up: whoever built it knows whether it came
+        from a scene manager's `get_scene` or from a config, and a backend that went and found
+        one for itself would be a second answer to "what are we simulating".
+        """
 
     async def run(self, world_observations: Publisher) -> None:
         """Step the world forever, offering a frame of what changed whenever world_observations is not busy.
@@ -68,6 +78,9 @@ class SimulationBackend(Protocol):
 
 def load_backend(
     name: str,
-) -> Callable[["SimulationConfig", Mapping[str, Simulated], Path], SimulationBackend]:
+) -> Callable[
+    ["SimulationConfig", "UsdModel | Path | None", Mapping[str, Simulated], Path],
+    SimulationBackend,
+]:
     module, _, cls = BACKENDS[name].rpartition(".")
     return getattr(import_module(module), cls)  # type: ignore[no-any-return]

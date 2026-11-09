@@ -38,6 +38,7 @@ from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 
 if TYPE_CHECKING:
+    from dimos.robot.assets.model import UsdModel
     from dimos.sim2.module import SimulationConfig
 
 # Physics catches up to the wall clock in bursts, publishing after each, since macOS oversleeps short
@@ -85,11 +86,15 @@ def _mesh_data(model: mujoco.MjModel, mesh: int) -> dict[str, str]:
 
 class MujocoBackend:
     def __init__(
-        self, config: "SimulationConfig", simulated: Mapping[str, Simulated], directory: Path
+        self,
+        config: "SimulationConfig",
+        world: "UsdModel | Path | None",
+        simulated: Mapping[str, Simulated],
+        directory: Path,
     ) -> None:
         self._config = config
         # The world as a file, which is what MuJoCo opens and what a renderer asks for by name.
-        self._scene_layer = scene_layer(config.scene)
+        self._scene_layer = scene_layer(world)
         self._robots = {d.robot_id: d for d in simulated.values() if isinstance(d, SimulatedRobot)}
         self.model = compile_world(self._scene_layer, simulated.values())
         # Robots whose controllers the world steps in lockstep with, and the actions each sent since its last tick.
