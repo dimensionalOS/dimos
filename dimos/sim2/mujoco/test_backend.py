@@ -16,7 +16,7 @@ import asyncio
 import contextlib
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, cast
 
 import mujoco
 import numpy as np
@@ -247,3 +247,37 @@ def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model)
     assert len(tick_times) > 5
     assert np.diff(tick_times[1:]) == pytest.approx(0.02, abs=1e-6)
     assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.1
+
+
+def test_closing_the_publisher_while_a_frame_is_in_flight_does_not_wedge_it():
+    from threading import Event as ThreadEvent, Thread
+
+    from dimos.sim2.mujoco.sim import _LatestPublisher
+
+    started, release = ThreadEvent(), ThreadEvent()
+
+    def publish(_frame: Any) -> None:
+        started.set()
+        release.wait(5)
+
+    publisher = _LatestPublisher(publish)
+    publisher.offer(cast("Any", object()))
+    assert started.wait(5), "the publisher thread never picked the frame up"
+
+    closer = Thread(target=publisher.close)
+    closer.start()
+    release.set()
+    closer.join(5)
+
+    assert not closer.is_alive(), "close() never returned: the publishing thread is wedged"
+
+
+def test_two_robots_with_one_id_are_refused_by_name(scene, robot_model):
+    with pytest.raises(ValueError, match="duplicate simulated robot ids"):
+        MujocoSim(
+            scene=scene,
+            robots=(
+                SimulatedRobot("dog", robot_model),
+                SimulatedRobot("dog", robot_model),
+            ),
+        )
