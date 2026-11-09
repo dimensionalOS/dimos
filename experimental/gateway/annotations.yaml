@@ -206,6 +206,9 @@ robots:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
           recommended_config: []
+        go2-sim-nav-named-locations:
+          title: 'Go2 in simulation (named locations)'
+          description: 'The simulated Go2 navigation stack with named map locations, kept under the map frame across runs by the relocalizer.'
         go2-sim-nav-episode:
           title: 'Go2 in simulation (nav-bench episode)'
           description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
@@ -386,12 +389,15 @@ robots:
       blueprints:
         m20:
           title: 'M20: navigation'
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower, plus named map locations kept under the premap frame by the relocalizer.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
+          - module: localmaprelocalization
+            field: map_file
+            label: Premap (.db/.mcap)
         m20-sim-nav:
           title: 'M20 in simulation (navigation)'
           description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
