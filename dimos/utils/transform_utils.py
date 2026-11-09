@@ -17,11 +17,18 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 
 
 def normalize_angle(angle: float) -> float:
@@ -29,8 +36,10 @@ def normalize_angle(angle: float) -> float:
     return np.arctan2(np.sin(angle), np.cos(angle))  # type: ignore[no-any-return]
 
 
-def twist_to_numpy(twist: Twist) -> NDArray[np.float64]:
+def twist_to_numpy(twist: Twist | TwistStamped) -> NDArray[np.float64]:
     """Convert a Twist-like geometry message to [linear xyz, angular xyz]."""
+    if isinstance(twist, TwistStamped):
+        twist = twist.twist
     return np.array(
         [
             twist.linear.x,
@@ -44,7 +53,7 @@ def twist_to_numpy(twist: Twist) -> NDArray[np.float64]:
     )
 
 
-def pose_to_matrix(pose: Pose) -> np.ndarray:
+def pose_to_matrix(pose: Pose | PoseStamped) -> np.ndarray:
     """
     Convert pose to 4x4 homogeneous transform matrix.
 
@@ -54,6 +63,8 @@ def pose_to_matrix(pose: Pose) -> np.ndarray:
     Returns:
         4x4 transformation matrix
     """
+    if isinstance(pose, PoseStamped):
+        pose = pose.pose
     # Extract position
     tx, ty, tz = pose.position.x, pose.position.y, pose.position.z
 
@@ -88,7 +99,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
         Pose object with position and orientation (quaternion)
     """
     # Extract position
-    pos = Vector3(T[0, 3], T[1, 3], T[2, 3])
+    pos = Point(T[0, 3], T[1, 3], T[2, 3])
 
     # Extract rotation matrix and convert to quaternion
     Rot = T[:3, :3]
@@ -100,7 +111,9 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
     return Pose(pos, orientation)
 
 
-def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
+def apply_transform(
+    pose: Pose | PoseStamped, transform: np.ndarray | Transform | TransformStamped
+) -> Pose:
     """
     Apply a transformation matrix to a pose.
 
@@ -111,12 +124,12 @@ def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
     Returns:
         Transformed pose
     """
-    if isinstance(transform, Transform):
-        if transform.child_frame_id != pose.frame_id:
-            raise ValueError(
-                f"Transform frame_id {transform.frame_id} does not match pose frame_id {pose.frame_id}"
-            )
-        transform = pose_to_matrix(transform.to_pose())
+    if isinstance(transform, TransformStamped):
+        if not isinstance(pose, PoseStamped) or transform.child_frame_id != pose.header.frame_id:
+            raise ValueError("Transform child frame does not match pose frame")
+        transform = geometry.transform_matrix(transform.transform)
+    elif isinstance(transform, Transform):
+        transform = geometry.transform_matrix(transform)
 
     # Convert pose to matrix
     T_pose = pose_to_matrix(pose)
@@ -175,7 +188,7 @@ def optical_to_robot_frame(pose: Pose) -> Pose:
     quat_robot = R.from_matrix(R_robot).as_quat()  # [x, y, z, w]
 
     return Pose(
-        Vector3(robot_x, robot_y, robot_z),
+        Point(robot_x, robot_y, robot_z),
         Quaternion(quat_robot[0], quat_robot[1], quat_robot[2], quat_robot[3]),
     )
 
@@ -217,7 +230,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     quat_optical = R.from_matrix(R_optical).as_quat()  # [x, y, z, w]
 
     return Pose(
-        Vector3(optical_x, optical_y, optical_z),
+        Point(optical_x, optical_y, optical_z),
         Quaternion(quat_optical[0], quat_optical[1], quat_optical[2], quat_optical[3]),
     )
 
@@ -356,16 +369,11 @@ def get_distance(pose1: Pose | Vector3, pose2: Pose | Vector3) -> float:
     Returns:
         Euclidean distance between the two poses in meters
     """
-    if hasattr(pose1, "position"):
-        pose1 = pose1.position
-    if hasattr(pose2, "position"):
-        pose2 = pose2.position
-
-    dx = pose1.x - pose2.x
-    dy = pose1.y - pose2.y
-    dz = pose1.z - pose2.z
-
-    return np.linalg.norm(np.array([dx, dy, dz]))  # type: ignore[return-value]
+    first = pose1.position if isinstance(pose1, Pose) else pose1
+    second = pose2.position if isinstance(pose2, Pose) else pose2
+    return float(
+        np.linalg.norm(np.array([first.x - second.x, first.y - second.y, first.z - second.z]))
+    )
 
 
 def offset_distance(
@@ -397,7 +405,7 @@ def offset_distance(
     approach_vector_world = rotation_matrix @ approach_vector_local
 
     # Apply offset along the approach direction
-    offset_position = Vector3(
+    offset_position = Point(
         target_pose.position.x + distance * approach_vector_world[0],
         target_pose.position.y + distance * approach_vector_world[1],
         target_pose.position.z + distance * approach_vector_world[2],

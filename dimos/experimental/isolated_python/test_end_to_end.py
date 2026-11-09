@@ -23,7 +23,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.experimental.isolated_python.example.contract import ExampleExternal
 from dimos.experimental.isolated_python.example.support import Offset
-from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.messages.std_msgs.msg import Int32
 from dimos.utils.testing.waiting import wait_until
 
 

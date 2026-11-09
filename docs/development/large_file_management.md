@@ -59,10 +59,12 @@ F: box "Return path" rad 5px fit wid 170% ht 170%
 
 ```python
 from dimos.utils.data import get_data
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import Image
 
-image = Image.from_file(get_data("cafe.jpg"))
-print(f"Image shape: {image.data.shape}")
+from dimos.message_utils import image as image_utils
+
+image = image_utils.from_file(get_data("cafe.jpg"))
+print(f"Image shape: {image_utils.view(image).shape}")
 ```
 
 ```results

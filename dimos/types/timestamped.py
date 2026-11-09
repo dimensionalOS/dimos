@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union, overload
 
-from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
 from reactivex.disposable import CompositeDisposable
-
-# from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
 
+from dimos.messages.builtin_interfaces.msg import Time as ROSTime
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore
@@ -55,7 +54,7 @@ def to_timestamp(ts: TimeLike) -> float:
         if hasattr(ts, "nanosec"):
             return ts.sec + ts.nanosec / 1e9  # type: ignore[no-any-return]
         else:  # has nsec
-            return ts.sec + ts.nsec / 1e9  # type: ignore[no-any-return]
+            return float(ts.sec + getattr(ts, "nsec", 0) / 1e9)
     raise TypeError("unsupported timestamp type")
 
 
@@ -113,7 +112,18 @@ class Timestamped:
         return [sec, nanosec]
 
 
-T = TypeVar("T", bound=Timestamped)
+T = TypeVar("T")
+
+
+VALUE = TypeVar("VALUE")
+
+
+class TimestampedData(Timestamped, Generic[VALUE]):
+    """Local time-series adapter; leave timestamp metadata outside wire values."""
+
+    def __init__(self, value: VALUE, ts: float) -> None:
+        super().__init__(ts)
+        self.value = value
 
 
 PRIMARY = TypeVar("PRIMARY", bound=Timestamped)
@@ -123,18 +133,20 @@ SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 class TimestampedBufferCollection(InMemoryStore[T]):
     """A sliding time window buffer backed by InMemoryStore."""
 
-    def __init__(self, window_duration: float) -> None:
-        super().__init__()
+    def __init__(
+        self, window_duration: float, *, timestamp_key: Callable[[T], float] | None = None
+    ) -> None:
+        super().__init__(timestamp_key=timestamp_key)
         self.window_duration = window_duration
 
     def add(self, item: T) -> None:
         """Add a timestamped item and prune items outside the time window."""
         self.save(item)
-        self.prune_old(item.ts - self.window_duration)
+        self.prune_old(self._timestamp(item) - self.window_duration)
 
     def remove(self, item: T) -> bool:
         """Remove a timestamped item. Returns True if found and removed."""
-        return self._delete(item.ts) is not None
+        return self._delete(self._timestamp(item)) is not None
 
     def remove_by_timestamp(self, timestamp: float) -> bool:
         """Remove an item by timestamp. Returns True if found and removed."""
@@ -166,12 +178,32 @@ class MatchContainer(Timestamped, Generic[PRIMARY, SECONDARY]):
         return (self.primary, *self.matches)  # type: ignore[arg-type]
 
 
+@overload
+def align_timestamped(
+    primary_observable: Observable[PRIMARY],
+    secondary_observable: Observable[SECONDARY],
+    /,
+    *,
+    buffer_size: float = 1.0,
+    match_tolerance: float = 0.1,
+) -> Observable[tuple[PRIMARY, SECONDARY]]: ...
+
+
+@overload
+def align_timestamped(
+    primary_observable: Observable[PRIMARY],
+    *secondary_observables: Observable[SECONDARY],
+    buffer_size: float = 1.0,
+    match_tolerance: float = 0.1,
+) -> Observable[tuple[PRIMARY | SECONDARY, ...]]: ...
+
+
 def align_timestamped(
     primary_observable: Observable[PRIMARY],
     *secondary_observables: Observable[SECONDARY],
     buffer_size: float = 1.0,  # seconds
     match_tolerance: float = 0.1,  # seconds
-) -> Observable[tuple[PRIMARY, ...]]:
+) -> Observable[tuple[Any, ...]]:
     """Align a primary observable with one or more secondary observables.
 
     Args:

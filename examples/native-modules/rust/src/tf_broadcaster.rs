@@ -15,7 +15,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dimos_module::nalgebra::Isometry3;
-use dimos_module::{run_with_transport, Module, Tf, Transform};
+use dimos_module::{run_with_transport, Module, Tf};
 use tokio::time::{interval, Duration};
 
 #[derive(Module)]
@@ -36,7 +36,8 @@ impl TfBroadcaster {
                     .duration_since(UNIX_EPOCH)
                     .expect("system clock before epoch")
                     .as_secs_f64();
-                let t = Transform::new("c", "d", ts, Isometry3::translation(0.5, 0.0, 0.0));
+                let stamp = dimos_module::tf::time_from_nanoseconds((ts * 1e9) as i64).expect("valid timestamp");
+                let t = dimos_module::tf::from_isometry("c", "d", stamp, Isometry3::translation(0.5, 0.0, 0.0));
                 if tf.publish(&[t]).await.is_err() {
                     break;
                 }

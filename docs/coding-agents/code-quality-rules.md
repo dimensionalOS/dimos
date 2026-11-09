@@ -9,7 +9,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 * Don't reach into another type's internals from the outside.
 * Group state that changes together into one object instead of parallel fields that must be kept consistent (e.g. a `_Session` dataclass holding client/lock/state), so methods don't null-check each field.
 * Don't put unrelated things in one class: 2D and 3D detection should be separate.
-* Keep message classes as lightweight structs with small, un-opinionated utilities. Heavy/opinionated external-lib conversions (e.g. `to_rerun`, occupancy-grid -> RGB) belong in a dedicated module (e.g. `dimos/msgs/conversions/rerun/`), which also keeps `import rerun` out of message modules.
+* Keep generated messages as schema-defined values. Put numeric operations in `dimos/message_utils/` and Rerun conversions in `dimos/visualization/rerun/`. Do not add methods or external-library imports to generated classes.
 
 ## Blueprints
 
