@@ -333,9 +333,7 @@ class PickAndPlaceModule(Module):
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
             grasp = PoseStamped(
                 header=deepcopy(candidates.header),
-                pose=Pose(
-                    position=candidate.pose.position, orientation=candidate.pose.orientation
-                ),
+                pose=Pose(position=candidate.pose.position, orientation=candidate.pose.orientation),
             )
             pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
             blocked = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)

@@ -23,9 +23,9 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from types import SimpleNamespace
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any, cast
 
 from dimos_cdrgen.registry import decode, encode
