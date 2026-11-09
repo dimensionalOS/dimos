@@ -62,7 +62,9 @@ def _trajectory_task() -> TaskConfig:
         joint_names=list(_MODEL.joint_names),
         priority=10,
         params={
-            "start_position_tolerance": 0.05,
+            # A streamed trajectory restarts from the measured pose after a reject;
+            # the leader may be this far ahead of the arm by then.
+            "start_position_tolerance": 0.3,
             "velocity_limits": velocity_limits,
         },
     )

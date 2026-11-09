@@ -202,6 +202,26 @@ The module publishes `left_gripper_command` and `right_gripper_command`
 follower blueprints bind them to one gripper task per jaw, open at the jaw's
 own end of travel as the connection declares it.
 
+## Smooth streaming
+
+By default the module low-passes the mapped arm targets at 6 Hz
+(`command_filter_cutoff_hz`) and sends each 50 Hz target as a two-point
+trajectory from the previous target over 40 ms (`trajectory_horizon_s`) through
+the coordinator's `execute_trajectory` RPC, non-blocking, so the follower
+interpolates between targets instead of re-anchoring every target on a measured
+angle that lags the leader by the loop delay. Measured on Alfred, that lag is
+40 to 100 ms and the re-anchor step is what feels like a ratchet. The
+coordinator is the one in the blueprint, or `coordinator_name`
+(`ControlCoordinator`) over the bus for the split deployment. A rejected
+trajectory restarts from the measured pose; the follower blueprints allow a
+0.3 rad start gap for that. If the RPC goes unserved 25 times in a row the
+module falls back to streaming `joint_command`.
+
+```bash
+# the one-target-per-tick behavior of earlier runs
+dimos run teleop-openarm-mini-leader --trajectory-horizon-s null --command-filter-cutoff-hz null
+```
+
 ## Driving the real OpenArm follower
 
 Without `--simulation` the same blueprint drives the physical bimanual OpenArm

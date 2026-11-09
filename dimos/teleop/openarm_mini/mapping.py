@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import math
 
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.openarm.config import openarm_urdf_joints
 from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
@@ -148,3 +151,55 @@ def _validate_jump_threshold(
                 f"Mapped OpenArm Mini {joint_name} jump {jump:.3f} rad exceeds "
                 f"threshold {max_joint_jump_radians:.3f} rad"
             )
+
+
+def low_pass_alpha(cutoff_hz: float, period_s: float) -> float:
+    """Blend weight of a first-order low-pass sampled every period_s."""
+    if not (math.isfinite(cutoff_hz) and cutoff_hz > 0.0):
+        raise ValueError("cutoff_hz must be positive")
+    if not (math.isfinite(period_s) and period_s > 0.0):
+        raise ValueError("period_s must be positive")
+    tau = 1.0 / (2.0 * math.pi * cutoff_hz)
+    return period_s / (tau + period_s)
+
+
+def smooth_positions(
+    previous: Mapping[str, float] | None,
+    positions: Mapping[str, float],
+    alpha: float,
+) -> dict[str, float]:
+    """Move each joint a fraction alpha toward its new value; unseen joints pass through."""
+    if not 0.0 < alpha <= 1.0:
+        raise ValueError("alpha must be in (0, 1]")
+    if previous is None:
+        return {joint: float(value) for joint, value in positions.items()}
+    return {
+        joint: (
+            previous[joint] + alpha * (float(value) - previous[joint])
+            if joint in previous
+            else float(value)
+        )
+        for joint, value in positions.items()
+    }
+
+
+def streamed_trajectory(
+    last_sent: Mapping[str, float] | None,
+    positions: Mapping[str, float],
+    horizon_s: float,
+) -> JointTrajectory:
+    """Two points from the last streamed target, or one point from the measured position."""
+    if not (math.isfinite(horizon_s) and horizon_s > 0.0):
+        raise ValueError("horizon_s must be positive")
+    names = list(positions)
+    target = [float(positions[name]) for name in names]
+    if last_sent is None or any(name not in last_sent for name in names):
+        return JointTrajectory(joint_names=names, points=[TrajectoryPoint(positions=target)])
+    start = [float(last_sent[name]) for name in names]
+    return JointTrajectory(
+        joint_names=names,
+        points=[
+            TrajectoryPoint(time_from_start=0.0, positions=start),
+            TrajectoryPoint(time_from_start=horizon_s, positions=target),
+        ],
+    )

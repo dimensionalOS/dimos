@@ -125,3 +125,42 @@ def test_gripper_trigger_maps_released_to_open_and_squeezed_to_closed() -> None:
 
     with pytest.raises(ValueError, match="gripper_travel_radians"):
         map_side_readings("right", _readings() | {"gripper": 0.1}, gripper_travel_radians=0.0)
+
+
+def test_low_pass_alpha_rises_with_cutoff_and_period() -> None:
+    from dimos.teleop.openarm_mini.mapping import low_pass_alpha
+
+    slow = low_pass_alpha(2.0, 0.02)
+    fast = low_pass_alpha(6.0, 0.02)
+    assert 0.0 < slow < fast < 1.0
+    assert low_pass_alpha(6.0, 0.04) > fast
+    with pytest.raises(ValueError):
+        low_pass_alpha(0.0, 0.02)
+    with pytest.raises(ValueError):
+        low_pass_alpha(6.0, 0.0)
+
+
+def test_smooth_positions_passes_the_first_sample_then_blends() -> None:
+    from dimos.teleop.openarm_mini.mapping import smooth_positions
+
+    first = smooth_positions(None, {"a": 1.0, "b": 2.0}, 0.5)
+    assert first == {"a": 1.0, "b": 2.0}
+    second = smooth_positions(first, {"a": 3.0, "c": 5.0}, 0.5)
+    assert second == {"a": 2.0, "c": 5.0}
+    with pytest.raises(ValueError):
+        smooth_positions(first, {"a": 1.0}, 0.0)
+
+
+def test_streamed_trajectory_is_one_point_until_a_target_was_sent() -> None:
+    from dimos.teleop.openarm_mini.mapping import streamed_trajectory
+
+    first = streamed_trajectory(None, {"a": 1.0, "b": 2.0}, 0.04)
+    assert len(first.points) == 1 and first.points[0].positions == [1.0, 2.0]
+    second = streamed_trajectory({"a": 1.0, "b": 2.0}, {"a": 1.5, "b": 2.0}, 0.04)
+    assert [point.time_from_start for point in second.points] == [0.0, 0.04]
+    assert second.points[0].positions == [1.0, 2.0]
+    assert second.points[1].positions == [1.5, 2.0]
+    partial = streamed_trajectory({"a": 1.0}, {"a": 1.5, "b": 2.0}, 0.04)
+    assert len(partial.points) == 1
+    with pytest.raises(ValueError):
+        streamed_trajectory(None, {"a": 1.0}, 0.0)
