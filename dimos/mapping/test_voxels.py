@@ -19,7 +19,8 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.testing.moment import OutputMoment
@@ -121,7 +122,7 @@ def test_roundtrip_range_preserved(grid: VoxelGrid) -> None:
 
     frame = lidar_store.find_closest_seek(1.0)
     assert frame is not None
-    input_pts = np.asarray(frame.pointcloud.points)
+    input_pts = pointcloud.xyz(frame)
 
     grid.add_frame(frame)
 

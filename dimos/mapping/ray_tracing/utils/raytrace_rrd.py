@@ -41,7 +41,8 @@ from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"
@@ -224,17 +225,26 @@ def main(
         for obs in lidar:
             t = tf.get(
                 world_frame,
-                obs.data.frame_id,
+                obs.data.header.frame_id,
                 time_point=obs.ts,
                 time_tolerance=TF_MATCH_TOLERANCE_S,
             )
             if t is None:
                 dropped += 1
                 continue
-            x, y, z = float(t.translation.x), float(t.translation.y), float(t.translation.z)
-            qx, qy, qz, qw = t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w
+            x, y, z = (
+                float(t.transform.translation.x),
+                float(t.transform.translation.y),
+                float(t.transform.translation.z),
+            )
+            qx, qy, qz, qw = (
+                t.transform.rotation.x,
+                t.transform.rotation.y,
+                t.transform.rotation.z,
+                t.transform.rotation.w,
+            )
             # Sensor-frame cloud: the mapper registers it by the tf pose.
-            raw = obs.data.points_f32()
+            raw = pointcloud.xyz(obs.data).astype(np.float32)
             for mapper in mappers.values():
                 mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
             count += 1

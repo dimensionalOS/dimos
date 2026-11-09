@@ -15,15 +15,23 @@
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.message_utils import occupancy as occupancy_utils, time as message_time
+from dimos.message_utils.occupancy import CostValues
+from dimos.messages.geometry_msgs.msg import Vector3
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.utils.data import get_data
 
 
 @pytest.fixture
 def costmap() -> OccupancyGrid:
-    return OccupancyGrid(np.load(get_data("occupancy_simple.npy")))
+    return occupancy_utils.from_array(
+        np.asarray(np.load(get_data("occupancy_simple.npy")), dtype=np.int8),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        resolution=0.05,
+        origin=None,
+    )
 
 
 @pytest.mark.parametrize(
@@ -50,4 +58,6 @@ def test_find_safe_goal(costmap, input_pos, expected_pos) -> None:
         connectivity_check_radius=0,
     )
 
-    assert safe_goal == Vector3(expected_pos[0], expected_pos[1], 0.0)
+    np.testing.assert_allclose(
+        [safe_goal.x, safe_goal.y, safe_goal.z], [expected_pos[0], expected_pos[1], 0.0]
+    )

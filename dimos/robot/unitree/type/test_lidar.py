@@ -16,9 +16,12 @@
 import itertools
 from typing import cast
 
+import numpy as np
 import pytest
 import reactivex as rx
 
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.std_msgs.msg import Header
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
@@ -101,3 +104,53 @@ def test_repair_stale_ts_calibration_boundary_one_differs() -> None:
         repair_stale_ts(default_period=0.130, calibration_frames=10, now=lambda: 999.0)
     ).subscribe(on_next=lambda item: out.append(item.ts))
     assert 999.0 not in out
+
+
+@pytest.mark.parametrize(
+    "stamps",
+    [
+        [1700000000123456789, 1700000000123456790, 1700000000123456791],
+        [1700000000123456789, 1700000000123456789, 1700000000253456789],
+    ],
+)
+def test_generated_stale_repair_retains_float_algorithm_and_mutation(stamps):
+    clouds = [
+        pointcloud.from_xyz(
+            np.array([[1, 2, 3]], dtype=np.float32),
+            header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(stamp)),
+        )
+        for stamp in stamps
+    ]
+    legacy = [Timestamped(message_time.to_seconds(cloud.header.stamp)) for cloud in clouds]
+    expected = []
+    rx.from_iterable(legacy).pipe(repair_stale_ts()).subscribe(
+        lambda item: expected.append(item.ts)
+    )
+    received = []
+    rx.from_iterable(clouds).pipe(repair_stale_ts()).subscribe(received.append)
+    assert [message_time.to_seconds(cloud.header.stamp) for cloud in received] == expected
+    assert all(result is source for result, source in zip(received, clouds, strict=True))
+    assert [cloud.header.frame_id for cloud in received] == ["world"] * 3
+    assert all(pointcloud.xyz(cloud).tolist() == [[1, 2, 3]] for cloud in received)
+
+
+def test_generated_frozen_firmware_uses_clock_after_same_calibration_window():
+    stamp = 1700000000123456789
+    clouds = [
+        pointcloud.from_xyz(
+            np.array([[1, 2, 3]], dtype=np.float32),
+            header=Header(frame_id="world", stamp=message_time.time_from_nanoseconds(stamp)),
+        )
+        for _ in range(13)
+    ]
+    legacy = [Timestamped(message_time.to_seconds(cloud.header.stamp)) for cloud in clouds]
+    expected = []
+    rx.from_iterable(legacy).pipe(
+        repair_stale_ts(calibration_frames=10, now=lambda: 999.0)
+    ).subscribe(lambda item: expected.append(item.ts))
+    received = []
+    rx.from_iterable(clouds).pipe(
+        repair_stale_ts(calibration_frames=10, now=lambda: 999.0)
+    ).subscribe(received.append)
+    assert [message_time.to_seconds(cloud.header.stamp) for cloud in received] == expected
+    assert all(result is source for result, source in zip(received, clouds, strict=True))

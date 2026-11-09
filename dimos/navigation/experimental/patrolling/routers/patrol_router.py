@@ -14,8 +14,8 @@
 
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 
 
 class PatrolRouter(Protocol):

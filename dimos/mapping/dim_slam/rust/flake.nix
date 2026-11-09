@@ -1,7 +1,8 @@
 {
-  description = "dimSLAM native module for DimOS: the dim_slam library behind an LCM wrapper";
+  description = "dimSLAM native module for DimOS: the dim_slam library with generated CDR messages";
 
   inputs = {
+    dimos-source = { url = "path:../../../.."; flake = false; };
     nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
@@ -12,14 +13,19 @@
     cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix, cu-vslam-rs }:
+  outputs = { self, dimos-source, nix-filter, nixpkgs, flake-utils, crate2nix, cu-vslam-rs }:
     flake-utils.lib.eachSystem [ "aarch64-linux" "x86_64-linux" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dim-slam-module";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
-
+        modulePath = "dimos/mapping/dim_slam/rust";
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        staged = import (dimos-source + "/native/rust/module-source.nix") {
+          inherit pkgs modulePath moduleSource;
+          projectRoot = dimos-source;
+        };
+        src = staged + "/${modulePath}";
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 
         sdkPackages = nixpkgs.lib.filterAttrs

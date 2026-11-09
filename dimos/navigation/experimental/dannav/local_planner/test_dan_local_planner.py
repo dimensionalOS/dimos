@@ -19,9 +19,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.experimental.dannav.local_planner.module import (
     DanLocalPlannerConfig,
     _ReplanGate,
@@ -31,24 +32,28 @@ from dimos.navigation.experimental.dannav.local_planner.module import (
 def _path_from_points(points: list[tuple[float, float]]) -> Path:
     poses = [
         PoseStamped(
-            ts=1.0, frame_id="world", position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
+            pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
         for x, y in points
     ]
-    return Path(frame_id="world", poses=poses)
+    return Path(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"), poses=poses
+    )
 
 
 def _odom(x: float, y: float, *, ts: float = 1.0) -> PoseStamped:
     return PoseStamped(
-        ts=ts,
-        frame_id="world",
-        position=[x, y, 0.0],
-        orientation=[0.0, 0.0, 0.0, 1.0],
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
 
 
 def _point(x: float, y: float) -> PointStamped:
-    return PointStamped(x=x, y=y, z=0.0, frame_id="world")
+    return PointStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"),
+        point=Point(x, y, 0.0),
+    )
 
 
 def _gate(**config: Any) -> _ReplanGate:
@@ -110,7 +115,9 @@ def test_empty_path_published_and_resets_gate() -> None:
 
     # An empty path (nothing safe ahead) forwards immediately as a stop and
     # drops the committed path.
-    empty = Path(frame_id="world", poses=[])
+    empty = Path(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"), poses=[]
+    )
     assert gate.on_planner_path(empty) is empty
     assert gate._committed is None
 

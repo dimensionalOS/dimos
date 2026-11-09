@@ -17,9 +17,9 @@ from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils import occupancy as occupancy_utils
+from dimos.messages.geometry_msgs.msg import Point, PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.navigation.experimental.patrolling.routers.base_patrol_router import BasePatrolRouter
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
@@ -48,7 +48,7 @@ class CoveragePatrolRouter(BasePatrolRouter):
 
             # Precompute the safe mask (cells with enough clearance from obstacles).
             clearance_cells = self._visitation.clearance_radius_cells
-            free_mask = msg.grid == 0
+            free_mask = occupancy_utils.view(msg) == 0
             structure = np.ones((2 * clearance_cells + 1, 2 * clearance_cells + 1), dtype=bool)
             self._safe_mask = binary_erosion(free_mask, structure=structure).astype(bool)
 
@@ -57,7 +57,7 @@ class CoveragePatrolRouter(BasePatrolRouter):
             # open areas.  Low voronoi cost = on the skeleton (equidistant from
             # walls) = high sampling weight.
             voronoi = voronoi_gradient(msg, max_distance=1.5)
-            voronoi_cost = voronoi.grid.astype(np.float64)
+            voronoi_cost = occupancy_utils.view(voronoi).astype(np.float64)
             # Invert: skeleton cells (cost 0) become weight 100, walls (100) become 0.
             # Clamp negatives (unknown = -1) to 0.
             weights = np.clip(100.0 - voronoi_cost, 0.0, 100.0)
@@ -83,7 +83,7 @@ class CoveragePatrolRouter(BasePatrolRouter):
         if pose is None:
             return None
 
-        start = (pose.position.x, pose.position.y)
+        start = (pose.pose.position.x, pose.pose.position.y)
 
         # Get candidate points from unvisited safe cells.
         unvisited_safe = safe_mask & ~visited
@@ -112,7 +112,7 @@ class CoveragePatrolRouter(BasePatrolRouter):
         best_point = None
 
         for row, col in chosen:
-            world = occupancy_grid.grid_to_world((col, row, 0))
+            world = occupancy_utils.grid_to_world(occupancy_grid, (col, row))
             candidate = (world.x, world.y)
 
             path = min_cost_astar(costmap, candidate, start, unknown_penalty=1.0, use_cpp=True)
@@ -145,8 +145,10 @@ class CoveragePatrolRouter(BasePatrolRouter):
         poses = path.poses[::step]
 
         for pose in poses:
-            grid = occupancy_grid.world_to_grid((pose.position.x, pose.position.y))
-            col, row = int(grid.x), int(grid.y)
+            grid = occupancy_utils.world_to_grid(
+                occupancy_grid, Point(pose.pose.position.x, pose.pose.position.y, 0.0)
+            )
+            col, row = int(grid[0]), int(grid[1])
             r_min = max(0, row - r)
             r_max = min(h, row + r + 1)
             c_min = max(0, col - r)

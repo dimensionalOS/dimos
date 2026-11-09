@@ -19,6 +19,7 @@
 | `dimos --record run unitree-go2-joystick-record` | Teleop from the local keyboard window + record `joystick`, `cmd_vel` and every sensor; no mapper, viewer capped at 2 GB |
 | `dimos run unitree-go2 --map-file=<map>` | Navigation on a saved map (`<map>.map.db`) |
 | `dimos run unitree-go2-map` | Navigation on a map that every run extends and saves back (`map_go2`) |
+| `dimos run unitree-go2-relocalization` | Navigation + align live scans to a saved `.pc2.cdr` premap |
 
 ## Deep Dive
 

@@ -14,11 +14,16 @@
 
 from typing import Any
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Vector3,
+)
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.global_planner.mls_planner.start_relay import StartRelay
 from dimos.protocol.tf.tf import MultiTBuffer
 
@@ -54,23 +59,23 @@ class FakeTF(MultiTBuffer):
         pass
 
 
-def _mount() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, MOUNT_Z),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
+def _mount() -> TransformStamped:
+    return TransformStamped(
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="base_link"),
         child_frame_id="mid360_link",
-        ts=1.0,
+        transform=Transform(
+            translation=Vector3(0.0, 0.0, MOUNT_Z), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        ),
     )
 
 
-def _odom_edge() -> Transform:
-    return Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="odom",
+def _odom_edge() -> TransformStamped:
+    return TransformStamped(
+        header=Header(stamp=message_time.time_from_seconds(2.0), frame_id="odom"),
         child_frame_id="mid360_link",
-        ts=2.0,
+        transform=Transform(
+            translation=Vector3(1.0, 2.0, 3.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        ),
     )
 
 
@@ -88,12 +93,12 @@ def test_start_pose_is_the_tf_base_pose() -> None:
     tf.receive_transform(_odom_edge())
     module, captured = _relay(tf)
     try:
-        module._on_tf(TFMessage())
+        module._on_tf(TFMessage(transforms=[]))
         # The base sits MOUNT_Z below the sensor along the mount leg.
         assert len(captured) == 1
-        assert abs(captured[0].position.x - 1.0) < 1e-9
-        assert abs(captured[0].position.y - 2.0) < 1e-9
-        assert abs(captured[0].position.z - (3.0 - MOUNT_Z)) < 1e-9
+        assert abs(captured[0].pose.position.x - 1.0) < 1e-9
+        assert abs(captured[0].pose.position.y - 2.0) < 1e-9
+        assert abs(captured[0].pose.position.z - (3.0 - MOUNT_Z)) < 1e-9
     finally:
         module.stop()
 
@@ -103,7 +108,7 @@ def test_nothing_published_while_the_chain_is_incomplete() -> None:
     tf.receive_transform(_mount())
     module, captured = _relay(tf)
     try:
-        module._on_tf(TFMessage())
+        module._on_tf(TFMessage(transforms=[]))
         assert captured == []
     finally:
         module.stop()
@@ -113,8 +118,8 @@ def test_lookup_retries_are_throttled_during_an_outage() -> None:
     tf = FakeTF()
     module, captured = _relay(tf)
     try:
-        module._on_tf(TFMessage())
-        module._on_tf(TFMessage())
+        module._on_tf(TFMessage(transforms=[]))
+        module._on_tf(TFMessage(transforms=[]))
         assert captured == []
         assert tf.gets == 1
     finally:

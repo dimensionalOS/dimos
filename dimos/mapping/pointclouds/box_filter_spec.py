@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Pose, Vector3
 from dimos.spec.utils import Spec
 
 

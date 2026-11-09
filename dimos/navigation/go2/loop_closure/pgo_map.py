@@ -24,6 +24,7 @@ Check against the offline method on a recording::
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 import sys
@@ -32,9 +33,16 @@ import time
 import numpy as np
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.go2.loop_closure.pgo import PGOConfig, PGOState, _pose_to_pose3
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
+from dimos.navigation.go2.loop_closure.pgo import (
+    FRAME_BODY,
+    PGOConfig,
+    PGOState,
+    _pose_to_pose3,
+)
 from dimos.navigation.go2.loop_closure.premap import (
     ROS_GTSAM_SWAP,
     Premap,
@@ -126,6 +134,8 @@ class PGOMap:
         self._frame_id = frame_id
         self._premap = premap
         self._buckets: list[VoxelGrid] = []
+        # exact source stamp of the newest frame, kept for the published Header
+        self._latest_stamp = message_time.time_from_seconds(0.0)
         self._cooldown = rebuild_cooldown_s
         # the poses the cached map was placed at, oldest keyframe first, and how far each one's points reach
         self._placed_poses = np.empty((0, 4, 4))
@@ -142,27 +152,40 @@ class PGOMap:
 
     def add(self, cloud: PointCloud2, pose: Pose | None) -> bool:
         """Insert a world-frame lidar frame taken at odom `pose`. True if the map was re-placed."""
-        if pose is not None and not (pose.position.is_zero() or pose.orientation.is_zero()):
+        ts = message_time.to_seconds(cloud.header.stamp)
+        if (
+            pose is not None
+            and any((pose.position.x, pose.position.y, pose.position.z))
+            and any(
+                (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w)
+            )
+        ):
             t0, loops = time.perf_counter(), self.pgo.n_loops
-            self.pgo.process(_pose_to_pose3(pose), cloud.ts, cloud)
+            self.pgo.process(_pose_to_pose3(pose), ts, cloud)
             if self.pgo.n_loops != loops:
                 self.loop_ms = (time.perf_counter() - t0) * 1e3
-        if not self.pgo.n_keyframes or not len(cloud):
+        if not self.pgo.n_keyframes or not cloud.width * cloud.height:
             return False
-        self._latest_ts = cloud.ts
+        self._latest_ts = ts
+        self._latest_stamp = deepcopy(cloud.header.stamp)
         local, _ = self.pgo.keyframe_matrices()
         while len(self._buckets) < self.pgo.n_keyframes:
             self._buckets.append(self._new_bucket())
-        body = apply(np.linalg.inv(local[-1]), cloud.points_f32()).astype(np.float32)
-        self._buckets[-1].add_frame(PointCloud2.from_numpy(body, timestamp=cloud.ts))
+        body = apply(np.linalg.inv(local[-1]), pointcloud.xyz(cloud)).astype(np.float32)
+        self._buckets[-1].add_frame(
+            pointcloud.from_xyz(
+                body,
+                header=Header(stamp=deepcopy(cloud.header.stamp), frame_id=FRAME_BODY),
+            )
+        )
 
         # frame time, not wall time, so replay and tests pace the same as the robot
         if self.pgo.n_attaches != self._placed_attaches or (
-            cloud.ts - self._last_rebuild_ts >= self._cooldown and self._moved()
+            ts - self._last_rebuild_ts >= self._cooldown and self._moved()
         ):
             t0 = time.perf_counter()
             self._place_all()
-            self._last_rebuild_ts = cloud.ts
+            self._last_rebuild_ts = ts
             self._placed_attaches = self.pgo.n_attaches
             self.rebuild_ms = (time.perf_counter() - t0) * 1e3
             logger.info(
@@ -203,7 +226,7 @@ class PGOMap:
         """Live keyframe ``k``: its points in its own frame, owner number, pose."""
         _, optimized = self.pgo.keyframe_matrices()
         n_premap = len(self._premap) if self._premap is not None else 0
-        return self._buckets[k].get_global_pointcloud2().points_f32(), n_premap + k, optimized[k]
+        return pointcloud.xyz(self._buckets[k].get_global_pointcloud2()), n_premap + k, optimized[k]
 
     def _render(self, owners: list[tuple[np.ndarray, int, np.ndarray]]) -> _Placed:
         """These keyframes placed, the youngest winning each column."""
@@ -295,10 +318,16 @@ class PGOMap:
         if not len(recent):
             recent = np.array([self.pgo.n_keyframes - 1])
         pts = [
-            apply(local[k], self._buckets[k].get_global_pointcloud2().points_f32()) for k in recent
+            apply(local[k], pointcloud.xyz(self._buckets[k].get_global_pointcloud2()))
+            for k in recent
         ]
-        window = PointCloud2.from_numpy(np.concatenate(pts).astype(np.float32))
-        window.ts = (stamps[recent[0]] + self._latest_ts) / 2
+        window = pointcloud.from_xyz(
+            np.concatenate(pts).astype(np.float32),
+            header=Header(
+                stamp=message_time.time_from_seconds((stamps[recent[0]] + self._latest_ts) / 2),
+                frame_id=self._frame_id,
+            ),
+        )
         return window
 
     def live_map(self) -> PointCloud2:
@@ -306,7 +335,10 @@ class PGOMap:
         n_premap = len(self._premap) if self._premap is not None else 0
         pts = self._render([o for o in self._owners() if o[1] >= n_premap]).pts
         world = apply(np.linalg.inv(self.pgo.graph_from_world()), pts) if len(pts) else pts
-        return PointCloud2.from_numpy(np.asarray(world, dtype=np.float32).reshape(-1, 3))
+        return pointcloud.from_xyz(
+            np.asarray(world, dtype=np.float32).reshape(-1, 3),
+            header=Header(stamp=message_time.time_from_seconds(0), frame_id=self._frame_id),
+        )
 
     def global_map(self) -> PointCloud2:
         """The map in the robot-anchored world frame."""
@@ -315,10 +347,9 @@ class PGOMap:
             newest = self._placed(self.pgo.n_keyframes - 1)
             pts = np.concatenate([self._base.pts[self._base.outside(newest.cols)], newest.pts])
         world = apply(np.linalg.inv(self.pgo.graph_from_world()), pts) if len(pts) else pts
-        return PointCloud2.from_numpy(
+        return pointcloud.from_xyz(
             np.asarray(world, dtype=np.float32).reshape(-1, 3),
-            frame_id=self._frame_id,
-            timestamp=self._latest_ts,
+            header=Header(stamp=deepcopy(self._latest_stamp), frame_id=self._frame_id),
         )
 
     def dispose(self) -> None:
@@ -355,8 +386,15 @@ def main(dataset: str) -> None:
     def frames() -> Iterator[tuple[PointCloud2, Pose | None]]:
         for obs in lidar:
             cloud = obs.data
-            cloud.ts = obs.ts  # old recordings carry Unitree's stale lidar stamps
-            yield cloud, obs.pose
+            # Explicit offline replay time override for recordings with stale sensor stamps.
+            cloud.header.stamp = message_time.time_from_seconds(obs.ts)
+            values = obs.pose_tuple
+            pose = (
+                None
+                if values is None
+                else Pose(position=Point(*values[:3]), orientation=Quaternion(*values[3:]))
+            )
+            yield cloud, pose
 
     live = PGOMap()
     step_ms, rebuilds = [], 0
@@ -372,9 +410,15 @@ def main(dataset: str) -> None:
     live._place_all()
     gold = VoxelGrid(device="CPU:0", show_startup_log=False)
     for cloud, _ in frames():
-        gold.add_frame(graph.place(cloud))
+        gold.add_points(
+            np.asarray(pointcloud.xyz(graph.place(cloud)), dtype=np.float32),
+            timestamp=message_time.to_seconds(cloud.header.stamp),
+        )
 
-    got, want = live.global_map().points_f32(), gold.get_global_pointcloud2().points_f32()
+    got, want = (
+        pointcloud.xyz(live.global_map()),
+        pointcloud.xyz(gold.get_global_pointcloud2()).astype(np.float32),
+    )
     missing = 1 - _within_one_voxel(want, got, 0.05)
     extra = 1 - _within_one_voxel(got, want, 0.05)
     steps = np.array(step_ms)
