@@ -80,7 +80,6 @@ def test_no_placeholder_survives_substitution() -> None:
 
 
 def test_the_defaults_describe_the_frames_the_driver_actually_stamps() -> None:
-    # The layer is useless if it names frames no one publishes, so it tracks the config.
     pytest.importorskip("pxr")
     config = Mid360Config()
 
@@ -90,7 +89,6 @@ def test_the_defaults_describe_the_frames_the_driver_actually_stamps() -> None:
 
 
 def test_the_sensor_grafts_onto_the_frame_it_is_bolted_to() -> None:
-    # The point of get_usd: a UsdManager puts this under one of its own links.
     pytest.importorskip("pxr")
     from dimos.robot.assets.usd import graft_usd
 
@@ -121,7 +119,6 @@ def Xform "robot" (
 
 def test_describing_itself_costs_no_usd_dependency() -> None:
     # usd-core has no linux-aarch64 wheel, so a Jetson running this driver must never need it.
-    # That is the whole reason the layer is baked instead of converted here.
     import subprocess
 
     code = (
@@ -154,10 +151,8 @@ def test_the_baked_layer_authors_no_custom_attributes() -> None:
 
 
 def _answer(config: Mid360Config) -> list[str]:
-    """Mid360.get_usd without a Mid360.
-
-    A sync @rpc is tagged in place rather than wrapped, so it can be called with anything
-    carrying a config, which keeps these tests off the NativeModule's rust build.
+    """Mid360.get_usd without a Mid360: a sync @rpc is tagged in place rather than wrapped, so it
+    can be called with anything carrying a config, which keeps these tests off the rust build.
     """
     from types import SimpleNamespace
 
@@ -175,10 +170,8 @@ def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
 
 
 def test_get_usd_roots_its_assets_at_this_module_rather_than_the_build_machine() -> None:
-    """The baked constant is written on a build machine, whose paths mean nothing on a robot.
-
-    So the root is resolved at call time from this module's own location, which is the only
-    directory this driver can point at and be right about wherever it is installed.
+    """The baked constant is written on a build machine, whose paths mean nothing on a robot, so
+    the root is resolved at call time from this module's own location.
     """
     root = _answer(Mid360Config())[0]
 

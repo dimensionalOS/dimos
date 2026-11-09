@@ -43,9 +43,8 @@ if TYPE_CHECKING:
 
 # As ints, not as the enums themselves. A model array yields numpy scalars, and since MuJoCo 4
 # these enums are pybind11 objects rather than IntEnum: np.int32(3) == mjJNT_HINGE is True while
-# np.int32(3) in (mjJNT_HINGE, ...) is False, because `in` asks the comparison that does not
-# answer. Every robot's joints were dropped here, so the world announced each robot and never
-# one of its joints -- nothing to publish, nothing to pose, and nothing placed in a viewer.
+# np.int32(3) in (mjJNT_HINGE, ...) is False. Every robot's joints were dropped here, so the
+# world announced each robot and never one of its joints.
 _SINGLE_DOF = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
 # Less than this since it was last sent is not a change: a resting body's solver jitter is not motion.
 _MOVED = 1e-6
@@ -66,10 +65,8 @@ class MujocoBackend:
     ) -> None:
         """A USD layer, what is in it, and how fast to run it. Nothing else.
 
-        `simulated` is what the robots said about themselves, `speed` is sim seconds per wall
-        second, and `max_burst_seconds` is how much physics it will catch up on at once. All of
-        them are config in the sense that matters: an engine is handed the world
-        and the knobs for running it, and works out everything else from the layer.
+        `simulated` is what the robots said about themselves, `speed` is sim seconds per wall second,
+        and `max_burst_seconds` is how much physics it will catch up on at once.
         """
         simulated = list(simulated)
         self._speed = speed
@@ -121,14 +118,10 @@ class MujocoBackend:
     def step(self, actions: Sequence[Action] = ()) -> tuple[float, WorldObservations]:
         """Advance the world to the clock and say what moved: the sim time reached, and a frame.
 
-        It stops short of the clock at a controller's tick, with that controller named in the
-        frame's `act`. That is what lockstep is: the caller publishes the frame, waits until
-        `ready()` (or gives up on it), and steps again -- so a policy running at 50 Hz sees every
-        tick and the world never runs ahead of the commands it is waiting for.
-
-        Physics catches up in bursts rather than one step at a time, because macOS oversleeps a
-        short wait; lag past one burst is dropped, since a command landing a whole control period
-        late is worse than a world that skipped.
+        It stops short of the clock at a controller's tick, naming that controller in the frame's
+        `act`: the caller publishes the frame, waits until `ready()` (or gives up), and steps again.
+        Physics catches up in bursts because macOS oversleeps a short wait; lag past one burst is
+        dropped, since a command landing a whole control period late is worse than a skipped world.
         """
         model, data = self.model, self.data
         if actions:
@@ -204,10 +197,9 @@ class MujocoBackend:
     def _initial_joints(self) -> dict[str, float]:
         """Every joint the world starts somewhere other than zero, and holds there until commanded.
 
-        Read off each robot's own layer, where its drives say what pose it holds -- the same
-        place its gains come from, and the same place a real robot's controller would be
-        configured from. Off its own layer rather than off the composed one, because that is
-        where the names are the ones this robot's parts get prefixed from.
+        Read off each robot's own layer, where its drives say what pose it holds -- rather than off the
+        composed one, because that is where the names are the ones this robot's parts get prefixed
+        from.
         """
         from dimos.robot.assets.usd import usd_drives
 
@@ -388,13 +380,8 @@ def _files_named_by_usd(layer: Path) -> dict[str, Path]:
     """The layer and every file it names, by full path, read out of the layer's own text.
 
     A layer names its assets between @ signs and relative to itself:
-    `prepend references = @meshes/desk.usdc@`. Only the text form can be read this way; a
-    binary .usdc names its assets inside the crate, so this would find the layer alone and
-    whatever asked for a mesh would be told no.
-
-    There used to be an MJCF branch beside this, with the compiler's meshdir and assetdir. It
-    has been unreachable since a world became a layer: both callers get their path from
-    `usd_layer`, which always writes a `.usda`.
+    `prepend references = @meshes/desk.usdc@`. Only the text form can be read this way; a binary
+    .usdc names its assets inside the crate, so this would find the layer alone.
     """
     files = {str(layer): layer}
     try:

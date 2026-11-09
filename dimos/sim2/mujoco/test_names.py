@@ -38,7 +38,6 @@ def test_a_name_that_is_already_whole_is_taken_as_written():
 
 
 def test_mjcf_names_are_untouched():
-    """The same lookup has to keep working for a model that never saw USD."""
     assert resolve(["world", "base", "neck"], "base") == "base"
 
 
@@ -95,9 +94,8 @@ def test_shortening_renames_a_models_parts_to_the_names_a_description_uses():
 
 
 def test_a_reference_follows_the_part_it_names():
-    """An actuator names the joint it drives as a string, and renaming the joint does not touch it.
-
-    Left behind, the compiled world comes out with no actuators at all and nothing says why.
+    """An actuator names the joint it drives as a string, and renaming the joint does not touch
+    it. Left behind, the compiled world comes out with no actuators at all and nothing says why.
     """
     spec = _Spec(
         joints=[_Element("/toy/Geometry/base/head/neck")],
@@ -114,9 +112,8 @@ def test_a_reference_follows_the_part_it_names():
 
 
 def test_a_hinge_and_the_motor_on_it_may_share_a_name():
-    """MuJoCo's namespaces are per kind, and the toy robot's joint and actuator are both "neck".
-
-    Judged together each was the other's ambiguity, so neither was shortened.
+    """MuJoCo's namespaces are per kind, and the toy robot's joint and actuator are both "neck":
+    judged together each was the other's ambiguity, so neither was shortened.
     """
     spec = _Spec(
         joints=[_Element("/toy/Geometry/base/head/neck")],
@@ -144,10 +141,8 @@ def test_a_short_name_something_else_already_holds_is_left_alone():
 
 def test_three_of_one_robot_in_a_composed_world_keep_their_ids():
     """A grafted subtree is nested under a prim named after its mount frame, and that is the id.
-
     Without it every pelvis shortens to "pelvis", the three are each other's ambiguity, and none
-    is renamed -- so the world publishes prim paths as entity ids and a description looking for
-    its own robot finds nothing.
+    is renamed -- so the world publishes prim paths as entity ids.
     """
     spec = _Spec(
         bodies=[
