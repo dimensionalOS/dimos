@@ -341,6 +341,57 @@ def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
     assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
 
 
+def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
+    """A mount bolted to a link is not free to move, and has to say so.
+
+    Nesting places a frame but does not say how it is held, so a physics engine decides. MuJoCo
+    decides "free in all six degrees", and a frame carries no mass, so the G1's lidar mount made
+    the whole robot refuse to compile: "mass and inertia of moving bodies must be larger than
+    mjMINVAL". The weld costs no degree of freedom -- a welded massless body folds into its
+    parent -- and it is what was true all along.
+    """
+    from pxr import UsdPhysics
+
+    grown = usd_with_frames(
+        urdf_to_usd(toy), {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+    stage = _stage(grown)
+
+    frame = _prim_by_link(stage, "spot")
+    assert frame, "the frame is still a link"
+    welds = [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ]
+    assert len(welds) == 1, "the frame is held by exactly one weld"
+    base = _prim_by_link(stage, "base_link")
+    assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
+
+
+def test_a_frame_added_to_something_that_is_not_a_link_is_not_welded(toy: Any) -> None:
+    """A converted room hangs its visitors' frames off its own root, which is an Xform.
+
+    Welding to something that is not a rigid body is not a statement USD can make, and nothing
+    there needs it: a frame nested under static geometry is static too.
+    """
+    from pxr import UsdPhysics
+
+    stage = _stage(
+        usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    )
+
+    frame = _prim_by_link(stage, "spot")
+    assert frame, "the frame is a link whether or not it is welded"
+    assert not [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ], "nothing holds the frame: it is nested under static geometry, which is static too"
+
+
 def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="is taken"):
         usd_with_frames(
