@@ -37,11 +37,6 @@ from dimos.sim2.usd_layer import usd_layer
 
 # Sites only mark a pose; keep them invisible and negligible.
 _SITE_SIZE = (0.001, 0.001, 0.001)
-_IMU_SENSORS = {
-    "gyro": mujoco.mjtSensor.mjSENS_GYRO,
-    "accelerometer": mujoco.mjtSensor.mjSENS_ACCELEROMETER,
-    "orientation": mujoco.mjtSensor.mjSENS_FRAMEQUAT,
-}
 
 
 @dataclass(frozen=True)
@@ -49,11 +44,16 @@ class SensorMount:
     """What a sensor tells *its own* world about itself: where it sits and what to build there.
 
     Not a description anything else sees. It used to travel to the simulation over
-    @shared_config, which made the difference between a camera and a lidar core's business and
-    left this engine reading a `kind` nobody else had any use for. A sensor knows what it is; it
-    only has to say so to the world it renders with.
+    a description the simulation was handed, which made the difference between a camera and a
+    lidar core's business and left this engine reading a `kind` nobody else had any use for. A
+    sensor knows what it is; it only has to say so to the world it renders with.
     """
 
+    # What to build at the frame. A camera is a camera; everything else is a site, because what
+    # a lidar or an IMU needs from a world is a pose to read it from. MuJoCo's own gyro and
+    # accelerometer sensors are not used: nothing here reads `MjData.sensordata`, and an IMU is
+    # differenced from the site's pose and velocity instead -- which is what lets the Mid-360's
+    # IMU work off a view that only ever asked for a lidar's site.
     kind: Literal["camera", "lidar", "imu"]
     # Its frame as the composed scene names it: a site or a body, of a robot or of the room.
     frame_id: str
@@ -257,11 +257,6 @@ def mount_sensor(spec: mujoco.MjSpec, sensor: SensorMount) -> None:
     # there is nothing to add and adding it would be a second site of the same name.
     elif resolved([s.name for s in spec.sites], name) != name:
         body.add_site(name=name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), pos=pos, quat=quat)
-    if sensor.kind == "imu":
-        for suffix, kind in _IMU_SENSORS.items():
-            spec.add_sensor(
-                name=f"{name}/{suffix}", type=kind, objtype=mujoco.mjtObj.mjOBJ_SITE, objname=name
-            )
 
 
 def _quaternion(rpy: Vector) -> NDArray[np.float64]:
