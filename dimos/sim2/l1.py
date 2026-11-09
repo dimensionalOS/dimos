@@ -46,7 +46,7 @@ class SimL1Config(SceneConfig):
     cell: float = 0.05
     half_width_cells: int = 64
     z_range: tuple[float, float] = (-0.6, 1.3)
-    geom_groups: tuple[int, ...] = (0,)
+    geom_groups: tuple[int, ...] = (0, 3)
     seed: int = 0
 
 

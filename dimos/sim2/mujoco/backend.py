@@ -259,7 +259,7 @@ class MujocoBackend:
             pose = np.array([*data.xpos[body], *_xyzw(data.xquat[body])])
             sent = self._sent.get(name)
             if sent is None or not _close(sent, pose):
-                world.position(name, pose)
+                world.position(name, pose.tolist())
                 self._sent[name] = pose
             joints, joint_names = self._joints[name]
             if joints:

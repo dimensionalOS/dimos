@@ -57,11 +57,16 @@ class LivoxSim(Module):
     imu: Out[Imu]
     world_observations: In[WorldObservations]
 
+    @property
+    def imu_frame_id(self) -> str:
+        prefix = self.config.frame_id_prefix
+        return f"{prefix}/{self.config.imu_frame_id}" if prefix else self.config.imu_frame_id
+
     @rpc
     def get_usd(self) -> list[str]:
         return [
             str(Path(mid360_driver.__file__ or "").parent),
-            mid360_usd(self.frame_id, self.config.imu_frame_id),
+            mid360_usd(self.frame_id, self.imu_frame_id),
         ]
 
     async def main(self) -> AsyncIterator[None]:
@@ -136,7 +141,7 @@ class LivoxSim(Module):
                     angular_velocity=Vector3(*gyro),
                     linear_acceleration=Vector3(*accelerometer),
                     orientation=Quaternion(x, y, z, w),
-                    frame_id=self.config.imu_frame_id,
+                    frame_id=self.imu_frame_id,
                     ts=self._world.stamp(),
                 )
             )
