@@ -195,6 +195,8 @@ def run_coordinator(
             on_ready(coordinator)
         with recording(coordinator):
             if on_ready is not None and wait_for_recording:
+                if not coordinator.health_check():
+                    raise RuntimeError("health check failed, a worker process died")
                 on_ready(coordinator)
             coordinator.loop()
     except Exception:

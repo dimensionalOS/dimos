@@ -755,6 +755,33 @@ def test_rust_recorder_is_ready_before_daemon_readiness(recording_coordinator, m
     assert events == ["recorder ready", "daemon ready", "loop", "recorder stopped"]
 
 
+def test_worker_death_during_rust_startup_fails_before_readiness(
+    recording_coordinator, mocker, tmp_path
+):
+    session = mocker.patch.object(rust_cli_recorder, "RustRecordingSession").return_value
+
+    def worker_dies_during_startup():
+        recording_coordinator.health_check.return_value = False
+
+    session.start.side_effect = worker_dies_during_startup
+    on_ready = mocker.Mock()
+
+    with pytest.raises(RuntimeError, match="health check failed, a worker process died"):
+        run_coordinator(
+            mocker.Mock(),
+            mocker.Mock(),
+            run_id="recording-test",
+            log_dir=tmp_path,
+            on_ready=on_ready,
+        )
+
+    session.start.assert_called_once_with()
+    session.stop.assert_called_once_with()
+    on_ready.assert_not_called()
+    recording_coordinator.loop.assert_not_called()
+    recording_coordinator.stop.assert_called_once_with()
+
+
 def test_rust_build_failure_fails_startup_before_readiness(recording_coordinator, mocker, tmp_path):
     prepare = mocker.patch.object(
         rust_cli_recorder,
