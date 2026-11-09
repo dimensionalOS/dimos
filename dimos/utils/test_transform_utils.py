@@ -16,12 +16,19 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils import transform_utils
 
 
@@ -60,7 +67,7 @@ class TestNormalizeAngle:
 
 class TestTwistToNumpy:
     def test_twist_to_numpy_orders_linear_then_angular(self) -> None:
-        twist = Twist(linear=[1.0, 2.0, 3.0], angular=[4.0, 5.0, 6.0])
+        twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(4.0, 5.0, 6.0))
 
         result = transform_utils.twist_to_numpy(twist)
 
@@ -70,7 +77,9 @@ class TestTwistToNumpy:
         )
 
     def test_twist_to_numpy_accepts_twist_stamped(self) -> None:
-        twist = TwistStamped(frame_id="eef", linear=[-1.0, 0.0, 1.0], angular=[0.1, 0.2, 0.3])
+        twist = TwistStamped(
+            Header(Time(0, 0), "eef"), Twist(Vector3(-1.0, 0.0, 1.0), Vector3(0.1, 0.2, 0.3))
+        )
 
         result = transform_utils.twist_to_numpy(twist)
 
@@ -82,12 +91,12 @@ class TestTwistToNumpy:
 
 class TestPoseToMatrix:
     def test_identity_pose(self) -> None:
-        pose = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1))
         T = transform_utils.pose_to_matrix(pose)
         assert np.allclose(T, np.eye(4))
 
     def test_translation_only(self) -> None:
-        pose = Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
         T = transform_utils.pose_to_matrix(pose)
         expected = np.eye(4)
         expected[:3, 3] = [1, 2, 3]
@@ -96,7 +105,7 @@ class TestPoseToMatrix:
     def test_rotation_only_90_degrees_z(self) -> None:
         # 90 degree rotation around z-axis
         quat = R.from_euler("z", np.pi / 2).as_quat()
-        pose = Pose(Vector3(0, 0, 0), Quaternion(quat[0], quat[1], quat[2], quat[3]))
+        pose = Pose(Point(0, 0, 0), Quaternion(quat[0], quat[1], quat[2], quat[3]))
         T = transform_utils.pose_to_matrix(pose)
 
         # Check rotation part
@@ -108,7 +117,7 @@ class TestPoseToMatrix:
 
     def test_translation_and_rotation(self) -> None:
         quat = R.from_euler("xyz", [np.pi / 4, np.pi / 6, np.pi / 3]).as_quat()
-        pose = Pose(Vector3(5, -3, 2), Quaternion(quat[0], quat[1], quat[2], quat[3]))
+        pose = Pose(Point(5, -3, 2), Quaternion(quat[0], quat[1], quat[2], quat[3]))
         T = transform_utils.pose_to_matrix(pose)
 
         # Check translation
@@ -123,7 +132,7 @@ class TestPoseToMatrix:
 
     def test_zero_norm_quaternion(self) -> None:
         # Test handling of zero norm quaternion
-        pose = Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 0))
+        pose = Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 0))
         T = transform_utils.pose_to_matrix(pose)
 
         # Should use identity rotation
@@ -189,7 +198,7 @@ class TestMatrixToPose:
 
 class TestApplyTransform:
     def test_identity_transform(self) -> None:
-        pose = Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
         T_identity = np.eye(4)
         result = transform_utils.apply_transform(pose, T_identity)
 
@@ -198,7 +207,7 @@ class TestApplyTransform:
         assert np.isclose(result.position.z, pose.position.z)
 
     def test_translation_transform(self) -> None:
-        pose = Pose(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(1, 0, 0), Quaternion(0, 0, 0, 1))
         T = np.eye(4)
         T[:3, 3] = [2, 3, 4]
         result = transform_utils.apply_transform(pose, T)
@@ -208,7 +217,7 @@ class TestApplyTransform:
         assert np.isclose(result.position.z, 4)  # 4 + 0
 
     def test_rotation_transform(self) -> None:
-        pose = Pose(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(1, 0, 0), Quaternion(0, 0, 0, 1))
         T = np.eye(4)
         T[:3, :3] = R.from_euler("z", np.pi / 2).as_matrix()  # 90 degree rotation
         result = transform_utils.apply_transform(pose, T)
@@ -219,14 +228,12 @@ class TestApplyTransform:
         assert np.isclose(result.position.z, 0)
 
     def test_transform_with_transform_object(self) -> None:
-        pose = Pose(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
-        pose.frame_id = "base"
+        pose = Pose(Point(1, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = PoseStamped(Header(Time(0, 0), "base"), pose)
 
-        transform = Transform()
-        transform.frame_id = "world"
-        transform.child_frame_id = "base"
-        transform.translation = Vector3(2, 3, 4)
-        transform.rotation = Quaternion(0, 0, 0, 1)
+        transform = TransformStamped(
+            Header(Time(0, 0), "world"), "base", Transform(Vector3(2, 3, 4), Quaternion(0, 0, 0, 1))
+        )
 
         result = transform_utils.apply_transform(pose, transform)
         assert np.isclose(result.position.x, 3)
@@ -234,14 +241,14 @@ class TestApplyTransform:
         assert np.isclose(result.position.z, 4)
 
     def test_transform_frame_mismatch_raises(self) -> None:
-        pose = Pose(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
-        pose.frame_id = "base"
+        pose = Pose(Point(1, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = PoseStamped(Header(Time(0, 0), "base"), pose)
 
-        transform = Transform()
-        transform.frame_id = "world"
-        transform.child_frame_id = "different_frame"
-        transform.translation = Vector3(2, 3, 4)
-        transform.rotation = Quaternion(0, 0, 0, 1)
+        transform = TransformStamped(
+            Header(Time(0, 0), "world"),
+            "different_frame",
+            Transform(Vector3(2, 3, 4), Quaternion(0, 0, 0, 1)),
+        )
 
         with pytest.raises(ValueError, match="does not match"):
             transform_utils.apply_transform(pose, transform)
@@ -249,7 +256,7 @@ class TestApplyTransform:
 
 class TestOpticalToRobotFrame:
     def test_identity_at_origin(self) -> None:
-        pose = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1))
         result = transform_utils.optical_to_robot_frame(pose)
         assert result.position.x == 0
         assert result.position.y == 0
@@ -257,7 +264,7 @@ class TestOpticalToRobotFrame:
 
     def test_position_transformation(self) -> None:
         # Optical: X=right(1), Y=down(0), Z=forward(0)
-        pose = Pose(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(1, 0, 0), Quaternion(0, 0, 0, 1))
         result = transform_utils.optical_to_robot_frame(pose)
 
         # Robot: X=forward(0), Y=left(-1), Z=up(0)
@@ -267,7 +274,7 @@ class TestOpticalToRobotFrame:
 
     def test_forward_position(self) -> None:
         # Optical: X=right(0), Y=down(0), Z=forward(2)
-        pose = Pose(Vector3(0, 0, 2), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(0, 0, 2), Quaternion(0, 0, 0, 1))
         result = transform_utils.optical_to_robot_frame(pose)
 
         # Robot: X=forward(2), Y=left(0), Z=up(0)
@@ -277,7 +284,7 @@ class TestOpticalToRobotFrame:
 
     def test_down_position(self) -> None:
         # Optical: X=right(0), Y=down(3), Z=forward(0)
-        pose = Pose(Vector3(0, 3, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(0, 3, 0), Quaternion(0, 0, 0, 1))
         result = transform_utils.optical_to_robot_frame(pose)
 
         # Robot: X=forward(0), Y=left(0), Z=up(-3)
@@ -286,7 +293,7 @@ class TestOpticalToRobotFrame:
         assert np.isclose(result.position.z, -3)
 
     def test_round_trip_optical_robot(self) -> None:
-        original_pose = Pose(Vector3(1, 2, 3), Quaternion(0.1, 0.2, 0.3, 0.9165151389911680))
+        original_pose = Pose(Point(1, 2, 3), Quaternion(0.1, 0.2, 0.3, 0.9165151389911680))
         robot_pose = transform_utils.optical_to_robot_frame(original_pose)
         recovered_pose = transform_utils.robot_to_optical_frame(robot_pose)
 
@@ -298,7 +305,7 @@ class TestOpticalToRobotFrame:
 class TestRobotToOpticalFrame:
     def test_position_transformation(self) -> None:
         # Robot: X=forward(1), Y=left(0), Z=up(0)
-        pose = Pose(Vector3(1, 0, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(1, 0, 0), Quaternion(0, 0, 0, 1))
         result = transform_utils.robot_to_optical_frame(pose)
 
         # Optical: X=right(0), Y=down(0), Z=forward(1)
@@ -308,7 +315,7 @@ class TestRobotToOpticalFrame:
 
     def test_left_position(self) -> None:
         # Robot: X=forward(0), Y=left(2), Z=up(0)
-        pose = Pose(Vector3(0, 2, 0), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(0, 2, 0), Quaternion(0, 0, 0, 1))
         result = transform_utils.robot_to_optical_frame(pose)
 
         # Optical: X=right(-2), Y=down(0), Z=forward(0)
@@ -318,7 +325,7 @@ class TestRobotToOpticalFrame:
 
     def test_up_position(self) -> None:
         # Robot: X=forward(0), Y=left(0), Z=up(3)
-        pose = Pose(Vector3(0, 0, 3), Quaternion(0, 0, 0, 1))
+        pose = Pose(Point(0, 0, 3), Quaternion(0, 0, 0, 1))
         result = transform_utils.robot_to_optical_frame(pose)
 
         # Optical: X=right(0), Y=down(-3), Z=forward(0)
@@ -592,8 +599,8 @@ class TestQuaternionToEuler:
 
 class TestGetDistance:
     def test_same_pose(self) -> None:
-        pose1 = Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))
-        pose2 = Pose(Vector3(1, 2, 3), Quaternion(0.1, 0.2, 0.3, 0.9))
+        pose1 = Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
+        pose2 = Pose(Point(1, 2, 3), Quaternion(0.1, 0.2, 0.3, 0.9))
         distance = transform_utils.get_distance(pose1, pose2)
         assert np.isclose(distance, 0)
 
@@ -604,32 +611,32 @@ class TestGetDistance:
         assert np.isclose(distance, np.sqrt(3**2 + 3**2 + 3**2))
 
     def test_distance_x_axis(self) -> None:
-        pose1 = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
-        pose2 = Pose(Vector3(5, 0, 0), Quaternion(0, 0, 0, 1))
+        pose1 = Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1))
+        pose2 = Pose(Point(5, 0, 0), Quaternion(0, 0, 0, 1))
         distance = transform_utils.get_distance(pose1, pose2)
         assert np.isclose(distance, 5)
 
     def test_distance_y_axis(self) -> None:
-        pose1 = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
-        pose2 = Pose(Vector3(0, 3, 0), Quaternion(0, 0, 0, 1))
+        pose1 = Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1))
+        pose2 = Pose(Point(0, 3, 0), Quaternion(0, 0, 0, 1))
         distance = transform_utils.get_distance(pose1, pose2)
         assert np.isclose(distance, 3)
 
     def test_distance_z_axis(self) -> None:
-        pose1 = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
-        pose2 = Pose(Vector3(0, 0, 4), Quaternion(0, 0, 0, 1))
+        pose1 = Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1))
+        pose2 = Pose(Point(0, 0, 4), Quaternion(0, 0, 0, 1))
         distance = transform_utils.get_distance(pose1, pose2)
         assert np.isclose(distance, 4)
 
     def test_3d_distance(self) -> None:
-        pose1 = Pose(Vector3(0, 0, 0), Quaternion(0, 0, 0, 1))
-        pose2 = Pose(Vector3(3, 4, 0), Quaternion(0, 0, 0, 1))
+        pose1 = Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1))
+        pose2 = Pose(Point(3, 4, 0), Quaternion(0, 0, 0, 1))
         distance = transform_utils.get_distance(pose1, pose2)
         assert np.isclose(distance, 5)  # 3-4-5 triangle
 
     def test_negative_coordinates(self) -> None:
-        pose1 = Pose(Vector3(-1, -2, -3), Quaternion(0, 0, 0, 1))
-        pose2 = Pose(Vector3(1, 2, 3), Quaternion(0, 0, 0, 1))
+        pose1 = Pose(Point(-1, -2, -3), Quaternion(0, 0, 0, 1))
+        pose2 = Pose(Point(1, 2, 3), Quaternion(0, 0, 0, 1))
         distance = transform_utils.get_distance(pose1, pose2)
         expected = np.sqrt(4 + 16 + 36)  # sqrt(56)
         assert np.isclose(distance, expected)
@@ -639,7 +646,7 @@ class TestRetractDistance:
     def test_retract_along_negative_z(self) -> None:
         # Default case: gripper approaches along -z axis
         # Positive distance moves away from the surface (opposite to approach direction)
-        target_pose = Pose(Vector3(0, 0, 1), Quaternion(0, 0, 0, 1))
+        target_pose = Pose(Point(0, 0, 1), Quaternion(0, 0, 0, 1))
         retracted = transform_utils.offset_distance(target_pose, 0.5)
 
         # Moving along -z approach vector with positive distance = retracting upward
@@ -658,7 +665,7 @@ class TestRetractDistance:
         # Test with a rotated pose (90 degrees around x-axis)
         r = R.from_euler("x", np.pi / 2)
         q = r.as_quat()
-        target_pose = Pose(Vector3(0, 0, 1), Quaternion(q[0], q[1], q[2], q[3]))
+        target_pose = Pose(Point(0, 0, 1), Quaternion(q[0], q[1], q[2], q[3]))
 
         retracted = transform_utils.offset_distance(target_pose, 0.5)
 
@@ -669,7 +676,7 @@ class TestRetractDistance:
 
     def test_retract_negative_distance(self) -> None:
         # Negative distance should move forward (toward the approach direction)
-        target_pose = Pose(Vector3(0, 0, 1), Quaternion(0, 0, 0, 1))
+        target_pose = Pose(Point(0, 0, 1), Quaternion(0, 0, 0, 1))
         retracted = transform_utils.offset_distance(target_pose, -0.3)
 
         # Moving along -z approach vector with negative distance = moving downward
@@ -681,7 +688,7 @@ class TestRetractDistance:
         # Test with arbitrary position and rotation
         r = R.from_euler("xyz", [0.1, 0.2, 0.3])
         q = r.as_quat()
-        target_pose = Pose(Vector3(5, 3, 2), Quaternion(q[0], q[1], q[2], q[3]))
+        target_pose = Pose(Point(5, 3, 2), Quaternion(q[0], q[1], q[2], q[3]))
 
         distance = 1.0
         retracted = transform_utils.offset_distance(target_pose, distance)

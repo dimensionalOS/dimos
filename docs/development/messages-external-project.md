@@ -47,4 +47,6 @@ renames and deletion of obsolete generated types.
 
 The native built-in example is documented in
 [Run C++ and Rust](/docs/development/message-source-packages.md#run-c-and-rust).
-Transport and SDK integration are separate features.
+Registered external classes work with typed LCM and Zenoh transports and with CDR recording. Use the same registered class on each end, and install its provider in each Python environment. CDR MCAP recordings carry the message schema for readers.
+
+The native SDK consumes generated C++ or Rust artifacts. Verify that the external project's generated artifacts compile with the consuming SDK before using a native process.

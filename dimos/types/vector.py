@@ -18,7 +18,7 @@ from typing import TypeVar, Union
 
 import numpy as np
 
-from dimos.types.ros_polyfill import Vector3
+from dimos.messages.geometry_msgs.msg import Vector3
 
 T = TypeVar("T", bound="Vector")
 
@@ -354,6 +354,8 @@ def to_list(value: VectorLike) -> list[float]:
     Returns:
         List of floats
     """
+    if isinstance(value, Vector3):
+        return [value.x, value.y, value.z]
     if isinstance(value, Vector):
         return value.data.tolist()  # type: ignore[no-any-return]
     elif isinstance(value, np.ndarray):

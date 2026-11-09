@@ -22,16 +22,15 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 
 class Navigation(Module):
     mov: Out[Vector3]
     lidar: In[PointCloud2]
     target_position: In[Vector3]
-    odometry: In[Odometry]
+    odometry: In[PoseStamped]
 
     odom_msg_count = 0
     lidar_msg_count = 0

@@ -33,9 +33,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 
 _BUILD = "nix build -L path:.#dimos-native-module-examples"
 
@@ -59,17 +60,17 @@ class TfProducer(Module):
             t = time.time() - start
             now = time.time()
             self.tfbuffer.publish(
-                Transform(
-                    translation=Vector3(0.0, math.cos(t), math.sin(t)),
-                    frame_id="a",
-                    child_frame_id="b",
-                    ts=now,
+                TransformStamped(
+                    Header(message_time.time_from_seconds(now), "a"),
+                    "b",
+                    Transform(
+                        Vector3(0.0, math.cos(t), math.sin(t)), Quaternion(0.0, 0.0, 0.0, 1.0)
+                    ),
                 ),
-                Transform(
-                    translation=Vector3(1.0, 0.0, 0.0),
-                    frame_id="b",
-                    child_frame_id="c",
-                    ts=now,
+                TransformStamped(
+                    Header(message_time.time_from_seconds(now), "b"),
+                    "c",
+                    Transform(Vector3(1.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
                 ),
             )
             await asyncio.sleep(0.1)

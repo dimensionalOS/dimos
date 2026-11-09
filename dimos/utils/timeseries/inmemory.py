@@ -13,7 +13,7 @@
 # limitations under the License.
 """In-memory backend for TimeSeriesStore."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from sortedcontainers import SortedKeyList  # type: ignore[import-untyped]
 
@@ -23,13 +23,19 @@ from dimos.utils.timeseries.base import T, TimeSeriesStore
 class InMemoryStore(TimeSeriesStore[T]):
     """In-memory storage using SortedKeyList. O(log n) insert, lookup, and range queries."""
 
-    def __init__(self) -> None:
-        self._entries: SortedKeyList = SortedKeyList(key=lambda e: e.ts)
+    def __init__(self, *, timestamp_key: Callable[[T], float] | None = None) -> None:
+        self._timestamp_key = timestamp_key
+        self._entries: SortedKeyList = SortedKeyList(key=self._timestamp)
+
+    def _timestamp(self, item: T) -> float:
+        if self._timestamp_key is not None:
+            return self._timestamp_key(item)
+        return super()._timestamp(item)
 
     def _bisect_exact(self, timestamp: float) -> int | None:
         """Return index of entry with exact timestamp, or None."""
         pos = self._entries.bisect_key_left(timestamp)
-        if pos < len(self._entries) and self._entries[pos].ts == timestamp:
+        if pos < len(self._entries) and self._timestamp(self._entries[pos]) == timestamp:
             return pos  # type: ignore[no-any-return]
         return None
 
@@ -65,7 +71,7 @@ class InMemoryStore(TimeSeriesStore[T]):
         else:
             it = iter(self._entries)
         for e in it:
-            yield (e.ts, e)
+            yield (self._timestamp(e), e)
 
     def _find_closest_timestamp(
         self, timestamp: float, tolerance: float | None = None
@@ -77,9 +83,9 @@ class InMemoryStore(TimeSeriesStore[T]):
 
         candidates: list[float] = []
         if pos > 0:
-            candidates.append(self._entries[pos - 1].ts)
+            candidates.append(self._timestamp(self._entries[pos - 1]))
         if pos < len(self._entries):
-            candidates.append(self._entries[pos].ts)
+            candidates.append(self._timestamp(self._entries[pos]))
 
         if not candidates:
             return None
@@ -98,7 +104,7 @@ class InMemoryStore(TimeSeriesStore[T]):
     def _last_timestamp(self) -> float | None:
         if not self._entries:
             return None
-        return self._entries[-1].ts  # type: ignore[no-any-return]
+        return self._timestamp(self._entries[-1])  # type: ignore[no-any-return]
 
     def _find_before(self, timestamp: float) -> tuple[float, T] | None:
         if not self._entries:
@@ -106,7 +112,7 @@ class InMemoryStore(TimeSeriesStore[T]):
         pos = self._entries.bisect_key_left(timestamp)
         if pos > 0:
             e = self._entries[pos - 1]
-            return (e.ts, e)
+            return (self._timestamp(e), e)
         return None
 
     def _find_after(self, timestamp: float) -> tuple[float, T] | None:
@@ -115,5 +121,5 @@ class InMemoryStore(TimeSeriesStore[T]):
         pos = self._entries.bisect_key_right(timestamp)
         if pos < len(self._entries):
             e = self._entries[pos]
-            return (e.ts, e)
+            return (self._timestamp(e), e)
         return None

@@ -105,7 +105,7 @@ Most module streams offer backpressured observables.
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs import Image
+from dimos.messages.sensor_msgs.msg import Image
 
 class MLModel(Module):
     color_image: In[Image]

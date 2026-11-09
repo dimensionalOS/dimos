@@ -153,7 +153,7 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
-from dimos.msgs.sensor_msgs import Image
+from dimos.messages.sensor_msgs.msg import Image
 
 class ModuleA(Module):
     image: Out[Image]
@@ -181,7 +181,7 @@ If you don't like the name you can always override it like in the next section.
 
 ## Which transport is used?
 
-Streams follow the configured backend, which defaults to Zenoh. Objects supporting `lcm_encode` use `ZenohTransport`; other objects use `pZenohTransport`. Selecting `--transport=lcm` uses the corresponding LCM transports.
+Streams follow the configured backend, which defaults to Zenoh. Registered generated message types use CDR through `ZenohTransport`; other supported Python objects use `pZenohTransport`. Selecting `--transport=lcm` uses the corresponding LCM transports.
 
 You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
@@ -214,7 +214,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
-from dimos.msgs.sensor_msgs import Image
+from dimos.messages.sensor_msgs.msg import Image
 
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'
