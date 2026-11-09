@@ -21,6 +21,7 @@ import time
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
+from dimos.control.components import make_humanoid_joints
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -33,7 +34,6 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
-from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
@@ -81,8 +81,20 @@ SERVO_JOINTS = (
     + tuple(f"{side}_{name}_joint" for side in ("left", "right") for name, *_ in _ARM)
 )
 
+# SERVO_JOINTS orders the rows and make_humanoid_joints labels them, so a reorder of _LEG against
+# a new vendor MJCF would mislabel every joint silently. Same guard wholebody_connection has.
+assert len(SERVO_JOINTS) == len(make_humanoid_joints("g1"))
+
 
 logger = setup_logger()
+
+
+def _publishing_stopped(task: "asyncio.Task[None]") -> None:
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("g1 sim: the publishing loop stopped", exc_info=error)
 
 
 ROOT_BODY = "pelvis"
@@ -111,14 +123,20 @@ class G1Sim(Module):
     imu: Out[Imu]
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
-    _view: WorldView | None = None
     _soft_start: float | None = None
+    _warned_about_joints: bool = False
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
         self._publishing = asyncio.create_task(self._publish())
+        self._publishing.add_done_callback(_publishing_stopped)
         yield
+
+    @property
+    def joint_names(self) -> list[str]:
+        """This robot's joints as the wire names them, under its own id."""
+        return make_humanoid_joints(self.config.robot_id)
 
     async def handle_motor_command(self, command: MotorCommandArray) -> None:
         if command.num_joints != len(SERVO_JOINTS):
@@ -184,12 +202,23 @@ class G1Sim(Module):
             if not names:
                 continue
             index = {name: i for i, name in enumerate(names)}
+            missing = [joint for joint in SERVO_JOINTS if joint not in index]
+            if missing:
+                # A partial set used to raise KeyError here, which killed the task and left the
+                # robot publishing nothing for the rest of the run.
+                if not self._warned_about_joints:
+                    self._warned_about_joints = True
+                    logger.warning(
+                        f"{robot}: the world reported {len(names)} joints, without "
+                        f"{missing[:3]}{'...' if len(missing) > 3 else ''}; not publishing yet"
+                    )
+                continue
             rows = rows[[index[joint] for joint in SERVO_JOINTS]]
             self.motor_states.publish(
                 JointState(
                     ts=stamp,
                     frame_id=self.config.frame_id,
-                    name=G1_JOINT_NAMES,
+                    name=self.joint_names,
                     position=rows[:, 0].tolist(),
                     velocity=rows[:, 1].tolist(),
                     effort=rows[:, 2].tolist(),
