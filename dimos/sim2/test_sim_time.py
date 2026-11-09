@@ -16,7 +16,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from pathlib import Path
 import time
 from typing import Any
 import uuid
@@ -30,19 +29,22 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd import graft_usd, prefix_usd_frames, usd_with_drives
+from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.assets.logistics import LOGISTICS
+from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.imu import SimImu
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.livox import LivoxSim
-from dimos.sim2.module import Simulation
+from dimos.sim2.sim import sim_module
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.world_observations import ACT, WorldMirror
 
 L1_PERIOD = 0.13
@@ -55,40 +57,42 @@ RATES = {
 }
 
 
-@pytest.fixture
-def scene(tmp_path: Path) -> Path:
-    path = tmp_path / "scene.xml"
-    path.write_text("""
-<mujoco>
-  <worldbody>
-    <geom name="floor" type="plane" size="5 5 .1"/>
-    <geom type="box" pos="2 0 .5" size=".2 1 .5"/>
-  </worldbody>
-</mujoco>
-""")
-    return path
+# Where the scene's manager lives, and so the name everything that needs the world asks.
+SCENE_MANAGER = f"scene/{UsdManager.name}"
+# Every sensor sits at a frame of the dog's model.
+FRAMES = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
 
 
 @pytest.fixture
-def robot_model(tmp_path: Path) -> Path:
-    path = tmp_path / "robot.xml"
-    path.write_text("""
-<mujoco model="dog">
-  <worldbody>
-    <body name="base" pos="0 0 .1">
-      <freejoint/>
-      <geom type="box" size=".2 .1 .1" mass="1"/>
-      <body name="head" pos=".2 0 .1"><joint name="neck" type="hinge" axis="0 0 1"/><geom type="sphere" size=".05" mass=".1"/></body>
-    </body>
-  </worldbody>
-  <actuator><motor name="neck" joint="neck"/></actuator>
-</mujoco>
-""")
-    return path
+def robot_model() -> UsdModel:
+    """The dog: a box on a free joint with a hinged head, a driven neck, and a frame per sensor."""
+    model = toy_robot().with_frames(
+        {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in FRAMES.items()}
+    )
+    # Its gains, where a robot's gains live: in its layer. Small ones, because the head is a
+    # 0.1 kg sphere at the joint and its inertia about the neck is 1e-4: kd beyond about 0.01
+    # is stiffer than a 5 ms step can integrate, and the whole robot leaves the room.
+    return UsdModel.from_layer(usd_with_drives(model.usd, {"neck": (0.01, 0.001, 0.0)}))
+
+
+@pytest.fixture
+def composed(robot_model: UsdModel) -> UsdModel:
+    """The world as a manager composes it: the room, with the dog grafted onto a spot on its floor.
+
+    What the simulation runs and what every sensor renders from, which is the point -- one layer,
+    one world, and the furniture a scan comes back off is the furniture that is drawn.
+    """
+    # The toy's layer puts its base at (9, 9, 9), so the spot it stands on takes that back out:
+    # a mount frame places a robot by its own layer's origin, not by where its root happens to be.
+    room = UsdModel.from_file(LOGISTICS).with_frames(
+        {"dog": ("logistics", (-9.0, -9.0, -8.7), (0.0, 0.0, 0.0))}
+    )
+    return UsdModel.from_layer(
+        graft_usd(room.usd, {"dog": prefix_usd_frames(robot_model.usd, "dog")})
+    )
 
 
 class _DogConfig(ModuleConfig):
-    model: Path
     # With a control period, the world waits this long (wall seconds) for each of its commands.
     control_period: float | None = None
     think: float = 0.0
@@ -100,12 +104,6 @@ class _Dog(Module):
     config: _DogConfig
     world_observations: In[WorldObservations]
     actions: Out[WorldAction]
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        config = self.config
-        robot = SimulatedRobot("dog", config.model, "base", control_period=config.control_period)
-        return {"simulated": robot}
 
     async def main(self) -> AsyncIterator[None]:
         world, loop = WorldMirror(), asyncio.get_running_loop()
@@ -154,27 +152,43 @@ class _Readings(Module):
 
 
 def _run(
-    scene: Path, robot_model: Path, seconds: float, speed: float = 1.0, **dog: Any
+    composed: UsdModel,
+    robot_model: UsdModel,
+    seconds: float,
+    speed: float = 1.0,
+    **dog: Any,
 ) -> dict[str, Any]:
-    # Every sensor at a frame of the dog's model.
-    frames = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
-    model = mjcf_with_frames(
-        robot_model,
-        {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in frames.items()},
-        out_dir=robot_model.parent,
-    )
     blueprint = autoconnect(
-        Simulation.blueprint(scene=scene, speed=speed),
-        _Dog.blueprint(model=model, **dog),
-        SimCamera.blueprint(frame_id="eye", width=64, height=48, rate_hz=RATES["color_image"]),
-        SimImu.blueprint(frame_id="imu_link", rate_hz=RATES["imu"]),
+        sim_module(
+            scene_manager=SCENE_MANAGER,
+            speed=speed,
+            robots=[SimulatedRobot("dog", robot_model, control_period=dog.get("control_period"))],
+        ),
+        _Dog.blueprint(**dog),
+        # The one manager, answering for the whole world. Everything else asks it.
+        UsdManager.blueprint(
+            model=composed, frame_id_prefix="", tf_renames={"logistics": "world"}
+        ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),
+        SimCamera.blueprint(
+            frame_id="eye",
+            width=64,
+            height=48,
+            rate_hz=RATES["color_image"],
+            scene_manager=SCENE_MANAGER,
+        ),
+        SimImu.blueprint(frame_id="imu_link", rate_hz=RATES["imu"], scene_manager=SCENE_MANAGER),
         LivoxSim.blueprint(
-            frame_id="livox", rate_hz=RATES["lidar"], imu_rate_hz=RATES["livox_imu"]
+            frame_id="livox",
+            rate_hz=RATES["lidar"],
+            imu_rate_hz=RATES["livox_imu"],
+            scene_manager=SCENE_MANAGER,
         ).remappings([(LivoxSim, "imu", "livox_imu")]),
-        SimL1.blueprint(frame_id="l1", period=L1_PERIOD).remappings([(SimL1, "lidar", "l1_lidar")]),
+        SimL1.blueprint(frame_id="l1", period=L1_PERIOD, scene_manager=SCENE_MANAGER).remappings(
+            [(SimL1, "lidar", "l1_lidar")]
+        ),
         _Readings.blueprint(),
         # A worker each, as a robot's blueprint gives its sensors: one sharing a busy loop falls behind at 4x.
-    ).global_config(n_workers=8)
+    ).global_config(n_workers=9)
     # Its own zenoh domain: another world running on this machine would otherwise share its topics.
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
@@ -227,8 +241,8 @@ def _per_sim_second(stamps: list[float], start: float) -> float:
     ],
     ids=["half_speed", "four_times_speed", "slower_than_real_lockstep"],
 )
-def test_sensors_keep_their_rates_per_sim_second(scene, robot_model, speed, dog):
-    readings = _run(scene, robot_model, seconds=8.0, speed=speed, **dog)
+def test_sensors_keep_their_rates_per_sim_second(composed, robot_model, speed, dog):
+    readings = _run(composed, robot_model, seconds=8.0, speed=speed, **dog)
     stamps = readings["stamps"]
     counts = {name: len(stamps[name]) for name in RATES}
     assert all(count > 5 for count in counts.values()), counts

@@ -372,7 +372,6 @@ all_modules = {
     "sim-l1": "dimos.sim2.l1.SimL1",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
-    "simulated-world": "dimos.sim2.sim.SimulatedWorld",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
     "speak-skill": "dimos.agents.skills.speak_skill.SpeakSkill",
     "spot-high-level": "dimos.experimental.robot.bosdyn.spot.effectors.high_level.SpotHighLevel",

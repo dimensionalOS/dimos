@@ -30,7 +30,6 @@ from pydantic import Field, field_validator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -248,7 +247,7 @@ class UsdManagerConfig(ModuleConfig):
         return {frame: Mount.of(v) for frame, v in value.items()}
 
 
-class UsdManager(SharedConfigModule):
+class UsdManager(Module):
     """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
     config: UsdManagerConfig
@@ -271,7 +270,12 @@ class UsdManager(SharedConfigModule):
         self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._load(self.config.model)
+        # Converted here and once: everything below works on the USD, whatever it came from.
+        self._description = _as_usd(self.config.model or _world_model())
+        self._file_paths = self._description.referenced_files()
+        self._joints = {joint.name: joint for joint in self._description.joints}
+        # tf_renames reach this robot's own frames too, so every name it emits goes through here.
+        self._frames = self._renamed_own_frames()
         self._next_joint_tf_t = 0.0
         self._warned_about_joint_names = False
         # Per edge: the last transform sent (translation + rotation) and when.
@@ -352,40 +356,6 @@ class UsdManager(SharedConfigModule):
                     f"neither an @rpc {SUBTREE_RPC}() nor an @rpc {SCENE_RPC}() to ask for its "
                     f"subtree"
                 )
-
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        models = [(name, config.get("model")) for name, config in config_senders]
-        if self.config.model is not None:
-            models.insert(0, ("model=", self.config.model))
-        if len(models) > 1:
-            raise ValueError(
-                f"UsdManager takes one model, from model= or one @shared_config(UsdManager); "
-                f"got {[n for n, _ in models]}"
-            )
-        if not models:
-            return
-        name, model = models[0]
-        if not isinstance(model, RobotModel | UsdModel):
-            raise TypeError(
-                f"{name}'s @shared_config(UsdManager) must return "
-                f"{{'model': RobotModel}} or {{'model': UsdModel}}"
-            )
-        if model is not self.config.model:
-            self._load(model)
-
-    def _load(self, model: RobotModel | UsdModel | None) -> None:
-        """Take this model as the one this manager answers for.
-
-        A model given as `model=` is loaded at construction; one that arrives over
-        @shared_config replaces it when it comes. None is a scene with no robot of its own --
-        a single link called "world" for mounts to hang from.
-        """
-        # Converted here and once: everything below works on the USD, whatever it came from.
-        self._description = _as_usd(model or _world_model())
-        self._file_paths = self._description.referenced_files()
-        self._joints = {joint.name: joint for joint in self._description.joints}
-        # tf_renames reach this robot's own frames too, so every name it emits goes through here.
-        self._frames = self._renamed_own_frames()
 
     @rpc
     def start(self) -> None:
