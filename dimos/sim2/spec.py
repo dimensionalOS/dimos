@@ -17,9 +17,9 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from functools import cache
-from pathlib import Path
 from typing import Literal
-import xml.etree.ElementTree as ET
+
+from dimos.robot.assets.model import UsdModel
 
 Vector = tuple[float, float, float]
 
@@ -37,8 +37,9 @@ class Servo:
 @dataclass(frozen=True)
 class SimulatedRobot:
     robot_id: str
-    # Its MJCF: its sensors' frames are sites (or bodies) in it (mjcf_with_frames adds them).
-    model: Path
+    # Its USD: its sensors' frames are frames in it (UsdModel.with_frames adds them), and the
+    # files it names travel with it, so there is no second place to say where its meshes are.
+    model: UsdModel
     root_body: str
     xyz: Vector = (0.0, 0.0, 0.0)
     rpy: Vector = (0.0, 0.0, 0.0)
@@ -47,10 +48,6 @@ class SimulatedRobot:
     control_period: float | None = None
 
     servos: tuple[Servo, ...] = ()
-    # A directory whose files the model may name by file name, like its meshes.
-    assets: Path | None = None
-    # A pose the model names: the robot starts in it and holds it, its base that high above xyz.
-    keyframe: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,15 +88,9 @@ def resolve(simulated: Iterable[Simulated]) -> list[Simulated]:
 
 
 @cache
-def frame_names(mjcf: Path) -> frozenset[str]:
-    """The names of an MJCF's bodies and sites."""
-    root = ET.parse(mjcf).getroot()
-    return frozenset(
-        name
-        for tag in ("body", "site")
-        for element in root.iter(tag)
-        if (name := element.get("name"))
-    )
+def frame_names(model: UsdModel) -> frozenset[str]:
+    """Every frame the model names: the links and joints a sensor can be mounted at."""
+    return frozenset(model.frame_names())
 
 
 def validate(simulated: Iterable[Simulated]) -> None:

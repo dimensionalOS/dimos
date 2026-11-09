@@ -12,23 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 
 import pytest
 
+from dimos.robot.assets.model import UsdModel
+from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 
 
 @pytest.fixture
-def model(tmp_path: Path) -> Path:
-    """The dog's model, with its camera's and imu's frames as sites; the scene owns any other frame."""
-    path = tmp_path / "dog.xml"
-    path.write_text(
-        '<mujoco><worldbody><body name="base"><body name="head">'
-        '<site name="camera_optical"/></body><site name="imu"/></body></worldbody></mujoco>'
+def model() -> UsdModel:
+    """The dog's model, with its camera's and imu's frames on it; the scene owns any other frame."""
+    return toy_robot().with_frames(
+        {
+            "camera_optical": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "imu": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        }
     )
-    return path
 
 
 def _simulation(**simulated: object) -> Simulation:
@@ -60,7 +61,7 @@ def test_simulation_describes_its_world(model):
 
 
 @pytest.mark.parametrize(
-    "config", [{"simulatd": SimulatedRobot("dog", Path("dog.xml"), "base")}, {"simulated": 1}]
+    "config", [{"simulatd": SimulatedRobot("dog", toy_robot(), "base")}, {"simulated": 1}]
 )
 def test_a_malformed_description_is_rejected(config):
     simulation = Simulation()

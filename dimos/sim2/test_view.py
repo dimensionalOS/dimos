@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.sim2.view import open_view, sensor_frame
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
@@ -33,21 +34,13 @@ def description(tmp_path: Path) -> dict:
   </worldbody>
 </mujoco>
 """)
-    robot = tmp_path / "robot.xml"
-    robot.write_text("""
-<mujoco>
-  <worldbody>
-    <body name="base">
-      <freejoint/>
-      <geom type="box" size=".2 .1 .1" mass="1"/>
-      <site name="imu"/>
-      <body name="head" pos=".2 0 .1"><joint name="neck" type="hinge" axis="0 0 1"/><geom type="sphere" size=".05" mass=".1"/>
-        <site name="eye"/><site name="lidar"/>
-      </body>
-    </body>
-  </worldbody>
-</mujoco>
-""")
+    robot = toy_robot().with_frames(
+        {
+            "imu": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "eye": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        }
+    )
     return {
         "scene": str(scene),
         "simulated": [

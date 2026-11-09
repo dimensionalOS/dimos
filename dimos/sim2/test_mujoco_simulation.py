@@ -28,11 +28,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
+from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.module import Simulation, SimulationConfig
 from dimos.sim2.mujoco_backend import MujocoBackend
 from dimos.sim2.spec import Servo, SimulatedRobot, SimulatedSensor, resolve
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
+from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import ACT, WorldMirror
 
@@ -54,33 +56,14 @@ def scene(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def robot_model(tmp_path: Path) -> Path:
-    path = tmp_path / "robot.xml"
-    path.write_text("""
-<mujoco>
-  <worldbody>
-    <body name="base" pos="9 9 9">
-      <freejoint/>
-      <geom type="box" size=".2 .1 .1" mass="1"/>
-      <body name="head" pos=".2 0 .1">
-        <joint name="neck" type="hinge" axis="0 0 1"/>
-        <geom type="sphere" size=".05" mass=".1"/>
-      </body>
-    </body>
-  </worldbody>
-  <actuator><motor name="neck" joint="neck"/></actuator>
-  <keyframe><key name="home" qpos="0 0 0 1 0 0 0 0"/></keyframe>
-</mujoco>
-""")
-    return path
+def robot_model() -> UsdModel:
+    return toy_robot()
 
 
 def test_robots_and_sensors_compile_into_one_world(scene, robot_model, tmp_path):
     # Two dogs, one with an eye on its head, the other a lidar 20 cm above its base; and a camera over the scene.
-    left = mjcf_with_frames(robot_model, {"eye": ("head", (0, 0, 0), (0, 0, 0))}, out_dir=tmp_path)
-    right = mjcf_with_frames(
-        robot_model, {"lidar": ("base", (0, 0, 0.2), (0, 0, 0))}, out_dir=tmp_path
-    )
+    left = robot_model.with_frames({"eye": ("head", (0, 0, 0), (0, 0, 0))})
+    right = robot_model.with_frames({"lidar": ("base", (0, 0, 0.2), (0, 0, 0))})
     model = compile_world(
         scene,
         resolve(
@@ -109,7 +92,7 @@ def test_sensor_at_a_missing_frame_is_rejected(scene):
 
 
 class _DogConfig(ModuleConfig):
-    model: Path
+    model: UsdModel
 
 
 class _Dog(Module):
@@ -167,8 +150,10 @@ def test_backend_steps_physics_and_takes_commands(scene, robot_model, tmp_path):
     asyncio.run(run_briefly())
     world = published.world
     assert world.time > 0.3
-    # It fell from z=1 onto the floor.
-    assert world.entity("dog").pose[2] < 0.2
+    # It fell from z=1 onto the floor. Not nearer than 0.3, because it comes to rest tilted on
+    # its head as well as its box, and how high that leaves the base is the toy's shape rather
+    # than anything this test is about.
+    assert world.entity("dog").pose[2] < 0.3
     names, joints = world.joints("dog")
     assert names == ["neck"]
     assert joints[0, 1] > 1.0
@@ -184,7 +169,7 @@ def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_mo
     backend._apply_pending()
     seen = _Collect()
     seen.offer(backend.frame())
-    assert seen.world.entity("dog").cbor["model"] == str(robot_model)
+    assert seen.world.entity("dog").cbor["model"] == str(usd_layer(robot_model))
     assert seen.world.joints("dog")[0] == ["neck"]
     assert seen.world.entity("crate").pose[:3] == pytest.approx([0, 2, 0.5])
     # Its ts is the wall time the sim started at, plus sim time.

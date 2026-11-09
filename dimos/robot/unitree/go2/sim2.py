@@ -14,7 +14,7 @@
 
 """A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
 
-Go2Sim.mjcf is the Go2's MJCF with the rig's sensor frames as sites: a sensor names one (Go2Sim.lidar_mount_frame, ...)
+Go2Sim.usd is the committed Go2 layer with the rig's sensor frames added: a sensor names one (Go2Sim.lidar_mount_frame, ...)
 as its frame_id, and Go2Sim hands a UsdManager the URDF of it, which poses the same frames on tf.
 """
 
@@ -36,7 +36,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     CAMERA_XYZ,
@@ -50,13 +50,10 @@ from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import rotation_matrix
 from dimos.sim2.world_observations import ACT, WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
-from dimos.utils.data import get_data
 
 
 class Go2SimConfig(ModuleConfig):
@@ -69,9 +66,10 @@ class Go2SimConfig(ModuleConfig):
 
 
 class Go2Sim(Module):
-    # The real rig's frames (go2_mid360_static_transforms), on the MJCF's base body.
-    mjcf = mjcf_with_frames(
-        get_data("go2_sim") / "unitree_go2" / "go2.xml",
+    # The committed layer, converted once from the vendor MJCF (see assets/go2.usda), carrying
+    # the real rig's frames (go2_mid360_static_transforms) on its base. The mounts are added here
+    # rather than baked in because a mount is whose robot carries it, not what the robot is.
+    usd = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
         {
             "utlidar_lidar": (
                 "base",
@@ -81,7 +79,7 @@ class Go2Sim(Module):
             "front_camera": ("base", CAMERA_XYZ, (0.0, 0.0, 0.0)),
             "mid360_link": ("front_camera", MID360_XYZ, (0.0, MID360_PITCH_DOWN, 0.0)),
             "camera_optical": ("front_camera", (0.0, 0.0, 0.0), OPTICAL_RPY),
-        },
+        }
     )
     l1_mount_frame = "utlidar_lidar"
     lidar_mount_frame = "mid360_link"
@@ -111,7 +109,7 @@ class Go2Sim(Module):
         return {
             "simulated": SimulatedRobot(
                 config.robot_id,
-                self.mjcf,
+                self.usd,
                 "base",
                 xyz=config.xyz,
                 control_period=CONTROL_DT,
@@ -122,9 +120,9 @@ class Go2Sim(Module):
         }
 
     @shared_config(UsdManager)
-    def urdf(self) -> dict[str, RobotModel]:
-        # The MJCF's base body is the URDF's base_link, the frame odometry moves.
-        return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, "base_link")}
+    def description(self) -> dict[str, UsdModel]:
+        # The same layer the simulation runs: one description, not a converted copy of one.
+        return {"model": self.usd}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()

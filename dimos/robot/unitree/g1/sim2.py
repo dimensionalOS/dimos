@@ -14,13 +14,14 @@
 
 """G1Sim: the sim twin of G1WholeBodyConnection, with its motor_command in and motor_states and pelvis imu out.
 
-G1Sim.mjcf is menagerie's G1 with its sensor frames as sites: LivoxSim names G1Sim.lidar_mount_frame, and G1Sim
-hands a UsdManager the URDF of it.
+G1Sim.usd is the committed G1 layer with its sensor mounts added as frames: LivoxSim names
+G1Sim.lidar_mount_frame, and the same layer answers the simulation, the UsdManager and the viewer.
 """
 
 import asyncio
 from collections.abc import AsyncIterator
 import math
+from pathlib import Path
 import time
 from typing import Any
 
@@ -37,18 +38,15 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
 from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation, SimulationSpec
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
 from dimos.sim2.view import WorldView, open_view
 from dimos.sim2.world_observations import WorldMirror
-from dimos.simulation.mujoco.menagerie import menagerie_path
 from dimos.utils.logging_config import setup_logger
 
 # Where it starts: pelvis height, and per joint (Menagerie's order, which is the motors' order) the pose it stands in
@@ -112,13 +110,11 @@ class G1SimConfig(ModuleConfig):
 
 
 class G1Sim(Module):
-    # The Mid-360 upside down on the torso, as G1's torso_to_mid360 has it.
-    mjcf = mjcf_with_frames(
-        menagerie_path() / "unitree_g1" / "g1.xml",
-        {"mid360_link": ("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))},
-        # Each wrist draws a rubber hand and collides only the wrist, so the robot's own lidar
-        # sees its shoulders and elbows and looks straight through its hands.
-        collide_drawn=("left_wrist_yaw_link", "right_wrist_yaw_link"),
+    # The committed layer, converted once from the menagerie MJCF (see assets/g1.usda), with the
+    # Mid-360 upside down on the torso, as G1's torso_to_mid360 has it. The mount is added here
+    # rather than baked in because a mount is whose robot carries it, not what the robot is.
+    usd = UsdModel.from_file(Path(__file__).parent / "assets" / "g1.usda").with_frames(
+        {"mid360_link": ("torso_link", _TORSO_MID360_XYZ, (math.pi, MID360_PITCH, 0.0))}
     )
     lidar_mount_frame = "mid360_link"
 
@@ -144,7 +140,7 @@ class G1Sim(Module):
         return {
             "simulated": SimulatedRobot(
                 self.config.robot_id,
-                self.mjcf,
+                self.usd,
                 ROOT_BODY,
                 xyz=(x, y, HOME_HEIGHT),
                 servos=SERVOS,
@@ -152,9 +148,9 @@ class G1Sim(Module):
         }
 
     @shared_config(UsdManager)
-    def urdf(self) -> dict[str, RobotModel]:
-        # The MJCF's pelvis is the URDF's root, as on the real G1.
-        return {"model": mjcf_to_urdf(self.mjcf, self.config.robot_id, ROOT_BODY)}
+    def description(self) -> dict[str, UsdModel]:
+        # The same layer the simulation runs: one description, not a converted copy of one.
+        return {"model": self.usd}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()

@@ -16,7 +16,7 @@
 
 import pytest
 
-from dimos.sim2.usd_names import resolve, resolved
+from dimos.sim2.usd_names import resolve, resolved, shorten
 
 USD_NAMES = [
     "world",
@@ -59,3 +59,84 @@ def test_resolved_hands_back_none_where_resolve_would_raise():
     assert resolved(USD_NAMES, "pelvis") == "/g1/Joints/pelvis"
     assert resolved(USD_NAMES, "nothing") is None
     assert resolved(["/a/x", "/b/x"], "x") is None
+
+
+class _Element:
+    """Enough of a MjSpec element to rename: a name, and nothing else."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _Reference:
+    def __init__(self, **fields: str) -> None:
+        self.__dict__.update(fields)
+
+
+class _Spec:
+    """Enough of a MjSpec to shorten: the collections it renames and the ones that refer to them."""
+
+    def __init__(self, **kinds: list) -> None:
+        for kind in ("bodies", "joints", "sites", "cameras", "actuators", "sensors", "pairs"):
+            setattr(self, kind, kinds.get(kind, []))
+
+
+def test_shortening_renames_a_models_parts_to_the_names_a_description_uses():
+    spec = _Spec(
+        bodies=[_Element("world"), _Element("/toy/Geometry/base")],
+        joints=[_Element("/toy/Geometry/base/head/neck")],
+    )
+
+    renames = shorten(spec)
+
+    assert [body.name for body in spec.bodies] == ["world", "base"]
+    assert [joint.name for joint in spec.joints] == ["neck"]
+    assert renames == {"/toy/Geometry/base": "base", "/toy/Geometry/base/head/neck": "neck"}
+
+
+def test_a_reference_follows_the_part_it_names():
+    """An actuator names the joint it drives as a string, and renaming the joint does not touch it.
+
+    Left behind, the compiled world comes out with no actuators at all and nothing says why.
+    """
+    spec = _Spec(
+        joints=[_Element("/toy/Geometry/base/head/neck")],
+        actuators=[_Reference(name="/toy/Physics/neck", target="/toy/Geometry/base/head/neck")],
+        sensors=[_Reference(name="gyro", objname="/toy/Geometry/base", refname="")],
+        bodies=[_Element("/toy/Geometry/base")],
+    )
+
+    shorten(spec)
+
+    assert spec.actuators[0].target == "neck"
+    assert spec.actuators[0].name == "neck"
+    assert spec.sensors[0].objname == "base"
+
+
+def test_a_hinge_and_the_motor_on_it_may_share_a_name():
+    """MuJoCo's namespaces are per kind, and the toy robot's joint and actuator are both "neck".
+
+    Judged together each was the other's ambiguity, so neither was shortened.
+    """
+    spec = _Spec(
+        joints=[_Element("/toy/Geometry/base/head/neck")],
+        actuators=[_Reference(name="/toy/Physics/neck", target="/toy/Geometry/base/head/neck")],
+    )
+
+    shorten(spec)
+
+    assert spec.joints[0].name == "neck"
+    assert spec.actuators[0].name == "neck"
+
+
+def test_two_parts_of_one_kind_ending_the_same_way_keep_their_paths():
+    spec = _Spec(bodies=[_Element("/robot/left/wheel"), _Element("/robot/right/wheel")])
+
+    assert shorten(spec) == {}
+    assert [body.name for body in spec.bodies] == ["/robot/left/wheel", "/robot/right/wheel"]
+
+
+def test_a_short_name_something_else_already_holds_is_left_alone():
+    spec = _Spec(bodies=[_Element("base"), _Element("/toy/Geometry/base")])
+
+    assert shorten(spec) == {}

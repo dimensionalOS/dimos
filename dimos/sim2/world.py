@@ -15,7 +15,6 @@
 """Compile a scene, its robots and their sensor mounts into one MuJoCo model."""
 
 from collections.abc import Iterable
-from functools import cache
 from pathlib import Path
 
 import mujoco
@@ -24,7 +23,8 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, Vector, validate
-from dimos.sim2.usd_names import resolve, resolved
+from dimos.sim2.usd_layer import usd_layer
+from dimos.sim2.usd_names import resolve, resolved, shorten
 
 # Sites only mark a pose; keep them invisible and negligible.
 _SITE_SIZE = (0.001, 0.001, 0.001)
@@ -61,16 +61,19 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     """Robots are prefixed "<robot_id>/"; scene-mounted sensors are prefixed "world/"."""
     _register_usd_reader(Path(scene))
     descriptions = list(simulated)
-    for described in descriptions:
-        if isinstance(described, SimulatedRobot):
-            _register_usd_reader(Path(described.model))
     robots = [d for d in descriptions if isinstance(d, SimulatedRobot)]
     sensors = [d for d in descriptions if isinstance(d, SimulatedSensor)]
     validate(descriptions)
 
     world = mujoco.MjSpec.from_file(str(scene))
     for robot in robots:
-        spec = mujoco.MjSpec.from_file(str(robot.model), assets=_assets(robot))
+        layer = usd_layer(robot.model)
+        _register_usd_reader(layer)
+        spec = mujoco.MjSpec.from_file(str(layer))
+        # Before anything looks at them: a robot's names leave the simulation as entity ids and
+        # tf frames, so what it calls its pelvis has to be "pelvis" and not the prim path USD
+        # gave it. See usd_names.shorten.
+        shorten(spec)
         robot_geoms = {geom.name for geom in spec.geoms}
         root_name = resolved([body.name for body in spec.bodies], robot.root_body)
         root = spec.body(root_name) if root_name else None
@@ -100,9 +103,7 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
         for sensor in sensors:
             if sensor.robot_id == robot.robot_id:
                 _mount(spec, sensor, robot.robot_id)
-        height, _ = keyframe(robot)
-        x, y, z = robot.xyz
-        frame = world.worldbody.add_frame(pos=(x, y, z + height), quat=_quaternion(robot.rpy))
+        frame = world.worldbody.add_frame(pos=robot.xyz, quat=_quaternion(robot.rpy))
         world.attach(spec, prefix=f"{robot.robot_id}/", frame=frame)
         # Contact pairs naming a geom the robot lacks (its floor) mean the scene's geom of that name.
         for pair in world.pairs:
@@ -116,38 +117,24 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     return world.compile()
 
 
-@cache
-def keyframe(robot: SimulatedRobot) -> tuple[float, dict[str, float]]:
-    """The base height and the hinge and slide joint values of the robot's keyframe; (0, {}) without one."""
-    if robot.keyframe is None:
-        return 0.0, {}
-    spec = mujoco.MjSpec.from_file(str(robot.model), assets=_assets(robot))
-    qpos = np.asarray(spec.key(robot.keyframe).qpos)
-    sizes = {mujoco.mjtJoint.mjJNT_FREE: 7, mujoco.mjtJoint.mjJNT_BALL: 4}
-    joints, address, height = {}, 0, 0.0
-    for joint in spec.joints:
-        if joint.type == mujoco.mjtJoint.mjJNT_FREE:
-            height = float(qpos[address + 2])
-        elif joint.type not in sizes:
-            joints[joint.name] = float(qpos[address])
-        address += sizes.get(joint.type, 1)
-    return height, joints
-
-
-def _assets(robot: SimulatedRobot) -> dict[str, bytes] | None:
-    return {f.name: f.read_bytes() for f in robot.assets.iterdir()} if robot.assets else None
-
-
 def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str = "") -> None:
-    """At its frame: a site of the model (on that site's body, at its pose), a body (at its origin), or "world"."""
+    """At its frame: a site of the model (on that site's body, at its pose), a body (at its origin), or "world".
+
+    A frame read out of USD is named by its prim path, so the name the description uses is
+    resolved against what the model actually calls things; a scene written as an MJCF names it
+    the same either way.
+    """
     frame = sensor.frame_id
     site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
     if frame != "world":
-        site, body = spec.site(frame), spec.body(frame)
+        site_name = resolved([s.name for s in spec.sites], frame)
+        body_name = resolved([b.name for b in spec.bodies], frame)
+        site = spec.site(site_name) if site_name else None
+        body = spec.body(body_name) if body_name else None
         if site is not None:
             # Compiled, so a site oriented any way (euler, axisangle, ...) reads as pos and quat.
             compiled = spec.copy().compile()
-            index = compiled.site(frame).id
+            index = compiled.site(site_name).id
             body, pos, quat = site.parent, compiled.site_pos[index], compiled.site_quat[index]
         elif body is None:
             raise ValueError(f"{owner}: no site or body {frame!r} for its {sensor.kind}")

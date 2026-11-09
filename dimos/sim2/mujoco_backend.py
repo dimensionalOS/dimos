@@ -33,7 +33,8 @@ import numpy as np
 from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.backend import Publisher
 from dimos.sim2.spec import Simulated, SimulatedRobot
-from dimos.sim2.world import compile_world, keyframe
+from dimos.sim2.usd_layer import usd_layer
+from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 
 if TYPE_CHECKING:
@@ -107,8 +108,11 @@ class MujocoBackend:
         self._sent_joints: dict[str, np.ndarray] = {}
         self._refusals: list[tuple[str, str]] = []
         self._files = _files_named_by(self._scene, None)
-        for robot in self._robots.values():
-            self._files.update(_files_named_by(robot.model, None))
+        # A robot's layer as a file: the name a renderer asks for it by, and what the files it
+        # names are relative to.
+        self._layers = {id: usd_layer(r.model) for id, r in self._robots.items()}
+        for layer in self._layers.values():
+            self._files.update(_files_named_by(layer, None))
         self._reset()
 
     def describe(self) -> dict[str, Any]:
@@ -240,7 +244,7 @@ class MujocoBackend:
         """Every joint the world starts somewhere other than zero, and holds there until commanded."""
         initial = {}
         for robot in self._robots.values():
-            held = keyframe(robot)[1] | {servo.joint: servo.initial for servo in robot.servos}
+            held = {servo.joint: servo.initial for servo in robot.servos}
             initial |= {f"{robot.robot_id}/{name}": value for name, value in held.items()}
         return initial
 
@@ -371,7 +375,7 @@ class MujocoBackend:
         for name in self._roots:
             robot = self._robots.get(name)
             # What to request on render_file_request to draw a robot on its own.
-            world.add(name, **({"model": str(robot.model)} if robot is not None else {}))
+            world.add(name, **({"model": str(self._layers[name])} if robot is not None else {}))
             for joint_name in self._joints[name][1]:
                 world.add(f"{name}/{joint_name}")
         self._announced = True

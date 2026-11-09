@@ -156,13 +156,31 @@ class MujocoView:
         self.model.geom_group[start : start + int(self.model.body_geomnum[body])] = spare
 
     def _mount(self, frame: str) -> int:
-        """The body ``frame`` is attached to."""
+        """The body ``frame`` is attached to: the nearest one at or above it that has any geometry.
+
+        A mount frame used to be a site, whose body is whatever it was placed on. Described in
+        USD it is a link of its own, welded to the thing it is bolted to -- the G1's mid360_link
+        hangs off torso_link rather than marking a spot on it -- and a frame carries no geometry,
+        so taking it at face value excluded a body with nothing in it. The housing stayed visible,
+        every ray came back 22 mm away inside the sensor's blind range, and the scan came out
+        empty: the exact failure this exclusion exists to prevent.
+
+        Walking up stops short of the world, whose geometry is the floor and the last thing a
+        ranging sensor should be blind to.
+        """
         kind, index = self._frame(frame)
         if kind == mujoco.mjtObj.mjOBJ_SITE:
-            return int(self.model.site_bodyid[index])
-        if kind == mujoco.mjtObj.mjOBJ_CAMERA:
-            return int(self.model.cam_bodyid[index])
-        return int(index)
+            body = int(self.model.site_bodyid[index])
+        elif kind == mujoco.mjtObj.mjOBJ_CAMERA:
+            body = int(self.model.cam_bodyid[index])
+        else:
+            body = int(index)
+        while self.model.body_geomnum[body] == 0:
+            parent = int(self.model.body_parentid[body])
+            if parent == 0:
+                return body
+            body = parent
+        return body
 
     def close(self) -> None:
         for renderer in self._renderers.values():

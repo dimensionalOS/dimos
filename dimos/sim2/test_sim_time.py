@@ -35,14 +35,15 @@ from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.imu import SimImu
 from dimos.sim2.l1 import SimL1
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
 from dimos.sim2.world_observations import ACT, WorldMirror
 
 L1_PERIOD = 0.13
@@ -70,25 +71,12 @@ def scene(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def robot_model(tmp_path: Path) -> Path:
-    path = tmp_path / "robot.xml"
-    path.write_text("""
-<mujoco model="dog">
-  <worldbody>
-    <body name="base" pos="0 0 .1">
-      <freejoint/>
-      <geom type="box" size=".2 .1 .1" mass="1"/>
-      <body name="head" pos=".2 0 .1"><joint name="neck" type="hinge" axis="0 0 1"/><geom type="sphere" size=".05" mass=".1"/></body>
-    </body>
-  </worldbody>
-  <actuator><motor name="neck" joint="neck"/></actuator>
-</mujoco>
-""")
-    return path
+def robot_model() -> UsdModel:
+    return toy_robot()
 
 
 class _DogConfig(ModuleConfig):
-    model: Path
+    model: UsdModel
     # With a control period, the world waits this long (wall seconds) for each of its commands.
     control_period: float | None = None
     think: float = 0.0
@@ -154,14 +142,12 @@ class _Readings(Module):
 
 
 def _run(
-    scene: Path, robot_model: Path, seconds: float, speed: float = 1.0, **dog: Any
+    scene: Path, robot_model: UsdModel, seconds: float, speed: float = 1.0, **dog: Any
 ) -> dict[str, Any]:
     # Every sensor at a frame of the dog's model.
     frames = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
-    model = mjcf_with_frames(
-        robot_model,
-        {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in frames.items()},
-        out_dir=robot_model.parent,
+    model = robot_model.with_frames(
+        {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in frames.items()}
     )
     blueprint = autoconnect(
         Simulation.blueprint(scene=scene, speed=speed),
