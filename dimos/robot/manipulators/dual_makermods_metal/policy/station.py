@@ -66,7 +66,9 @@ class MetalStationKinematics:
     _data: object = field(default=None, init=False, repr=False)
     _q_indices: list[int] = field(default_factory=list, init=False, repr=False)
     _frame_ids: list[int] = field(default_factory=list, init=False, repr=False)
-    _tcp_offset: NDArray[np.float64] = field(default=None, init=False, repr=False)  # type: ignore[assignment]
+    _tcp_offset: NDArray[np.float64] = field(
+        default_factory=lambda: np.zeros(3, dtype=np.float64), init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self._build()

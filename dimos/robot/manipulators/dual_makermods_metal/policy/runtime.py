@@ -213,7 +213,7 @@ class MetalArmPolicyRuntime:
             raise PolicyContractError(
                 f"observation frame has {frame.shape[0]} values, expected {manifest.frame_dim}"
             )
-        return frame
+        return np.asarray(frame, dtype=np.float32)
 
     def observe(
         self,

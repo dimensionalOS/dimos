@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 from numpy.typing import NDArray
@@ -105,6 +105,16 @@ def sha256_file(path: str | Path) -> str:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+@overload
+def _as_float_tuple(
+    values: Sequence[float], width: Literal[3], name: str
+) -> tuple[float, float, float]: ...
+
+
+@overload
+def _as_float_tuple(values: Sequence[float], width: int, name: str) -> tuple[float, ...]: ...
 
 
 def _as_float_tuple(values: Sequence[float], width: int, name: str) -> tuple[float, ...]:

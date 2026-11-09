@@ -91,9 +91,8 @@ class HandGoal:
         quaternion_xyzw: tuple[float, float, float, float],
     ) -> HandGoal:
         matrix = quaternion_xyzw_to_matrix(quaternion_xyzw)
-        return cls(
-            tuple(float(v) for v in np.asarray(position).reshape(3)), tuple(map(tuple, matrix))
-        )
+        xyz = np.asarray(position, dtype=np.float64).reshape(3)
+        return cls((float(xyz[0]), float(xyz[1]), float(xyz[2])), tuple(map(tuple, matrix)))
 
 
 @dataclass(frozen=True)

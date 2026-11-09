@@ -68,9 +68,10 @@ def _load_reference_actor(checkpoint: dict[str, Any]) -> tuple[Any, dict[str, An
     import torch
     from torch import nn
 
-    state = checkpoint.get("actor_state_dict")
-    if not isinstance(state, dict):
+    raw_state = checkpoint.get("actor_state_dict")
+    if not isinstance(raw_state, dict):
         raise ValueError("checkpoint has no actor_state_dict")
+    state: dict[str, Any] = raw_state
     expected = {
         "obs_normalizer._mean",
         "obs_normalizer._var",
@@ -95,6 +96,9 @@ def _load_reference_actor(checkpoint: dict[str, Any]) -> tuple[Any, dict[str, An
 
     class ReferenceActor(nn.Module):
         """``MLPModel`` forward for this checkpoint: normalize, then ELU MLP, mean output."""
+
+        mean: torch.Tensor
+        std: torch.Tensor
 
         def __init__(self) -> None:
             super().__init__()
@@ -172,7 +176,7 @@ def export_checkpoint(
     example = torch.zeros(1, HISTORY_FRAMES * 96, dtype=torch.float32)
     torch.onnx.export(
         actor,
-        example,
+        (example,),
         onnx_path,
         input_names=["obs"],
         output_names=["action"],
