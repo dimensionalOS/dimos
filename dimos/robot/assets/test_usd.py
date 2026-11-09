@@ -424,6 +424,53 @@ def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
     assert drive.GetTargetPositionAttr().Get() == pytest.approx(0.25)
 
 
+def _with_actuator(usd: str, joint: str, *, biased: bool) -> str:
+    """``usd`` with a MuJoCo actuator on ``joint``, carrying a control range of plus/minus 23.7."""
+    from pxr import Sdf, Usd, UsdPhysics
+
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    stage = Usd.Stage.Open(layer)
+    prim = next(p for p in stage.Traverse() if p.IsA(UsdPhysics.Joint) and p.GetName() == joint)
+    actuator = stage.DefinePrim(f"/toy/Physics/{joint}", "MjcActuator")
+    actuator.CreateRelationship("mjc:target").SetTargets([prim.GetPath()])
+    double = Sdf.ValueTypeNames.Double
+    actuator.CreateAttribute("mjc:ctrlRange:min", double).Set(-23.7)
+    actuator.CreateAttribute("mjc:ctrlRange:max", double).Set(23.7)
+    if biased:
+        actuator.CreateAttribute("mjc:biasType", Sdf.ValueTypeNames.Token).Set("affine")
+    return str(layer.ExportToString())
+
+
+def test_a_motors_control_range_becomes_its_torque_limit(toy: Any) -> None:
+    """Because that is what a motor's control signal is, and a servo's is a position."""
+    usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=False)
+
+    stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
+    driven = stage.GetPrimAtPath("/toy/Physics/base_to_mount")
+
+    assert str(driven.GetAttribute("mjc:biasType").Get()) == "affine"
+    assert driven.GetAttribute("mjc:forceRange:max").Get() == pytest.approx(23.7)
+    # Commanded a position now, so whatever it may reach is the joint's range to enforce.
+    assert str(driven.GetAttribute("mjc:ctrlLimited").Get()) == "false"
+
+
+def test_an_actuator_that_already_biases_keeps_its_control_range_alone(toy: Any) -> None:
+    """It is already a servo, and that range is the joint's travel rather than a torque.
+
+    The G1's layer arrives like this -- kp=500, with each joint's own travel as its control
+    range. Moving that to the force range limits the joint to a couple of newton-metres, which
+    is not enough to hold a leg up and is a thing you find out by watching a robot sit down.
+    """
+    usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=True)
+
+    stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
+    driven = stage.GetPrimAtPath("/toy/Physics/base_to_mount")
+
+    assert driven.GetAttribute("mjc:gainPrm").Get()[0] == pytest.approx(40.0)
+    assert not driven.GetAttribute("mjc:forceRange:max").HasAuthoredValue()
+
+
 def test_a_joint_the_layer_does_not_have_cannot_be_driven(toy: Any) -> None:
     with pytest.raises(ValueError, match="no joint for \\['nowhere'\\]"):
         usd_with_drives(urdf_to_usd(toy), {"nowhere": (1.0, 0.1, 0.0)})
