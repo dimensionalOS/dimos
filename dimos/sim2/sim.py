@@ -39,7 +39,6 @@ subclasses and every engine is a subclass of the one below.
 
 from importlib import import_module
 from pathlib import Path
-import time
 from typing import Any, cast
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -63,8 +62,6 @@ logger = setup_logger()
 # as text naming its assets, and `get_asset` is how a consumer that has to open files gets them.
 _SCENE_RPC = "get_scene"
 _ASSET_RPC = "get_asset"
-# How long between complaints while a manager has not answered yet.
-_NAG_EVERY = 20
 
 
 class SceneConfig(ModuleConfig):
@@ -147,23 +144,24 @@ class SimulatedWorld(SharedConfigModule):
 def scene_from(
     mount: Mount | None, rpc: Any, fallback: Path | UsdModel | None = None
 ) -> UsdModel | None:
-    """The scene a manager composed, as USD with its assets on disk. Waits until it answers.
+    """The scene a manager composed, as USD with its assets on disk. Asked once.
 
     The one way anything here learns what the world is, and used by both kinds of thing that
     need to know: the engine that is going to run it, and every sensor that is going to render
     from it. They ask the same manager the same question and get the same layer, which is what
     makes a scan land on the furniture that is drawn rather than on a generated stand-in.
 
+    One call, and no retry and no deadline on this side. `get_scene` does not answer until the
+    manager has every mount's `get_usd` grafted into the scene -- it waits on those itself, with
+    no deadline, because half a world is a room with no robots in it -- so there is nothing here
+    to poll for and nothing to give up on. Ask it after the modules are built, not while they are
+    being built, and it answers once: a manager that is not constructed yet cannot be waited for
+    by anybody.
+
     USD either way, and never a path for the asker to go and open: a scene arrives as text that
     names its assets, which is what lets it reach something sharing no filesystem with whoever
     composed it, and the names are turned back into files here -- once per machine, keyed by
     content.
-
-    Waits with no deadline, the way a manager waits on its own mounts, and for the same reason:
-    half a world is a room with no robots in it, and something that hangs waiting is easier to
-    understand than something that quietly renders the wrong thing. Each module gets its own
-    thread in the coordinator's `safe_thread_map` (`max_workers=len(items)`), so blocking one
-    cannot starve the modules it is waiting on.
     """
     if mount is None:
         return UsdModel.from_file(fallback) if isinstance(fallback, Path | str) else fallback
@@ -172,30 +170,18 @@ def scene_from(
         if mount.module is None
         else RPCClient.remote(mount.module, mount.remote_name, rpc=rpc)
     )
-    attempts = 0
-    while True:
-        attempts += 1
-        try:
-            answer = getattr(client, _SCENE_RPC)([])
-        except Exception as error:
-            answer = None
-            logger.debug(f"sim2: {mount.remote_name}.{_SCENE_RPC}() has not answered: {error}")
-        if answer:
-            logger.info(
-                f"sim2: the scene came from {mount.remote_name}.{_SCENE_RPC}()"
-                f" after {attempts} ask(s)"
-            )
-            layer = scene_as_files(
-                resolve_usd_assets(answer[USD], answer[ASSET_ROOT]),
-                lambda name: getattr(client, _ASSET_RPC)(name),
-            )
-            return UsdModel.from_file(layer)
-        if attempts % _NAG_EVERY == 0:
-            logger.warning(
-                f"sim2: still waiting on {mount.remote_name} for {_SCENE_RPC}()"
-                f" after {attempts} asks"
-            )
-        time.sleep(0.5)
+    answer = getattr(client, _SCENE_RPC)([])
+    if not answer:
+        raise ValueError(
+            f"{mount.remote_name}.{_SCENE_RPC}() answered {answer!r}, which is not a scene. It "
+            f"answers [asset_root, usd] once it has composed one, and waits until it can."
+        )
+    logger.info(f"sim2: the scene came from {mount.remote_name}.{_SCENE_RPC}()")
+    layer = scene_as_files(
+        resolve_usd_assets(answer[USD], answer[ASSET_ROOT]),
+        lambda name: getattr(client, _ASSET_RPC)(name),
+    )
+    return UsdModel.from_file(layer)
 
 
 # Which module runs the world, by name: the only thing core knows about any engine, and it knows
