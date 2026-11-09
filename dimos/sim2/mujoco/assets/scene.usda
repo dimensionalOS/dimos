@@ -1,0 +1,155 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "MuJoCo USD Converter v0.9.0"
+    }
+    defaultPrim = "scene"
+    doc = """Generated from Composed Stage of root layer /tmp/claude-1000/-home-dimos/ff9ad774-151d-43c4-9774-fa96d8ad90f5/scratchpad/scene/converted/scene.usda
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "scene" (
+    apiSchemas = ["GeomModelAPI"]
+    assetInfo = {
+        string name = "scene"
+    }
+    kind = "component"
+)
+{
+    float3[] extentsHint = [(-5, -5, 0), (5, 5, 1.02)]
+
+    def Scope "Geometry"
+    {
+        def Plane "floor" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            float3[] extent = [(-5, -5, -0), (5, 5, 0)]
+            double length = 10
+            rel material:binding:physics = </scene/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double width = 10
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Xform "shelf" (
+            apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (2, 0, 1)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Cube "shelf_box" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+            )
+            {
+                float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                rel material:binding:physics = </scene/Physics/PhysicsMaterial>
+                uniform double[] mjc:solref = [0.02, 1]
+                float newton:contactGap = 0
+                float physics:density = 1000
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                double size = 2
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (0.4, 0.4, 0.02)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def PhysicsFixedJoint "shelf_joint"
+            {
+                rel physics:body0 = </scene>
+                rel physics:body1 = </scene/Geometry/shelf>
+                point3f physics:localPos0 = (2, 0, 1)
+                point3f physics:localPos1 = (0, 0, 0)
+                quatf physics:localRot0 = (1, 0, 0, 0)
+                quatf physics:localRot1 = (1, 0, 0, 0)
+            }
+        }
+
+        def Xform "crate" (
+            apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 2, 0.5)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Cube "crate_box" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+            )
+            {
+                float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                rel material:binding:physics = </scene/Physics/PhysicsMaterial>
+                uniform double[] mjc:solref = [0.02, 1]
+                float newton:contactGap = 0
+                float physics:density = 1000
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                double size = 2
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (0.1, 0.1, 0.1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+        }
+    }
+
+    def Scope "Physics"
+    {
+        def Material "PhysicsMaterial" (
+            apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+        )
+        {
+            float newton:contactDamping = 100
+            float newton:contactStiffness = 2500
+            float newton:rollingFriction = 0.0001
+            float newton:torsionalFriction = 0.005
+            float physics:dynamicFriction = 1
+            float physics:staticFriction = 1
+        }
+    }
+}
+
+def PhysicsScene "PhysicsScene" (
+    apiSchemas = ["NewtonSceneAPI", "MjcSceneAPI"]
+)
+{
+    uniform int newton:maxSolverIterations = 100
+    uniform int newton:timeStepsPerSecond = 500
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+}
