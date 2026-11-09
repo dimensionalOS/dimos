@@ -24,7 +24,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
@@ -110,15 +109,13 @@ def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revisi
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")})
-    # rename dock, move desk
+    # rename dock, move desk, then delete desk
     publish(module, {"charger": at(1, 2, "map"), "desk": at(5, 6, "map")})
     assert positions(module.locations_snapshot()) == {"charger": (1, 2), "desk": (5, 6)}
-    # delete desk
     publish(module, {"charger": at(1, 2, "map")})
     assert names(module.locations_snapshot()) == ["charger"]
 
-    # start() says what the list is, then every applied list goes out one revision on, so every
-    # listener's cache follows
+    # start() says what the list is, then every applied list goes out one revision on
     assert [names(p) for p in published] == [[], ["dock", "desk"], ["charger", "desk"], ["charger"]]
     assert [p.seq_num for p in published] == [0, 1, 2, 3]
 
@@ -143,9 +140,8 @@ def test_the_last_writer_wins_whatever_revision_it_saw(make):
     stale = listing({"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}, both_saw)
     asyncio.run(module.handle_named_locations(stale))
 
-    # the second publisher wrote last, so its list is the list -- "dock" is back, by design
+    # the second publisher wrote last, so "dock" is back and the one that renamed hears it
     assert names(module.locations_snapshot()) == ["dock", "desk"]
-    # and it goes out, so the one that renamed hears it and agrees
     assert names(published[-1]) == ["dock", "desk"]
     assert published[-1].seq_num == 3
 
@@ -167,19 +163,6 @@ def test_a_list_from_another_run_is_applied_too(make):
     assert published[-1].server_id == module.locations_snapshot().server_id
 
 
-def test_a_request_resends_every_location(make):
-    """A viewer that starts after the module asks once and gets them all."""
-    module, published = make()
-    begin(module)
-    publish(module, {"dock": at(1, 2, "map")})
-
-    published.clear()
-    asyncio.run(module.handle_named_locations_request(String("")))
-    assert len(published) == 1
-    assert positions(published[-1]) == {"dock": (1, 2)}
-    assert all(p.header.frame_id == "map" for p in published[-1].poses)
-
-
 def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
     module, _ = make()
     module.submit(FIX)
@@ -193,7 +176,6 @@ def test_a_list_without_a_map_transform_is_ignored_and_the_truth_resent(make):
     module, published = make()
     publish(module, {"door": at(10, 1, "world")})
     assert names(module.locations_snapshot()) == []
-    # the publisher is waiting on an echo: it gets the current list, not silence
     assert len(published) == 1 and names(published[-1]) == []
 
 
@@ -223,11 +205,9 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
 
     second, published = make(map_file=run1)
     begin(second)
-    # start() publishes the seeded list, so a client that connected before this module hears it
-    # without having to ask
+    # start() publishes the seeded list, so a client that connected first hears it unasked
     assert positions(published[0]) == {"dock": (1, 2)}
-    asyncio.run(second.handle_named_locations_request(String("")))
-    assert positions(published[-1]) == {"dock": (1, 2)}
+    assert all(p.header.frame_id == "map" for p in published[0].poses)
     loaded = published[0].poses[0]
     assert loaded.header.frame_id == "map"
     assert (
@@ -237,7 +217,6 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
 
     relabelled, published = make(map_file=run1, map_frame="premap")
     begin(relabelled)
-    asyncio.run(relabelled.handle_named_locations_request(String("")))
     assert published[0].poses[0].header.frame_id == "premap"
     assert positions(published[0]) == {"dock": (1, 2)}
 
