@@ -140,3 +140,44 @@ def test_a_short_name_something_else_already_holds_is_left_alone():
     spec = _Spec(bodies=[_Element("base"), _Element("/toy/Geometry/base")])
 
     assert shorten(spec) == {}
+
+
+def test_three_of_one_robot_in_a_composed_world_keep_their_ids():
+    """A grafted subtree is nested under a prim named after its mount frame, and that is the id.
+
+    Without it every pelvis shortens to "pelvis", the three are each other's ambiguity, and none
+    is renamed -- so the world publishes prim paths as entity ids and a description looking for
+    its own robot finds nothing.
+    """
+    spec = _Spec(
+        bodies=[
+            _Element("/office_555/left/g1/Geometry/pelvis"),
+            _Element("/office_555/main/g1/Geometry/pelvis"),
+            _Element("/office_555/Geometry/desk_1"),
+        ]
+    )
+
+    shorten(spec, ids=("left", "main"))
+
+    assert [body.name for body in spec.bodies] == [
+        "left/pelvis",
+        "main/pelvis",
+        # The room keeps the name it came with: it is already published under it, and renaming
+        # the furniture would change a wire format to no purpose.
+        "/office_555/Geometry/desk_1",
+    ]
+
+
+def test_the_world_around_the_robots_keeps_the_names_it_came_with():
+    spec = _Spec(bodies=[_Element("/office_555/Geometry/desk_1")])
+
+    assert shorten(spec, ids=("left",)) == {}
+
+
+def test_an_id_matches_a_whole_path_segment_and_not_part_of_one():
+    """ "left" must not claim "/left_arm/", or two robots' frames merge under one name."""
+    spec = _Spec(bodies=[_Element("/scene/left_arm/Geometry/base")])
+
+    shorten(spec, ids=("left",))
+
+    assert [body.name for body in spec.bodies] == ["/scene/left_arm/Geometry/base"]

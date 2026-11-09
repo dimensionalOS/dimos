@@ -16,6 +16,7 @@
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -58,7 +59,14 @@ def _register_usd_reader(scene: Path) -> None:
 
 
 def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel:
-    """Robots are prefixed "<robot_id>/"; scene-mounted sensors are prefixed "world/"."""
+    """Robots are prefixed "<robot_id>/"; scene-mounted sensors are prefixed "world/".
+
+    A robot the world already holds is configured where it stands. A composed scene arrives with
+    its robots grafted in -- that is what `get_scene` answers with, and the layer the viewer draws
+    -- and attaching one on top of that would put a second copy of the robot in the room. Where
+    the world does not hold it, its own layer is read and attached, which is how a scene that is
+    only a room gets a robot at all.
+    """
     _register_usd_reader(Path(scene))
     descriptions = list(simulated)
     robots = [d for d in descriptions if isinstance(d, SimulatedRobot)]
@@ -66,58 +74,35 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     validate(descriptions)
 
     world = mujoco.MjSpec.from_file(str(scene))
+    # Before anything looks for a robot in it: a composed world names everything by prim path,
+    # and what a robot's parts are called leaves the simulation as entity ids and tf frames.
+    shorten(world, ids=[robot.robot_id for robot in robots])
     for robot in robots:
+        prefix = f"{robot.robot_id}/"
+        standing = resolved([body.name for body in world.bodies], prefix + robot.root_body)
+        if standing is not None:
+            _configure(world, robot, sensors, root=world.body(standing), prefix=prefix)
+            continue
         layer = usd_layer(robot.model)
         _register_usd_reader(layer)
         spec = mujoco.MjSpec.from_file(str(layer))
-        # Before anything looks at them: a robot's names leave the simulation as entity ids and
-        # tf frames, so what it calls its pelvis has to be "pelvis" and not the prim path USD
-        # gave it. See usd_names.shorten.
+        # The same reason as above, for a layer that is one robot and nothing else.
         shorten(spec)
         robot_geoms = {geom.name for geom in spec.geoms}
         root_name = resolved([body.name for body in spec.bodies], robot.root_body)
-        root = spec.body(root_name) if root_name else None
-        if root is None:
-            raise ValueError(f"{robot.robot_id}: no body {robot.root_body!r} in {robot.model}")
+        if root_name is None:
+            raise ValueError(f"{robot.robot_id}: no body {robot.root_body!r} in {layer}")
+        root = spec.body(root_name)
         # The description places the robot, not the source asset.
         root.pos = (0.0, 0.0, 0.0)
         root.quat = (1.0, 0.0, 0.0, 0.0)
-        if not robot.floating:
-            root.mocap = True
-        for key in list(spec.keys):
-            spec.delete(key)
-        actuators = {actuator.target: actuator for actuator in spec.actuators}
-        for servo in robot.servos:
-            try:
-                actuator = actuators[resolve(actuators, servo.joint)]
-            except KeyError as error:
-                # Naming the layer, because "no 'left_hip_pitch_joint' among " with nothing after
-                # it says only that the model arrived without its actuators, not which model or
-                # from where.
-                raise ValueError(
-                    f"{robot.robot_id}: no actuator on {servo.joint!r} in {layer} "
-                    f"({len(actuators)} actuator(s) there): {error}"
-                ) from error
-            # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
-            motor = (
-                actuator.biastype == mujoco.mjtBias.mjBIAS_NONE
-                and actuator.ctrlrange[0] < actuator.ctrlrange[1]
-            )
-            torque_limit = actuator.ctrlrange.copy()
-            actuator.set_to_position(kp=servo.kp, kv=servo.kd)
-            actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
-            if motor:
-                actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
-                actuator.forcerange = torque_limit
-        for sensor in sensors:
-            if sensor.robot_id == robot.robot_id:
-                _mount(spec, sensor, robot.robot_id)
+        _configure(spec, robot, sensors, root=root, prefix="", layer=layer)
         frame = world.worldbody.add_frame(pos=robot.xyz, quat=_quaternion(robot.rpy))
-        world.attach(spec, prefix=f"{robot.robot_id}/", frame=frame)
+        world.attach(spec, prefix=prefix, frame=frame)
         # Contact pairs naming a geom the robot lacks (its floor) mean the scene's geom of that name.
         for pair in world.pairs:
             for side in ("geomname1", "geomname2"):
-                name = getattr(pair, side).removeprefix(f"{robot.robot_id}/")
+                name = getattr(pair, side).removeprefix(prefix)
                 if getattr(pair, side) != name and name not in robot_geoms:
                     setattr(pair, side, name)
     for sensor in sensors:
@@ -126,18 +111,78 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     return world.compile()
 
 
-def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str = "") -> None:
+def _configure(
+    spec: mujoco.MjSpec,
+    robot: SimulatedRobot,
+    sensors: Iterable[SimulatedSensor],
+    *,
+    root: Any,
+    prefix: str,
+    layer: Path | None = None,
+) -> None:
+    """Turn the described robot's actuators into servos and mount its sensors, in ``spec``.
+
+    Called once per robot, on its own layer before it is attached or on the world it already
+    stands in. ``prefix`` is how that robot's parts are named in ``spec``: nothing on its own
+    layer, "<robot_id>/" in a world.
+    """
+    if not robot.floating:
+        root.mocap = True
+    for key in list(spec.keys):
+        spec.delete(key)
+    actuators = {actuator.target: actuator for actuator in spec.actuators}
+    for servo in robot.servos:
+        try:
+            actuator = actuators[resolve(actuators, prefix + servo.joint)]
+        except KeyError as error:
+            # Naming where it looked, because "no 'left_hip_pitch_joint' among " with nothing
+            # after it says only that the model arrived without its actuators, not which model
+            # or from where.
+            where = layer or "the world it stands in"
+            raise ValueError(
+                f"{robot.robot_id}: no actuator on {servo.joint!r} in {where} "
+                f"({len(actuators)} actuator(s) there): {error}"
+            ) from error
+        # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
+        motor = (
+            actuator.biastype == mujoco.mjtBias.mjBIAS_NONE
+            and actuator.ctrlrange[0] < actuator.ctrlrange[1]
+        )
+        torque_limit = actuator.ctrlrange.copy()
+        actuator.set_to_position(kp=servo.kp, kv=servo.kd)
+        actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
+        if motor:
+            actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+            actuator.forcerange = torque_limit
+    for sensor in sensors:
+        if sensor.robot_id == robot.robot_id:
+            _mount(spec, sensor, robot.robot_id, prefix=prefix, look=prefix)
+
+
+def _mount(
+    spec: mujoco.MjSpec,
+    sensor: SimulatedSensor,
+    owner: str,
+    prefix: str = "",
+    look: str = "",
+) -> None:
     """At its frame: a site of the model (on that site's body, at its pose), a body (at its origin), or "world".
 
     A frame read out of USD is named by its prim path, so the name the description uses is
     resolved against what the model actually calls things; a scene written as an MJCF names it
     the same either way.
+
+    Two prefixes, because where a frame is found and what the thing mounted at it is called are
+    not always the same. ``look`` is how that frame is named *in this spec*: nothing on a robot's
+    own layer, "<robot_id>/" in a world the robot already stands in. ``prefix`` is what the site
+    or camera is named, which for a scene-mounted sensor is "world/" and for a robot is whatever
+    its parts are already called.
     """
     frame = sensor.frame_id
     site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
     if frame != "world":
-        site_name = resolved([s.name for s in spec.sites], frame)
-        body_name = resolved([b.name for b in spec.bodies], frame)
+        site_name = resolved([s.name for s in spec.sites], look + frame)
+        body_name = resolved([b.name for b in spec.bodies], look + frame)
         site = spec.site(site_name) if site_name else None
         body = spec.body(body_name) if body_name else None
         if site is not None:
@@ -146,7 +191,7 @@ def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str
             index = compiled.site(site_name).id
             body, pos, quat = site.parent, compiled.site_pos[index], compiled.site_quat[index]
         elif body is None:
-            raise ValueError(f"{owner}: no site or body {frame!r} for its {sensor.kind}")
+            raise ValueError(f"{owner}: no site or body {look + frame!r} for its {sensor.kind}")
     name = prefix + frame
     if sensor.kind == "camera":
         # The frame is the optical frame (z forward, y down); a MuJoCo camera looks down -z, y up.
@@ -154,7 +199,9 @@ def _mount(spec: mujoco.MjSpec, sensor: SimulatedSensor, owner: str, prefix: str
         body.add_camera(
             name=name, fovy=sensor.fovy, pos=pos, quat=optical.as_quat(scalar_first=True)
         )
-    elif site is None or prefix:
+    # A site of its own unless the frame already *is* a site under that very name, in which case
+    # there is nothing to add and adding it would be a second site of the same name.
+    elif resolved([s.name for s in spec.sites], name) != name:
         body.add_site(name=name, size=_SITE_SIZE, rgba=(0, 0, 0, 0), pos=pos, quat=quat)
     if sensor.kind == "imu":
         for suffix, kind in _IMU_SENSORS.items():

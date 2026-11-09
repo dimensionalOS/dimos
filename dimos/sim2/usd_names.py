@@ -32,7 +32,7 @@ robot's elements are therefore renamed to what the description calls them before
 """
 
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 
@@ -60,7 +60,7 @@ def resolved(names: Iterable[str], wanted: str) -> str | None:
         return None
 
 
-def shorten(spec: Any) -> dict[str, str]:
+def shorten(spec: Any, ids: Iterable[str] = ()) -> dict[str, str]:
     """Rename a loaded model's parts to the names a description uses. Returns what was renamed.
 
     What a robot's parts are called does not stay inside the engine: attaching a robot under its
@@ -79,6 +79,20 @@ def shorten(spec: Any) -> dict[str, str]:
     Geoms are deliberately left alone. Nothing addresses one by short name, and a model is far
     more likely to have two of them ending the same way (``base_0``, ``base_1``) than two bodies.
 
+    ``ids`` names the robots a *composed* world holds, and is what keeps three of one robot apart
+    in it. A grafted subtree is nested under a prim named after the frame it was mounted at, so
+    MuJoCo sees ``/office_555/left/g1_29dof_rev_1_0/Geometry/pelvis`` -- the id is in the path,
+    even though the namespace itself only lives in a displayName MuJoCo never reads. An element
+    under a named robot becomes ``<id>/<tail>``, which is both what a single attached robot is
+    called and what tf already publishes. Without the ids every robot's pelvis shortens to
+    "pelvis", three of them are each other's ambiguity, and none is renamed at all.
+
+    Given ids, **only** what belongs to one of them is renamed. The world around the robots keeps
+    the names it came with: a converted room's 449 bodies are already published under those names
+    and ``resolve`` is what spares a description from having to know them, so renaming the
+    furniture would change a wire format to no purpose. Given no ids there is one model and
+    everything in it is renamed, which is the robot's own layer on its way to being attached.
+
     Ambiguity is left alone rather than guessed at: two elements *of one kind* whose paths end
     the same way, or a short name another of that kind already holds, keep the paths they came
     with. ``resolve`` still finds those, and a name that cannot be made unique is better long
@@ -87,9 +101,10 @@ def shorten(spec: Any) -> dict[str, str]:
     # A kind at a time, because MuJoCo's namespaces are per kind: the toy robot's hinge and the
     # motor driving it are both called "neck", and judging them together made each the other's
     # ambiguity, so neither was shortened and the actuator was left pointing at a path.
+    owners = list(ids)
     renames: dict[str, str] = {}
     for kind in ("bodies", "joints", "sites", "cameras", "actuators"):
-        renames.update(_shortened(getattr(spec, kind, ())))
+        renames.update(_shortened(getattr(spec, kind, ()), owners))
     if renames:
         _follow(spec, renames)
     return renames
@@ -105,15 +120,18 @@ _REFERENCES = {
 }
 
 
-def _shortened(elements: Iterable[Any]) -> dict[str, str]:
-    """Each element renamed to the tail of its path where that is unambiguous; old name -> new."""
+def _shortened(elements: Iterable[Any], owners: Sequence[str] = ()) -> dict[str, str]:
+    """Each element renamed to the name its description uses, where that is unambiguous.
+
+    old name -> new. See ``shorten``; ``owners`` are the robot ids a composed world holds.
+    """
     named = [element for element in elements if element.name]
-    tails = Counter(element.name.rsplit("/", 1)[-1] for element in named)
+    tails = Counter(_wanted(element.name, owners) for element in named)
     taken = {element.name for element in named}
     renames: dict[str, str] = {}
     for element in named:
         old = element.name
-        tail = old.rsplit("/", 1)[-1]
+        tail = _wanted(old, owners)
         if tail == old or tails[tail] > 1 or tail in taken:
             continue
         taken.discard(old)
@@ -121,6 +139,19 @@ def _shortened(elements: Iterable[Any]) -> dict[str, str]:
         element.name = tail
         renames[old] = tail
     return renames
+
+
+def _wanted(name: str, owners: Sequence[str]) -> str:
+    """The name a description would use for the element the engine calls ``name``.
+
+    ``name`` itself where it belongs to no named robot in a world that has some: nothing to
+    rename, and ``_shortened`` reads that as "leave it alone".
+    """
+    tail = name.rsplit("/", 1)[-1]
+    for owner in owners:
+        if f"/{owner}/" in name or name.startswith(f"{owner}/"):
+            return f"{owner}/{tail}"
+    return name if owners else tail
 
 
 def _follow(spec: Any, renames: Mapping[str, str]) -> None:
