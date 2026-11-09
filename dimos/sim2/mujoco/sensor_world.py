@@ -52,6 +52,9 @@ class WorldView(Protocol):
     def render(self, camera: str, width: int, height: int) -> NDArray[np.uint8]:
         """An RGB image from a camera mount."""
 
+    def owner(self, frame: str) -> str | None:
+        """The robot whose subtree this frame is in, or None where it is the room's."""
+
     def raycaster(self, groups: Sequence[int]) -> Raycaster:
         """Casts into the geoms in these groups (robots' meshes sit outside group 0)."""
 
