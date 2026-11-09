@@ -282,6 +282,10 @@ class TickLoop:
                         joint_efforts[joint_name] = joint_state.effort
                     if self._publish_robot_callback:
                         per_hardware[hw.hardware_id] = state
+                    taken = getattr(hw, "read_state_ts", None)
+                    stamp = taken() if callable(taken) else None
+                    if stamp:
+                        read_at.append(stamp)
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
             # Read whether or not a robot can be commanded: one whose readings
