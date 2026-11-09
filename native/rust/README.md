@@ -53,6 +53,14 @@ async fn main() {
 }
 ```
 
+## Handlers
+
+Handlers run one at a time on the module's task. `handle()` is one `select!` loop over every input, so while a handler is awaiting, none of the module's other inputs is served.
+
+Each input holds a buffer of eight messages. When it is full, the transport's receive thread blocks in delivery until the handler takes one out. That stalls every topic the thread carries and pushes the congestion back to the publisher, whose declared QoS resolves it: `block` holds the publisher's `publish()`, `drop` discards at the publisher. The SDK itself never drops a message.
+
+Keep handlers short: decode, update state, publish. Long work belongs on a worker task fed from the handler through its own channel, as the ray tracer, the MLS planner and the local planner do. A handler that never returns holds the transport until the module stops.
+
 ## Transport
 
 Every transport is compiled into the binary. `run_with_transport` opens the one named by the `DIMOS_TRANSPORT` env var (`lcm` or `zenoh`), which the Python coordinator sets from `global_config.transport` (the `--transport` flag). The module never names a transport, so the same binary runs over either.
@@ -196,13 +204,13 @@ impl ::dimos_module::Module for MyModule {
 }
 ```
 
-`builder.input` registers a route from the resolved topic into an mpsc channel that backs `Input<T>`. `builder.output` hands back an `Output<T>` carrying a sender into its own per-channel publish queue.
+`builder.input` registers a route from the resolved topic into the bounded channel that backs `Input<T>` (see [Handlers](#handlers)). `builder.output` hands back an `Output<T>` carrying a sender into its own per-channel publish queue.
 
 ## Lifecycle inside `run()`
 
 1. Read one JSON line from stdin, parse into topics, config, and per-channel publisher QoS.
 2. `M::build(&mut builder, config)`: macro-generated, populates each field.
-3. Subscribe each input channel on the transport (push callbacks into the input mpsc channels), and spawn one publish worker per output channel, each draining its queue into `transport.publish()`. Receive and publish run independently, and a stalled publish on one channel can't block the others.
+3. Subscribe each input channel on the transport (push callbacks into the input channels, blocking the transport while one is full), and spawn one publish worker per output channel, each draining its queue into `transport.publish()`. Receive and publish run independently, and a stalled publish on one channel can't block the others.
 4. `module.setup().await`.
 5. `module.handle().await`, racing ctrl-c.
 6. `module.teardown().await`.
