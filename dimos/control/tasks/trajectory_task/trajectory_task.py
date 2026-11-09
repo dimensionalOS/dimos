@@ -201,6 +201,9 @@ class JointTrajectoryTask(BaseControlTask):
         self._trajectory: JointTrajectory | None = None
         self._motions: dict[str, tuple[_TrajectoryRun, int]] = {}
         self._commanded_positions: dict[str, float] = {}
+        # Opt-in streamed controller jogs expire on this robot-side clock.
+        # RPC trajectories and ordinary finite position goals keep their semantics.
+        self._stream_deadlines: dict[str, float] = {}
         self._start_time: float = 0.0
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
@@ -234,6 +237,14 @@ class JointTrajectoryTask(BaseControlTask):
 
     def on_joint_command(self, msg: JointState, t_now: float) -> bool:
         """Convert streamed joint positions into a velocity-bounded trajectory target."""
+        guarded = msg.frame_id == "dimos/guarded-joint"
+        if guarded and not msg.position and len(msg.name) == len(msg.velocity):
+            if not msg.name or any(value != 0.0 for value in msg.velocity):
+                return False
+            for name in msg.name:
+                if name in self._stream_deadlines:
+                    self._stream_deadlines[name] = t_now
+            return True
         if not msg.position or len(msg.name) != len(msg.position):
             return False
         selected = [
@@ -247,7 +258,10 @@ class JointTrajectoryTask(BaseControlTask):
             joint_names=[name for name, _ in selected],
             points=[TrajectoryPoint(positions=[position for _, position in selected])],
         )
-        return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        accepted = self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        if accepted and guarded:
+            self._stream_deadlines.update((name, t_now + 0.4) for name, _ in selected)
+        return accepted
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
@@ -270,6 +284,15 @@ class JointTrajectoryTask(BaseControlTask):
         output_names = [name for name in self._joint_names_list if name in self._motions]
         all_complete = bool(self._motions)
         for joint_name, (run, index) in list(self._motions.items()):
+            deadline = self._stream_deadlines.get(joint_name)
+            if deadline is not None and state.t_now >= deadline:
+                # Hold the current reading, never the old jog's future target.
+                position = state.joints.get_position(joint_name)
+                if position is not None and math.isfinite(position):
+                    self._commanded_positions[joint_name] = position
+                del self._motions[joint_name]
+                del self._stream_deadlines[joint_name]
+                continue
             if run.start_time is None:
                 run.start_time = state.t_now
                 if run.trajectory is self._trajectory:
@@ -294,6 +317,7 @@ class JointTrajectoryTask(BaseControlTask):
             reached = math.isclose(commanded, final_position, abs_tol=1e-9)
             if nominal_complete and reached:
                 del self._motions[joint_name]
+                self._stream_deadlines.pop(joint_name, None)
             else:
                 all_complete = False
 
@@ -337,6 +361,7 @@ class JointTrajectoryTask(BaseControlTask):
         """Clear stored trajectory-specific execution state."""
         self._trajectory = None
         self._motions.clear()
+        self._stream_deadlines.clear()
         self._commanded_positions.clear()
         self._pending_start = False
         self._start_time = 0.0
@@ -469,6 +494,7 @@ class JointTrajectoryTask(BaseControlTask):
 
         run = _TrajectoryRun(trajectory)
         for index, joint_name in enumerate(trajectory.joint_names):
+            self._stream_deadlines.pop(joint_name, None)
             self._motions[joint_name] = (run, index)
             if len(trajectory.points) > 1 and joint_name not in self._commanded_positions:
                 self._commanded_positions[joint_name] = current_positions[joint_name]

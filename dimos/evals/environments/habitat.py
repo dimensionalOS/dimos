@@ -142,8 +142,7 @@ class HabitatEnvironment(Sim):
                     "goal",
                     "path",
                     "cmd_vel",
-                    "stop_movement",
-                    "goal_reached",
+                    "nav_status",
                 )
             ),
         ]

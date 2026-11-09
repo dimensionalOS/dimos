@@ -27,17 +27,20 @@ from dimos.robot.manipulators.openarm.blueprints.mini_teleop import (
     teleop_openarm_mini,
     teleop_openarm_mini_follower,
 )
-from dimos.robot.manipulators.openarm.config import OPENARM_ARM_JOINTS, OPENARM_JOINTS
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
 _CAMERAS = ("left_wrist", "right_wrist")
+# The coordinator reports the connection's joints: arm/<urdf joint>, arms then jaws.
+_JOINTS = [f"arm/{joint}" for joint in OpenArmConnection.robot.joint_names]
+_ARM_JOINTS = [f"arm/{joint}" for joint in OpenArmConnection.robot.arm_joint_names]
 
 _state = FeatureSpec(
     stream="coordinator_joint_state",
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(OPENARM_JOINTS),),
-    names=list(OPENARM_JOINTS),
+    shape=(len(_JOINTS),),
+    names=_JOINTS,
 )
 # The leaders drive the 14 arm joints only; the grippers are observed, not commanded.
 _profile = CollectionProfile(
@@ -60,8 +63,8 @@ _profile = CollectionProfile(
             update={
                 "stream": "coordinator_joint_command",
                 "source_kind": "joint_position_updates",
-                "shape": (len(OPENARM_ARM_JOINTS),),
-                "names": list(OPENARM_ARM_JOINTS),
+                "shape": (len(_ARM_JOINTS),),
+                "names": _ARM_JOINTS,
             },
             deep=True,
         )

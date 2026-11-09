@@ -23,16 +23,14 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionModule
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
 from dimos.robot.manipulators.openarm.blueprints.mini_collection import (
     openarm_mini_collection,
     openarm_mini_follower_collection,
 )
 from dimos.robot.manipulators.openarm.blueprints.mini_teleop import OPENARM_ROUTER
-from dimos.robot.manipulators.openarm.blueprints.teleop import (
-    OpenArmTeleopCoordinator,
-    _OpenArmManipulationModule,
-)
-from dimos.robot.manipulators.openarm.config import OPENARM_ARM_JOINTS, OPENARM_JOINTS
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 
 
@@ -40,6 +38,8 @@ from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 def test_collection_uses_normal_module_configuration(blueprint: Blueprint, tmp_path: Path) -> None:
     parsed = BlueprintConfigParser(blueprint).parse(
         [
+            "--left-can-port=can1",
+            "--right-can-port=can2",
             "--recorder.recording",
             str(tmp_path / "session"),
             "--episodes.task",
@@ -66,11 +66,12 @@ def test_state_observes_every_joint_and_action_is_the_commanded_arm_joints() -> 
     schema = recorder.kwargs["recording_schema"]
     state = schema.observation["observation.state"]
     assert state.stream == "coordinator_joint_state"
-    assert state.names == list(OPENARM_JOINTS)
+    assert state.names == [f"arm/{joint}" for joint in OpenArmConnection.robot.joint_names]
+    assert state.names[-2:] == ["arm/openarm_left_finger_joint1", "arm/openarm_right_finger_joint1"]
     (action,) = schema.action.values()
     assert action.stream == "coordinator_joint_command"
     assert action.source_kind == "joint_position_updates"
-    assert action.names == list(OPENARM_ARM_JOINTS)
+    assert action.names == [f"arm/{joint}" for joint in OpenArmConnection.robot.arm_joint_names]
     assert schema.observation["observation.images.left_wrist"].stream == "left_wrist_image"
     assert schema.observation["observation.images.right_wrist"].stream == "right_wrist_image"
     assert recorder.kwargs["input_types"].keys() == {
@@ -87,12 +88,16 @@ def test_one_machine_collection_wraps_the_one_machine_teleop_stack() -> None:
     assert modules[1:] == [
         EpisodeMonitorModule,
         OpenArmMiniTeleopModule,
-        OpenArmTeleopCoordinator,
-        _OpenArmManipulationModule,
+        DamiaoCoordinator,
+        OpenArmConnection,
+        ManipulationModule,
         WebcamModule,
         WebcamModule,
     ]
-    assert dict(openarm_mini_collection.remapping_map) == {
+    remaps = dict(openarm_mini_collection.remapping_map)
+    assert remaps[(OpenArmConnection.name, "position_command")] == "arm_position_command"
+    assert remaps[("ControlCoordinator", "arm_joint_state")] == "joint_state"
+    assert {k: v for k, v in remaps.items() if k[0] in ("left_wrist", "right_wrist")} == {
         ("left_wrist", "color_image"): "left_wrist_image",
         ("left_wrist", "camera_info"): "left_wrist_camera_info",
         ("left_wrist", "tf"): "left_wrist_tf",
@@ -105,7 +110,8 @@ def test_one_machine_collection_wraps_the_one_machine_teleop_stack() -> None:
 def test_follower_collection_has_no_leader_and_dials_the_robot_router() -> None:
     modules = [atom.module for atom in openarm_mini_follower_collection.active_blueprints]
     assert OpenArmMiniTeleopModule not in modules
-    assert OpenArmTeleopCoordinator in modules
+    assert DamiaoCoordinator in modules
+    assert OpenArmConnection in modules
     assert openarm_mini_follower_collection.global_config_overrides["zenoh_connect"] == (
         OPENARM_ROUTER
     )

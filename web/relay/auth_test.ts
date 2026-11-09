@@ -89,3 +89,36 @@ Deno.test("parseAuthFile rejects secrets that cannot fit in hello", () => {
   );
   assertFalse(err.message.includes(secret));
 });
+
+const SOURCE_KEY = "source-key-0123456789abcdef";
+
+Deno.test("a topic source key is bound to its source id and to nothing else", () => {
+  const auth = parseAuthFile(JSON.stringify({
+    robots: {},
+    viewers: { paul: VIEWER_TOKEN },
+    topicSources: { workspace: SOURCE_KEY },
+  }));
+  assert(auth.topicSourceKeyOk("workspace", SOURCE_KEY));
+  assertFalse(auth.topicSourceKeyOk("other", SOURCE_KEY));
+  assertFalse(auth.topicSourceKeyOk("workspace", VIEWER_TOKEN));
+  assertFalse(auth.topicSourceKeyOk("workspace", undefined));
+  assertFalse(auth.robotKeyOk("workspace", SOURCE_KEY));
+  assertEquals(auth.viewerName(SOURCE_KEY), null);
+  assertFalse(auth.bearerOk(`Bearer ${SOURCE_KEY}`));
+  // The section is optional; without it no source key is valid.
+  assertFalse(parseAuthFile(FILE).topicSourceKeyOk("workspace", SOURCE_KEY));
+});
+
+Deno.test("topic sources need valid ids and their own secrets, reported without the secret", () => {
+  for (
+    const data of [
+      { robots: {}, viewers: { paul: VIEWER_TOKEN }, topicSources: { workspace: VIEWER_TOKEN } },
+      { robots: {}, viewers: {}, topicSources: { "bad/source": SOURCE_KEY } },
+      { robots: {}, viewers: {}, topicSources: { _workspace: SOURCE_KEY } },
+      { robots: {}, viewers: {}, topicSources: [] },
+    ]
+  ) {
+    const error = assertThrows(() => parseAuthFile(JSON.stringify(data)), Error);
+    assertFalse(error.message.includes(SOURCE_KEY) || error.message.includes(VIEWER_TOKEN));
+  }
+});
