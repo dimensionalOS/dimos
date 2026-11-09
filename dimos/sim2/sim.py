@@ -67,7 +67,13 @@ _ASSET_RPC = "get_asset"
 _NAG_EVERY = 20
 
 
-class SimulatedWorldConfig(ModuleConfig):
+class SceneConfig(ModuleConfig):
+    """What anything that needs the world puts in its config: where to get it from.
+
+    Shared by the engine that runs the world and by every sensor that renders from it, because
+    they have to be pointed at the same manager and there is one right way to say so.
+    """
+
     # The world, as USD: a layer, or a file holding one. A path is read into a `UsdModel` rather
     # than handed over as a path, because an engine here is only ever given USD -- the one kind
     # of description a robot, a scene and a sensor all agree on.
@@ -77,11 +83,6 @@ class SimulatedWorldConfig(ModuleConfig):
     # and what it answers with *is* the world; `scene=` is the fallback for a world nobody
     # manages, which is what the tests are.
     scene_manager: Mount | None = None
-    # Sim seconds per wall second.
-    speed: float = 1.0
-    # Wall seconds the world waits on a stalled controller (one that has acted before) before
-    # stepping without it.
-    controller_timeout: float = 0.5
 
     @field_validator("scene_manager", mode="before")
     @classmethod
@@ -93,6 +94,14 @@ class SimulatedWorldConfig(ModuleConfig):
         wall of "Unexpected keyword argument: blueprints, transport_map, ...".
         """
         return value if value is None or isinstance(value, Mount) else Mount.of(value)
+
+
+class SimulatedWorldConfig(SceneConfig):
+    # Sim seconds per wall second.
+    speed: float = 1.0
+    # Wall seconds the world waits on a stalled controller (one that has acted before) before
+    # stepping without it.
+    controller_timeout: float = 0.5
 
 
 class SimulatedWorld(SharedConfigModule):
@@ -131,54 +140,62 @@ class SimulatedWorld(SharedConfigModule):
         self.simulated = simulated
 
     def world(self) -> UsdModel | None:
-        """The world to simulate: what the scene manager composed, or `scene=` without one.
+        """The world to simulate: what the scene manager composed, or `scene=` without one."""
+        return scene_from(self.config.scene_manager, self.rpc, self.config.scene)
 
-        USD either way, and never a path an engine goes and opens for itself: a scene arrives as
-        text that names its assets, which is what lets it reach something sharing no filesystem
-        with whoever composed it, and the names are turned back into files here -- once per
-        machine, keyed by content.
 
-        Waits with no deadline, the way a manager waits on its own mounts, and for the same
-        reason: half a world is a room with no robots in it, and a sim that hangs waiting is
-        easier to understand than one that quietly simulates the wrong thing. Each module gets
-        its own thread in the coordinator's `safe_thread_map` (`max_workers=len(items)`), so
-        blocking this one cannot starve the modules it is waiting on.
-        """
-        mount = self.config.scene_manager
-        if mount is None:
-            scene = self.config.scene
-            return UsdModel.from_file(scene) if isinstance(scene, Path | str) else scene
-        client = self._client(mount)
-        attempts = 0
-        while True:
-            attempts += 1
-            try:
-                answer = getattr(client, _SCENE_RPC)([])
-            except Exception as error:
-                answer = None
-                logger.debug(f"sim2: {mount.remote_name}.{_SCENE_RPC}() has not answered: {error}")
-            if answer:
-                logger.info(
-                    f"sim2: the world came from {mount.remote_name}.{_SCENE_RPC}()"
-                    f" after {attempts} ask(s)"
-                )
-                layer = scene_as_files(
-                    resolve_usd_assets(answer[USD], answer[ASSET_ROOT]),
-                    lambda name: getattr(client, _ASSET_RPC)(name),
-                )
-                return UsdModel.from_file(layer)
-            if attempts % _NAG_EVERY == 0:
-                logger.warning(
-                    f"sim2: still waiting on {mount.remote_name} for {_SCENE_RPC}()"
-                    f" after {attempts} asks"
-                )
-            time.sleep(0.5)
+def scene_from(
+    mount: Mount | None, rpc: Any, fallback: Path | UsdModel | None = None
+) -> UsdModel | None:
+    """The scene a manager composed, as USD with its assets on disk. Waits until it answers.
 
-    def _client(self, mount: Mount) -> Any:
-        """Whoever answers for this mount, named or typed."""
-        if mount.module is None:
-            return RPCClient(None, None, mount.remote_name, {_SCENE_RPC, _ASSET_RPC}, rpc=self.rpc)
-        return RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
+    The one way anything here learns what the world is, and used by both kinds of thing that
+    need to know: the engine that is going to run it, and every sensor that is going to render
+    from it. They ask the same manager the same question and get the same layer, which is what
+    makes a scan land on the furniture that is drawn rather than on a generated stand-in.
+
+    USD either way, and never a path for the asker to go and open: a scene arrives as text that
+    names its assets, which is what lets it reach something sharing no filesystem with whoever
+    composed it, and the names are turned back into files here -- once per machine, keyed by
+    content.
+
+    Waits with no deadline, the way a manager waits on its own mounts, and for the same reason:
+    half a world is a room with no robots in it, and something that hangs waiting is easier to
+    understand than something that quietly renders the wrong thing. Each module gets its own
+    thread in the coordinator's `safe_thread_map` (`max_workers=len(items)`), so blocking one
+    cannot starve the modules it is waiting on.
+    """
+    if mount is None:
+        return UsdModel.from_file(fallback) if isinstance(fallback, Path | str) else fallback
+    client = (
+        RPCClient(None, None, mount.remote_name, {_SCENE_RPC, _ASSET_RPC}, rpc=rpc)
+        if mount.module is None
+        else RPCClient.remote(mount.module, mount.remote_name, rpc=rpc)
+    )
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            answer = getattr(client, _SCENE_RPC)([])
+        except Exception as error:
+            answer = None
+            logger.debug(f"sim2: {mount.remote_name}.{_SCENE_RPC}() has not answered: {error}")
+        if answer:
+            logger.info(
+                f"sim2: the scene came from {mount.remote_name}.{_SCENE_RPC}()"
+                f" after {attempts} ask(s)"
+            )
+            layer = scene_as_files(
+                resolve_usd_assets(answer[USD], answer[ASSET_ROOT]),
+                lambda name: getattr(client, _ASSET_RPC)(name),
+            )
+            return UsdModel.from_file(layer)
+        if attempts % _NAG_EVERY == 0:
+            logger.warning(
+                f"sim2: still waiting on {mount.remote_name} for {_SCENE_RPC}()"
+                f" after {attempts} asks"
+            )
+        time.sleep(0.5)
 
 
 # Which module runs the world, by name: the only thing core knows about any engine, and it knows
