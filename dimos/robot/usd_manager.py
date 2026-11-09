@@ -262,7 +262,7 @@ class UsdManager(Module):
 
     def __init__(self, **kwargs: object) -> None:
         # Set once this manager is wholly built. super().__init__ takes an RPC session, so from
-        # that line on a caller can ask for the scene -- and one does, the moment a Simulation
+        # that line on a caller can ask for the scene -- and one does, the moment a simulation
         # goes looking for the world it is about to run. That reached a half-built object:
         # `AttributeError: 'UsdManager' object has no attribute '_subtree_clients'`. The rpcs
         # that need this module assembled wait on it instead, which they can because they are

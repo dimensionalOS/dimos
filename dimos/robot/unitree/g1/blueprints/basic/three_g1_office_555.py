@@ -14,11 +14,9 @@
 
 """Three G1s standing in office_555: one world, three robots, each with its own description.
 
-The room is the physics as well as the picture, and it is the *same file* for both: MuJoCo reads
-the converted `scene.usda` directly, so `Simulation` compiles the very layer the viewer draws
-(449 bodies, 3925 geoms). A lidar return therefore comes off the furniture that is on screen
-rather than off a generated stand-in -- a scan landing outside the walls that are drawn is the
-usual sign those two have drifted apart.
+The room is the physics as well as the picture, and it is the *same layer* for both: the room's
+manager composes `scene.usda` with the robots grafted in (449 bodies, 3925 geoms before they
+arrive), and that composition is what every part of this reads.
 
 Each robot walks under its own GR00T whole-body controller, the same task and the same ONNX
 policy the real G1 runs: the coordinator reads that robot's `motor_states` and `imu`, and writes
@@ -31,6 +29,12 @@ namespace. One manager per robot is not an accident of wiring: a manager answers
 model, so three robots sharing one would have to pick which of them it describes. Namespacing
 gives each its own `joint_state` and its own tf, and `expose` lets the three of them still reach
 the single world they are standing in.
+
+Above those three sits the room's own manager, and what *it* composes is the world: the office
+with all three robots and their lidars grafted into it. That one layer is what the physics runs,
+what each lidar ranges against, and what the viewer draws -- which is the point. A scan landing
+outside the walls that are drawn is the usual sign those have drifted apart, and now there is
+only one of them to drift.
 """
 
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
@@ -46,7 +50,8 @@ from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
-from dimos.sim2.module import Simulation
+from dimos.sim2.sim import sim_module
+from dimos.sim2.spec import SimulatedRobot
 from dimos.simulation.scenes.office_555.room import SCENE
 from dimos.utils.data import LfsPath
 from dimos.visualization.vis_module import vis_module
@@ -61,6 +66,11 @@ SPOTS = {
 # What each namespace lets through to the shared world: the simulation is one world for all
 # three, so its traffic must not be namespaced apart with the rest of the robot's topics.
 SHARED = {"world_observations", "actions"}
+# The namespace the room's manager lives in, and so the name everything that needs the world
+# asks it by. Its own namespace because a manager outside every namespace would be a fourth one
+# answering on the same unnamespaced topics as the three robots'.
+SCENE_NAMESPACE = "scene"
+SCENE_MANAGER = f"{SCENE_NAMESPACE}/{UsdManager.name}"
 # The one robot the joystick drives. Its cmd_vel is the unnamespaced topic the Controller
 # publishes on; the other two keep theirs inside their namespace, where nothing writes, so
 # they stand still. One joystick driving all three at once was a demo, not a thing anyone
@@ -153,8 +163,24 @@ SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
 )
 
 
+def _lidar(name: str):
+    """This robot's Mid-360, built once per robot so the manager can mount the same instance.
+
+    Memoised because a blueprint object is the thing a manager addresses: constructing it twice
+    would deploy two lidars and mount one of them.
+    """
+    if name not in _LIDARS:
+        _LIDARS[name] = LivoxSim.blueprint(
+            frame_id=G1Sim.lidar_mount_frame, scene_manager=SCENE_MANAGER
+        )
+    return _LIDARS[name]
+
+
+_LIDARS: dict[str, object] = {}
+
+
 def _robot(name: str):
-    """One G1 in the room: the sim module, the description it serves, and its Mid-360."""
+    """One G1 in the room: its sim module, the manager that answers for it, and its Mid-360."""
     return (
         autoconnect(
             # The robot id and the namespace are the same word on purpose: what
@@ -164,6 +190,8 @@ def _robot(name: str):
                 robot_id=name,
                 # No xy: the scene's mount frame places this robot now.
                 frame_id=f"{name}/pelvis",
+                # Where it reads the world from, for the IMU in its own pelvis.
+                scene_manager=SCENE_MANAGER,
                 # No fade-in, to match the controller arming with no ramp. The fade-in exists
                 # for a real G1, where something else holds the robot while stiffness comes up.
                 # Here nothing does: until the first command the servos' own gains hold the
@@ -172,8 +200,8 @@ def _robot(name: str):
                 # long before the three seconds are up.
                 soft_start_seconds=0.0,
             ),
-            UsdManager.blueprint(),
-            LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame),
+            UsdManager.blueprint(model=G1Sim.usd, mounts={G1Sim.lidar_mount_frame: _lidar(name)}),
+            _lidar(name),
             _walker(name),
         )
         .remappings(
@@ -224,23 +252,22 @@ scene_manager = UsdManager.blueprint(
     # root on the way out is what joins the room to the frame the robots already stand in.
     tf_renames={"office_555": "world"},
 ).namespace(
-    # A namespace of its own, for one reason: a manager outside every namespace hears
-    # @shared_config(UsdManager) from all three robots and refuses, having been handed four
-    # models when it answers for one. The topics a viewer reaches it on stay unnamespaced.
-    "scene",
+    # A namespace of its own, so it is not a fourth manager answering on the same unnamespaced
+    # topics as the three robots'. The topics a viewer reaches it on stay unnamespaced.
+    SCENE_NAMESPACE,
     expose={"render_file_request", "file_info", "tf"},
 )
 
 three_g1_office_555 = autoconnect(
-    # Back on the file while the sim2 redesign lands. `scene_manager=_manager_name(scene_manager)`
-    # is the composed path and it works from a cold asset cache -- 3733 references over 927 files,
-    # Blueprint started, no errors -- but with the cache warm the start goes wrong two different
-    # ways: once a module's `start()` rpc never returned, once a sensor began before its streams
-    # were wired ("'NoneType' object has no attribute 'subscribe'"). Both are the coordinator's
-    # build/wire/start ordering meeting a Simulation.build that now does an rpc and rewrites four
-    # thousand asset references, and both go away with the redesign that moves the loop into the
-    # backend module. Not worth leaving the sim broken in the meantime.
-    Simulation.blueprint(scene=SCENE),
+    sim_module(
+        # The world is what the scene's manager composed: the room, with all three robots and
+        # their lidars grafted into it. Not the room on its own -- that would be a world the
+        # physics ran with nothing standing in it, and three robots publishing into it.
+        scene_manager=SCENE_MANAGER,
+        # The one thing a layer cannot say: what the world calls each robot. Where each stands is
+        # the room's mount frame, and the gains and pose that hold them up are in G1Sim.usd.
+        robots=[SimulatedRobot(name, G1Sim.usd) for name in SPOTS],
+    ),
     vis_module(viewer_backend=global_config.viewer),
     scene_manager,
     *_robots.values(),
