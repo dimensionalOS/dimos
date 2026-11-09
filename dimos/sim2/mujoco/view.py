@@ -22,10 +22,11 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.sim2.mujoco.names import resolve
+from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
+from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
 
 _GRAVITY = np.array([0.0, 0.0, -9.81])
 
@@ -34,8 +35,11 @@ class MujocoView:
     def __init__(self, description: Mapping[str, Any]) -> None:
         # Its own model of the world: nothing here reads the backend.
         self.model = compile_world(Path(description["scene"]), description["simulated"])
+        # Each robot's id and what its description calls the body everything else hangs off.
         self._robots = {
-            d.robot_id for d in description["simulated"] if isinstance(d, SimulatedRobot)
+            d.robot_id: d.root_body
+            for d in description["simulated"]
+            if isinstance(d, SimulatedRobot)
         }
         self._joints: dict[str, int] = {}
         self._robot_roots: dict[str, int] = {}
@@ -114,9 +118,73 @@ class MujocoView:
         renderer.update_scene(self.data, camera=camera)
         return renderer.render().copy()
 
-    def raycaster(self, groups: Sequence[int]) -> MujocoRaycaster:
+    def raycaster(
+        self,
+        groups: Sequence[int],
+        mounted_at: str | None = None,
+        blind_to: Sequence[str] = (),
+    ) -> MujocoRaycaster:
+        """Rays against ``groups``; ``mounted_at`` names a frame whose own body they pass through.
+
+        A ranging sensor is bolted to something, and in a model it sits inside that something's
+        collision hull rather than proud of its surface -- a hull is a few convex shapes around
+        a shape that is neither. Cast against collision geometry without saying so and every
+        ray, in every direction, returns the mount a couple of centimetres away; a sensor that
+        drops returns inside its blind range then reports nothing at all.
+
+        Excluding the one body the sensor is mounted on says only "a sensor does not see its own
+        housing", which is true of every sensor on every robot and needs no distance picked by
+        hand. Everything else stays visible, the arms and legs hanging off that mount included.
+
+        ``blind_to`` names any further frames to ignore, for the cases that rule does not cover:
+        a radome, a mast the sensor looks past, a wall a test wants out of the way. MuJoCo can
+        exclude one body from a cast, so these are moved instead to a geom group the cast does
+        not read -- in this view's own model, and a geom's group is a label it selects and draws
+        by, never one it simulates by.
+        """
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
-        return MujocoRaycaster(self.model, self.data, mask)
+        for frame in blind_to or ():
+            self._hide_from_rays(self._mount(frame), groups)
+        mount = NO_BODY_EXCLUDED if mounted_at is None else self._mount(mounted_at)
+        return MujocoRaycaster(self.model, self.data, mask, mount)
+
+    def _hide_from_rays(self, body: int, groups: Sequence[int]) -> None:
+        """Move ``body``'s geoms to a group ``groups`` leaves out, so rays pass through it."""
+        spare = next((g for g in range(mujoco.mjNGROUP) if g not in groups), None)
+        if spare is None:
+            raise ValueError(
+                f"a cast over every geom group ({sorted(groups)}) leaves nowhere to put a frame "
+                f"it is meant to be blind to"
+            )
+        start = int(self.model.body_geomadr[body])
+        self.model.geom_group[start : start + int(self.model.body_geomnum[body])] = spare
+
+    def _mount(self, frame: str) -> int:
+        """The body ``frame`` is attached to: the nearest one at or above it that has any geometry.
+
+        A mount frame used to be a site, whose body is whatever it was placed on. Described in
+        USD it is a link of its own, welded to the thing it is bolted to -- the G1's mid360_link
+        hangs off torso_link rather than marking a spot on it -- and a frame carries no geometry,
+        so taking it at face value excluded a body with nothing in it. The housing stayed visible,
+        every ray came back 22 mm away inside the sensor's blind range, and the scan came out
+        empty: the exact failure this exclusion exists to prevent.
+
+        Walking up stops short of the world, whose geometry is the floor and the last thing a
+        ranging sensor should be blind to.
+        """
+        kind, index = self._frame(frame)
+        if kind == mujoco.mjtObj.mjOBJ_SITE:
+            body = int(self.model.site_bodyid[index])
+        elif kind == mujoco.mjtObj.mjOBJ_CAMERA:
+            body = int(self.model.cam_bodyid[index])
+        else:
+            body = int(index)
+        while self.model.body_geomnum[body] == 0:
+            parent = int(self.model.body_parentid[body])
+            if parent == 0:
+                return body
+            body = parent
+        return body
 
     def close(self) -> None:
         for renderer in self._renderers.values():
@@ -160,13 +228,21 @@ class MujocoView:
         return self._joints[name]
 
     def _root(self, robot_id: str) -> int:
-        # Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading
-        # this 200 times a second would otherwise rescan every body in the scene each time.
+        """The body this robot's description calls its root.
+
+        By name, not by position in the tree. This used to take the one top-level body whose name
+        started with the robot's id, which holds when `compile_world` attaches a robot to the
+        worldbody and not when the world arrives composed -- there the robots hang under the room
+        and nothing is top-level but the room. The bare `next()` then raised from inside a
+        sensor's task as `coroutine raised StopIteration`, twice per robot, saying nothing.
+
+        Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading this
+        200 times a second would otherwise rescan every body in the scene each time.
+        """
         if robot_id not in self._robot_roots:
-            bodies = [b for b in range(1, self.model.nbody) if self.model.body_parentid[b] == 0]
-            self._robot_roots[robot_id] = next(
-                b for b in bodies if self.model.body(b).name.startswith(f"{robot_id}/")
-            )
+            wanted = f"{robot_id}/{self._robots[robot_id]}"
+            names = [self.model.body(b).name for b in range(self.model.nbody)]
+            self._robot_roots[robot_id] = int(self.model.body(resolve(names, wanted)).id)
         return self._robot_roots[robot_id]
 
     def _pose_entity(self, entity: Entity, body: int) -> None:

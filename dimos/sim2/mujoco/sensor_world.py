@@ -19,7 +19,6 @@ The renderer drawing the view is chosen by name, as backends are.
 """
 
 from collections.abc import Mapping, Sequence
-from importlib import import_module
 from typing import Any, Protocol
 
 import numpy as np
@@ -29,8 +28,6 @@ from scipy.spatial.transform import Rotation
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
-
-RENDERERS = {"mujoco": "dimos.sim2.mujoco_view.MujocoView"}
 
 Vector = NDArray[np.float64]
 
@@ -65,16 +62,37 @@ def rotation_matrix(wxyz: Vector) -> Vector:
 
 
 def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
-    """The view's name for the sensor at frame_id in the world Simulation.describe() returned."""
+    """The view's name for the sensor at frame_id in the world Simulation.describe() returned.
+
+    Raises naming what the world does hold. This used to be a bare `next()`, so a sensor the
+    world had never heard of came out of a module's `main` as `RuntimeError: coroutine raised
+    StopIteration` -- six of them, one per sensor, with nothing to say which frame was missing
+    or what the alternatives were.
+    """
     sensor = next(
-        d
-        for d in description["simulated"]
-        if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
+        (
+            d
+            for d in description["simulated"]
+            if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
+        ),
+        None,
     )
+    if sensor is None:
+        known = sorted(
+            d.frame_id for d in description["simulated"] if isinstance(d, SimulatedSensor)
+        )
+        raise KeyError(f"no sensor at frame {frame_id!r} in this world; it has sensors at {known}")
     return f"{sensor.robot_id or 'world'}/{frame_id}"
 
 
-def open_view(description: Mapping[str, Any], renderer: str = "mujoco") -> WorldView:
-    """A view of the world that Simulation.describe() returned."""
-    module, _, cls = RENDERERS[renderer].rpartition(".")
-    return getattr(import_module(module), cls)(description)  # type: ignore[no-any-return]
+def open_view(description: Mapping[str, Any]) -> WorldView:
+    """A sensor's own world, built from the same description the simulation was built from.
+
+    A sensor does not read the simulation's world: it instantiates one, applies the observations
+    it is sent, and reports what its own copy says. So this belongs to the sensors and to the
+    engine they build with -- not to sim2's core, which only instantiates a backend, publishes
+    observations and takes actions, and has no business knowing that anything is watching.
+    """
+    from dimos.sim2.mujoco.view import MujocoView
+
+    return MujocoView(description)
