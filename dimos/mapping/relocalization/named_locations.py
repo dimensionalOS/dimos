@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
@@ -31,7 +30,7 @@ logger = setup_logger()
 
 def location_frame(name: str) -> str:
     """The tf frame a named location hangs at, under the map frame."""
-    return "location_" + re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")
+    return "location_" + name
 
 
 def same_locations(a: dict[str, PoseStamped], b: dict[str, PoseStamped]) -> bool:
