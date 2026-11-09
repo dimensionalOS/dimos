@@ -118,6 +118,8 @@ class PerceptionLocalize(Module):
 
     detections: Out[Detection3DArray]
 
+    _thread: threading.Thread | None = None
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -183,13 +185,15 @@ class PerceptionLocalize(Module):
 
     @rpc
     def stop(self) -> None:
-        self._stop.set()
-        self._ready.clear()
-        self._thread.join(timeout=5.0)
-        for unsubscribe in self._unsubs:
-            unsubscribe()
-        self._tf_buffer.dispose()
-        self._memento.close()
+        # the thread is the last thing start() creates
+        if self._thread is not None:
+            self._stop.set()
+            self._ready.clear()
+            self._thread.join(timeout=5.0)
+            for unsubscribe in self._unsubs:
+                unsubscribe()
+            self._tf_buffer.dispose()
+            self._memento.close()
         super().stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:

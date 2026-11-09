@@ -116,6 +116,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
         self._last_said = ""
         self._stop_event = threading.Event()
         self._publisher: threading.Thread | None = None
+        self._latest: dict[str, LatestReader[Any]] = {}
 
     def trigger(self) -> Observable[object]:
         pose: Observable[object] = self.odom.observable().pipe(
@@ -181,7 +182,7 @@ class TypeSafeNavigationAgent(TypeSafeAgent):
 
     @rpc
     def start(self) -> None:
-        self._latest: dict[str, LatestReader[Any]] = {
+        self._latest = {
             "detections_3d": getter_streaming(
                 self.detections_3d.observable(), timeout=0, nonblocking=True
             ),

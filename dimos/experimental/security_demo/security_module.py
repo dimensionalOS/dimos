@@ -185,7 +185,8 @@ class SecurityModule(Module):
 
     @rpc
     def stop(self) -> None:
-        self._stop_security_patrol_internal()
+        if self._main_thread is not None:
+            self._stop_security_patrol_internal()
         self._depth_estimator.stop()
         self._detector.stop()
         self._tracker.stop()
