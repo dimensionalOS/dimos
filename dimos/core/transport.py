@@ -214,6 +214,7 @@ class ROSTransport(PubSubTransport[Any]):
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
         super().__init__(ROSTopic(topic, msg_type))
+        self._kwargs = kwargs
 
     def cbor_encode(self) -> dict[str, Any]:
         return {"topic": self.topic.topic, "msg_type": self.topic.msg_type}
@@ -238,7 +239,7 @@ class ROSTransport(PubSubTransport[Any]):
         if self._ros is None:
             from dimos.protocol.pubsub.impl.rospubsub import DimosROS  # rclpy: see __init__
 
-            self._ros = DimosROS()
+            self._ros = DimosROS(**self._kwargs)
             self._ros.start()
 
     def stop(self) -> None:
