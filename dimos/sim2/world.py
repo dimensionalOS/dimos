@@ -88,7 +88,16 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
             spec.delete(key)
         actuators = {actuator.target: actuator for actuator in spec.actuators}
         for servo in robot.servos:
-            actuator = actuators[resolve(actuators, servo.joint)]
+            try:
+                actuator = actuators[resolve(actuators, servo.joint)]
+            except KeyError as error:
+                # Naming the layer, because "no 'left_hip_pitch_joint' among " with nothing after
+                # it says only that the model arrived without its actuators, not which model or
+                # from where.
+                raise ValueError(
+                    f"{robot.robot_id}: no actuator on {servo.joint!r} in {layer} "
+                    f"({len(actuators)} actuator(s) there): {error}"
+                ) from error
             # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
             motor = (
                 actuator.biastype == mujoco.mjtBias.mjBIAS_NONE

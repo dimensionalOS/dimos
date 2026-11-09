@@ -88,6 +88,7 @@ def _pxr() -> _Pxr:
         return _PXR
     with _PXR_LOCK:
         if _PXR is None:
+            _let_mujoco_register_its_schemas_first()
             try:
                 from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, Vt
             except ImportError as exc:  # pragma: no cover - only where the extra is absent
@@ -96,6 +97,31 @@ def _pxr() -> _Pxr:
                 Gf=Gf, Sdf=Sdf, Tf=Tf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics, Vt=Vt
             )
     return _PXR
+
+
+def _let_mujoco_register_its_schemas_first() -> None:
+    """Import MuJoCo's USD reader before pxr, where MuJoCo is installed at all.
+
+    Two OpenUSD runtimes end up in one process -- usd-core's, which this module uses to write a
+    layer, and the one MuJoCo bundles to read one -- and whichever initialises first owns the
+    plugin registry. With usd-core first, MuJoCo's own ``mjcPhysics`` schemas are never
+    registered, so every ``MjcActuator`` in a layer parses as an untyped prim and is dropped.
+
+    Nothing says so. Geometry is plain UsdGeom and UsdPhysics and loads either way, so the G1
+    came up as a complete robot with **no actuators at all** and the only symptom, much later,
+    was `no 'left_hip_pitch_joint' among ` -- a servo looking for a motor in a model that had
+    silently lost all 29 of them.
+
+    Importing it here is the only placement that holds, because this function is where pxr is
+    first touched and a caller cannot know it is the first. It costs nothing where MuJoCo is
+    absent (a robot posing itself on tf never has it) and nothing on later calls, since the
+    import is cached and this runs once.
+    """
+    try:
+        import mujoco._usd  # noqa: F401
+    except ImportError:
+        # No MuJoCo here, so nothing is going to read a layer back with it.
+        return
 
 
 @dataclass(frozen=True)
