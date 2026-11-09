@@ -25,6 +25,7 @@ PROVIDERS: dict[str, tuple[str, str]] = {
 PASSTHROUGH_ENV: tuple[str, ...] = (
     "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
     "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "PI_OFFLINE",
 )  # fmt: skip
 
 # Upper bound on one bash tool call, seconds.

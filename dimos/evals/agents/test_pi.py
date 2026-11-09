@@ -282,6 +282,19 @@ def test_model_proxy_keeps_native_provider_and_no_secret(
         assert env.get(name) == os.environ.get(name)
 
 
+@pytest.mark.parametrize("offline", [None, "0", "1"])
+def test_pi_offline_setting_reaches_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, offline: str | None
+) -> None:
+    monkeypatch.delenv("PI_OFFLINE", raising=False)
+    if offline is not None:
+        monkeypatch.setenv("PI_OFFLINE", offline)
+
+    env = PiAdapter()._build_process_env(RunPaths.for_run(tmp_path))
+
+    assert env.get("PI_OFFLINE") == offline
+
+
 def test_anthropic_sse_usage_and_trace_matching(tmp_path: Path) -> None:
     raw = tmp_path / "raw"
     raw.mkdir()

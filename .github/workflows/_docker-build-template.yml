@@ -24,7 +24,7 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         if: ${{ inputs.should-run }}
         with:
           fetch-depth: 0
@@ -123,7 +123,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # required for github cache of docker layers
-      - uses: crazy-max/ghaction-github-runtime@v4
+      - uses: crazy-max/ghaction-github-runtime@v4.0.0
         if: ${{ inputs.should-run }}
 
       # required for github cache of docker layers
