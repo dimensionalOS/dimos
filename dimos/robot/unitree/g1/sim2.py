@@ -108,7 +108,6 @@ IMU_FRAME = "imu_in_pelvis"
 
 class G1SimConfig(SceneConfig):
     robot_id: str = "g1"
-    xy: tuple[float, float] = (0.0, 0.0)
     frame_id: str = "g1_pelvis"
     # What the robot's pose is given in. The world frame, as the Go2 twin uses.
     odom_frame_id: str = "world"
