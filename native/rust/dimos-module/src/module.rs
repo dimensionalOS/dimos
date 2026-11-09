@@ -606,8 +606,8 @@ async fn shutdown_signal() -> io::Result<()> {
 mod tests {
     use super::*;
     use serde::Deserialize;
-    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::mpsc::{Receiver, Sender};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
@@ -629,15 +629,16 @@ mod tests {
         }
     }
 
-    type InboundQueue = Mutex<VecDeque<(String, Vec<u8>)>>;
+    type Inbound = (String, Vec<u8>);
 
     /// Mock push transport for testing receive/publish concurrency.
     ///
-    /// `subscribe` registers callbacks. One delivery loop drains an inbound queue
-    /// into them, independent of the publish path.
+    /// `subscribe` registers callbacks. One delivery thread drains an inbound
+    /// queue into them, independent of the publish path, like the real
+    /// transports do.
     struct ControllableMockTransport {
-        inbound: Arc<InboundQueue>,
-        inbound_notify: Arc<Notify>,
+        inbound: Sender<Inbound>,
+        inbound_rx: Mutex<Option<Receiver<Inbound>>>,
         subscriptions: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
         listening: Arc<AtomicBool>,
         publish_delay_ms: Arc<AtomicU64>,
@@ -649,9 +650,10 @@ mod tests {
 
     impl ControllableMockTransport {
         fn new() -> Self {
+            let (inbound, inbound_rx) = std::sync::mpsc::channel();
             Self {
-                inbound: Arc::new(InboundQueue::new(VecDeque::new())),
-                inbound_notify: Arc::new(Notify::new()),
+                inbound,
+                inbound_rx: Mutex::new(Some(inbound_rx)),
                 subscriptions: Arc::new(Mutex::new(HashMap::new())),
                 listening: Arc::new(AtomicBool::new(false)),
                 publish_delay_ms: Arc::new(AtomicU64::new(0)),
@@ -663,26 +665,20 @@ mod tests {
         }
 
         fn spawn_delivery_loop(&self) {
-            let inbound = Arc::clone(&self.inbound);
-            let inbound_notify = Arc::clone(&self.inbound_notify);
+            let inbound_rx = self.inbound_rx.lock().unwrap().take().unwrap();
             let subscriptions = Arc::clone(&self.subscriptions);
             let dispatch_entered = Arc::clone(&self.dispatch_entered);
             let dispatch_log = Arc::clone(&self.dispatch_log);
-            tokio::spawn(async move {
-                loop {
-                    let popped = inbound.lock().unwrap().pop_front();
-                    if let Some((channel, data)) = popped {
-                        dispatch_entered.notify_one();
-                        let callbacks = subscriptions.lock().unwrap().get(&channel).cloned();
-                        if let Some(callbacks) = callbacks {
-                            for cb in &callbacks {
-                                cb(&data);
-                            }
+            std::thread::spawn(move || {
+                for (channel, data) in inbound_rx {
+                    dispatch_entered.notify_one();
+                    let callbacks = subscriptions.lock().unwrap().get(&channel).cloned();
+                    if let Some(callbacks) = callbacks {
+                        for cb in &callbacks {
+                            cb(&data);
                         }
-                        dispatch_log.lock().unwrap().push(Instant::now());
-                    } else {
-                        inbound_notify.notified().await;
                     }
+                    dispatch_log.lock().unwrap().push(Instant::now());
                 }
             });
         }
@@ -713,12 +709,8 @@ mod tests {
         }
     }
 
-    fn inject_inbound(inbound: &InboundQueue, notify: &Notify, channel: &str, data: Vec<u8>) {
-        inbound
-            .lock()
-            .unwrap()
-            .push_back((channel.to_string(), data));
-        notify.notify_one();
+    fn inject_inbound(inbound: &Sender<Inbound>, channel: &str, data: Vec<u8>) {
+        inbound.send((channel.to_string(), data)).unwrap();
     }
 
     async fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
@@ -1056,7 +1048,6 @@ mod tests {
         let dispatch_log = transport.dispatch_log.clone();
         let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
-        let inbound_notify = transport.inbound_notify.clone();
         let publish_delay_ms = transport.publish_delay_ms.clone();
         let publish_entered = transport.publish_entered.clone();
 
@@ -1079,7 +1070,7 @@ mod tests {
             .await
             .expect("publish task should pick up publish_rx within 1s");
 
-        inject_inbound(&inbound, &inbound_notify, "/data", vec![42u8]);
+        inject_inbound(&inbound, "/data", vec![42u8]);
 
         wait_for("dispatch to fire and publish to complete", || {
             !dispatch_log.lock().unwrap().is_empty() && !publish_log.lock().unwrap().is_empty()
@@ -1100,7 +1091,6 @@ mod tests {
         let transport = ControllableMockTransport::new();
         let publish_log = transport.publish_log.clone();
         let inbound = transport.inbound.clone();
-        let inbound_notify = transport.inbound_notify.clone();
         let dispatch_entered = transport.dispatch_entered.clone();
 
         let mut builder = Builder::new(topics(&[("slow", "/slow"), ("out", "/out")]));
@@ -1122,7 +1112,7 @@ mod tests {
         let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // send a message to the receiver
-        inject_inbound(&inbound, &inbound_notify, "/slow", vec![1u8]);
+        inject_inbound(&inbound, "/slow", vec![1u8]);
 
         // make sure dispatch begins and blocks in decode before we publish
         tokio::time::timeout(Duration::from_secs(1), dispatch_entered.notified())
@@ -1229,7 +1219,6 @@ mod tests {
     async fn panicking_route_does_not_starve_siblings_on_same_channel() {
         let transport = ControllableMockTransport::new();
         let inbound = transport.inbound.clone();
-        let inbound_notify = transport.inbound_notify.clone();
 
         let delivered = Arc::new(AtomicU64::new(0));
         let mut routes: HashMap<String, Vec<Box<dyn Route>>> = HashMap::new();
@@ -1242,7 +1231,7 @@ mod tests {
         );
 
         subscribe_routes(&transport, routes).await.unwrap();
-        inject_inbound(&inbound, &inbound_notify, "/data", vec![7u8]);
+        inject_inbound(&inbound, "/data", vec![7u8]);
 
         wait_for("sibling route to receive despite the panic", || {
             delivered.load(Ordering::SeqCst) == 1
