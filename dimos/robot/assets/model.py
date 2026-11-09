@@ -38,9 +38,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# An xyz or an rpy triple. Spelled out here rather than imported from assets/usd.py, which
-# needs usd-core: pydantic resolves this annotation by name when it builds a model around
-# UsdModel, and a name it cannot reach is a model that will not finish defining itself.
+# An xyz or rpy triple. Not imported from assets/usd.py (needs usd-core): pydantic resolves
+# this annotation by name, and a name it cannot reach never finishes defining UsdModel.
 Vector = tuple[float, float, float]
 
 
@@ -113,7 +112,6 @@ class LoadedRobotModel:
         return next((joint for joint in self.joints if joint.name == name), None)
 
     def referenced_files(self) -> set[str]:
-        """The full path of every file the URDF names (mesh, texture, splat, ...)."""
         return {
             element.attrib["filename"]
             for element in ET.fromstring(self.xml).iter()
@@ -125,34 +123,20 @@ class LoadedRobotModel:
 class UsdModel:
     """A robot or scene as USD: what a UsdManager works from, whatever it was described in.
 
-    One class and not two, unlike RobotModel's split into a loaded form: a USD layer has
-    nothing to expand, so ``load()`` returns itself.
-
-    A layer alone cannot answer everything a manager asks. Its joints are UsdPhysics prims and
-    nothing reads those back into forward kinematics yet; its defaultPrim is the robot, not the
-    root link; and a URDF names files, a texture among them, that the conversion does not carry
-    into the layer. So a model converted from a URDF keeps it, and answers from whichever of the
-    two knows. A layer read from disk has only the layer.
-
-    The layer itself is produced on demand. Converting one needs usd-core, which has no wheel
-    for linux-aarch64, and a robot that only poses itself on tf never asks for a layer.
+    One class, not two like RobotModel: a layer has nothing to expand, so ``load()`` returns
+    itself. A URDF-converted model keeps the URDF, because a layer alone cannot answer joints
+    (UsdPhysics prims, no forward kinematics), the root link (defaultPrim is the robot) or the
+    files a URDF names. Layers convert on demand: usd-core has no linux-aarch64 wheel.
     """
 
     _source_path: Path | str | os.PathLike[str] | None = None
-    # The description this converts, where it came from a URDF.
     _urdf: LoadedRobotModel | None = None
-    # A layer given outright, rather than read or converted.
     _text: str | None = None
-    # Frames to add to the layer when it is read; see ``with_frames``.
     _added_frames: tuple[tuple[str, str, Vector, Vector], ...] = ()
 
     @classmethod
     def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
-        """A model from a .usd/.usda file, read when it is used rather than now.
-
-        Lazy because a blueprint is built wherever it is imported, which is not always a
-        machine the file is on.
-        """
+        """Read lazily: a blueprint is built wherever it is imported, not always where the file is."""
         if Path(source_path).suffix not in _USD_SUFFIXES:
             raise ValueError(
                 f"UsdModel.from_file wants a USD file, got {str(source_path)!r}; "
@@ -161,23 +145,14 @@ class UsdModel:
         return cls(source_path)
 
     def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
-        """This model with extra frames, added when its layer is first read.
-
-        A converted room arrives with frames for its own furniture and none for its visitors,
-        so anything standing in it needs one adding. Lazy like the rest of this class: adding
-        a frame needs usd-core, and a blueprint is built wherever it is imported.
-        """
+        """Lazy: adding a frame needs usd-core, and a blueprint is built wherever it is imported."""
         added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in frames.items())
         return replace(self, _added_frames=self._added_frames + added)
 
     @classmethod
     def from_layer(cls, usd: str) -> UsdModel:
-        """A layer given outright, with no file behind it.
-
-        What arrives over the bus: a manager hands a whole scene over as one string, and the
-        receiver has a description rather than somewhere to go and read one. Its asset paths have
-        to be absolute already -- there is no source file left for a relative one to be relative
-        to -- which is what `resolve_usd_assets` is for on the way in.
+        """A layer given outright, no file behind it. Its asset paths must already be absolute --
+        nothing is left for a relative one to be relative to; see `resolve_usd_assets`.
         """
         return cls(_text=usd)
 
@@ -189,20 +164,17 @@ class UsdModel:
 
     @property
     def source_path(self) -> Path | None:
-        """The file this came from, which is what its relative asset paths are relative to."""
+        """The file this came from, which its relative asset paths are relative to."""
         return None if self._source_path is None else Path(self._source_path).expanduser()
 
     @cached_property
     def usd(self) -> str:
-        """The layer. Converted from the URDF, or read from the file, the first time it is asked."""
+        """Converted from the URDF, or read from the file, on first use."""
         return self._with_added_frames(self._layer())
 
     def _asset_root(self) -> Path | None:
-        """Where this layer's relative asset paths point, for USD to resolve them against.
-
-        Only so that composing a stage off this layer is quiet: nothing that reads frames or
-        asset names needs the geometry, but USD warns once per mesh prim that it could not open
-        the file, and a room has hundreds of them.
+        """Only so composing a stage off this layer is quiet: USD warns once per mesh prim it
+        cannot open, and a room has hundreds.
         """
         source = self.source_path
         return source.parent if source is not None else None
@@ -222,7 +194,7 @@ class UsdModel:
         if self._text is not None:
             return self._text
         if self._urdf is not None:
-            from dimos.robot.assets.usd import urdf_to_usd
+            from dimos.robot.assets.urdf_to_usd import urdf_to_usd
 
             return urdf_to_usd(self._urdf)
         path = self.source_path
@@ -241,64 +213,47 @@ class UsdModel:
 
     @cached_property
     def _poseable(self) -> LoadedRobotModel:
-        """The layer read back as a URDF, which is the only form a joint can be posed from.
+        """The layer read back as a URDF, the only form a joint can be posed from.
 
-        A joint in USD is a UsdPhysics prim: it states an axis and a pair of bodies, not a
-        parent-to-child transform at an angle. Forward kinematics lives in RobotModel, so a
-        layer that was never a URDF is converted into one here rather than teaching a second
-        copy of the same maths to read prims.
-
-        Unlike everything else on this class, this needs usd-core even for tf. That is the
-        price of describing a robot in USD and nothing else: a URDF-described robot still
-        poses itself on a machine with no pxr, which is the line two tests hold.
+        A USD joint is a UsdPhysics prim -- an axis and two bodies, not a parent-to-child
+        transform at an angle -- and forward kinematics lives in RobotModel. Needs usd-core
+        even for tf, unlike the rest of this class; two tests hold the no-pxr URDF path.
         """
         from dimos.robot.assets.usd_to_urdf import usd_to_urdf
 
         source = self.source_path
         return RobotModel.from_urdf_string(
-            usd_to_urdf(self.usd), asset_dir=None if source is None else source.parent
+            usd_to_urdf(self.usd, root=self._asset_root()),
+            asset_dir=None if source is None else source.parent,
         ).load()
 
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        """The joints to pose on tf.
-
-        Off the URDF where there was one, so a URDF-described robot never reads a layer to
-        pose itself. A layer read off disk has to be converted back; see _poseable.
+        """Off the URDF where there was one, so a URDF-described robot never reads a layer to pose
+        itself; a disk layer is converted back (see _poseable).
         """
         return self._urdf.joints if self._urdf is not None else self._poseable.joints
 
     @property
     def root_link(self) -> str:
-        """The frame everything hangs under.
-
-        The URDF's own root where there was one. For a layer read off disk it has to be found
-        in the layer, because the defaultPrim is the robot rather than a link, and a tf lookup
-        against that name would find nothing.
+        """The URDF's own root where there was one; a disk layer's has to be found in the layer,
+        because its defaultPrim is the robot rather than a link.
         """
         if self._urdf is not None:
             return self._urdf.root_link
         from dimos.robot.assets.usd_to_urdf import usd_root_link
 
-        return usd_root_link(self.usd)
+        return usd_root_link(self.usd, self._asset_root())
 
     def get_joint(self, name: str) -> JointDescription | None:
-        """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
 
     def urdf(self) -> LoadedRobotModel | None:
-        """The description this was converted from, for the one consumer that needs URDF.
-
-        None for a layer read off disk: there was never a URDF behind it, so a caller that
-        needs one has to convert (see usd_to_urdf).
-        """
+        """None for a layer read off disk; a caller needing a URDF has to convert (see usd_to_urdf)."""
         return self._urdf
 
     def frame_names(self) -> set[str]:
-        """Every link and joint name, by the name it travels under.
-
-        Off the URDF where there is one, so a robot that never needs a layer never builds one.
-        """
+        """Off the URDF where there is one, so a robot that never needs a layer never builds one."""
         if self._urdf is None:
             from dimos.robot.assets.usd import usd_frame_names
 
@@ -309,19 +264,17 @@ class UsdModel:
         return names
 
     def referenced_files(self) -> set[str]:
-        """Every file this names, which is what a renderer may ask to be served.
-
-        The URDF's own list where there is one: it names files, a texture among them, that the
+        """Off the URDF where there is one: it names files, a texture among them, that the
         conversion does not carry into the layer.
         """
         if self._urdf is None:
-            from dimos.robot.assets.usd import referenced_asset_paths
+            from dimos.robot.assets.usd_assets import referenced_asset_paths
 
             return referenced_asset_paths(self.usd, self._asset_root())
         return self._urdf.referenced_files()
 
     def load(self) -> UsdModel:
-        """Itself: there is nothing to expand, so it is already its own loaded form."""
+        """Itself: there is nothing to expand."""
         return self
 
 
@@ -647,7 +600,6 @@ class RobotModel:
         return replace(self, _default_joint_acceleration_limit=float(value))
 
     def to_usd(self) -> UsdModel:
-        """This description as USD. The layer is converted when it is first asked for."""
         return UsdModel.from_robot_model(self)
 
     def load(self) -> LoadedRobotModel:

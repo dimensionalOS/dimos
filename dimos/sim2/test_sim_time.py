@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Sensors keep their rates per sim second whether the world runs slower or faster than real."""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -57,33 +56,20 @@ RATES = {
 }
 
 
-# Where the scene's manager lives, and so the name everything that needs the world asks.
 SCENE_MANAGER = f"scene/{UsdManager.name}"
-# Every sensor sits at a frame of the dog's model.
 FRAMES = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
 
 
 @pytest.fixture
 def robot_model() -> UsdModel:
-    """The dog: a box on a free joint with a hinged head, a driven neck, and a frame per sensor."""
     model = toy_robot().with_frames(
         {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in FRAMES.items()}
     )
-    # Its gains, where a robot's gains live: in its layer. Small ones, because the head is a
-    # 0.1 kg sphere at the joint and its inertia about the neck is 1e-4: kd beyond about 0.01
-    # is stiffer than a 5 ms step can integrate, and the whole robot leaves the room.
     return UsdModel.from_layer(usd_with_drives(model.usd, {"neck": (0.01, 0.001, 0.0)}))
 
 
 @pytest.fixture
 def composed(robot_model: UsdModel) -> UsdModel:
-    """The world as a manager composes it: the room, with the dog grafted onto a spot on its floor.
-
-    What the simulation runs and what every sensor renders from, which is the point -- one layer,
-    one world, and the furniture a scan comes back off is the furniture that is drawn.
-    """
-    # The toy's layer puts its base at (9, 9, 9), so the spot it stands on takes that back out:
-    # a mount frame places a robot by its own layer's origin, not by where its root happens to be.
     room = UsdModel.from_file(LOGISTICS).with_frames(
         {"dog": ("logistics", (-9.0, -9.0, -8.7), (0.0, 0.0, 0.0))}
     )
@@ -93,14 +79,11 @@ def composed(robot_model: UsdModel) -> UsdModel:
 
 
 class _DogConfig(ModuleConfig):
-    # With a control period, the world waits this long (wall seconds) for each of its commands.
     control_period: float | None = None
     think: float = 0.0
 
 
 class _Dog(Module):
-    """A robot that, in lockstep, is slow to answer: the world runs slower than real waiting for it."""
-
     config: _DogConfig
     world_observations: In[WorldObservations]
     actions: Out[WorldAction]
@@ -165,7 +148,6 @@ def _run(
             robots=[SimulatedRobot("dog", robot_model, control_period=dog.get("control_period"))],
         ),
         _Dog.blueprint(**dog),
-        # The one manager, answering for the whole world. Everything else asks it.
         UsdManager.blueprint(
             model=composed, frame_id_prefix="", tf_renames={"logistics": "world"}
         ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),
@@ -187,16 +169,12 @@ def _run(
             [(SimL1, "lidar", "l1_lidar")]
         ),
         _Readings.blueprint(),
-        # A worker each, as a robot's blueprint gives its sensors: one sharing a busy loop falls behind at 4x.
     ).global_config(n_workers=9)
-    # Its own zenoh domain: another world running on this machine would otherwise share its topics.
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
         readings = coordinator.get_instance(_Readings)
-        # At least `seconds` of wall time, then until every sensor has steady stamps: on a loaded machine
-        # a sensor's first point cloud (it imports open3d) can take most of that.
         deadline = time.monotonic() + seconds + MAX_EXTRA_WALL
         time.sleep(seconds)
         while time.monotonic() < deadline and not _steady(readings.readings()["stamps"]):
@@ -206,7 +184,6 @@ def _run(
         coordinator.stop()
 
 
-# Wall seconds a run may go on past its own, waiting for every sensor to be steady.
 MAX_EXTRA_WALL = 60.0
 STEADY_STAMPS = 8
 
@@ -220,12 +197,10 @@ def _steady(stamps: dict[str, list[float]]) -> bool:
     )
 
 
-# Sim seconds at the start in which a sensor may stall once, warming up (its first point cloud imports open3d).
 WARM_UP = 1.0
 
 
 def _per_sim_second(stamps: list[float], start: float) -> float:
-    # Stamps are the wall time the sim started at plus its sim time, so their spacing is sim time.
     steady = [stamp for stamp in stamps if stamp >= start + WARM_UP]
     assert len(steady) > 5, f"only {len(steady)} after warming up"
     return (len(steady) - 1) / (steady[-1] - steady[0])
@@ -236,7 +211,6 @@ def _per_sim_second(stamps: list[float], start: float) -> float:
     [
         (0.5, {}),
         (4.0, {}),
-        # Lockstep with a robot that takes 50 ms (wall) to answer each 20 ms (sim) tick.
         (1.0, {"control_period": 0.02, "think": 0.05}),
     ],
     ids=["half_speed", "four_times_speed", "slower_than_real_lockstep"],
@@ -252,8 +226,6 @@ def test_sensors_keep_their_rates_per_sim_second(composed, robot_model, speed, d
         measured = _per_sim_second(stamps[name], start)
         assert measured == pytest.approx(rate, rel=0.1), (name, measured)
     if dog:
-        # The world waited on the robot: well slower than real.
         assert sim_seconds < 0.7 * readings["wall"]
-    # At rest on the floor (after it settles), the IMU feels the floor push up against gravity.
     settled = readings["accelerations"][len(readings["accelerations"]) // 2 :]
     assert np.mean(settled) == pytest.approx(9.81, abs=0.3)

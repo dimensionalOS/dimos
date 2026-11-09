@@ -328,3 +328,15 @@ def test_declared_zero_stiffness_joints_are_kept_for_tasks() -> None:
 def test_declared_zero_stiffness_joint_must_be_in_the_model() -> None:
     with pytest.raises(ValueError, match="zero-stiffness joints.*arm/missing"):
         arm(zero_stiffness_joints=["arm/missing"])
+
+
+def test_a_reading_keeps_the_stamp_the_robot_put_on_it() -> None:
+    """The stamp has to survive arrival, or the joints end up on a different clock from the pose.
+
+    In sim those differ: the world stamps sim time, which runs behind the wall whenever the box
+    is loaded, so a reading restamped on arrival is minutes from the pose it describes.
+    """
+    source = arm()
+    source.on_message("joint_state", JointState(name=[J1, J2], position=[0.1, 0.2], ts=12.5))
+
+    assert source.read_joints().timestamp == 12.5

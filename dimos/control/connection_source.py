@@ -351,13 +351,10 @@ class ConnectionSource:
                 reported = reported | {port}
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
-            # When the robot says the reading was taken, not when it landed here. On hardware those
-            # are the same clock and within a millisecond of each other. In sim they are not: the
-            # world stamps sim time, which runs slower than the wall whenever the box is loaded, and
-            # a reading restamped on arrival is minutes away from the pose it actually describes.
-            # Everything downstream inherits this -- the coordinator's JointState, and from there
-            # every joint transform UsdManager puts on tf -- so a scan looked up against those
-            # frames is placed against a body that has since moved.
+            # When the robot says the reading was taken, not when it landed here. In sim those differ: the
+            # world stamps sim time, which runs slower than the wall whenever the box is loaded, and a
+            # reading restamped on arrival is minutes away from the pose it describes. Everything
+            # downstream inherits it, down to the joint transforms a scan is placed against.
             stamp = getattr(msg, "ts", None)
             self._received_at = (
                 float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else time.time()

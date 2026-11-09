@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A description names a body; a model read from USD calls it something longer."""
 
 import pytest
 
@@ -32,13 +31,11 @@ def test_a_short_name_finds_the_prim_path_it_refers_to():
 
 
 def test_a_name_that_is_already_whole_is_taken_as_written():
-    # a model that really does call something this means it, so it wins over any tail match
     assert resolve(["/a/pelvis", "pelvis"], "pelvis") == "pelvis"
     assert resolve(USD_NAMES, "/g1/Joints/pelvis") == "/g1/Joints/pelvis"
 
 
 def test_mjcf_names_are_untouched():
-    """The same lookup has to keep working for a model that never saw USD."""
     assert resolve(["world", "base", "neck"], "base") == "base"
 
 
@@ -50,7 +47,6 @@ def test_two_of_the_same_short_name_is_an_error_not_a_guess():
 def test_a_miss_says_what_there_was():
     with pytest.raises(KeyError, match="pelvis"):
         resolve(["/a/base"], "pelvis")
-    # and enough of the available names to see their shape, without printing a whole scene
     with pytest.raises(KeyError, match=r"\.\.\. \(5 more\)"):
         resolve([f"/scene/thing_{i}" for i in range(11)], "nothing")
 
@@ -62,8 +58,6 @@ def test_resolved_hands_back_none_where_resolve_would_raise():
 
 
 class _Element:
-    """Enough of a MjSpec element to rename: a name, and nothing else."""
-
     def __init__(self, name: str) -> None:
         self.name = name
 
@@ -74,8 +68,6 @@ class _Reference:
 
 
 class _Spec:
-    """Enough of a MjSpec to shorten: the collections it renames and the ones that refer to them."""
-
     def __init__(self, **kinds: list) -> None:
         for kind in ("bodies", "joints", "sites", "cameras", "actuators", "sensors", "pairs"):
             setattr(self, kind, kinds.get(kind, []))
@@ -95,10 +87,6 @@ def test_shortening_renames_a_models_parts_to_the_names_a_description_uses():
 
 
 def test_a_reference_follows_the_part_it_names():
-    """An actuator names the joint it drives as a string, and renaming the joint does not touch it.
-
-    Left behind, the compiled world comes out with no actuators at all and nothing says why.
-    """
     spec = _Spec(
         joints=[_Element("/toy/Geometry/base/head/neck")],
         actuators=[_Reference(name="/toy/Physics/neck", target="/toy/Geometry/base/head/neck")],
@@ -114,10 +102,6 @@ def test_a_reference_follows_the_part_it_names():
 
 
 def test_a_hinge_and_the_motor_on_it_may_share_a_name():
-    """MuJoCo's namespaces are per kind, and the toy robot's joint and actuator are both "neck".
-
-    Judged together each was the other's ambiguity, so neither was shortened.
-    """
     spec = _Spec(
         joints=[_Element("/toy/Geometry/base/head/neck")],
         actuators=[_Reference(name="/toy/Physics/neck", target="/toy/Geometry/base/head/neck")],
@@ -143,12 +127,6 @@ def test_a_short_name_something_else_already_holds_is_left_alone():
 
 
 def test_three_of_one_robot_in_a_composed_world_keep_their_ids():
-    """A grafted subtree is nested under a prim named after its mount frame, and that is the id.
-
-    Without it every pelvis shortens to "pelvis", the three are each other's ambiguity, and none
-    is renamed -- so the world publishes prim paths as entity ids and a description looking for
-    its own robot finds nothing.
-    """
     spec = _Spec(
         bodies=[
             _Element("/office_555/left/g1/Geometry/pelvis"),
@@ -162,8 +140,6 @@ def test_three_of_one_robot_in_a_composed_world_keep_their_ids():
     assert [body.name for body in spec.bodies] == [
         "left/pelvis",
         "main/pelvis",
-        # The room keeps the name it came with: it is already published under it, and renaming
-        # the furniture would change a wire format to no purpose.
         "/office_555/Geometry/desk_1",
     ]
 
@@ -175,7 +151,6 @@ def test_the_world_around_the_robots_keeps_the_names_it_came_with():
 
 
 def test_an_id_matches_a_whole_path_segment_and_not_part_of_one():
-    """ "left" must not claim "/left_arm/", or two robots' frames merge under one name."""
     spec = _Spec(bodies=[_Element("/scene/left_arm/Geometry/base")])
 
     shorten(spec, ids=("left",))

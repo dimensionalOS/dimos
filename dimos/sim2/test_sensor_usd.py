@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every sensor describes itself in USD, and describes the frame it was configured with.
-
-A sensor that answers with a hardcoded frame name looks right in a one-robot world and silently
-collides in a three-robot one, so the point of each of these is the *configured* frame coming
-back, not merely that a layer came back.
-"""
 
 import math
 from typing import Any
@@ -28,8 +22,6 @@ from dimos.robot.assets.usd import usd_frame_names
 
 pytest.importorskip("pxr")
 
-# Each sim sensor, the config that places it, and the frames its layer has to name. Every one of
-# them joins this table as it arrives.
 _SENSORS = [
     ("camera", {"frame_id": "left/camera_optical"}, {"left/camera_optical"}),
     ("imu", {"frame_id": "left/imu_link"}, {"left/imu_link"}),
@@ -66,11 +58,6 @@ def test_a_sensor_describes_itself_at_the_frames_it_was_given(
 
 
 def test_a_camera_says_what_it_can_see_from_its_frame() -> None:
-    """A frame is a pose; a camera is a pose and some optics, and USD has somewhere to put both.
-
-    Stated in the layer rather than only in this module's config, so anything that wants to draw
-    what this camera can see has it from the scene the manager composed.
-    """
     from pxr import Usd, UsdGeom
 
     from dimos.sim2.camera import SimCamera
@@ -88,7 +75,6 @@ def test_a_camera_says_what_it_can_see_from_its_frame() -> None:
     aperture = lens.GetVerticalApertureAttr().Get()
     focal = lens.GetFocalLengthAttr().Get()
     assert math.degrees(2 * math.atan(aperture / 2 / focal)) == pytest.approx(90.0)
-    # Facing the way USD faces: a camera prim looks down -z, an optical frame along +z.
     forward = lens.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).TransformDir((0, 0, -1))
     assert tuple(round(axis, 6) for axis in forward) == (0.0, 0.0, 1.0)
 
@@ -102,7 +88,6 @@ def _anonymous(usd: str) -> object:
 
 
 def test_the_simulated_mid360_describes_the_same_box_as_the_real_one() -> None:
-    """A sim twin that described itself differently would change shape with which one is running."""
     from dimos.hardware.sensors.lidar.livox.module import mid360_usd
     from dimos.sim2.livox import LivoxSim
 
@@ -114,3 +99,17 @@ def test_the_simulated_mid360_describes_the_same_box_as_the_real_one() -> None:
 
     assert usd == mid360_usd("mid360_link", "imu_link")
     assert root, "the root is the driver's own directory, which is where its mesh lives"
+
+
+def test_a_namespaced_lidar_puts_its_namespace_on_its_imu_frame_too() -> None:
+    from dimos.sim2.livox import LivoxSim
+
+    sim = LivoxSim(frame_id="mid360_link", frame_id_prefix="left")
+    try:
+        assert sim.frame_id == "left/mid360_link"
+        assert sim.imu_frame_id == "left/imu_link"
+        _, usd = sim.get_usd()
+    finally:
+        sim.stop()
+
+    assert {"left/mid360_link", "left/imu_link"} <= usd_frame_names(usd)

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The committed Go2 layer says what the Go2 is, so this is what holds it to that."""
 
 import pytest
 
@@ -20,13 +19,6 @@ pytest.importorskip("pxr")
 
 
 def test_the_layer_carries_the_gains_the_policy_runs_on() -> None:
-    """The gains are in the layer, written there once by `scripts/usd_drives.py`.
-
-    Which means they can go stale: the policy blob is where they came from, and nothing stops
-    somebody replacing it. This is what notices. Run the script again if it fails -- the layer is
-    the source of truth for whatever runs the robot, and it has to agree with the controller the
-    robot actually ships with.
-    """
     from dimos.robot.assets.usd import usd_drives
     from dimos.robot.unitree.go2.sim2 import Go2Sim, go2_drives
 
@@ -36,7 +28,6 @@ def test_the_layer_carries_the_gains_the_policy_runs_on() -> None:
 
 
 def test_every_sensor_mount_the_rig_has_is_a_frame_of_the_layer() -> None:
-    """A sensor names one of these as its frame_id, and a manager grafts it onto that frame."""
     from dimos.robot.unitree.go2.sim2 import Go2Sim
 
     frames = Go2Sim.usd.frame_names()

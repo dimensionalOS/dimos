@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A WorldView drawn by MuJoCo: its own model of the composed scene, posed from world_observations.
-
-Never the engine's model. This compiles the same layer the engine did -- the one the manager
-composed, which `get_scene` answers with -- adds whatever the sensor needs at its own mount, and
-poses it from the observations. So a camera draws the furniture that is really there, a lidar
-ranges against it, and neither reads a physics engine or needs the simulation to tell it
-anything.
-"""
 
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -41,8 +33,6 @@ class MujocoView:
     def __init__(
         self, scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None
     ) -> None:
-        # Its own model of the composed scene, shortened for the same robots the engine
-        # shortened for, so the entity ids in the observations name bodies in here.
         self._robots = set(ids)
         spec = compile_world(scene, ids=self._robots)
         if mount is not None:
@@ -53,12 +43,11 @@ class MujocoView:
         self.data = mujoco.MjData(self.model)
         mujoco.mj_kinematics(self.model, self.data)
         self._frames: dict[str, tuple[int, int]] = {}
+        self._hidden: list[tuple[int, int, NDArray[np.uint8]]] = []
         self._names: dict[int, list[str]] = {}
         self._velocities_current = False
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
-        # An IMU's previous world velocity and the time of it, for its acceleration.
         self._previous: dict[str, tuple[float, NDArray[np.float64]]] = {}
-        # Per posed body: where the body that actually moves it sits relative to it.
         self._offsets: dict[int, tuple[NDArray[np.float64], Rotation]] = {}
 
     @property
@@ -75,7 +64,6 @@ class MujocoView:
                 if joint_of:
                     if entity.joint is None:
                         continue
-                    # A robot's joints are named "<robot>/<joint>" in this model too; an object's are its own.
                     joint = self._joint(entity.path if owner in self._robots else name)
                     if joint >= 0:
                         data.qpos[model.jnt_qposadr[joint]] = entity.joint[0]
@@ -83,11 +71,10 @@ class MujocoView:
                 elif entity.path in self._robots:
                     self._pose_entity(entity, self._root(entity.path))
                 else:
-                    name = resolved(self._named(mujoco.mjtObj.mjOBJ_BODY), entity.path)
-                    # An object spawned after the world was composed is not in this view.
-                    if name is not None:
+                    body = resolved(self._named(mujoco.mjtObj.mjOBJ_BODY), entity.path)
+                    if body is not None:
                         self._pose_entity(
-                            entity, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+                            entity, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)
                         )
             data.time = world.time
         mujoco.mj_kinematics(self.model, self.data)
@@ -108,9 +95,7 @@ class MujocoView:
         return position.copy(), quat
 
     def velocity(self, frame: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Linear and angular velocity in the frame's own axes."""
         kind, index = self._frame(frame)
-        # mjOBJ_BODY would be the body's inertial frame; mjOBJ_XBODY is the body's own.
         kind = mujoco.mjtObj.mjOBJ_XBODY if kind == mujoco.mjtObj.mjOBJ_BODY else kind
         if not self._velocities_current:
             mujoco.mj_comPos(self.model, self.data)
@@ -124,7 +109,6 @@ class MujocoView:
         if (width, height) not in self._renderers:
             self._renderers[width, height] = mujoco.Renderer(self.model, height, width)
         renderer = self._renderers[width, height]
-        # Camera poses, which kinematics leaves stale.
         mujoco.mj_comPos(self.model, self.data)
         mujoco.mj_camlight(self.model, self.data)
         renderer.update_scene(self.data, camera=camera)
@@ -136,32 +120,14 @@ class MujocoView:
         mounted_at: str | None = None,
         blind_to: Sequence[str] = (),
     ) -> MujocoRaycaster:
-        """Rays against ``groups``; ``mounted_at`` names a frame whose own body they pass through.
-
-        A ranging sensor is bolted to something, and in a model it sits inside that something's
-        collision hull rather than proud of its surface -- a hull is a few convex shapes around
-        a shape that is neither. Cast against collision geometry without saying so and every
-        ray, in every direction, returns the mount a couple of centimetres away; a sensor that
-        drops returns inside its blind range then reports nothing at all.
-
-        Excluding the one body the sensor is mounted on says only "a sensor does not see its own
-        housing", which is true of every sensor on every robot and needs no distance picked by
-        hand. Everything else stays visible, the arms and legs hanging off that mount included.
-
-        ``blind_to`` names any further frames to ignore, for the cases that rule does not cover:
-        a radome, a mast the sensor looks past, a wall a test wants out of the way. MuJoCo can
-        exclude one body from a cast, so these are moved instead to a geom group the cast does
-        not read -- in this view's own model, and a geom's group is a label it selects and draws
-        by, never one it simulates by.
-        """
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
+        self._show_hidden()
         for frame in blind_to or ():
             self._hide_from_rays(self._mount(frame), groups)
         mount = NO_BODY_EXCLUDED if mounted_at is None else self._mount(mounted_at)
         return MujocoRaycaster(self.model, self.data, mask, mount)
 
     def _hide_from_rays(self, body: int, groups: Sequence[int]) -> None:
-        """Move ``body``'s geoms to a group ``groups`` leaves out, so rays pass through it."""
         spare = next((g for g in range(mujoco.mjNGROUP) if g not in groups), None)
         if spare is None:
             raise ValueError(
@@ -169,21 +135,11 @@ class MujocoView:
                 f"it is meant to be blind to"
             )
         start = int(self.model.body_geomadr[body])
-        self.model.geom_group[start : start + int(self.model.body_geomnum[body])] = spare
+        count = int(self.model.body_geomnum[body])
+        self._hidden.append((start, count, self.model.geom_group[start : start + count].copy()))
+        self.model.geom_group[start : start + count] = spare
 
     def _mount(self, frame: str) -> int:
-        """The body ``frame`` is attached to: the nearest one at or above it that has any geometry.
-
-        A mount frame used to be a site, whose body is whatever it was placed on. Described in
-        USD it is a link of its own, welded to the thing it is bolted to -- the G1's mid360_link
-        hangs off torso_link rather than marking a spot on it -- and a frame carries no geometry,
-        so taking it at face value excluded a body with nothing in it. The housing stayed visible,
-        every ray came back 22 mm away inside the sensor's blind range, and the scan came out
-        empty: the exact failure this exclusion exists to prevent.
-
-        Walking up stops short of the world, whose geometry is the floor and the last thing a
-        ranging sensor should be blind to.
-        """
         kind, index = self._frame(frame)
         if kind == mujoco.mjtObj.mjOBJ_SITE:
             body = int(self.model.site_bodyid[index])
@@ -198,7 +154,13 @@ class MujocoView:
             body = parent
         return body
 
+    def _show_hidden(self) -> None:
+        for start, count, groups in reversed(self._hidden):
+            self.model.geom_group[start : start + count] = groups
+        self._hidden.clear()
+
     def close(self) -> None:
+        self._show_hidden()
         for renderer in self._renderers.values():
             renderer.close()
         self._renderers.clear()
@@ -216,17 +178,9 @@ class MujocoView:
         self._previous[sensor] = (self.time, velocity)
         elapsed = self.time - before[0] if before else 0.0
         acceleration = (velocity - before[1]) / elapsed if before and elapsed > 0 else np.zeros(3)
-        # An accelerometer measures specific force: at rest, the floor pushing up against gravity.
         return angular, world_from_sensor.T @ (acceleration - _GRAVITY), quat
 
     def _frame(self, frame: str) -> tuple[int, int]:
-        """A body, site or camera, by the name the world calls it.
-
-        Resolved rather than looked up, because off a USD layer MuJoCo names everything by its
-        prim path: the crate the observations call "crate" is "/scene/Geometry/crate" in here,
-        and the entities are published under the short name on purpose -- nobody can address a
-        prim path. `resolve` is the same rule the rest of this engine uses for the same reason.
-        """
         if frame not in self._frames:
             for kind in (
                 mujoco.mjtObj.mjOBJ_BODY,
@@ -242,19 +196,12 @@ class MujocoView:
         return self._frames[frame]
 
     def owner(self, frame: str) -> str | None:
-        """The robot whose subtree this frame is in, by the id the world announced; None for the room's.
-
-        A sensor bolted to a robot sometimes needs to know which one -- the L1 publishes a map
-        centred on the robot it rides -- and a frame's own name says so, because a robot's parts
-        are all called "<id>/<something>".
-        """
         kind, index = self._frame(frame)
         name = mujoco.mj_id2name(self.model, kind, index) or ""
         robot, _, _ = name.partition("/")
         return robot if robot in self._robots else None
 
     def _named(self, kind: int) -> list[str]:
-        """Every name of this kind in the model, for resolving a short one against."""
         if kind not in self._names:
             count = {
                 mujoco.mjtObj.mjOBJ_BODY: self.model.nbody,
@@ -280,16 +227,6 @@ class MujocoView:
     def _moved_by(
         self, body: int, position: NDArray[np.float64], quat_wxyz: NDArray[np.float64]
     ) -> tuple[int, NDArray[np.float64], NDArray[np.float64]]:
-        """The body whose joint moves ``body``, and where that body has to go to put it here.
-
-        A robot grafted into a scene hangs off a mount frame, and the free joint is on the frame
-        rather than on the robot's own root: MuJoCo takes a free joint only on a top-level body.
-        So a view told "this robot is at x" has to move the frame, not the root, and the two sit
-        a fixed distance apart -- the offset the graft put between them.
-
-        Rigid, so the offset is read once off the model's reference pose and never changes. Where
-        the posed body is itself the one with the joint, this is the identity and says so.
-        """
         model = self.model
         holder = body
         while model.body_jntadr[holder] < 0 and model.body_mocapid[holder] < 0:
@@ -300,7 +237,6 @@ class MujocoView:
         if holder == body:
             return body, position, quat_wxyz
         if body not in self._offsets:
-            # From the holder to the body, in the holder's own axes, at the reference pose.
             reference = mujoco.MjData(model)
             mujoco.mj_kinematics(model, reference)
             holder_rotation = Rotation.from_quat(reference.xquat[holder], scalar_first=True)
@@ -318,19 +254,6 @@ class MujocoView:
         )
 
     def _root(self, robot_id: str) -> int:
-        """The body everything else on this robot hangs off, found in the model rather than named.
-
-        The robot's bodies are all called "<id>/<something>"; its root is the one whose *parent*
-        is not. That holds whether the robot was attached to the worldbody or arrived composed
-        into a room -- where nothing is top-level but the room itself, which is what broke the
-        older rule of "the top-level body whose name starts with the id".
-
-        It also means a view needs no description of the robot at all: which body is the root is
-        a fact about the world it is looking at, and reading it there cannot disagree with it.
-
-        Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading this
-        200 times a second would otherwise rescan every body in the scene each time.
-        """
         if robot_id not in self._robot_roots:
             model, prefix = self.model, f"{robot_id}/"
             under = [
@@ -361,7 +284,6 @@ class MujocoView:
                 qpos, dof = model.jnt_qposadr[joint], model.jnt_dofadr[joint]
                 data.qpos[qpos : qpos + 7] = [*position, *quat_wxyz]
                 velocity = np.zeros(6) if entity.velocity is None else entity.velocity
-                # The world's velocities are world-aligned; a free joint's angular velocity is the body's.
                 rotation = np.zeros(9)
                 mujoco.mju_quat2Mat(rotation, quat_wxyz)
                 data.qvel[dof : dof + 3] = velocity[:3]

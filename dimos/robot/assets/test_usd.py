@@ -21,21 +21,17 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.urdf_to_usd import PASSTHROUGH_KEY, urdf_to_usd
 from dimos.robot.assets.usd import (
-    PASSTHROUGH_KEY,
-    asset_hash,
     graft_usd,
     prefix_usd_frames,
     rename_usd_frames,
-    require_asset_hashes,
-    trivialize_usd,
-    unhashed_assets,
-    urdf_to_usd,
     usd_drives,
     usd_frame_names,
     usd_with_drives,
     usd_with_frames,
 )
+from dimos.robot.assets.usd_assets import asset_hash, require_asset_hashes, unhashed_assets
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
 pytest.importorskip("pxr")
@@ -112,8 +108,8 @@ def test_links_nest_down_the_kinematic_tree(toy: Any) -> None:
 
 
 def test_a_link_name_that_is_not_a_usd_identifier_keeps_its_urdf_spelling(toy: Any) -> None:
-    # "arm-1" cannot be a prim name, so displayName is the only way back to the tf frame.
-    # It is USD's own field for a name that identifier syntax cannot hold.
+    # "arm-1" cannot be a prim name, so displayName -- USD's own field for a name identifier
+    # syntax cannot hold -- is the only way back to the tf frame.
     stage = _stage(urdf_to_usd(toy))
     prim = _prim_by_link(stage, "arm-1")
 
@@ -228,8 +224,8 @@ def _references(prim: Any) -> list[str]:
 
 
 def test_a_mesh_names_the_path_the_urdf_named(meshy: Any) -> None:
-    # assetInfo is USD's own "which asset is this prim", so no attribute of ours and no
-    # triangles of ours. UsdManager already serves exactly these paths.
+    # assetInfo is USD's own "which asset is this prim": no attribute of ours, no triangles of
+    # ours, and UsdManager already serves exactly these paths.
     stage = _stage(urdf_to_usd(meshy))
     mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
 
@@ -237,13 +233,6 @@ def test_a_mesh_names_the_path_the_urdf_named(meshy: Any) -> None:
 
 
 def test_a_mesh_file_is_not_referenced_as_though_it_were_a_usd_layer(meshy: Any) -> None:
-    """A reference arc composes another USD layer; an STL is not one.
-
-    Authoring one anyway makes the layer invalid: every standard consumer reports "Cannot
-    determine file format ... target=usd" and composes the mesh away, so the robot has no
-    geometry in usdview, in Isaac or in MuJoCo. dimos could not see it because it reads the
-    path out of the layer and serves the file itself instead of composing the stage.
-    """
     stage = _stage(urdf_to_usd(meshy))
 
     offenders = {
@@ -293,17 +282,9 @@ def test_a_grafted_subtree_keeps_its_joints_pointing_at_its_own_links(toy: Any) 
 
 
 def test_a_graft_joins_the_subtree_to_its_mount_with_a_floating_joint(toy: Any) -> None:
-    """Nesting says where a subtree hangs; the joint says how.
-
-    Welding it is wrong -- the root of an articulated subtree is a frame tf publishes, and two
-    parents make its pose flip -- but saying nothing is worse: a reader with no tf has nowhere
-    to put it, and a root with no joint above it reads as a static scene tile rather than a
-    robot. Free in all six degrees is the true answer.
-    """
     root = urdf_to_usd(toy)
 
     stage = _stage(graft_usd(root, {"mount": urdf_to_usd(toy, name="arm_sub")}))
-    # The generic PhysicsJoint is the only free one; the toy's own joints are fixed or revolute.
     mounted = [prim for prim in stage.Traverse() if prim.GetTypeName() == "PhysicsJoint"]
 
     assert len(mounted) == 1
@@ -316,7 +297,6 @@ def test_a_graft_joins_the_subtree_to_its_mount_with_a_floating_joint(toy: Any) 
 
 
 def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
-    """The nesting already placed the subtree; the joint only says it is free."""
     from pxr import Gf
 
     stage = _stage(graft_usd(urdf_to_usd(toy), {"mount": urdf_to_usd(toy, name="arm_sub")}))
@@ -329,11 +309,6 @@ def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
 
 
 def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
-    """A converted room arrives with frames for its own furniture and none for its visitors.
-
-    Three robots standing in one need three frames, because grafting two subtrees at one frame
-    is refused, so the scene has to be able to grow them.
-    """
     root = urdf_to_usd(toy)
 
     grown = usd_with_frames(root, {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
@@ -344,14 +319,6 @@ def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
 
 
 def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
-    """A mount bolted to a link is not free to move, and has to say so.
-
-    Nesting places a frame but does not say how it is held, so a physics engine decides. MuJoCo
-    decides "free in all six degrees", and a frame carries no mass, so the G1's lidar mount made
-    the whole robot refuse to compile: "mass and inertia of moving bodies must be larger than
-    mjMINVAL". The weld costs no degree of freedom -- a welded massless body folds into its
-    parent -- and it is what was true all along.
-    """
     from pxr import UsdPhysics
 
     grown = usd_with_frames(
@@ -373,14 +340,6 @@ def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
 
 
 def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(toy: Any) -> None:
-    """A converted room hangs its visitors' frames off its own root, which is an Xform.
-
-    Welding to that is not a statement USD can make, so the frame is welded to the *world*
-    instead -- a FixedJoint naming only body1. Nesting under static geometry is not enough: the
-    frame is a rigid body, because that is what makes an engine give it a body at all, and an
-    unheld rigid body with no mass is "mass and inertia of moving bodies must be larger than
-    mjMINVAL" -- the same complaint a robot's lidar mount made, now from a room.
-    """
     from pxr import UsdPhysics
 
     stage = _stage(
@@ -401,13 +360,6 @@ def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(to
 
 
 def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
-    """A robot's gains are a fact about the robot, so the layer carries them.
-
-    Twice over, because two readers want two spellings: `UsdPhysics.DriveAPI` on the joint,
-    which is the standard and what Isaac takes its actuator gains from, and MuJoCo's own
-    longhand on the actuary -- gainPrm, biasPrm and an affine biasType, which is a position
-    servo written out. Neither is a conversion of the other; both are authored.
-    """
     from pxr import UsdPhysics
 
     grown = usd_with_drives(urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25)})
@@ -443,7 +395,6 @@ def _with_actuator(usd: str, joint: str, *, biased: bool) -> str:
 
 
 def test_a_motors_control_range_becomes_its_torque_limit(toy: Any) -> None:
-    """Because that is what a motor's control signal is, and a servo's is a position."""
     usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=False)
 
     stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
@@ -451,17 +402,10 @@ def test_a_motors_control_range_becomes_its_torque_limit(toy: Any) -> None:
 
     assert str(driven.GetAttribute("mjc:biasType").Get()) == "affine"
     assert driven.GetAttribute("mjc:forceRange:max").Get() == pytest.approx(23.7)
-    # Commanded a position now, so whatever it may reach is the joint's range to enforce.
     assert str(driven.GetAttribute("mjc:ctrlLimited").Get()) == "false"
 
 
 def test_an_actuator_that_already_biases_keeps_its_control_range_alone(toy: Any) -> None:
-    """It is already a servo, and that range is the joint's travel rather than a torque.
-
-    The G1's layer arrives like this -- kp=500, with each joint's own travel as its control
-    range. Moving that to the force range limits the joint to a couple of newton-metres, which
-    is not enough to hold a leg up and is a thing you find out by watching a robot sit down.
-    """
     usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=True)
 
     stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
@@ -477,12 +421,6 @@ def test_a_joint_the_layer_does_not_have_cannot_be_driven(toy: Any) -> None:
 
 
 def test_the_drives_read_back_as_they_were_written(toy: Any) -> None:
-    """Including the target, which is where "the pose this starts in" lives.
-
-    On the joint rather than in a keyframe, because a keyframe is the whole model's: a robot's
-    own keyframe means nothing once it has been grafted into a room, where qpos is a different
-    vector. A target per joint says the same thing and survives being composed.
-    """
     grown = usd_with_drives(
         urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25), "mount_to_arm": (8.0, 0.4, -1.5)}
     )
@@ -496,11 +434,6 @@ def test_the_drives_read_back_as_they_were_written(toy: Any) -> None:
 
 
 def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
-    """A rig's mounts describe each other: the Go2's Mid-360 sits on its front camera.
-
-    Reading the layer's links once before adding any made that "the layer has no frame
-    'front_camera'", which is true of the file and not of the stage being built into it.
-    """
     stage = _stage(
         usd_with_frames(
             urdf_to_usd(toy),
@@ -528,39 +461,12 @@ def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) 
         usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
 
 
-def test_trivializing_keeps_the_lights_and_drops_the_shapes(toy: Any) -> None:
-    """A light is not a shape.
-
-    It is how the scene looks, and the one thing a viewer cannot work out for itself: told
-    none, it has to invent some, and a room that says what its sky is gets lit by a guess.
-    Dropping them with the geometry meant a scene could not hand over its lighting without
-    handing over its meshes too.
-    """
-    lit = urdf_to_usd(toy).replace(
-        'def Xform "toy"\n{',
-        'def Xform "toy"\n{\n    def DomeLight "sky"\n    {\n'
-        "        color3f inputs:color = (0.4, 0.6, 0.9)\n    }\n",
-    )
-    assert 'def DomeLight "sky"' in lit, "the fixture has to actually carry a light"
-
-    lean = trivialize_usd(lit)
-
-    assert 'def DomeLight "sky"' in lean, "the sky survives"
-    assert "def Mesh " not in lean and "def Cube " not in lean, "the shapes do not"
-
-
 def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no prim for that frame"):
         graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
 
 
 def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
-    """A scene is rooted at a plain Xform, and that is where a robot standing in it mounts.
-
-    A converted room is 450 bodies under one Xform that carries no RigidBodyAPI, so matching
-    only on that API left it with no attach point at all -- while `usd_root_link` happily named
-    it as the root. The two have to agree.
-    """
     root = urdf_to_usd(toy)
 
     stage = _stage(graft_usd(root, {"toy": urdf_to_usd(toy, name="arm_sub")}))
@@ -569,13 +475,9 @@ def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
 
 
 def test_grafting_two_copies_of_one_description_at_one_frame_is_an_error(toy: Any) -> None:
-    """Both mount under the same prim name, so the second would quietly replace the first.
-
-    Prefixing a description renames its frames, not its prims -- prim paths are already unique
-    by nesting, so there is nothing to rename. Three G1s grafted at one frame therefore came
-    out as one G1, with the right frame count and no complaint.
+    """Both mount under the same prim name, so the second would quietly replace the first: three
+    G1s grafted at one frame came out as one G1, with the right frame count and no complaint.
     """
-    # At the scene's own root, which is where robots standing in a room mount.
     root = graft_usd(urdf_to_usd(toy), {"toy": urdf_to_usd(toy, name="arm_sub")})
 
     with pytest.raises(ValueError, match="is taken"):
@@ -583,7 +485,6 @@ def test_grafting_two_copies_of_one_description_at_one_frame_is_an_error(toy: An
 
 
 def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
-    """The defaultPrim is offered last, so it can never shadow a real link of the same name."""
     root = urdf_to_usd(toy, name="base_link")
 
     stage = _stage(graft_usd(root, {"base_link": urdf_to_usd(toy, name="arm_sub")}))
@@ -594,7 +495,6 @@ def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
 
 
 def test_a_prefix_moves_the_root_with_everything_under_it(toy: Any) -> None:
-    """Two namespaced copies of one scene must share no frame name, the root included."""
     scene = urdf_to_usd(toy, name="room")
 
     left = usd_frame_names(prefix_usd_frames(scene, "left"))
@@ -640,7 +540,6 @@ def _passthrough(stage: Any, path: str) -> list[str]:
 
 
 def test_a_links_unconverted_urdf_rides_along_on_its_prim(extra: Any) -> None:
-    """<inertial> means nothing to this converter, which is not a reason to lose it."""
     stage = _stage(urdf_to_usd(extra))
 
     kept = _passthrough(stage, "/extra/base_link")
@@ -679,7 +578,6 @@ def test_a_joints_unconverted_urdf_rides_along_on_its_joint_prim(extra: Any) -> 
 
 
 def test_a_link_with_nothing_unconverted_carries_no_passthrough(extra: Any) -> None:
-    # No empty dictionaries on every prim of every robot.
     stage = _stage(urdf_to_usd(extra))
 
     assert stage.GetPrimAtPath("/extra/base_link/arm").GetCustomDataByKey(PASSTHROUGH_KEY) is None
@@ -713,19 +611,12 @@ def floater(tmp_path: Path) -> Any:
 
 
 def test_a_floating_base_converts_at_all(floater: Any) -> None:
-    """A floating joint has no single position, which is the whole point of it.
-
-    Asking one to pose its child raises, so a robot with a floating base -- a g1, a go2,
-    anything that walks -- could not be converted at all.
-    """
     stage = _stage(urdf_to_usd(floater))
 
     assert stage.GetPrimAtPath("/floater/world/base_link")
 
 
 def test_a_floating_joints_child_sits_at_the_joint_origin(floater: Any) -> None:
-    # Its real pose comes from odometry; the origin is the honest stand-in, and it is what
-    # parent_from_child(0) gives for every other joint type.
     from pxr import UsdGeom
 
     stage = _stage(urdf_to_usd(floater))
@@ -736,26 +627,15 @@ def test_a_floating_joints_child_sits_at_the_joint_origin(floater: Any) -> None:
 
 
 def test_a_floating_joint_is_the_generic_joint(floater: Any) -> None:
-    """The base PhysicsJoint is free in all six degrees, which is what a URDF floating joint is.
-
-    Standard, so a reader does not need metadata of ours to recognise one -- and a prim means a
-    layer read back can tell a free base from a body that is merely nested inside another.
-    """
     stage = _stage(urdf_to_usd(floater))
 
     prim = stage.GetPrimAtPath("/floater/joints/floating_base_joint")
     assert prim, [p.GetName() for p in stage.Traverse()]
     assert str(prim.GetTypeName()) == "PhysicsJoint"
-    # Nothing locked, and no axis: the generic joint has none.
     assert not prim.GetAttribute("physics:axis")
 
 
 def test_a_planar_joint_locks_the_axes_out_of_its_plane(tmp_path: Path) -> None:
-    """A URDF planar joint moves in its own xy and turns about z, so the other three are locked.
-
-    PhysicsLimitAPI is the standard way to say that, which keeps it apart from a floating joint
-    without either of them needing a custom field.
-    """
     source = tmp_path / "cart.urdf"
     source.write_text(
         '<robot name="cart"><link name="world"/><link name="body"/>'
@@ -815,10 +695,8 @@ def test_a_layer_with_no_assets_at_all_passes(toy: Any) -> None:
 
 
 def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: Any) -> None:
-    """The answer is the fix: the error carries the value to paste.
-
-    That matters most for a layer that is written by hand or baked into a constant, where
-    there is no converter to have done it for you.
+    """The answer is the fix: the error carries the value to paste, which matters most for a layer
+    written by hand or baked into a constant.
     """
     usd = urdf_to_usd(hashy).replace("string version", "string notversion")
 
@@ -854,12 +732,6 @@ def test_unhashed_assets_names_the_prim_carrying_each_one(hashy: Any) -> None:
 
 
 def test_a_texture_is_an_asset_the_hash_check_sees(tmp_path: Any) -> None:
-    """A texture names its image in an `asset` attribute, which is neither an arc nor assetInfo.
-
-    So the check that exists to refuse an unidentified asset walked straight past every texture:
-    a layer with three untextured-after-transport PNGs in it passed, which is the same vacuous
-    pass that reading only reference arcs used to give on every mesh.
-    """
     from pxr import Sdf, Usd, UsdGeom, UsdShade
 
     image = tmp_path / "wood.png"
@@ -875,7 +747,6 @@ def test_a_texture_is_an_asset_the_hash_check_sees(tmp_path: Any) -> None:
 
 
 def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
-    """And it is satisfiable the same way a mesh is, by naming the hash in assetInfo."""
     from pxr import Sdf, Usd, UsdGeom, UsdShade
 
     image = tmp_path / "wood.png"
@@ -892,12 +763,6 @@ def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
 
 
 def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
-    """A converted room's root is a plain Xform, not a link, and it is still a frame.
-
-    It is the one everything in the room hangs off, so if tf calls that frame something else
-    -- "world", where the robots stand -- the rename has to reach it. Validating the name and
-    then quietly not applying it is the worst of the three options.
-    """
     scene = urdf_to_usd(toy, name="office")
 
     assert "office" in usd_frame_names(scene)
@@ -908,11 +773,9 @@ def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
 
 
 def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
-    """Without this a reader falls back to a density over the visual meshes.
-
-    MuJoCo says so out loud -- "has only visual gprims and no colliders or explicit inertia;
-    falling back to default density" -- and a G1 whose every link weighs the wrong amount loads
-    fine and cannot stand up. The URDF's <inertial> was being passed through as text nothing reads.
+    """Without this a reader falls back to a density over the visual meshes -- MuJoCo says "has only
+    visual gprims and no colliders or explicit inertia; falling back to default density" -- and a
+    G1 whose every link weighs the wrong amount loads fine and cannot stand up.
     """
     from pxr import UsdPhysics
 

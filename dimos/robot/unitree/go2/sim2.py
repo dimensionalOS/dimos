@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
-
-Go2Sim.usd is the committed Go2 layer with the rig's sensor frames added: a sensor names one
-(Go2Sim.lidar_mount_frame, ...) as its frame_id, and the blueprint hands the same layer to a
-UsdManager, which poses those frames on tf, and to `sim_module`, which runs them. The layer
-carries the policy's gains and its home pose as drives (see `go2_drives`), so what holds this
-robot up is stated once, where the robot is described.
-"""
 
 import asyncio
 from collections.abc import AsyncIterator
 import math
 from pathlib import Path
-import time
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -56,14 +47,6 @@ from dimos.simulation.go2_legged.robot import COMMAND_SLEW, projected_gravity, y
 
 
 def go2_drives() -> dict[str, tuple[float, float, float]]:
-    """The gains and home pose the walking policy runs on, as `usd_with_drives` wants them.
-
-    Read out of the policy blob, which carries its own kp, kd and default pose: the gains that
-    hold this robot up are the controller's, not the vendor's. Called by
-    `scripts/usd_drives.py` to write them into the committed layer, and by the test that keeps
-    the layer honest if the blob ever changes -- never at runtime, because by then the layer is
-    what says it.
-    """
     policy = load_policy(None)
     return {
         joint: (float(kp), float(kd), float(q))
@@ -77,14 +60,10 @@ class Go2SimConfig(ModuleConfig):
     robot_id: str = "go2"
     policy: Path | None = None
     odom_frame_id: str = "world"
-    # Yaw rate commanded per radian of heading error while no turn is commanded.
     heading_gain: float = 2.0
 
 
 class Go2Sim(Module):
-    # The committed layer, converted once from the vendor MJCF (see assets/go2.usda), carrying
-    # the real rig's frames (go2_mid360_static_transforms) on its base. The mounts are added here
-    # rather than baked in because a mount is whose robot carries it, not what the robot is.
     usd = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
         {
             "utlidar_lidar": (
@@ -107,7 +86,6 @@ class Go2Sim(Module):
     actions: Out[WorldAction]
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
-    # Named as the Go2's URDF names them, for UsdManager.
     joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -122,7 +100,6 @@ class Go2Sim(Module):
         self._world = WorldMirror()
         loop = asyncio.get_running_loop()
 
-        # The world holds every CONTROL_DT of sim time until the policy has acted, as in training.
         def on_frame(world: WorldMirror) -> None:
             if world.got(self.config.robot_id, ACT):
                 loop.call_soon_threadsafe(self._act)
@@ -133,7 +110,7 @@ class Go2Sim(Module):
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         self._desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
-        self._desired_expires = time.monotonic() + CMD_VEL_TIMEOUT
+        self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
 
     def _act(self) -> None:
         policy, world = self._policy, self._world
@@ -145,9 +122,8 @@ class Go2Sim(Module):
             return
         x, y, z, w = base.pose[3:]
         quat = np.array([w, x, y, z])
-        desired = self._desired if time.monotonic() < self._desired_expires else np.zeros(3)
+        desired = self._desired if stamp < self._desired_expires else np.zeros(3)
         self._command += np.clip(desired - self._command, -COMMAND_SLEW, COMMAND_SLEW)
-        # The bundled policy drifts in yaw even standing still; with no turn commanded, hold heading.
         if desired[2] == 0:
             self._heading = yaw_of(quat) if self._heading is None else self._heading
             turn = self.config.heading_gain * math.remainder(self._heading - yaw_of(quat), math.tau)
@@ -155,7 +131,6 @@ class Go2Sim(Module):
             self._heading, turn = None, 0.0
         joints = {name: row for name, row in zip(names, rows, strict=True)}
         observation = Proprioception(
-            # The world's angular velocity is world-aligned; the policy's gyro reads in the base's frame.
             angular_velocity=rotation_matrix(quat).T @ base.velocity[3:],
             gravity=projected_gravity(quat),
             joint_position=np.array([joints[name][0] for name in policy.joint_names]),
