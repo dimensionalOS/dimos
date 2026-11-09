@@ -241,6 +241,18 @@ class MujocoView:
                 raise KeyError(f"no body, site or camera named {frame!r}")
         return self._frames[frame]
 
+    def owner(self, frame: str) -> str | None:
+        """The robot whose subtree this frame is in, by the id the world announced; None for the room's.
+
+        A sensor bolted to a robot sometimes needs to know which one -- the L1 publishes a map
+        centred on the robot it rides -- and a frame's own name says so, because a robot's parts
+        are all called "<id>/<something>".
+        """
+        kind, index = self._frame(frame)
+        name = mujoco.mj_id2name(self.model, kind, index) or ""
+        robot, _, _ = name.partition("/")
+        return robot if robot in self._robots else None
+
     def _named(self, kind: int) -> list[str]:
         """Every name of this kind in the model, for resolving a short one against."""
         if kind not in self._names:
