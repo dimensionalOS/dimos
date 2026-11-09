@@ -32,15 +32,11 @@ import uuid
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.utils.logging_config import setup_logger
-
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
 Vector = tuple[float, float, float]
-
-logger = setup_logger()
 
 
 _NO_USD = (

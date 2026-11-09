@@ -30,8 +30,6 @@ from typing import Any
 from dimos.robot.assets.usd import Prim, Pxr, Spec, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
-Vector = tuple[float, float, float]
-
 logger = setup_logger()
 
 

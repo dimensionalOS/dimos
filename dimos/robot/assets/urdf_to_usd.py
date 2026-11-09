@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
     from dimos.robot.assets.model import JointDescription, LoadedRobotModel
 
-Vector = tuple[float, float, float]
 
 logger = setup_logger()
 
