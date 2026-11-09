@@ -139397,6 +139397,28 @@ def Xform "office_555" (
     }
 }
 
+def Camera "Look_Camera" (
+    doc = """Not a camera to look through -- a camera to say how the room is exposed.
+
+    USD keeps exposure on the camera rather than on the render settings, because that is the
+    division it draws: the stage is lit in physical units and the camera decides how much of that
+    reaches the image. `exposure` is a log base-2 compensation, so 0 changes nothing and 1 doubles
+    the image-plane intensities; Isaac's camera exposure API puts the physical rig next to it
+    (exposure:iso, exposure:time, exposure:fStop, exposure:responsivity). This stage uses the bare
+    compensation, which is the same 1.05x it asked for before, said where Isaac would look for it.
+
+    MuJoCo resolves cameras by name, so this one is inert in the sim: nothing renders through it.
+    """
+)
+{
+    # Pulling the world light back to let the occlusion show cost the room its brightness; the
+    # bright end has room to spare (p95 0.796) so the exposure takes it back. The fittings were
+    # turned up while a filmic curve was still rolling their highlights off; without that curve
+    # the same light clips the walls to flat white, so the room is exposed down to put the bright
+    # end back inside the range.
+    float exposure = 0.070389
+}
+
 def RenderSettings "Look"
 {
     # How the scene wants to be shown, so a viewer does not have to guess. Filmic tone mapping rolls
@@ -139407,12 +139429,13 @@ def RenderSettings "Look"
     # sixteen stops to compress, and this room is low-contrast to begin with, so all it did was
     # desaturate (0.094 -> 0.059) and flatten. The neutral curve keeps the hue and the contrast.
     uniform token dimos:look:toneMap = "neutral"
-    # The fittings were turned up while the filmic curve was still rolling their highlights off.
-    # Without that curve the same light clips the walls to flat white, so the room is exposed down
-    # to put the bright end back inside the range, and the contrast bump -- which pushes exactly the
-    # values that were clipping -- goes away. Saturation is what is actually wanted here.
-    # Pulling the world light back to let the occlusion show cost the room its brightness; the
-    # bright end has room to spare (p95 0.796) so the exposure takes it back.
+    # Where the exposure lives, because USD keeps it on the camera. The contrast bump that used to
+    # sit here -- it pushed exactly the values the old filmic curve was clipping -- is gone with it;
+    # saturation is what is actually wanted.
+    rel camera = </Look_Camera>
+    # The same 1.05 again, for a viewer older than the camera reader: dim-controller pins dimos-react
+    # by commit, so a stage that only said it on the camera would render unexposed against a pin from
+    # before that. Drop this line once the pin is past it -- the camera is the one that is read first.
     float dimos:look:exposure = 1.05
     # No environment light. Blender's bounce comes from irradiance volumes, which vary through space
     # and know what is occluding what; a single environment map does not, so it fills the floor under
