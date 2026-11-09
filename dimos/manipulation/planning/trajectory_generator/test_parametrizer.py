@@ -36,7 +36,7 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
     TrajectoryParametrizationError,
 )
-from dimos.message_utils import time as message_time
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
 from dimos.messages.sensor_msgs.msg import JointState
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -174,9 +174,12 @@ def test_path_that_goes_nowhere_holds_still_without_the_backend() -> None:
     )
 
     assert parametrizer.calls == []
-    assert [point.positions for point in plan.trajectory.points] == [[0.3, 0.1], [0.3, 0.1]]
-    assert all(point.velocities == [0.0, 0.0] for point in plan.trajectory.points)
-    assert plan.trajectory.duration == pytest.approx(0.01)
+    assert [list(point.positions) for point in plan.trajectory.points] == [
+        [0.3, 0.1],
+        [0.3, 0.1],
+    ]
+    assert all(list(point.velocities) == [0.0, 0.0] for point in plan.trajectory.points)
+    assert trajectory_utils.duration(plan.trajectory) == pytest.approx(0.01)
 
 
 def test_a_saved_hold_is_refused_once_the_arm_has_moved() -> None:
