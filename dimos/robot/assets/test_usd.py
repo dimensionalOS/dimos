@@ -341,6 +341,78 @@ def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
     assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
 
 
+def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
+    """A mount bolted to a link is not free to move, and has to say so.
+
+    Nesting places a frame but does not say how it is held, so a physics engine decides. MuJoCo
+    decides "free in all six degrees", and a frame carries no mass, so the G1's lidar mount made
+    the whole robot refuse to compile: "mass and inertia of moving bodies must be larger than
+    mjMINVAL". The weld costs no degree of freedom -- a welded massless body folds into its
+    parent -- and it is what was true all along.
+    """
+    from pxr import UsdPhysics
+
+    grown = usd_with_frames(
+        urdf_to_usd(toy), {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+    stage = _stage(grown)
+
+    frame = _prim_by_link(stage, "spot")
+    assert frame, "the frame is still a link"
+    welds = [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ]
+    assert len(welds) == 1, "the frame is held by exactly one weld"
+    base = _prim_by_link(stage, "base_link")
+    assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
+
+
+def test_a_frame_added_to_something_that_is_not_a_link_is_not_welded(toy: Any) -> None:
+    """A converted room hangs its visitors' frames off its own root, which is an Xform.
+
+    Welding to something that is not a rigid body is not a statement USD can make, and nothing
+    there needs it: a frame nested under static geometry is static too.
+    """
+    from pxr import UsdPhysics
+
+    stage = _stage(
+        usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    )
+
+    frame = _prim_by_link(stage, "spot")
+    assert frame, "the frame is a link whether or not it is welded"
+    assert not [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ], "nothing holds the frame: it is nested under static geometry, which is static too"
+
+
+def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
+    """A rig's mounts describe each other: the Go2's Mid-360 sits on its front camera.
+
+    Reading the layer's links once before adding any made that "the layer has no frame
+    'front_camera'", which is true of the file and not of the stage being built into it.
+    """
+    stage = _stage(
+        usd_with_frames(
+            urdf_to_usd(toy),
+            {
+                "front_camera": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
+                "lidar": ("front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
+            },
+        )
+    )
+
+    camera = _prim_by_link(stage, "front_camera")
+    assert camera
+    assert stage.GetPrimAtPath(camera.GetPath().AppendChild("lidar")), "the lidar is on the camera"
+
+
 def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="is taken"):
         usd_with_frames(
@@ -730,3 +802,72 @@ def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
 
     assert 'displayName = "world"' in renamed
     assert "world" in usd_frame_names(renamed)
+
+
+def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
+    """Without this a reader falls back to a density over the visual meshes.
+
+    MuJoCo says so out loud -- "has only visual gprims and no colliders or explicit inertia;
+    falling back to default density" -- and a G1 whose every link weighs the wrong amount loads
+    fine and cannot stand up. The URDF's <inertial> was being passed through as text nothing reads.
+    """
+    from pxr import UsdPhysics
+
+    urdf = tmp_path / "weighed.urdf"
+    urdf.write_text(
+        """<?xml version="1.0"?>
+<robot name="weighed">
+  <link name="base">
+    <inertial>
+      <origin xyz="0 0 -0.076" rpy="0 0 0"/>
+      <mass value="3.813"/>
+      <inertia ixx="0.010549" iyy="0.0093089" izz="0.0079184" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <link name="frame_only"/>
+  <joint name="base_to_frame" type="fixed">
+    <parent link="base"/><child link="frame_only"/>
+  </joint>
+</robot>
+"""
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="weighed"))
+
+    base = _prim_by_link(stage, "base")
+    assert base.HasAPI(UsdPhysics.MassAPI)
+    mass = UsdPhysics.MassAPI(base)
+    assert mass.GetMassAttr().Get() == pytest.approx(3.813)
+    assert tuple(mass.GetCenterOfMassAttr().Get()) == pytest.approx((0.0, 0.0, -0.076))
+    # already diagonal, so the principal moments are the tensor's own, smallest first
+    assert tuple(mass.GetDiagonalInertiaAttr().Get()) == pytest.approx(
+        (0.0079184, 0.0093089, 0.010549), rel=1e-5
+    )
+
+    # a link with no <inertial> is a frame -- an IMU mount, a foot contact -- and stays massless
+    assert not _prim_by_link(stage, "frame_only").HasAPI(UsdPhysics.MassAPI)
+
+
+def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: Path) -> None:
+    from pxr import UsdPhysics
+
+    urdf = tmp_path / "tilted.urdf"
+    urdf.write_text(
+        """<?xml version="1.0"?>
+<robot name="tilted">
+  <link name="base">
+    <inertial>
+      <mass value="2"/>
+      <inertia ixx="0.02" iyy="0.03" izz="0.04" ixy="0.005" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+</robot>
+"""
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="tilted"))
+    mass = UsdPhysics.MassAPI(_prim_by_link(stage, "base"))
+    moments = tuple(mass.GetDiagonalInertiaAttr().Get())
+    # the trace is invariant under the rotation onto the principal axes
+    assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
+    # and the axes are a rotation, not a reflection
+    axes = mass.GetPrincipalAxesAttr().Get()
+    assert axes is not None

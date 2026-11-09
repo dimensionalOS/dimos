@@ -88,6 +88,7 @@ def _pxr() -> _Pxr:
         return _PXR
     with _PXR_LOCK:
         if _PXR is None:
+            _let_mujoco_register_its_schemas_first()
             try:
                 from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, Vt
             except ImportError as exc:  # pragma: no cover - only where the extra is absent
@@ -96,6 +97,31 @@ def _pxr() -> _Pxr:
                 Gf=Gf, Sdf=Sdf, Tf=Tf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics, Vt=Vt
             )
     return _PXR
+
+
+def _let_mujoco_register_its_schemas_first() -> None:
+    """Import MuJoCo's USD reader before pxr, where MuJoCo is installed at all.
+
+    Two OpenUSD runtimes end up in one process -- usd-core's, which this module uses to write a
+    layer, and the one MuJoCo bundles to read one -- and whichever initialises first owns the
+    plugin registry. With usd-core first, MuJoCo's own ``mjcPhysics`` schemas are never
+    registered, so every ``MjcActuator`` in a layer parses as an untyped prim and is dropped.
+
+    Nothing says so. Geometry is plain UsdGeom and UsdPhysics and loads either way, so the G1
+    came up as a complete robot with **no actuators at all** and the only symptom, much later,
+    was `no 'left_hip_pitch_joint' among ` -- a servo looking for a motor in a model that had
+    silently lost all 29 of them.
+
+    Importing it here is the only placement that holds, because this function is where pxr is
+    first touched and a caller cannot know it is the first. It costs nothing where MuJoCo is
+    absent (a robot posing itself on tf never has it) and nothing on later calls, since the
+    import is cached and this runs once.
+    """
+    try:
+        import mujoco._usd  # noqa: F401
+    except ImportError:
+        # No MuJoCo here, so nothing is going to read a layer back with it.
+        return
 
 
 @dataclass(frozen=True)
@@ -161,6 +187,7 @@ def urdf_to_usd(
         paths=paths,
         extras=link_extras,
         base_dir=Path(model.source_path).parent if model.source_path else None,
+        inertials=_inertial_of(model.xml),
     )
     _write_joints(
         pxr,
@@ -232,8 +259,12 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a scene")
     stage = pxr.Usd.Stage.Open(layer)
-    by_link = _link_prim_paths(stage)
     for name, (parent, xyz, rpy) in frames.items():
+        # Read afresh each time, because a frame may hang off one added a moment ago: the Go2's
+        # Mid-360 sits on its front camera, which is itself a frame the rig adds. Reading the
+        # layer's links once before the loop made that "the layer has no frame 'front_camera'",
+        # which is true of the file and not of the stage it is being built into.
+        by_link = _link_prim_paths(stage)
         parent_path = by_link.get(parent)
         if parent_path is None:
             raise ValueError(
@@ -250,7 +281,39 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
         transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
         transform[:3, 3] = xyz
         prim.AddTransformOp().Set(_matrix(pxr, transform))
+        _weld_frame(pxr, stage, parent_path, str(path), name)
     return str(layer.ExportToString())
+
+
+def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) -> None:
+    """Say the frame is fixed to the link it hangs off, where that link is one that moves.
+
+    Nesting places a frame but says nothing about how it is held, and a physics engine has to
+    decide. MuJoCo's guess is the most permissive one -- a body free in all six degrees -- and a
+    frame carries no mass, so the G1's lidar mount came back as "mass and inertia of moving
+    bodies must be larger than mjMINVAL" and the robot would not compile at all. A weld is the
+    honest statement (a mount bolted to the torso is not free to move) and it costs no degree of
+    freedom: MuJoCo folds a welded massless body into its parent.
+
+    Only where the parent is a link. A converted room hangs its visitors' frames off its own
+    root, which is an Xform and not a rigid body, and welding to something that is not a body is
+    not a statement USD can make. Nothing there needs it: a frame nested under static geometry is
+    static too, which is why a scene's stand frames always loaded.
+    """
+    parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
+    if not parent or not parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+        return
+    joint = pxr.UsdPhysics.FixedJoint.Define(
+        stage, pxr.Sdf.Path(path).AppendChild(_identifier(pxr, f"{name}_joint"))
+    )
+    joint.CreateBody0Rel().SetTargets([parent.GetPath()])
+    joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
+    # The nesting already placed the frame, so the joint adds no offset of its own.
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.GetPrim().SetDisplayName(f"{name}_joint")
 
 
 def prefix_usd_frames(usd: str, prefix: str) -> str:
@@ -677,6 +740,64 @@ def _link_prim_paths(stage: Any) -> dict[str, str]:
     return paths
 
 
+def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
+    """Each link's mass, centre of mass and inertia tensor, from its ``<inertial>``.
+
+    A link without one is left out: in a converted MJCF that is a frame -- an IMU mount, a foot
+    contact point, a lidar mount -- which is massless on purpose.
+    """
+    found: dict[str, tuple[float, np.ndarray, np.ndarray]] = {}
+    for link in ET.fromstring(xml).iter("link"):
+        name, inertial = link.get("name"), link.find("inertial")
+        if name is None or inertial is None:
+            continue
+        mass_element, tensor = inertial.find("mass"), inertial.find("inertia")
+        if mass_element is None or tensor is None:
+            continue
+        origin = inertial.find("origin")
+        zero = (0.0, 0.0, 0.0)
+        xyz = np.array(_floats(origin.get("xyz") if origin is not None else None, 3, zero))
+        rpy = np.array(_floats(origin.get("rpy") if origin is not None else None, 3, zero))
+        read = {
+            key: float(tensor.get(key, 0.0)) for key in ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
+        }
+        matrix = np.array(
+            [
+                [read["ixx"], read["ixy"], read["ixz"]],
+                [read["ixy"], read["iyy"], read["iyz"]],
+                [read["ixz"], read["iyz"], read["izz"]],
+            ]
+        )
+        # the tensor is about the centre of mass in the frame the origin's rpy names, so carry
+        # that rotation into the axes rather than dropping it
+        rotation = Rotation.from_euler("xyz", rpy).as_matrix()
+        found[name] = (float(mass_element.get("value", 0.0)), xyz, rotation @ matrix @ rotation.T)
+    return found
+
+
+def _write_mass(pxr: Any, prim: Any, mass: float, centre: np.ndarray, tensor: np.ndarray) -> None:
+    """Say the link's mass in the way a physics engine reading this layer looks for it.
+
+    The URDF's tensor is a full symmetric matrix; UsdPhysics wants principal moments and the
+    rotation onto them, so it is diagonalised. Without this a reader falls back to a default
+    density over the visual meshes, which for a G1 means a robot whose every link weighs the wrong
+    amount -- it loads, and it cannot stand up.
+    """
+    moments, axes = np.linalg.eigh(tensor)
+    if np.linalg.det(axes) < 0:
+        axes[:, 0] = -axes[:, 0]  # a reflection is not a rotation
+    api = pxr.UsdPhysics.MassAPI.Apply(prim)
+    api.CreateMassAttr(float(mass))
+    api.CreateCenterOfMassAttr(pxr.Gf.Vec3f(*(float(value) for value in centre)))
+    api.CreateDiagonalInertiaAttr(pxr.Gf.Vec3f(*(float(max(value, 0.0)) for value in moments)))
+    quaternion = Rotation.from_matrix(axes).as_quat()
+    api.CreatePrincipalAxesAttr(
+        pxr.Gf.Quatf(
+            float(quaternion[3]), float(quaternion[0]), float(quaternion[1]), float(quaternion[2])
+        )
+    )
+
+
 def _write_link_tree(
     pxr: Any,
     stage: Any,
@@ -688,6 +809,7 @@ def _write_link_tree(
     paths: dict[str, str],
     extras: Mapping[str, Sequence[str]],
     base_dir: Path | None,
+    inertials: Mapping[str, tuple[float, np.ndarray, np.ndarray]] | None = None,
     joint: JointDescription | None = None,
 ) -> None:
     """Define the prim for ``link`` under ``parent_path``, then recurse into its children."""
@@ -702,6 +824,9 @@ def _write_link_tree(
     prim.SetDisplayName(link)
     _set_passthrough(pxr, prim, extras.get(link))
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
+    inertial = (inertials or {}).get(link)
+    if inertial is not None:
+        _write_mass(pxr, prim, *inertial)
     if joint is not None:
         xform.AddTransformOp().Set(_matrix(pxr, _zero_pose(joint)))
 
@@ -725,6 +850,7 @@ def _write_link_tree(
             paths=paths,
             extras=extras,
             base_dir=base_dir,
+            inertials=inertials,
             joint=child_joint,
         )
 
