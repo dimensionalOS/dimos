@@ -24,6 +24,9 @@ drawing the world is a subscriber like any other, reached through no API of core
     sim_module(scene_manager="scene/usdmanager")        # the default engine
     sim_module("mujoco", scene=Path("room.usda"))       # or one by name, configured as it likes
 
+A backend is any module shaped like `SimulatedWorld` -- actions in, observations out -- which is
+a protocol rather than a base class so that a native one can be one too.
+
 The blueprint says who is in the world, because the blueprint is the one place that already
 knows::
 
@@ -39,19 +42,19 @@ watching.
 
 from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 from pydantic import field_validator
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd import resolve_usd_assets
 from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
-from dimos.sim2.spec import SimulatedRobot, validate
+from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import scene_as_files
 from dimos.utils.logging_config import setup_logger
 
@@ -103,37 +106,21 @@ class SimulatedWorldConfig(SceneConfig):
     controller_timeout: float = 0.5
 
 
-class SimulatedWorld(Module):
-    """A simulated world as a module: actions in, observations out. An engine subclasses this.
+class SimulatedWorld(Protocol):
+    """What sim2's core says a simulated world is: actions in on one stream, observations out on another.
 
-    This is the whole of what sim2's core says a simulation is. Core does not own the loop, know
-    which engine is running, hold a list of renderers, or make a view for one: it is told what
-    is in the world, finds the world itself, and leaves the rest to whichever subclass is
-    deployed.
+    A protocol and not a base class, deliberately. A backend does not have to be a Python module
+    subclassing anything -- a native one cannot be -- so this is the shape it has to have rather
+    than the class it has to extend. `SimulatedWorldConfig` is here for a Python backend that
+    wants the usual config without retyping it, and nothing is obliged to use that either.
 
-    Configured, not described to. The robots are a config value that the blueprint sets, so a
-    robot module needs no way to reach whatever engine is running and the engine needs no way to
-    hear from anything.
+    This is the whole contract. Core does not own the loop, know which engine is running, hold a
+    list of renderers, or make a view for one: a backend is told what is in the world, finds the
+    world itself through `scene_from`, and does the rest however it likes.
     """
 
-    config: SimulatedWorldConfig
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        try:
-            validate(self.config.robots)
-        except Exception:
-            # Nothing else will stop a module that threw in its own constructor, and it has
-            # already started the threads `Module.__init__` starts.
-            self.stop()
-            raise
-        self.simulated = self.config.robots
-
-    def world(self) -> UsdModel | None:
-        """The world to simulate: what the scene manager composed, or `scene=` without one."""
-        return scene_from(self.config.scene_manager, self.rpc, self.config.scene)
 
 
 def scene_from(
@@ -194,4 +181,4 @@ def sim_module(backend: str = "mujoco", **config: Any) -> Blueprint:
     if backend not in BACKENDS:
         raise ValueError(f"unknown simulation backend {backend!r}; one of {sorted(BACKENDS)}")
     module, _, name = BACKENDS[backend].rpartition(".")
-    return cast("type[SimulatedWorld]", getattr(import_module(module), name)).blueprint(**config)
+    return cast("Any", getattr(import_module(module), name)).blueprint(**config)

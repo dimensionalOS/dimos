@@ -31,7 +31,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.mujoco.names import resolve, resolved, shorten
+from dimos.sim2.mujoco.names import resolved, shorten
 from dimos.sim2.spec import Simulated, SimulatedRobot, Vector, validate
 from dimos.sim2.usd_layer import usd_layer
 
@@ -195,7 +195,15 @@ def _configure(
     prefix: str,
     layer: Path | None = None,
 ) -> None:
-    """Turn the described robot's actuators into the servos it says it has, in ``spec``.
+    """What is left to do to a robot after its layer has been read: hold it still if it is fixed.
+
+    Its gains are not here any more. They are in its layer, as a drive on each joint and as
+    MuJoCo's own actuator attributes beside it, so MuJoCo arrives at a position servo by reading
+    the file -- nothing has to turn a motor into one afterwards, and there is no second place for
+    a robot's gains to disagree with the robot.
+
+    Keyframes are dropped, because a vendor layer's pose is not the one the controller holds and
+    a composed world's qpos is not the shape a robot's own keyframe was written for.
 
     Called once per robot, on its own layer before it is attached or on the world it already
     stands in. ``prefix`` is how that robot's parts are named in ``spec``: nothing on its own
@@ -205,30 +213,6 @@ def _configure(
         root.mocap = True
     for key in list(spec.keys):
         spec.delete(key)
-    actuators = {actuator.target: actuator for actuator in spec.actuators}
-    for servo in robot.servos:
-        try:
-            actuator = actuators[resolve(actuators, prefix + servo.joint)]
-        except KeyError as error:
-            # Naming where it looked, because "no 'left_hip_pitch_joint' among " with nothing
-            # after it says only that the model arrived without its actuators, not which model
-            # or from where.
-            where = layer or "the world it stands in"
-            raise ValueError(
-                f"{robot.robot_id}: no actuator on {servo.joint!r} in {where} "
-                f"({len(actuators)} actuator(s) there): {error}"
-            ) from error
-        # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
-        motor = (
-            actuator.biastype == mujoco.mjtBias.mjBIAS_NONE
-            and actuator.ctrlrange[0] < actuator.ctrlrange[1]
-        )
-        torque_limit = actuator.ctrlrange.copy()
-        actuator.set_to_position(kp=servo.kp, kv=servo.kd)
-        actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
-        if motor:
-            actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
-            actuator.forcerange = torque_limit
 
 
 def mount_sensor(spec: mujoco.MjSpec, sensor: SensorMount) -> None:

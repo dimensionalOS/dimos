@@ -14,12 +14,16 @@
 
 """What a robot sends a world, as {"simulated": ...} from a @shared_config(SimulatedWorld) method.
 
-A robot and nothing else. A *sensor* used to describe itself here too, saying what kind of thing
-it was and how wide its field of view -- which made core's business include the difference
-between a camera and a lidar, and left an engine deciding what to build for each. A sensor now
-builds its own world out of the scene and renders from it, so what it is stays between the
-sensor and whatever it renders with. Core knows a scene has mounts, from the manager that
-composed it; it does not know that anything is mounted on them.
+A robot and nothing else, and very little of that. A *sensor* used to describe itself here too,
+saying what kind of thing it was and how wide its field of view -- which made core's business
+include the difference between a camera and a lidar, and left an engine deciding what to build
+for each. A sensor now builds its own world out of the scene and renders from it, so what it is
+stays between the sensor and whatever it renders with.
+
+A robot's *gains* used to be here too, as a servo per joint. They are a fact about the robot and
+they live in its layer now (`usd_with_drives`), where whatever runs it reads them from the same
+place a real one would. What is left is what a layer cannot say: the name the world calls this
+robot, and how often its controller acts.
 """
 
 from collections.abc import Iterable
@@ -28,16 +32,6 @@ from dataclasses import dataclass
 from dimos.robot.assets.model import UsdModel
 
 Vector = tuple[float, float, float]
-
-
-@dataclass(frozen=True)
-class Servo:
-    """A joint whose actuator becomes a PD position servo, starting at and holding initial."""
-
-    joint: str
-    kp: float
-    kd: float
-    initial: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -51,8 +45,6 @@ class SimulatedRobot:
     floating: bool = True
     # Its controller acts every this many sim seconds: the world sets "act" on it then, and waits for its actions.
     control_period: float | None = None
-
-    servos: tuple[Servo, ...] = ()
 
     @property
     def root_body(self) -> str:
