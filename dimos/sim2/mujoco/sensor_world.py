@@ -55,8 +55,21 @@ class WorldView(Protocol):
     def owner(self, frame: str) -> str | None:
         """The robot whose subtree this frame is in, or None where it is the room's."""
 
-    def raycaster(self, groups: Sequence[int]) -> Raycaster:
-        """Casts into the geoms in these groups (robots' meshes sit outside group 0)."""
+    def velocity(self, frame: str) -> tuple[Vector, Vector]:
+        """Linear and angular velocity in the frame's own axes."""
+
+    def raycaster(
+        self,
+        groups: Sequence[int],
+        mounted_at: str | None = None,
+        blind_to: Sequence[str] = (),
+    ) -> Raycaster:
+        """Casts into the geoms in these groups (robots' meshes sit outside group 0).
+
+        ``mounted_at`` names the frame whose own body the rays pass through, because a sensor
+        sits inside its mount rather than proud of it; ``blind_to`` names any further frames to
+        ignore.
+        """
 
     def imu(self, sensor: str) -> tuple[Vector, Vector, Vector]:
         """Gyro, accelerometer (specific force) and (w, x, y, z) orientation at an IMU mount, in its frame."""

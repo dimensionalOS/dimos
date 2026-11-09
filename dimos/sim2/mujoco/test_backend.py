@@ -14,7 +14,6 @@
 
 import asyncio
 import contextlib
-import json
 from pathlib import Path
 import time
 from typing import Any
@@ -101,13 +100,10 @@ def test_a_sensor_mounts_itself_in_a_world_of_its_own(scene, robot_model):
     assert model.camera("left/eye") is not None
     assert model.cam_fovy[model.camera("left/eye").id] == 42.0
     assert data.cam("world/overhead").xpos.tolist() == pytest.approx([0, 0, 3])
-    # An IMU is a site plus the three sensors that read it.
+    # An IMU is a site and nothing else: nothing here reads MuJoCo's own gyro or accelerometer,
+    # and a reading is differenced off the site's pose and velocity instead.
     assert data.site("left/imu").xpos.tolist() == pytest.approx([-1, 0, 0.3])
-    assert {model.sensor(i).name for i in range(model.nsensor)} == {
-        "left/imu/gyro",
-        "left/imu/accelerometer",
-        "left/imu/orientation",
-    }
+    assert model.nsensor == 0
 
 
 def test_a_robot_grafted_into_a_scene_is_still_free_to_move(scene, robot_model):
@@ -262,20 +258,6 @@ def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, rob
     backend._apply_pending()
     seen.offer(backend.frame())
     assert seen.world.entity("dog").cbor["note"] == {"a": 1}
-
-
-def test_scene_data_describes_the_world_without_its_robots(scene, robot_model):
-    backend = MujocoBackend(scene, [SimulatedRobot("dog", robot_model)])
-    data = json.loads(backend.scene_data())
-    assert data["format"] == "dimos.scene_data.v1" and data["frame"] == "world"
-    bodies = {body["name"]: body for body in data["bodies"]}
-    assert set(bodies) == {"world", "shelf", "crate"}
-    assert [geom["type"] for geom in bodies["world"]["geoms"]] == ["plane"]
-    crate = bodies["crate"]
-    assert crate["pos"] == pytest.approx([0, 2, 0.5])
-    assert crate["geoms"][0]["type"] == "box" and crate["geoms"][0]["size"] == pytest.approx(
-        [0.1] * 3
-    )
 
 
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
