@@ -139364,6 +139364,19 @@ def Xform "office_555" (
         }
     }
 
+    # How this room is lit, in one place, because the two prims below only explain their own numbers.
+    #
+    # It is a bright, well-lit office in the daytime: daylight through the skylights and windows is
+    # the whole of the light, and it is meant to read as a room you would happily work in -- open
+    # and airy, with the paint on the furniture still visible rather than washed out. Nothing is
+    # dim and nothing is crushed; measured in frame, the floor sits around 0.44 and no pixel falls
+    # into black at all.
+    #
+    # Two lights do it, the way a Blender scene does it with a World and a sun rather than with
+    # fittings: the sun makes the bright patches and every shadow in the room, and the dome is the
+    # floor of the lighting -- the bounce that a real room gets off its own walls and that a
+    # renderer with no global illumination cannot produce. The eighteen ceiling fittings this
+    # replaced are gone; none of them cast, and all of them together could not make a shadow.
     def DomeLight "ambient" (
         prepend apiSchemas = ["ShadowAPI"]
     )
