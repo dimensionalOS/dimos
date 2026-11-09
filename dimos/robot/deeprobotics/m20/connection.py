@@ -35,6 +35,7 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
@@ -50,6 +51,7 @@ from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_ON_DOCK,
     USAGE_MODE_NAVIGATION,
     BasicServerLink,
+    BatteryReport,
 )
 from dimos.robot.deeprobotics.m20.constants import WORLD_FRAME
 from dimos.utils.logging_config import setup_logger
@@ -152,6 +154,18 @@ def dock_failure(
     return None
 
 
+def battery_state(report: BatteryReport) -> BatteryState | None:
+    """Combine the two packs into one BatteryState. A pack at 0 V is absent, not empty."""
+    packs = [pack for pack in (report.left, report.right) if pack.voltage > 0.0]
+    if not packs:
+        return None
+    return BatteryState(
+        voltage=sum(pack.voltage for pack in packs) / len(packs),
+        percentage=sum(pack.level for pack in packs) / len(packs) / 100.0,
+        temperature=max(pack.temperature for pack in packs),
+    )
+
+
 class M20Connection(Module):
     """Expose the planner-facing M20 command and terrain surface.
 
@@ -180,6 +194,7 @@ class M20Connection(Module):
     gait_cmd: Out[UInt32]
     odom: Out[PoseStamped]
     goal: Out[PointStamped]
+    battery: Out[BatteryState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -197,6 +212,7 @@ class M20Connection(Module):
             udp_port=self.config.basic_server_udp_port,
             timeout_s=self.config.basic_server_timeout_s,
             on_report=self._on_basic_server_report,
+            on_battery=self._on_battery_report,
         )
         self._charge_job: _ChargeJob | None = None
         self._charge_thread: Thread | None = None
@@ -460,11 +476,16 @@ class M20Connection(Module):
 
     @skill
     def charge_status(self) -> str:
-        """Report the robot's charging state and the charging error it reports now, if any."""
+        """Report the robot's charging state, its battery level and any charging error."""
         status = self._fresh_charge_status()
         error = self._basic_server.charge_error
-        label = "unknown" if status is None else _CHARGE_LABELS.get(status, "unknown")
-        return f"{label}, error {_charge_error_text(error)}" if error is not None else label
+        parts = ["unknown" if status is None else _CHARGE_LABELS.get(status, "unknown")]
+        battery = self._fresh_battery_state()
+        if battery is not None:
+            parts.append(f"battery {battery.percentage:.0%}")
+        if error is not None:
+            parts.append(f"error {_charge_error_text(error)}")
+        return ", ".join(parts)
 
     def _dock_refusal(self) -> str | None:
         status = self._fresh_charge_status()
@@ -630,6 +651,12 @@ class M20Connection(Module):
             return None
         return report.status
 
+    def _fresh_battery_state(self) -> BatteryState | None:
+        report = self._basic_server.battery
+        if report is None or time.monotonic() - report.received_at > _CHARGE_STATUS_MAX_AGE_S:
+            return None
+        return battery_state(report)
+
     def _wait_for_charge_status(self, timeout_s: float) -> bool:
         with self._state_condition:
             self._state_condition.wait_for(
@@ -644,6 +671,11 @@ class M20Connection(Module):
     def _on_basic_server_report(self) -> None:
         with self._state_condition:
             self._state_condition.notify_all()
+
+    def _on_battery_report(self, report: BatteryReport) -> None:
+        state = battery_state(report)
+        if state is not None:
+            self.battery.publish(state)
 
     def _on_requested_cmd_vel(self, twist: Twist) -> None:
         if not self._charge_busy():
