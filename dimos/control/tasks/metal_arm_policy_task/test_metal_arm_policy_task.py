@@ -22,11 +22,12 @@ the simulator closed-loop evidence test.
 from __future__ import annotations
 
 from collections.abc import Callable
+import threading
 
 import numpy as np
 import pytest
 
-from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.task import CoordinatorState, JointCommandOutput, JointStateSnapshot
 from dimos.control.tasks.metal_arm_policy_task.metal_arm_policy_task import (
     MetalArmPolicyTask,
     MetalArmPolicyTaskConfig,
@@ -69,12 +70,16 @@ class FakeRuntime:
         self.manifest = make_manifest()
         self.frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
         self.act_calls = 0
+        self.total_act_calls = 0
         self.reset_poses: list[np.ndarray | None] = []
         self.fail_act = False
         self.on_act: Callable[[], None] | None = None
+        self.on_reset: Callable[[], None] | None = None
         self._issued = np.zeros(12, dtype=np.float32)
 
     def reset(self, q_measured=None) -> None:
+        if self.on_reset is not None:
+            self.on_reset()
         self.frames.clear()
         self.act_calls = 0
         self.reset_poses.append(None if q_measured is None else np.asarray(q_measured).copy())
@@ -94,6 +99,7 @@ class FakeRuntime:
 
     def act(self) -> np.ndarray:
         self.act_calls += 1
+        self.total_act_calls += 1
         if self.on_act is not None:
             self.on_act()
         if self.fail_act:
@@ -116,7 +122,26 @@ class FakeKinematics:
         return out
 
 
-def make_task(*, teleop: bool = False, freshness=None, **overrides) -> MetalArmPolicyTask:
+class FakeClock:
+    """Deterministic monotonic receipt clock; tests advance it explicitly."""
+
+    def __init__(self, now: float = 1.0) -> None:
+        self.now = float(now)
+
+    def __call__(self) -> float:
+        return self.now
+
+    def set(self, now: float) -> None:
+        self.now = float(now)
+
+
+def make_task(
+    *,
+    teleop: bool = False,
+    freshness=None,
+    clock: FakeClock | None = None,
+    **overrides,
+) -> MetalArmPolicyTask:
     config = MetalArmPolicyTaskConfig(
         joint_names=JOINTS,
         model_dir="/unused",
@@ -130,6 +155,7 @@ def make_task(*, teleop: bool = False, freshness=None, **overrides) -> MetalArmP
         runtime=FakeRuntime(),
         kinematics=FakeKinematics(),
         feedback_fresh=freshness,
+        clock=clock or FakeClock(),
     )
 
 
@@ -543,3 +569,268 @@ def test_goal_size_is_validated():
         task.set_goal_pose24([0.0] * 23, t_now=0.0)
     with pytest.raises(ValueError):
         task.set_goal([0.0, 0.0], [0, 0, 0, 1], [0.0, 0.0, 0.0], [0, 0, 0, 1], t_now=0.0)
+
+
+# ------------------------------------------------ WebXR freshness per tick
+
+
+def _teleop_at(task: MetalArmPolicyTask, left, right, buttons, t_now: float) -> None:
+    assert task.on_left_cartesian_command(make_pose(*left), t_now)
+    assert task.on_right_cartesian_command(make_pose(*right), t_now)
+    assert task.on_teleop_buttons(grips(*buttons), t_now)
+
+
+def _active_teleop(goal_timeout_s: float = 0.25) -> MetalArmPolicyTask:
+    task = make_task(teleop=True, goal_timeout_s=goal_timeout_s)
+    _teleop_at(task, (0.5, 0.1, 0.2), (0.5, -0.1, 0.2), (True, True), 0.9)
+    assert task.on_teleop_buttons(grips(True, True), 0.95)
+    assert task.compute(make_state(1.0)) is not None
+    assert _session(task) == "active"
+    return task
+
+
+@pytest.mark.parametrize("stale_side", ["left", "right"])
+def test_one_live_controller_cannot_reauthorize_a_stale_one(stale_side: str):
+    task = _active_teleop()
+    live = (0.6, 0.1, 0.2)
+    if stale_side == "left":
+        assert task.on_right_cartesian_command(make_pose(*live), 10.0)
+    else:
+        assert task.on_left_cartesian_command(make_pose(*live), 10.0)
+    assert task.compute(make_state(10.0)) is None
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
+
+
+def test_stale_buttons_invalidate_even_with_live_poses():
+    task = _active_teleop()
+    assert task.on_left_cartesian_command(make_pose(0.6, 0.1, 0.2), 10.0)
+    assert task.on_right_cartesian_command(make_pose(0.6, -0.1, 0.2), 10.0)
+    assert task.compute(make_state(10.0)) is None
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
+
+
+def test_stale_inputs_are_checked_between_policy_inferences():
+    task = _active_teleop()
+    runtime = task._runtime
+    assert isinstance(runtime, FakeRuntime)
+    assert runtime.act_calls == 1
+    # Still inside the freshness window: holds without a new inference.
+    assert task.compute(make_state(1.02)) is not None
+    assert runtime.act_calls == 1
+    # No source has reported since activation; the tick itself invalidates.
+    assert task.compute(make_state(1.3)) is None
+    assert runtime.act_calls == 1
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
+
+
+def test_teleop_recovery_needs_fresh_samples_on_both_sides():
+    task = _active_teleop()
+    assert task.compute(make_state(10.0)) is None
+    assert _session(task) == "disengaged"
+    # One live side plus a fresh deadman is not enough: the other side was
+    # cleared with the session and may never be replayed.
+    assert task.on_left_cartesian_command(make_pose(0.6, 0.1, 0.2), 10.1)
+    assert task.on_teleop_buttons(grips(True, True), 10.1)
+    assert task.compute(make_state(10.2)) is None
+    assert _session(task) == "disengaged"
+    assert task.on_right_cartesian_command(make_pose(0.6, -0.1, 0.2), 10.2)
+    assert task.compute(make_state(10.3)) is not None
+    assert _session(task) == "active"
+
+
+# ------------------------------------------- responsive cancellation
+
+
+def _blocked_inference(task: MetalArmPolicyTask) -> tuple[threading.Event, threading.Event]:
+    entered, finish = threading.Event(), threading.Event()
+    runtime = task._runtime
+    assert isinstance(runtime, FakeRuntime)
+
+    def on_act() -> None:
+        entered.set()
+        finish.wait(5)
+
+    runtime.on_act = on_act
+    return entered, finish
+
+
+def _run_compute(
+    task: MetalArmPolicyTask, state: CoordinatorState
+) -> tuple[threading.Thread, list[JointCommandOutput | None]]:
+    outputs: list[JointCommandOutput | None] = []
+
+    def run() -> None:
+        outputs.append(task.compute(state))
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    return worker, outputs
+
+
+def test_release_is_responsive_during_inference_and_drops_the_result():
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=0.95)
+    assert task.engage(t_now=0.95)
+    entered, finish = _blocked_inference(task)
+    worker, outputs = _run_compute(task, make_state(1.0))
+    assert entered.wait(2)
+    released = threading.Event()
+
+    def release() -> None:
+        task.release()
+        released.set()
+
+    releaser = threading.Thread(target=release, daemon=True)
+    releaser.start()
+    assert released.wait(2), "release blocked on the in-flight actor"
+    finish.set()
+    worker.join(2)
+    releaser.join(2)
+    assert outputs == [None]
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.RELEASED.value
+
+
+def test_estop_is_responsive_during_inference_and_drops_the_result():
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=0.95)
+    assert task.engage(t_now=0.95)
+    entered, finish = _blocked_inference(task)
+    worker, outputs = _run_compute(task, make_state(1.0))
+    assert entered.wait(2)
+    stopped = threading.Event()
+
+    def estop() -> None:
+        task.set_estop(True)
+        stopped.set()
+
+    stopper = threading.Thread(target=estop, daemon=True)
+    stopper.start()
+    assert stopped.wait(2), "e-stop blocked on the in-flight actor"
+    finish.set()
+    worker.join(2)
+    stopper.join(2)
+    assert outputs == [None]
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.ESTOP.value
+
+
+def test_preemption_during_inference_drops_the_result():
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=0.95)
+    assert task.engage(t_now=0.95)
+    entered, finish = _blocked_inference(task)
+    worker, outputs = _run_compute(task, make_state(1.0))
+    assert entered.wait(2)
+    task.on_preempted("safety", frozenset({"arm/left_joint1"}))
+    finish.set()
+    worker.join(2)
+    assert outputs == [None]
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.PREEMPTED.value
+
+
+def test_release_is_responsive_during_runtime_reset():
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=0.95)
+    assert task.engage(t_now=0.95)
+    entered, finish = threading.Event(), threading.Event()
+    runtime = task._runtime
+    assert isinstance(runtime, FakeRuntime)
+
+    def on_reset() -> None:
+        entered.set()
+        finish.wait(5)
+
+    runtime.on_reset = on_reset
+    worker, outputs = _run_compute(task, make_state(1.0))
+    assert entered.wait(2)
+    released = threading.Event()
+
+    def release() -> None:
+        task.release()
+        released.set()
+
+    releaser = threading.Thread(target=release, daemon=True)
+    releaser.start()
+    assert released.wait(2), "release blocked on the runtime reset"
+    finish.set()
+    worker.join(2)
+    releaser.join(2)
+    assert outputs == [None]
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.RELEASED.value
+
+
+def test_reengagement_after_cancelled_inference_seeds_from_measured_q():
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=0.95)
+    assert task.engage(t_now=0.95)
+    entered, finish = _blocked_inference(task)
+    worker, outputs = _run_compute(task, make_state(1.0))
+    assert entered.wait(2)
+    assert task.release()
+    finish.set()
+    worker.join(2)
+    assert outputs == [None]
+    runtime = task._runtime
+    assert isinstance(runtime, FakeRuntime)
+    assert runtime.total_act_calls == 1
+
+    assert task.set_goal_pose24(goal24(), t_now=1.01)
+    assert task.engage(t_now=1.01)
+    output = task.compute(make_state(1.02))
+    assert output is not None
+    # The reset re-seeds from the measured pose, discarding the dropped step.
+    assert runtime.total_act_calls == 2
+    assert len(runtime.reset_poses) == 2
+    np.testing.assert_allclose(runtime.reset_poses[-1], Q0, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(output.positions, dtype=np.float32), Q0 + np.float32(0.01), atol=1e-6
+    )
+
+
+# ------------------------------------------------ receipt-time clocks
+
+
+def test_untimestamped_goal_is_stamped_at_receipt_not_first_tick():
+    clock = FakeClock(1.0)
+    task = make_task(clock=clock)
+    assert task.set_goal_pose24(goal24())  # no timestamp: stamp receipt now
+    clock.set(2.0)  # it sat for a second before anyone engaged
+    assert task.engage()
+    assert task.compute(make_state(100.0)) is None
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
+
+
+def test_untimestamped_goal_is_accepted_when_the_first_tick_is_prompt():
+    clock = FakeClock(1.0)
+    task = make_task(clock=clock)
+    assert task.set_goal_pose24(goal24())
+    assert task.engage()
+    assert task.compute(make_state(1.01)) is not None
+    assert _session(task) == "active"
+
+
+def test_delayed_engage_is_rejected():
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=1.0)
+    assert task.engage(t_now=1.0)
+    assert task.compute(make_state(10.0)) is None
+    assert _session(task) == "disengaged"
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
+
+
+def test_fresh_same_value_goal_reauthorizes_after_release():
+    task = make_task()
+    activate(task, 1.0)
+    assert task.release()
+    assert not task.engage(t_now=1.05)  # the goal went with the session
+    assert task.set_goal_pose24(goal24(), t_now=1.05)  # same value, fresh receipt
+    assert task.engage(t_now=1.05)
+    assert task.compute(make_state(1.06)) is not None
+    assert _session(task) == "active"

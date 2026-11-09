@@ -43,11 +43,13 @@ from dimos.robot.manipulators.dual_makermods_metal.config import (
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import HOME
 
 #: The trained station mounts differ from the repo's example bench layout.
-POLICY_MODEL = dual_metal_model_config(
-    left_xyz=(0.0, -0.345, 0.008),
-    right_xyz=(0.0, 0.345, 0.008),
-    robot="arm",
-)
+_LEFT_MOUNT = (0.0, -0.345, 0.008)
+_RIGHT_MOUNT = (0.0, 0.345, 0.008)
+#: Coordinator/planning view: joints named ``arm/<joint>``, as the task claims them.
+POLICY_MODEL = dual_metal_model_config(left_xyz=_LEFT_MOUNT, right_xyz=_RIGHT_MOUNT, robot="arm")
+#: Connection view: the same robot with its URDF joint names; the connection
+#: prefixes them with its own ``source`` ("arm") when it publishes readings.
+CONNECTION_MODEL = dual_metal_model_config(left_xyz=_LEFT_MOUNT, right_xyz=_RIGHT_MOUNT)
 
 DEFAULT_MODEL_DIR = Path(
     os.environ.get(
@@ -64,10 +66,14 @@ DEFAULT_MANIFEST_PATH = Path(
 
 
 def _initial_positions() -> dict[str, float]:
-    """The trained home pose with both jaws closed; the task stays inert."""
-    positions = dict(zip((f"arm/{joint}" for joint in ALL_ARM_JOINTS), HOME, strict=True))
+    """The trained home pose with both jaws closed; the task stays inert.
+
+    Names are the connection model's, i.e. without the ``arm/`` prefix the
+    connection adds when it publishes readings.
+    """
+    positions = dict(zip(ALL_ARM_JOINTS, HOME, strict=True))
     for side in SIDES:
-        positions[f"arm/{FINGER_JOINTS[side][0]}"] = 0.0
+        positions[FINGER_JOINTS[side][0]] = 0.0
     return positions
 
 
@@ -124,7 +130,7 @@ def dual_metal_policy_blueprint(
         ),
         MockJointConnection.blueprint(
             source="arm",
-            model=POLICY_MODEL.model,
+            model=CONNECTION_MODEL.model,
             initial_positions=_initial_positions(),
         ),
     ).remappings(
