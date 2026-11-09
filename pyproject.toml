@@ -330,6 +330,10 @@ sim = [
     "mjcf-to-urdf>=0.1.1",
     "playground>=0.0.5",
     "pygame>=2.6.1",
+    # A simulated world is USD: a backend is handed one, every sensor reads the same one, and
+    # the manager that composes them needs usd-core to do it. No linux-aarch64 wheel before
+    # usd-core 26.11, and a robot does not run a simulation, so the marker keeps it off there.
+    "usd-core>=23.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
 ]
 
 mapping = [
