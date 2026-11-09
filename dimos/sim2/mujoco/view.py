@@ -43,6 +43,7 @@ class MujocoView:
         self.data = mujoco.MjData(self.model)
         mujoco.mj_kinematics(self.model, self.data)
         self._frames: dict[str, tuple[int, int]] = {}
+        self._hidden: list[tuple[int, int, NDArray[np.uint8]]] = []
         self._names: dict[int, list[str]] = {}
         self._velocities_current = False
         self._renderers: dict[tuple[int, int], mujoco.Renderer] = {}
@@ -120,6 +121,10 @@ class MujocoView:
         blind_to: Sequence[str] = (),
     ) -> MujocoRaycaster:
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
+        # Hiding rewrites geom_group on the model this view shares with every raycaster it has
+        # made, so the previous caster's blind set is undone first: otherwise a second cast
+        # without blind_to stayed blind to whatever the first one hid.
+        self._show_hidden()
         for frame in blind_to or ():
             self._hide_from_rays(self._mount(frame), groups)
         mount = NO_BODY_EXCLUDED if mounted_at is None else self._mount(mounted_at)
@@ -133,7 +138,9 @@ class MujocoView:
                 f"it is meant to be blind to"
             )
         start = int(self.model.body_geomadr[body])
-        self.model.geom_group[start : start + int(self.model.body_geomnum[body])] = spare
+        count = int(self.model.body_geomnum[body])
+        self._hidden.append((start, count, self.model.geom_group[start : start + count].copy()))
+        self.model.geom_group[start : start + count] = spare
 
     def _mount(self, frame: str) -> int:
         kind, index = self._frame(frame)
@@ -150,7 +157,13 @@ class MujocoView:
             body = parent
         return body
 
+    def _show_hidden(self) -> None:
+        for start, count, groups in reversed(self._hidden):
+            self.model.geom_group[start : start + count] = groups
+        self._hidden.clear()
+
     def close(self) -> None:
+        self._show_hidden()
         for renderer in self._renderers.values():
             renderer.close()
         self._renderers.clear()
