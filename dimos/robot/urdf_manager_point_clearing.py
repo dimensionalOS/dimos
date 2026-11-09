@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A UrdfManager that also cuts the robot out of a point cloud; kept apart so a plain UrdfManager never needs RoboPlan."""
 
 from __future__ import annotations
 
@@ -41,18 +40,14 @@ logger = setup_logger()
 
 class UrdfManagerPointClearingConfig(UrdfManagerConfig):
     padding_m: float = Field(default=0.01, ge=0.0)
-    # How far a cloud's capture time may be from the tf and joint state it is matched with.
     tf_tolerance_s: float = Field(default=0.02, ge=0.0)
     tf_forward_tolerance_s: float = Field(default=0.05, ge=0.0)
     state_tolerance_s: float = Field(default=0.02, ge=0.0)
     state_history_s: float = Field(default=5.0, gt=0.0)
-    # Seconds between self-filter summary log lines (0 disables).
     filter_stats_interval_s: float = Field(default=10.0, ge=0.0)
 
 
 class UrdfManagerPointClearing(UrdfManager):
-    """A UrdfManager that also drops the robot's own returns from `pointcloud` at their capture time."""
-
     config: UrdfManagerPointClearingConfig
 
     pointcloud: In[PointCloud2]
@@ -69,25 +64,17 @@ class UrdfManagerPointClearing(UrdfManager):
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
     def _filter_description(self) -> LoadedRobotModel:
-        """The URDF RoboPlan builds its collision scene from. It only reads URDF, so a USD-described
-        robot is converted back; where the model came from a URDF the original is still there to hand
-        over -- no round trip, and no pxr needed.
-        """
         kept = self._description.urdf()
         if kept is not None:
             return kept
-        # A layer read straight off disk. Converting it is what lets a USD-native robot
-        # filter itself; the package paths are empty because a USD names its assets outright.
         return LoadedRobotModel(
             usd_to_urdf(self._description.usd), self._description.source_path, {}
         )
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
-        """Filter the latest capture without starving TF transport callbacks."""
         await asyncio.to_thread(self._on_pointcloud, cloud)
 
     def add_joint_state(self, state: JointState) -> None:
-        """Buffer the full model state (out-of-order arrivals stay timestamped) and publish its joints on tf."""
         with self._lock:
             if np.isfinite(state.ts):
                 self._states.remove_by_timestamp(state.ts)
@@ -98,7 +85,6 @@ class UrdfManagerPointClearing(UrdfManager):
         super().add_joint_state(state)
 
     def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
-        """The capture with the robot's points removed, frame and point fields unchanged; None when it can't be."""
         filtered = self._filter_capture(cloud)
         self._clouds_in += 1
         if filtered is None:
@@ -117,7 +103,6 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
         with self._lock:
-            # Sensors sharing this input interleave, so an older capture is filtered at its own time rather than dropped.
             if not np.isfinite(cloud.ts):
                 logger.warning("Dropping cloud: invalid capture timestamp")
                 return None
@@ -141,7 +126,6 @@ class UrdfManagerPointClearing(UrdfManager):
     def _compute_keep_mask(
         self, cloud: PointCloud2, points: NDArray[np.float32]
     ) -> NDArray[np.bool_] | None:
-        """One keep flag per point (input order), or None when the capture-time state or tf is missing."""
         base_from_sensor = self._tf_at(self._base_link, cloud.frame_id, cloud.ts)
         state = self._capture_state(cloud.ts)
         motions = self._multi_dof_motions(cloud.ts)
@@ -157,7 +141,6 @@ class UrdfManagerPointClearing(UrdfManager):
         return keep
 
     def _capture_state(self, stamp: float) -> dict[str, float] | None:
-        """Joint positions at capture time (empty when none is close enough), or None when that state is malformed."""
         state = self._states.find_closest(stamp, self.config.state_tolerance_s)
         if state is None:
             return {}
@@ -169,8 +152,6 @@ class UrdfManagerPointClearing(UrdfManager):
         return positions
 
     def _multi_dof_motions(self, stamp: float) -> dict[str, NDArray[np.float64]] | None:
-        """Each floating/planar joint's motion past its URDF origin, from capture-time tf (they have no scalar
-        JointState); None when one is missing."""
         motions = {}
         for joint in self._joints.values():
             if joint.type in MULTI_DOF_JOINT_TYPES:
@@ -181,23 +162,9 @@ class UrdfManagerPointClearing(UrdfManager):
         return motions
 
     def _published(self, frame: str) -> str:
-        """``frame`` as tf carries it: renamed and namespaced only if it is one of this robot's own.
-
-        A sensor's frame_id is published by the sensor's own module and arrives already in tf's
-        names, so `frame()` is the wrong thing to put it through: that prepends this manager's
-        frame_id_prefix unconditionally, and a namespaced manager was looking up
-        "g1/livox_frame" for a cloud published as "livox_frame" -- missing every time, and
-        reported only as "Dropping cloud: capture-time robot state or TF unavailable".
-        """
         return self.frame(frame) if frame in self._own_frame_names() else frame
 
     def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
-        """One tf lookup, in the description's names.
-
-        The renaming happens here rather than at the call sites -- this module works in its URDF's
-        names, tf carries the names the manager publishes, and tf_renames is the difference -- so a
-        lookup added later cannot forget it.
-        """
         return self.tfbuffer.get(
             self._published(parent),
             self._published(child),
@@ -208,14 +175,9 @@ class UrdfManagerPointClearing(UrdfManager):
 
 
 class RobotBodyFilter(Protocol):
-    """A self-filter backend: which points lie on the robot at a given joint state."""
-
     def keep_mask(
         self,
         root_points: NDArray[np.float64],
         joint_positions: Mapping[str, float],
         joint_motions: Mapping[str, NDArray[np.float64]],
-    ) -> NDArray[np.bool_] | None:
-        """One keep flag per point (points in the URDF root frame, input order), or None when the state lacks a
-        joint the backend needs. joint_motions holds each floating/planar joint's 4x4 motion past its URDF origin."""
-        ...
+    ) -> NDArray[np.bool_] | None: ...
