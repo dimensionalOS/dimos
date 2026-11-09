@@ -208,7 +208,13 @@ def prepare_model_input(
 def _parse_field_default(info: FieldInfo) -> Any:
     if info.default is not PydanticUndefined:
         return info.default
-    if info.default_factory is not None:
+    # A factory that reads the other fields cannot be called here: there are no validated values
+    # yet, and pydantic raises rather than returning anything. That is every default written as
+    # `default_factory=lambda m: m["g"].something`, which is how a module takes a default from
+    # the global config -- so a dataclass-valued field with one of those could not be given a
+    # sparse override at all ("The default factory requires the 'validated_data' argument").
+    # It has no default to complete an override from, which is what PydanticUndefined says.
+    if info.default_factory is not None and not info.default_factory_takes_validated_data:
         return info.get_default(call_default_factory=True)
     return PydanticUndefined
 
