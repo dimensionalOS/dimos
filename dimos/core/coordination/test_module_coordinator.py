@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core._test_future_annotations_helper import (
     FutureModuleIn,
@@ -873,11 +874,18 @@ def test_module_saved_in_modules_dir_after_start_loads(
         coordinator.stop()
 
 
-def test_restart_module_basic(dynamic_coordinator) -> None:
+@pytest.mark.parametrize("worker_exited", [False, True], ids=["running-worker", "dead-worker"])
+def test_restart_module_basic(dynamic_coordinator, worker_exited) -> None:
     """restart_module replaces the deployed proxy with a fresh one."""
     dynamic_coordinator.load_module(ModuleA)
     old_proxy = dynamic_coordinator.get_instance(ModuleA)
     assert old_proxy is not None
+
+    worker = dynamic_coordinator._managers["python"].workers[0]
+    if worker_exited:
+        worker._process.terminate()
+        worker._process.join(timeout=5)
+    assert worker.has_exited is worker_exited
 
     new_proxy = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
 
@@ -885,6 +893,38 @@ def test_restart_module_basic(dynamic_coordinator) -> None:
     assert new_proxy is not old_proxy
     assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
     assert new_proxy.get_name() == "A, Module A"
+
+
+def test_restart_module_aborts_when_undeploy_fails(
+    dynamic_coordinator: ModuleCoordinator, mocker: MockerFixture
+) -> None:
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
+    old_proxy = dynamic_coordinator.get_instance(ModuleA)
+    consumer = dynamic_coordinator.get_instance(ModuleB)
+    assert old_proxy is not None
+    assert consumer is not None
+    undeploy = mocker.patch.object(
+        WorkerManagerPython, "undeploy", side_effect=RuntimeError("stop failed")
+    )
+    deploy_fresh = mocker.spy(WorkerManagerPython, "deploy_fresh")
+    close_client = mocker.spy(old_proxy, "stop_rpc_client")
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+
+    deploy_fresh.assert_not_called()
+    close_client.assert_not_called()
+    assert dynamic_coordinator.get_instance(ModuleA) is old_proxy
+    assert consumer.what_is_as_name() == "A, Module A"
+
+    mocker.stop(undeploy)
+    new_proxy = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+
+    assert new_proxy is not old_proxy
+    assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
+    assert consumer.module_a is new_proxy
+    assert consumer.data1.transport.topic == new_proxy.data1.transport.topic
+    assert consumer.what_is_as_name() == "A, Module A"
 
 
 def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
