@@ -102,6 +102,15 @@ def test_an_unknown_engine_is_refused_by_name():
         sim_module("bullet")
 
 
+def test_there_is_more_than_one_engine_to_switch_between():
+    """Which is the only way to know this is a contract rather than a description of MuJoCo.
+
+    A switch with one thing in it is not a switch, and a backend protocol with one implementation
+    is whatever that implementation happens to do.
+    """
+    assert set(BACKENDS) >= {"mujoco", "dimsim"}
+
+
 def test_core_names_its_engines_and_imports_none_of_them():
     """The only thing core knows about any engine is a string, and that is deliberate.
 
