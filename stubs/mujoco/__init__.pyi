@@ -196,4 +196,5 @@ class mjtWrap:
     mjWRAP_JOINT: int
 
 class mjtBias:
+    mjBIAS_AFFINE: int
     mjBIAS_NONE: int

@@ -46,6 +46,11 @@ def joint_state(entity: int, position: float, velocity: float, effort: float) ->
     )
 
 
+def _resolve(future: "asyncio.Future[None]") -> None:
+    if not future.done():
+        future.set_result(None)
+
+
 class WorldWriter:
     def __init__(self) -> None:
         self.ids: dict[str, int] = {"world": WORLD}
@@ -184,7 +189,7 @@ class WorldMirror:
             due = [w for w in self._waiters if w[0] <= self.time]
             self._waiters = [w for w in self._waiters if w[0] > self.time]
         for _, loop, future in due:
-            loop.call_soon_threadsafe(lambda f=future: f.done() or f.set_result(None))
+            loop.call_soon_threadsafe(_resolve, future)
         for listener in self._listeners:
             listener(self)
 
