@@ -139413,7 +139413,7 @@ def RenderSettings "Look"
     # values that were clipping -- goes away. Saturation is what is actually wanted here.
     # Pulling the world light back to let the occlusion show cost the room its brightness; the
     # bright end has room to spare (p95 0.796) so the exposure takes it back.
-    float dimos:look:exposure = 0.95
+    float dimos:look:exposure = 1.05
     # No environment light. Blender's bounce comes from irradiance volumes, which vary through space
     # and know what is occluding what; a single environment map does not, so it fills the floor under
     # a desk exactly as much as the floor beside it and erases the shadow it was meant to soften.
@@ -139427,8 +139427,8 @@ def RenderSettings "Look"
     # The reach has to match the enclosure being darkened. 0.6 only caught the contact line where
     # a leg meets the floor; the shaded area under a desk is more like a metre and a half across,
     # and with no lamp overhead any more that occlusion is the only thing left to draw it.
-    float omni:rtx:ambientOcclusion:rayLength = 1.5
-    float dimos:look:saturation = 1.6
+    float omni:rtx:ambientOcclusion:rayLength = 2.2
+    float dimos:look:saturation = 1.72
     float dimos:look:contrast = 1
 }
 
