@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, Vector, validate
+from dimos.sim2.usd_names import resolve, resolved
 
 # Sites only mark a pose; keep them invisible and negligible.
 _SITE_SIZE = (0.001, 0.001, 0.001)
@@ -60,6 +61,9 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     """Robots are prefixed "<robot_id>/"; scene-mounted sensors are prefixed "world/"."""
     _register_usd_reader(Path(scene))
     descriptions = list(simulated)
+    for described in descriptions:
+        if isinstance(described, SimulatedRobot):
+            _register_usd_reader(Path(described.model))
     robots = [d for d in descriptions if isinstance(d, SimulatedRobot)]
     sensors = [d for d in descriptions if isinstance(d, SimulatedSensor)]
     validate(descriptions)
@@ -68,7 +72,8 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     for robot in robots:
         spec = mujoco.MjSpec.from_file(str(robot.model), assets=_assets(robot))
         robot_geoms = {geom.name for geom in spec.geoms}
-        root = spec.body(robot.root_body)
+        root_name = resolved([body.name for body in spec.bodies], robot.root_body)
+        root = spec.body(root_name) if root_name else None
         if root is None:
             raise ValueError(f"{robot.robot_id}: no body {robot.root_body!r} in {robot.model}")
         # The description places the robot, not the source asset.
@@ -80,7 +85,7 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
             spec.delete(key)
         actuators = {actuator.target: actuator for actuator in spec.actuators}
         for servo in robot.servos:
-            actuator = actuators[servo.joint]
+            actuator = actuators[resolve(actuators, servo.joint)]
             # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
             motor = (
                 actuator.biastype == mujoco.mjtBias.mjBIAS_NONE
