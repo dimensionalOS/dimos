@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The sim2 Go2 with a Mid-360 on the real rig's mount, its fitted pattern and mount occlusion.
-
-The same shape as `unitree_go2_sim2_l1`, with the head L1 swapped for the Mid-360 the rig
-actually carries.
-"""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -39,16 +34,11 @@ SCENE_MANAGER = f"{SCENE}/{UsdManager.name}"
 
 _room = UsdModel.from_file(LOGISTICS).with_frames({ROBOT: ("logistics", SPOT, (0.0, 0.0, 0.0))})
 
-# The sensors as their own blueprints, because the manager mounts them by the instance each one
-# deploys: a frame_id alone would name a module the manager cannot address.
 _lidar = LivoxSim.blueprint(
     frame_id=Go2Sim.lidar_mount_frame, go2_occlusion=True, scene_manager=SCENE_MANAGER
 )
 _camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame, scene_manager=SCENE_MANAGER)
 
-# One manager holding the whole robot: the Go2's own layer, with each sensor grafted onto the
-# frame it is bolted to. Without the mounts the lidar and camera are nowhere in the stage a
-# viewer draws -- the sensors publish, and nothing on screen shows what is doing the sensing.
 _robot = UsdManager.blueprint(
     model=Go2Sim.usd,
     mounts={Go2Sim.lidar_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera},
