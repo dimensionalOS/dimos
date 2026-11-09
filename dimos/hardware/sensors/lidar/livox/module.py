@@ -12,23 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python NativeModule wrapper for the Rust Livox Mid-360 driver.
-
-Usage::
-    from dimos.hardware.sensors.lidar.livox.module import Mid360
-    from dimos.core.coordination.blueprints import autoconnect
-
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    ModuleCoordinator.build(autoconnect(
-        Mid360.blueprint(lidar_ip="192.168.1.155"),  # host_ip auto-detected
-        SomeConsumer.blueprint(),
-    )).loop()
-
-The sensor also describes itself as USD over the ``get_usd`` RPC, so a UsdManager can take it
-as a ``mounts`` value. The layer is baked into ``_MID360_USD`` rather than converted on the
-fly, because usd-core has no linux-aarch64 wheel and this module runs on a Jetson; the
-constant is the whole artifact, so its provenance is written above it.
-"""
 
 from __future__ import annotations
 
@@ -64,33 +47,20 @@ class Mid360Config(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
-    # None derives host_ip from a NIC on the lidar's subnet; a box with two links
-    # into that subnet sets it explicitly.
     host_ip: str | None = None
-    # Required for a live sensor.
     lidar_ip: str | None = None
     frequency: float = 10.0
     enable_imu: bool = True
-    # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
     pcap: str | None = None
-    # Replay speed relative to capture time. None runs flat-out.
     replay_rate: float | None = Field(default=1.0, gt=0)
-    # Seconds a replay holds its first packet, so consumers can subscribe first.
     replay_delay: float = Field(default=0.0, ge=0)
-    # Multicast group the device streams to. None receives unicast only, which
-    # loopback replay needs and macOS requires (see virtual_mid360).
     multicast_ip: str | None = Field(
         default_factory=lambda: None if sys.platform == "darwin" else SDK_MULTICAST_GROUP
     )
-    # Wire layout per point:
-    #   "minimal" x,y,z,offset_time                    - 16 B (default)
-    #   "full"    x,y,z,intensity,offset_time,tag,line - 22 B
-    #   "legacy"  x,y,z,intensity                      - 16 B
     point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
 
-    # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
     push_msg_port: int = SDK_PUSH_MSG_PORT
     point_data_port: int = SDK_POINT_DATA_PORT
@@ -109,33 +79,11 @@ class Mid360Config(NativeModuleConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
-        # The rust struct has every key. None crosses as an explicit null.
         for key in ("host_ip", "lidar_ip", "pcap", "replay_rate", "multicast_ip"):
             config[key] = getattr(self, key)
         return config
 
 
-# The MID-360 as a USD layer, baked rather than converted at runtime: usd-core has no
-# linux-aarch64 wheel, and this module's whole job happens on a Jetson.
-#
-# This constant is the artifact. It was produced one-off by writing the sensor as a URDF and
-# running it through dimos.robot.assets.usd.urdf_to_usd; that URDF is not checked in, so the
-# numbers here are the record. To change it, write the URDF again from these notes, convert,
-# and re-insert the @LIDAR@ / @IMU@ placeholders into the displayName lines.
-#
-# Where the numbers come from:
-#   * the 65 x 65 x 60 mm shell, from the Livox MID-360 specs (265 g, four M3 holes in the base)
-#   * the lidar_link_to_imu_link offset, substituted at @IMU_OFFSET@ from
-#     PointLioConfig.extrinsic_t -- the lidar origin in the IMU frame -- negated. Read rather
-#     than written out here, so there is one copy of the number and nothing to keep in step.
-#   * the -0.020 m shell offset is a PLACEHOLDER, inferred from the IMU sitting 44.12 mm below
-#     the origin and the body being 60 mm tall. It moves the drawn box and nothing measured.
-#
-# The root link is the point cloud origin -- the frame the driver stamps its cloud with -- not
-# the mounting face, so a mount transform onto this points at the optical origin.
-#
-# @LIDAR@ / @IMU@ stand in for the configured frame names and appear only in displayName, the
-# name that travels; prim names stay fixed USD identifiers, so none of this depends on pxr.
 _LIDAR_TOKEN = "@LIDAR@"
 _IMU_TOKEN = "@IMU@"
 _IMU_OFFSET_TOKEN = "@IMU_OFFSET@"
@@ -226,11 +174,6 @@ def Xform "mid360"
 
 
 def _imu_offset() -> str:
-    """The IMU's origin in the lidar frame, as USD writes a triple.
-
-    PointLioConfig.extrinsic_t is the lidar origin in the IMU frame, so this is its negation.
-    Imported rather than restated: the two were the same three numbers in two files.
-    """
     from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 
     factory = PointLioConfig.model_fields["extrinsic_t"].default_factory
@@ -239,7 +182,6 @@ def _imu_offset() -> str:
 
 
 def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
-    """The baked MID-360 layer with its frame names and the IMU offset filled in."""
     return (
         _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame)
         .replace(_IMU_TOKEN, imu_frame)
@@ -248,7 +190,6 @@ def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
 
 
 def _resolved_host_ip(config: Mid360Config) -> str | None:
-    """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
         return config.host_ip
     if not config.lidar_ip:
@@ -276,19 +217,11 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: this sensor, in the frames this instance is configured to stamp.
-
-        A UsdManager asks for this when the MID-360 is one of its ``mounts``. The root is this
-        module's own directory -- the only one this driver can point at and be right about wherever it
-        is installed -- resolved at call time rather than baked into the constant, which is written on
-        a build machine whose paths mean nothing on the robot.
-        """
         return [
             str(Path(__file__).parent),
             mid360_usd(self.config.frame_id, self.config.imu_frame_id),
         ]
 
 
-# Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     Mid360()
