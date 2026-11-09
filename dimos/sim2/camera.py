@@ -56,7 +56,7 @@ class SimCamera(Module):
     @rpc
     def get_usd(self) -> list[str]:
         """``[asset_root, usd]``: this camera's optical frame, and what it can see from there."""
-        return camera_usd(self.config.frame_id, name="sim_camera", fovy=self.config.fovy)
+        return camera_usd(self.frame_id, name="sim_camera", fovy=self.config.fovy)
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
@@ -70,7 +70,7 @@ class SimCamera(Module):
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:
             raise ValueError(
-                f"{self.config.frame_id}: nothing says what the scene is, so there is nothing to"
+                f"{self.frame_id}: nothing says what the scene is, so there is nothing to"
                 f" render. Give this camera the scene_manager that composes the world."
             )
         layer, view = usd_layer(scene), None
@@ -86,7 +86,7 @@ class SimCamera(Module):
                     Image(
                         data=rgb,
                         format=ImageFormat.RGB,
-                        frame_id=self.config.frame_id,
+                        frame_id=self.frame_id,
                         ts=self._world.stamp(),
                     )
                 )
@@ -104,10 +104,16 @@ class SimCamera(Module):
         return open_view(
             layer,
             robot_ids(self._world),
-            SensorMount("camera", self.config.frame_id, self._name, self.config.fovy),
+            SensorMount("camera", self.frame_id, self._name, self.config.fovy),
         )
 
     @property
     def _name(self) -> str:
-        """What this camera is called in its own world. Its frame will do: there is one of it."""
-        return self.config.frame_id
+        """What this camera is called in its own world. Its frame will do: there is one of it.
+
+        `self.frame_id`, not `config.frame_id`: in a namespace the frame carries that prefix, and
+        the prefixed name is what the composed scene and the observations both use. Three robots
+        each with a camera is three cameras called `camera_optical` otherwise, mounted at one
+        frame, two of which belong to somebody else.
+        """
+        return self.frame_id
