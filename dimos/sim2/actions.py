@@ -13,11 +13,6 @@
 # limitations under the License.
 
 
-"""What can be done to any simulation, as typed actions a robot sends as one WorldAction.
-
-Entities are robot ids or object names; a robot's joint is "<entity>/<joint>" on the wire.
-"""
-
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -34,12 +29,6 @@ from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
 @dataclass(frozen=True)
 class JointCommand:
-    """Drive joints through their actuators; each actuator takes the one of these it is built for.
-
-    With kp and kd it is a motor command instead, as a real robot's motors take one:
-    effort = kp * (position - q) + kd * (velocity - dq) + effort.
-    """
-
     entity: str
     names: tuple[str, ...]
     position: tuple[float, ...] | None = None
@@ -51,8 +40,6 @@ class JointCommand:
 
 @dataclass(frozen=True)
 class CborKeyValueCommand:
-    """Set one key of an entity's CBOR data; what it does is up to the sim, which observes it back."""
-
     entity: str
     key: str
     value: Any
@@ -64,7 +51,6 @@ _FIELDS = ("position", "velocity", "effort", "kp", "kd")
 
 
 def world_action(mirror: WorldMirror, *actions: Action) -> WorldAction:
-    """The actions as a WorldAction, addressed by the ids the mirror's world gave its entities."""
     with mirror.lock:
         joints = [
             JointCommandMessage(
@@ -102,7 +88,6 @@ def _cbor_command(entity: int, key: str, value: Any) -> CborKeyValueCommandMessa
 
 
 def read_actions(message: WorldAction, world: WorldWriter) -> list[Action]:
-    """A WorldAction's typed actions, by the paths the backend's writer gave its entities' ids: one joint command per run of an entity's joints."""
     actions: list[Action] = []
     for command in message.joint_commands:
         entity, name = world.paths[command.entity_id].split("/", 1)

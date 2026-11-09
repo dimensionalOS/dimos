@@ -22,13 +22,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
@@ -40,15 +40,19 @@ from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
-    publish_usd_assets,
     rename_usd_frames,
-    require_asset_hashes,
-    resolve_usd_assets,
-    trivialize_usd,
     usd_frame_names,
     warm_usd,
 )
+from dimos.robot.assets.usd_assets import (
+    publish_usd_assets,
+    require_asset_hashes,
+    resolve_usd_assets,
+)
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import Blueprint
 
 logger = setup_logger()
 
@@ -60,6 +64,8 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 SUBTREE_RPC = "get_usd"
 # The RPC a mounted module answers with its *whole* tree. A manager has one; a sensor does not.
 SCENE_RPC = "get_scene"
+# The fetch behind a name get_scene handed out.
+ASSET_RPC = "get_asset"
 
 
 # The root link a manager given no model stands on.
@@ -102,7 +108,7 @@ class Mount:
     """
 
     # None when only the instance name was given: no class here, so the get_usd check is skipped.
-    module: type[Module] | None
+    module: type[ModuleBase] | None
     remote_name: str
     # Read straight off the module rather than derived from remote_name: namespace() keeps a
     # frame_id_prefix the user set by hand, and that override is what its frames are called.
@@ -147,7 +153,7 @@ class Mount:
         )
 
     @classmethod
-    def _from_blueprint(cls, blueprint: Any) -> Mount:
+    def _from_blueprint(cls, blueprint: Blueprint) -> Mount:
         """The one atom of ``blueprint`` that answers get_usd, under its deployed name."""
         atoms = [atom for atom in blueprint.blueprints if SUBTREE_RPC in atom.module.rpcs]
         if not atoms:
@@ -190,7 +196,7 @@ class Mount:
         )
 
     @staticmethod
-    def _tree_rpc(module: type[Module]) -> str:
+    def _tree_rpc(module: type[ModuleBase]) -> str:
         """get_scene when the module has one, so its own mounts come along; else get_usd."""
         return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
 
@@ -202,7 +208,6 @@ class UsdManagerConfig(ModuleConfig):
     model: RobotModel | UsdModel | None = None
     # Keep the frames, drop the shapes, so one description serves a real robot and a simulated
     # one. This robot's own layer only -- what a mounted module answers with is its own say.
-    trivialize: bool = False
     # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
@@ -349,8 +354,6 @@ class UsdManager(Module):
         with self._usd_lock:
             if self._usd is None:
                 usd = self._description.usd
-                if self.config.trivialize:
-                    usd = trivialize_usd(usd)
                 # Renamed here as well as on tf, or the layer names frames no transform arrives for.
                 self._usd = rename_usd_frames(usd, self._frames)
             return [self._asset_root(), self._usd]
@@ -385,22 +388,28 @@ class UsdManager(Module):
         return ["", published]
 
     @rpc
-    async def get_scene_on_disk(self, visited: list[str] | None = None) -> list[str]:
-        """``[asset_root, usd]``: the same scene, still naming the files it was composed from.
+    async def get_asset(self, name: str) -> bytes:
+        """The bytes of one asset the scene this manager published names.
 
-        For a consumer that opens files rather than asking for them. A physics engine reads a layer
-        off disk; `get_scene` hands out content names it serves over `render_file_request`, which is
-        right for a viewer across a bus and unusable to MuJoCo -- "at least 4 vertices required" on
-        the first piece of furniture is what asking the wrong one looks like. Resolve it against the
-        root this answers with: the subtrees were each rebased as they arrived, so only this
-        manager's own layer is still relative. Same machine only -- a backend elsewhere has to be
-        handed the bytes, which is `get_scene` plus `render_file_request`.
+        `get_scene` hands out names, not paths: a scene travels as a string and its meshes are
+        fetched, which is what lets a consumer anywhere read it. This is that fetch, as an rpc
+        rather than a round trip over `render_file_request`, because a consumer that has to open
+        the scene needs every mesh before it can start, synchronously, and wants an error rather
+        than a message that never comes. A viewer drawing lazily is better served by the topic,
+        and still is.
+
+        Only names this manager published, and only the files behind them. A request is never an
+        arbitrary path into the filesystem.
         """
         await self._ready.wait()
-        chain = list(visited or [])
-        self._refuse_a_cycle(chain)
-        root, scene = await self._compose(chain)
-        return [root[ASSET_ROOT], scene]
+        real = self._published_assets.get(name, name if name in self._file_paths else None)
+        if real is None:
+            raise KeyError(
+                f"{name!r} is neither a file this description names nor an asset the last scene "
+                f"published. Ask for a scene before its assets: the names only exist once one "
+                f"has been handed out."
+            )
+        return await asyncio.to_thread(self._resolved(real).read_bytes)
 
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:
@@ -541,7 +550,7 @@ class UsdManager(Module):
         return rename_usd_frames(usd, post), matched
 
     def _ask_for_usd(
-        self, client: Any, frame_id: str, mount: Mount, chain: list[str]
+        self, client: RPCClient, frame_id: str, mount: Mount, chain: list[str]
     ) -> list[str] | None:
         """One RPC attempt; a module that is not serving yet is a retry, not a failure.
 
