@@ -27,6 +27,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -55,8 +56,9 @@ from dimos.imitation.dataprep.schema import (
     SyncConfig,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header, String
 from dimos.robot.manipulators.xarm.config import xarm7_hardware
 
 
@@ -175,7 +177,13 @@ def test_resolve_field_attribute() -> None:
 
 def test_resolve_field_orders_joint_state_by_feature_names() -> None:
     arr = resolve_field(
-        JointState(name=["joint_b", "joint_a"], position=[2.0, 1.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["joint_b", "joint_a"],
+            position=np.asarray([2.0, 1.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
         FeatureSpec(
             stream="state",
             field="position",
@@ -194,9 +202,11 @@ def test_resolve_field_orders_joint_state_by_feature_names() -> None:
 )
 def test_resolve_field_orders_all_joint_state_vectors(field: str, expected: list[float]) -> None:
     state = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         name=["joint_b", "joint_a"],
-        velocity=[2.0, 1.0],
-        effort=[4.0, 3.0],
+        position=np.asarray([], dtype=np.float64),
+        velocity=np.asarray([2.0, 1.0], dtype=np.float64),
+        effort=np.asarray([4.0, 3.0], dtype=np.float64),
     )
     spec = FeatureSpec(
         stream="state",
@@ -212,7 +222,13 @@ def test_resolve_field_orders_all_joint_state_vectors(field: str, expected: list
 def test_resolve_field_rejects_duplicate_joint_names() -> None:
     with pytest.raises(ValueError, match="duplicate joint names"):
         resolve_field(
-            JointState(name=["joint_a", "joint_a"], position=[1.0, 2.0]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint_a", "joint_a"],
+                position=np.asarray([1.0, 2.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
             FeatureSpec(
                 stream="state",
                 field="position",
@@ -226,7 +242,13 @@ def test_resolve_field_rejects_duplicate_joint_names() -> None:
 def test_resolve_field_rejects_missing_configured_joint() -> None:
     with pytest.raises(ValueError, match="missing configured joints.*joint_b"):
         resolve_field(
-            JointState(name=["joint_a"], position=[1.0]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["joint_a"],
+                position=np.asarray([1.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
             FeatureSpec(
                 stream="state",
                 field="position",
@@ -548,8 +570,30 @@ def test_snapshots_can_align_forward_but_targets_remain_causal():
             "anchor": _scalar_stream([(10, 0), (11, 0)]),
             "measured": _scalar_stream([(10.01, 3), (10.99, 4)]),
             "commands": [
-                _Obs(1, JointState(name=["left", "right", "gripper"], position=[1, 2, 0])),
-                _Obs(10.001, JointState(name=["left"], position=[5])),
+                _Obs(
+                    1,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right", "gripper"],
+                        position=np.asarray([1, 2, 0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    10.001,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left"],
+                        position=np.asarray([5], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
             ],
         }
     )
@@ -589,9 +633,42 @@ def test_joint_state_message_class_does_not_determine_source_semantics(source_ki
         {
             "anchor": _scalar_stream([(0.0, 0), (0.1, 0)]),
             "joints": [
-                _Obs(-0.1, JointState(name=["left", "right"], position=[1, 2])),
-                _Obs(0.01, JointState(name=["left", "right"], position=[3, 4])),
-                _Obs(0.1, JointState(name=["left", "right"], position=[5, 6])),
+                _Obs(
+                    -0.1,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right"],
+                        position=np.asarray([1, 2], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    0.01,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right"],
+                        position=np.asarray([3, 4], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    0.1,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right"],
+                        position=np.asarray([5, 6], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
             ],
         }
     )
@@ -625,7 +702,18 @@ def test_shared_update_source_is_read_once_for_multiple_projections(mocker):
         {
             "anchor": _scalar_stream([(10, 0)]),
             "commands": [
-                _Obs(1, JointState(name=["left", "right", "gripper"], position=[1, 2, 0]))
+                _Obs(
+                    1,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right", "gripper"],
+                        position=np.asarray([1, 2, 0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                )
             ],
         }
     )
@@ -656,11 +744,66 @@ def test_held_action_uses_causal_recording_history_across_episodes():
         {
             "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0), (12.0, 0.0), (20.0, 0.0)]),
             "commands": [
-                _Obs(1.0, JointState(name=["right", "left"], position=[2.0, 1.0])),
-                _Obs(2.0, JointState(name=["gripper"], position=[0.0])),
-                _Obs(10.0, JointState(name=["gripper"], position=[1.0])),
-                _Obs(10.01, JointState(name=["left"], position=[3.0])),
-                _Obs(12.0, JointState(name=["gripper", "right", "left"], position=[0.0, 5.0, 4.0])),
+                _Obs(
+                    1.0,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["right", "left"],
+                        position=np.asarray([2.0, 1.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    2.0,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["gripper"],
+                        position=np.asarray([0.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    10.0,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["gripper"],
+                        position=np.asarray([1.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    10.01,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left"],
+                        position=np.asarray([3.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    12.0,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["gripper", "right", "left"],
+                        position=np.asarray([0.0, 5.0, 4.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
             ],
         }
     )
@@ -694,8 +837,30 @@ def test_held_action_does_not_initialize_from_future_commands():
         {
             "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0)]),
             "commands": [
-                _Obs(1.0, JointState(name=["left", "right"], position=[1.0, 2.0])),
-                _Obs(10.001, JointState(name=["gripper"], position=[1.0])),
+                _Obs(
+                    1.0,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right"],
+                        position=np.asarray([1.0, 2.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    10.001,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["gripper"],
+                        position=np.asarray([1.0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
             ],
         }
     )
@@ -714,9 +879,36 @@ def test_held_action_does_not_initialize_from_future_commands():
 @pytest.mark.parametrize(
     "message, reason",
     [
-        (JointState(name=["left", "left"], position=[1, 2]), "duplicate"),
-        (JointState(name=["left"], position=[]), "names but"),
-        (JointState(name=["left"], position=[float("nan")]), "non-finite"),
+        (
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["left", "left"],
+                position=np.asarray([1, 2], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            "duplicate",
+        ),
+        (
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["left"],
+                position=np.asarray([], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            "names but",
+        ),
+        (
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["left"],
+                position=np.asarray([float("nan")], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            "non-finite",
+        ),
         ({"position": [1]}, "JointState"),
     ],
 )
@@ -726,7 +918,18 @@ def test_held_action_rejects_malformed_updates_even_between_samples(message, rea
             "anchor": _scalar_stream([(10.0, 0.0)]),
             "commands": [
                 _Obs(1, message),
-                _Obs(2, JointState(name=["left", "right", "gripper"], position=[1, 2, 0])),
+                _Obs(
+                    2,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["left", "right", "gripper"],
+                        position=np.asarray([1, 2, 0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
             ],
         }
     )
@@ -745,9 +948,42 @@ def test_nearest_validates_selected_samples_not_unused_partial_messages():
         {
             "anchor": _scalar_stream([(10.0, 0.0), (11.0, 0.0)]),
             "commands": [
-                _Obs(10, JointState(name=["joint"], position=[1])),
-                _Obs(10.5, JointState(name=[], position=[])),
-                _Obs(11, JointState(name=["joint"], position=[2])),
+                _Obs(
+                    10,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["joint"],
+                        position=np.asarray([1], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    10.5,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=[],
+                        position=np.asarray([], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
+                _Obs(
+                    11,
+                    JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
+                        name=["joint"],
+                        position=np.asarray([2], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
+                    ),
+                ),
             ],
         }
     )
@@ -784,8 +1020,13 @@ def test_held_actions_do_not_relax_camera_rate_or_gap_checks():
                 _Obs(
                     1,
                     JointState(
+                        header=Header(
+                            stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                        ),
                         name=["left", "right", "gripper"],
-                        position=[1, 2, 0],
+                        position=np.asarray([1, 2, 0], dtype=np.float64),
+                        velocity=np.asarray([], dtype=np.float64),
+                        effort=np.asarray([], dtype=np.float64),
                     ),
                 )
             ],
@@ -1036,7 +1277,16 @@ def _webxr_xarm7_recording(*, jitter_s: float) -> _FakeStore:
     images = [_Obs(10.0 + k / 28.0, image) for k in range(57)]
     images[2] = _Obs(images[2].ts + jitter_s, image)
     states = [
-        _Obs(9.9 + k / 100.0, JointState(name=joints, position=[float(k)] * len(joints)))
+        _Obs(
+            9.9 + k / 100.0,
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(9.9 + k / 100.0), frame_id=""),
+                name=joints,
+                position=np.asarray([float(k)] * len(joints), dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
         for k in range(221)
     ]
     return _FakeStore(
@@ -1117,3 +1367,16 @@ def test_alignment_endpoint_respects_source_timestamp_precision(last_timestamp, 
         )
     )
     assert [sample.observation["state"].item() for sample in samples] == expected
+
+
+@pytest.mark.parametrize("field", [None, "data"])
+def test_resolve_generated_image_preserves_pixels_and_shape(field) -> None:
+    from dimos.message_utils import image
+
+    pixels = np.arange(18, dtype=np.uint8).reshape(2, 3, 3)
+    message = image.from_array(pixels, encoding="rgb8")
+    out = resolve_field(
+        message,
+        FeatureSpec(stream="camera", field=field, dtype="uint8", shape=(2, 3, 3), names=["camera"]),
+    )
+    np.testing.assert_array_equal(out, pixels)
