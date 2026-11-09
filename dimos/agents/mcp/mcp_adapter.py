@@ -90,17 +90,9 @@ class McpAdapter:
         result = self._unwrap(self.call("tools/list"))
         return result.get("tools", [])  # type: ignore[no-any-return]
 
-    def call_tool(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        meta: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Call a tool by name and return the result dict. ``meta`` is sent as ``_meta``."""
-        params: dict[str, Any] = {"name": name, "arguments": arguments or {}}
-        if meta is not None:
-            params["_meta"] = meta
-        return self._unwrap(self.call("tools/call", params))
+    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Call a tool by name and return the result dict."""
+        return self._unwrap(self.call("tools/call", {"name": name, "arguments": arguments or {}}))
 
     def call_tool_text(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         """Call a tool and return just the first text content item."""
@@ -122,7 +114,7 @@ class McpAdapter:
                 )
                 if resp.status_code == 200:
                     return True
-            except (requests.ConnectionError, requests.Timeout):
+            except requests.ConnectionError:
                 pass
             time.sleep(interval)
         return False

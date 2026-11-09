@@ -19,7 +19,7 @@ from queue import Empty
 from threading import RLock, Thread
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -29,7 +29,6 @@ import requests
 
 from dimos.agents.agent import Agent
 from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
-from dimos.agents.mcp.mcp_adapter import McpError
 from dimos.agents.testing.mock_model import MockModel
 from dimos.utils.testing.waiting import wait_until
 
@@ -93,57 +92,33 @@ def _mock_payload(body: dict[str, object]) -> dict[str, object]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
-class _FakeServer:
-    """Answers McpAdapter's requests.post through `payload`."""
+def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) -> MagicMock:
+    """Return an autospec'd requests.Session whose .post() replies via payload_fn."""
 
-    def __init__(self) -> None:
-        self.payload: Callable[[dict[str, object]], dict[str, object]] = _mock_payload
-        self.sent: list[dict[str, object]] = []
+    def _post(url: str, *, json: dict[str, object], timeout: float | None = None) -> MagicMock:
+        resp = create_autospec(requests.Response, instance=True, spec_set=True)
+        resp.json.return_value = payload_fn(json)
+        return resp
 
-    def post(self, url: str, *, json: dict[str, object], timeout: float) -> SimpleNamespace:
-        self.sent.append(json)
-        reply = self.payload(json)
-        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: reply)
-
-
-@pytest.fixture
-def server(monkeypatch: pytest.MonkeyPatch) -> _FakeServer:
-    fake = _FakeServer()
-    monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.requests.post", fake.post)
-    return fake
-
-
-def _tools(agent: Agent) -> list[Any]:
-    mcp = agent._resolve_mcp()
-    assert mcp is not None
-    return agent._fetch_tools(mcp)
-
-
-def _tools_after_listing(agent: Agent, server: _FakeServer) -> Any:
-    """The `add` tool, listed before `server.payload` starts failing."""
-    failing = server.payload
-    server.payload = _mock_payload
-    add_tool = next(t for t in _tools(agent) if t.name == "add")
-    server.payload = failing
-    return add_tool
+    session = create_autospec(requests.Session, instance=True, spec_set=True)
+    session.post.side_effect = _post
+    return session
 
 
 @pytest.mark.flaky(reruns=1)
-def test_mcp_endpoint_is_configured_else_the_blueprints_server_else_none() -> None:
-    blueprint_server = SimpleNamespace(mcp_url=lambda: "http://127.0.0.1:9992/mcp")
+def test_server_url_is_configured_else_the_blueprints_server_else_none() -> None:
+    server = SimpleNamespace(mcp_url=lambda: "http://127.0.0.1:9992/mcp")
     agent = Agent()
     try:
-        assert agent._resolve_mcp() is None
-        agent._mcp_server = blueprint_server
-        mcp = agent._resolve_mcp()
-        assert mcp is not None and mcp.url == "http://127.0.0.1:9992/mcp"
+        assert agent._server_url() is None
+        agent._mcp_server = server
+        assert agent._server_url() == "http://127.0.0.1:9992/mcp"
     finally:
         agent.stop()
     agent = Agent(mcp_server_url="http://configured/mcp")
     try:
-        agent._mcp_server = blueprint_server
-        mcp = agent._resolve_mcp()
-        assert mcp is not None and mcp.url == "http://configured/mcp"
+        agent._mcp_server = server
+        assert agent._server_url() == "http://configured/mcp"
     finally:
         agent.stop()
 
@@ -159,25 +134,23 @@ def test_agent_without_an_mcp_server_runs_with_no_tools() -> None:
         ):
             agent.on_system_modules([])
         assert create.call_args.kwargs["tools"] == []
-
-        agent.dispatch_continuation({"tool": "add"}, {})
-        assert "not found" in str(agent._message_queue.get_nowait().content)
     finally:
         agent.stop()
 
 
 @pytest.fixture
-def agent(server: _FakeServer) -> Iterator[Agent]:
-    """An Agent whose MCP requests are answered by `server`."""
-    agent = Agent(mcp_server_url="http://localhost:9990/mcp")
+def agent() -> Agent:
+    """Build an Agent wired to a mock requests session."""
+    client = Agent(mcp_server_url="http://localhost:9990/mcp")
+    client._http_client = _mock_session(_mock_payload)
     try:
-        yield agent
+        yield client
     finally:
-        agent.stop()
+        client.stop()
 
 
 def test_fetch_tools_from_mcp_server(agent: Agent) -> None:
-    tools = _tools(agent)
+    tools = agent._fetch_tools()
 
     assert len(tools) == 2
     assert tools[0].name == "add"
@@ -185,7 +158,7 @@ def test_fetch_tools_from_mcp_server(agent: Agent) -> None:
 
 
 def test_tool_invocation_via_mcp(agent: Agent) -> None:
-    tools = _tools(agent)
+    tools = agent._fetch_tools()
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
 
@@ -193,7 +166,7 @@ def test_tool_invocation_via_mcp(agent: Agent) -> None:
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
 
 
-def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent, server: _FakeServer) -> None:
+def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent) -> None:
     """An image cannot ride the tool response, so it follows as a HumanMessage
     naming its tool, or chat UIs would show it as typed input."""
     image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
@@ -203,8 +176,8 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent, server: _
             return _mock_payload(body)
         return {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [image]}}
 
-    server.payload = image_payload
-    greet_tool = next(t for t in _tools(agent) if t.name == "greet")
+    agent._http_client = _mock_session(image_payload)
+    greet_tool = next(t for t in agent._fetch_tools() if t.name == "greet")
 
     reply = greet_tool.func(name="Alice")
     msg: BaseMessage = agent._message_queue.get_nowait()
@@ -219,16 +192,21 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent, server: _
     ]
 
 
-def test_mcp_error_reaches_the_caller(agent: Agent, server: _FakeServer) -> None:
-    server.payload = lambda body: {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "error": {"code": -32601, "message": "Unknown: bad/method"},
-    }
-    add_tool = _tools_after_listing(agent, server)
+def test_mcp_request_error_propagation(agent: Agent) -> None:
+    def error_payload(body: dict[str, object]) -> dict[str, object]:
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32601, "message": "Unknown: bad/method"},
+        }
 
-    with pytest.raises(McpError, match="Unknown: bad/method"):
-        add_tool.func(x=1, y=2)
+    agent._http_client = _mock_session(error_payload)
+
+    try:
+        agent._mcp_request("bad/method")
+        raise AssertionError("Expected RuntimeError")
+    except RuntimeError as e:
+        assert "Unknown: bad/method" in str(e)
 
 
 def test_tool_stream_notification_becomes_human_message(agent: Agent) -> None:
@@ -285,24 +263,32 @@ def test_tool_stream_progress_frame_becomes_human_message(agent: Agent) -> None:
     assert str(msg.content) == "[tool:follow_person] Found a person"
 
 
-def test_tool_call_sends_a_progress_token(agent: Agent, server: _FakeServer) -> None:
+def test_mcp_tool_call_sends_progress_token(agent: Agent) -> None:
     """Every `tools/call` request carries a `_meta.progressToken`."""
-    add_tool = next(t for t in _tools(agent) if t.name == "add")
+    captured: dict[str, object] = {}
 
-    add_tool.func(x=1, y=2)
+    def fake_request(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        captured["method"] = method
+        captured["params"] = params
+        return {"content": [{"type": "text", "text": "ok"}]}
 
-    params = server.sent[-1]["params"]
-    assert server.sent[-1]["method"] == "tools/call"
+    with patch.object(agent, "_mcp_request", side_effect=fake_request):
+        agent._mcp_tool_call("add", {"x": 1, "y": 2})
+
+    assert captured["method"] == "tools/call"
+    params = captured["params"]
     assert isinstance(params, dict)
     assert params["name"] == "add"
     assert params["arguments"] == {"x": 1, "y": 2}
-    token = params["_meta"]["progressToken"]
-    assert isinstance(token, str) and token
+    meta = params["_meta"]
+    assert isinstance(meta, dict)
+    token = meta["progressToken"]
+    assert isinstance(token, str) and len(token) > 0
 
 
 @pytest.fixture
 def configured_agent(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> Agent:
-    """Prepare an agent for testing model initialization."""
+    """Prepare a client for testing agent model initialization."""
     agent.config.model_fixture = None
     agent.config.system_prompt = "System prompt"
     monkeypatch.setattr(agent, "_fetch_tools", MagicMock(return_value=[]))
@@ -472,18 +458,15 @@ def test_only_unanswered_tool_calls_get_a_failure_result(
 
 
 def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
-    agent: Agent,
-    server: _FakeServer,
-    agent_thread: Thread,
-    monkeypatch: pytest.MonkeyPatch,
+    agent: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failed MCP request escapes the real agent graph; a skill error would be a result."""
-    tools = _tools(agent)
+    tools = agent._fetch_tools()
 
     def unreachable(body: dict[str, object]) -> dict[str, object]:
         raise requests.ConnectionError("MCP server unreachable")
 
-    server.payload = unreachable
+    agent._http_client = _mock_session(unreachable)
     call = _call("add", "c1", x=1, y=2)
     model = MockModel(
         responses=[AIMessage(content="", tool_calls=[call]), AIMessage(content="done")]

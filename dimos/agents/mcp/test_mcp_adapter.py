@@ -18,7 +18,6 @@ import os
 from types import SimpleNamespace
 
 import pytest
-import requests
 
 from dimos.agents.mcp.constants import DEFAULT_MCP_TIMEOUT, mcp_url
 from dimos.agents.mcp.mcp_adapter import McpAdapter
@@ -38,28 +37,6 @@ def test_call_sends_config_timeout_unless_overridden(monkeypatch: pytest.MonkeyP
     McpAdapter(url="http://127.0.0.1:9/mcp", timeout=7).call("initialize")
 
     assert posted == [DEFAULT_MCP_TIMEOUT, 7]
-
-
-def test_call_tool_sends_meta_only_when_given(mocker) -> None:
-    post = mocker.patch("dimos.agents.mcp.mcp_adapter.requests.post")
-    post.return_value.json.return_value = {"result": {}}
-    adapter = McpAdapter(url="http://127.0.0.1:9/mcp")
-
-    adapter.call_tool("add", {"x": 1})
-    assert "_meta" not in post.call_args.kwargs["json"]["params"]
-
-    adapter.call_tool("add", {"x": 1}, meta={"progressToken": "t"})
-    assert post.call_args.kwargs["json"]["params"]["_meta"] == {"progressToken": "t"}
-
-
-def test_wait_for_ready_retries_a_server_slow_to_answer(mocker) -> None:
-    ready = SimpleNamespace(status_code=200)
-    mocker.patch(
-        "dimos.agents.mcp.mcp_adapter.requests.post",
-        side_effect=[requests.ReadTimeout(), ready],
-    )
-
-    assert McpAdapter(url="http://127.0.0.1:9/mcp").wait_for_ready(timeout=5.0, interval=0.0)
 
 
 def test_adapter_uses_the_endpoint_persisted_by_the_running_server(mocker, tmp_path) -> None:
