@@ -42,6 +42,9 @@ def description(tmp_path: Path) -> dict:
         }
     )
     return {
+        # As Simulation.describe() answers: the engine running this world is how a sensor finds
+        # something able to draw it.
+        "backend": "mujoco",
         "scene": str(scene),
         "simulated": [
             SimulatedRobot("dog", robot),

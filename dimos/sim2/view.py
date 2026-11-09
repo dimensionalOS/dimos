@@ -19,7 +19,6 @@ The renderer drawing the view is chosen by name, as backends are.
 """
 
 from collections.abc import Mapping, Sequence
-from importlib import import_module
 from typing import Any, Protocol
 
 import numpy as np
@@ -29,8 +28,6 @@ from scipy.spatial.transform import Rotation
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
-
-RENDERERS = {"mujoco": "dimos.sim2.mujoco.view.MujocoView"}
 
 Vector = NDArray[np.float64]
 
@@ -88,7 +85,14 @@ def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
     return f"{sensor.robot_id or 'world'}/{frame_id}"
 
 
-def open_view(description: Mapping[str, Any], renderer: str = "mujoco") -> WorldView:
-    """A view of the world that Simulation.describe() returned."""
-    module, _, cls = RENDERERS[renderer].rpartition(".")
-    return getattr(import_module(module), cls)(description)  # type: ignore[no-any-return]
+def open_view(description: Mapping[str, Any]) -> WorldView:
+    """A view of the world that Simulation.describe() returned, drawn by whatever is running it.
+
+    Asked of the backend rather than looked up here. A world knows which engine is simulating it
+    -- `describe()` says so -- and that engine is the only thing that can draw it, so a registry
+    of renderers in this module would be a second, separable answer to a question that already
+    has one.
+    """
+    from dimos.sim2.backend import load_backend
+
+    return load_backend(description["backend"]).view(description)

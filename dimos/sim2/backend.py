@@ -29,6 +29,7 @@ from dimos.sim2.world_observations import WorldWriter
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
     from dimos.sim2.module import SimulationConfig
+    from dimos.sim2.view import WorldView
 
 BACKENDS = {"mujoco": "dimos.sim2.mujoco.backend.MujocoBackend"}
 
@@ -74,6 +75,14 @@ class SimulationBackend(Protocol):
 
     def describe(self) -> dict[str, Any]:
         """Backend specifics for local clients, like the paths of a shared model and state."""
+
+    @staticmethod
+    def view(description: Mapping[str, Any]) -> "WorldView":
+        """A view of this kind of world: what a sensor reads poses and casts rays against.
+
+        On the class, not the instance, because a sensor builds its own view in its own process
+        from `Simulation.describe()` -- there is no backend object there to ask.
+        """
 
 
 def load_backend(

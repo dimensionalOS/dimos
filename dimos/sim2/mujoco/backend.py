@@ -40,6 +40,7 @@ from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
     from dimos.sim2.module import SimulationConfig
+    from dimos.sim2.mujoco.view import MujocoView
 
 # Physics catches up to the wall clock in bursts, publishing after each, since macOS oversleeps short
 # waits. Lag past one burst is dropped: a controller's command must not land a whole control period late.
@@ -123,6 +124,18 @@ class MujocoBackend:
 
     def describe(self) -> dict[str, Any]:
         return {"scene": str(self._scene_layer)}
+
+    @staticmethod
+    def view(description: Mapping[str, Any]) -> "MujocoView":
+        """How this world is read back: its own MuJoCo model, compiled from the same description.
+
+        Imported here rather than at the top because this module is the backend and that one is
+        the view of it: a sensor asks for a view without ever loading the backend, and a
+        simulation steps the backend without ever drawing.
+        """
+        from dimos.sim2.mujoco.view import MujocoView
+
+        return MujocoView(description)
 
     def assets(self) -> Mapping[str, Path | bytes]:
         # Under its own name as well as "world.xml": a renderer that has the description knows
