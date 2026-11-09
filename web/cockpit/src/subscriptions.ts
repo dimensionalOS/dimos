@@ -5,7 +5,13 @@
 // manifest and view change.
 
 import type { ChannelSpec, DecoderRegistry, Session } from "@dimos/sdk";
-import { createDecoderRegistry, isLcmSchema, TRACK_ENCODING } from "@dimos/sdk";
+import {
+  cdrHasSequences,
+  createDecoderRegistry,
+  isCdrSchema,
+  isLcmSchema,
+  TRACK_ENCODING,
+} from "@dimos/sdk";
 import type { PanelSpec } from "@dimos/shared";
 import { getPanel } from "./panels/registry.tsx";
 
@@ -30,6 +36,9 @@ const PANEL_ONLY_ENCODINGS = new Set([
  * subscribes like json.v1 so the table can show it. */
 function panelOnly(spec: ChannelSpec): boolean {
   if (PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
+  if (/\.cdr\.v1$/.test(spec.encoding) && isCdrSchema(spec.params.cdr)) {
+    return cdrHasSequences(spec.params.cdr);
+  }
   const lcm = spec.params.lcm;
   return isLcmSchema(lcm) &&
     Object.values(lcm.structs).some((rows) =>

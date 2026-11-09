@@ -16,13 +16,20 @@ import numpy as np
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.message_utils import occupancy, occupancy as occupancy_utils, time as message_time
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
 
 
 @pytest.fixture
 def occupancy() -> OccupancyGrid:
-    return OccupancyGrid(np.load(get_data("occupancy_simple.npy")))
+    return occupancy_utils.from_array(
+        np.asarray(np.load(get_data("occupancy_simple.npy")), dtype=np.int8),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        resolution=0.05,
+        origin=None,
+    )
 
 
 @pytest.fixture

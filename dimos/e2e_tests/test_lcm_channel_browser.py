@@ -15,11 +15,11 @@
 """LCM-by-default browser e2e.
 
 Starts a cockpit(channels=[Channel("lcm_pose", PoseStamped)]) bridge with no
-encoding named, so the channel compiles to geometry_msgs.PoseStamped.lcm.v1
+encoding named, so the channel compiles to geometry_msgs/msg/PoseStamped.cdr.v1
 and the manifest carries the message's LCM schema, serving the cockpit from
 its own local relay. The cockpit's channel table must decode frames from the
 manifest alone, and a bare SDK page must read the decoded fields: Python
-lcm_encode() -> relay -> schema-driven browser decoder, end to end.
+CDR encode -> relay -> schema-driven browser decoder, end to end.
 
 Marked web_browser: excluded from the default suite (needs the
 `browser-tests` dependency group, Playwright browsers, and built web dists).
@@ -32,7 +32,9 @@ from pathlib import Path
 
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.web.cockpit import Channel, cockpit
 
 pytest.importorskip("playwright")
@@ -44,7 +46,8 @@ pytestmark = pytest.mark.web_browser
 TOPIC = "/lcm_channel_e2e/lcm_pose"
 
 POSE = PoseStamped(
-    ts=42.5, frame_id="map", position=[1.5, -2.5, 0.25], orientation=[0.0, 0.0, 0.0, 1.0]
+    header=Header(stamp=time_from_seconds(42.5), frame_id="map"),
+    pose=Pose(position=Point(1.5, -2.5, 0.25), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
 )
 
 # A page whose SDK and relay live on another origin, reading the decoded LCM
@@ -60,7 +63,7 @@ SDK_PAGE = """<!DOCTYPE html>
         const v = snapshot.slot?.value;
         if (v === undefined || v === null) return;
         document.querySelector("#pose").textContent =
-          `x=${v.pose.position.x} frame=${v.header.frame_id} nsec=${v.header.stamp.nsec}`;
+          `x=${v.pose.position.x} frame=${v.header.frame_id} nsec=${v.header.stamp.nanosec}`;
       });
     </script>
   </body>
@@ -87,7 +90,7 @@ def test_cockpit_channel_table_decodes_the_lcm_channel(
     expect(value).to_contain_text("position: {x: 1.5, y: -2.5, z: 0.25}")
     expect(value).to_contain_text('frame_id: "map"')
     expect(chromium_page.get_by_test_id("ch-lcm_pose-decode-error")).to_have_count(0)
-    expect(chromium_page.get_by_text("geometry_msgs.PoseStamped.lcm.v1")).to_be_visible()
+    expect(chromium_page.get_by_text("geometry_msgs/msg/PoseStamped.cdr.v1")).to_be_visible()
 
 
 def test_sdk_page_reads_the_decoded_lcm_fields(

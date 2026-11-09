@@ -24,8 +24,7 @@ from dataclasses import dataclass
 import math
 import time
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
@@ -195,4 +194,4 @@ class Teleop:
             return
         self._driving = False
         logger.warning(f"relay bridge teleop: zero twist ({reason})")
-        self._publish(Twist.zero())
+        self._publish(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))

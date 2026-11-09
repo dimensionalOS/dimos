@@ -40,6 +40,83 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 
 ## Channels
 
+### Generated CDR messages
+
+An installed generated type can be sent as CDR with its complete ROS2 definition
+in the manifest. Generated classes select CDR by default. An explicit encoding is also supported:
+
+```python
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.web.cockpit import Channel, cockpit
+
+viewer = cockpit(channels=[Channel(
+    "measured_pose", PoseStamped,
+    encoding="geometry_msgs/msg/PoseStamped.cdr.v1",
+)])
+```
+
+Compose `viewer` with the module producing `measured_pose: Out[PoseStamped]`.
+Generated ports use the shared CDR codec on the selected LCM or Zenoh transport. The manifest embeds PoseStamped, Header and Time definitions from
+the installed message owner; the browser needs neither ROS nor another generated
+message package. Registered custom web encoders continue to take precedence.
+Explicit foreign LCM codecs and JSON channels remain available. The transport backend is selected independently of the message encoding.
+
+The SDK registry resolves the channel schema once and decodes its CDR frames:
+
+```ts
+import { createDecoderRegistry } from "@dimos/sdk";
+
+const decode = createDecoderRegistry().resolve(channel);
+const value = decode?.(payload, frameHeader).value;
+```
+
+`channel` is the adopted manifest record, `payload` the frame's `Uint8Array` and
+`frameHeader` its SDK header. Invalid schemas are unsupported; malformed CDR
+frames fail decoding. The raw cockpit table previews small messages. Messages
+with variable-length arrays require a visible panel subscription so a preview
+does not pull a large image/cloud buffer. A decoder alone does not add a typed
+camera, map or control panel.
+
+To run a real generated-message source, cockpit bridge and local relay, from
+the repository root in terminal 1:
+
+```sh skip
+DIMOS_ALLOW_MISSING_COCKPIT=1 uv sync --locked --extra visualization --extra web
+uv run --extra web python -I examples/message-viewer/demo_cdr_browser.py
+```
+
+In terminal 2:
+
+```sh skip
+cd web/sdk
+deno task fixture --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:5174/demo_cdr.html?live=1`. Wait for `connected`,
+`Received 8/8 channels`, increasing frame counts and zero decode errors.
+Select each channel. Check its fields and expand its embedded ROS2 definition:
+
+- `pose_stamped`: position `[1.5, -2.5, 0.25]` and `nanosec: 500000123`.
+- `custom_segments`: custom nested message fields.
+- `image`: two near-black/near-white pixels, with bytes `[0, 1, 2, 253, 254, 255]`.
+- `imu`, `joints`: fixed and variable arrays.
+- `int64`: `-9007199254740993n`, with no JavaScript number rounding.
+- `empty`, `string`: an empty message and Unicode text.
+
+This path uses actual generated Python messages, typed Zenoh transport,
+`cockpit()` manifest creation, relay framing, SDK subscriptions and CDR decoding.
+The page explicitly subscribes to all demo channels, including arrays. It does
+not add domain-specific cockpit panels or browser-to-robot CDR publishing.
+Stop terminal 1 with Ctrl-C. Use `--port` to select a different relay port and
+open the exact URL printed by the program.
+
+Without `?live=1`, the same page uses fixed packets to inspect little- and
+big-endian decoding. Generate `web/sdk/tests/fixtures/cdr_frames.json` with
+`python -m dimos.web.relay_bridge.tests.cdr_fixtures`. SDK tests check both byte
+orders; the fixture does not validate a live connection.
+
+### Existing channels
+
 A channel is one stream crossing the wire in one direction with one encoding. `rx` channels flow from the robot to the browser, `tx` channels from the browser to the robot. The bridge has four built-in ports:
 
 | Channel | Type | Encoding | Delivery |
@@ -98,7 +175,7 @@ arrow from B.w - (0, 0.3in) to M.e - (0, 0.3in) "publishes" below
 | `encoding` | A codec id. `None` picks the default (see [Encodings](#encodings)). |
 | `delivery` | `reliable` or `latest`. |
 | `max_hz` | The rate cap. For a tx channel it is the publish rate the relay accepts, per viewer and per robot. |
-| `params` | Extra JSON for the encoder and the browser, shipped in the manifest. `params["lcm"]` is reserved for the LCM schema. |
+| `params` | Extra JSON for the encoder and the browser, shipped in the manifest. `params["cdr"]` and `params["lcm"]` are reserved for message schemas. |
 | `publish` | `none` (the default) or `shared`. A tx channel must say `shared`: any viewer may publish on it. `exclusive` is not implemented. |
 | `required_scope` | Carried in the manifest for a relay with scopes. Nothing checks it today. |
 | `paced` | rx only. Space sends instead of sampling. |
@@ -127,38 +204,30 @@ An encoding id names a codec pair: the encoder in the bridge and the decoder in 
 
 Behind a relay with Cloudflare video ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)), and with aiortc installed (`dimos[webrtc]`), the bridge advertises every `jpeg.v1` channel as `video.webrtc.v1`. The frames become one H.264 WebRTC track per channel, pulled by the browser from Cloudflare instead of forwarded by the relay. Odd frame sizes lose their last row or column (H.264 encodes even sizes). A camera that pauses for 30 s or more (Cloudflare's track timeout) is pulled afresh by the relay when its frames resume. `--rtc false` keeps JPEG.
 
-Two more need no registration:
+These encoding families need no custom registration:
 
 - `json.v1`: JSON scalars, lists, dicts and plain dataclasses on rx. On tx, scalars, lists and dicts only (a dataclass built from untrusted browser JSON needs an explicit decoder).
-- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: any dimOS message with an LCM schema, rx only. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it into a plain object with no registration. A bulk message costs its full size per frame (a `PointCloud2` is 16 bytes per point), so set `max_hz` accordingly or write an encoder that sends less. `voxels.zlib.v1`, the Map3D encoding, is one: it sends a cloud as voxel occupancy bits, about 0.3 bytes per voxel.
+- `<package>/msg/<Message>.cdr.v1`, for example `geometry_msgs/msg/PoseStamped.cdr.v1`: registered generated messages. The manifest includes the ROS2 schema, and the browser decodes the CDR payload.
+- `<package>.<Message>.lcm.v1`: an explicitly selected codec for raw third-party LCM schema classes. It preserves the external LCM wire format and includes its schema in `params.lcm`.
 
-When `encoding` is not given, an rx dimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`. `Image` has no default: use `jpeg.v1` or an encoder of your own. The built-in names keep their codecs: `Channel("odom", PoseStamped)` in `cockpit(channels=[...])` raises, because `odom` is `pose.json.v1`. Any other name takes the default:
+When `encoding` is omitted, a registered generated class selects CDR. Other supported values select `json.v1`. CDR sends the full message, including raw image pixels. Use `jpeg.v1` for a Video panel, or provide an encoder that sends less data.
+
+The built-in channel names keep their codecs. For example, `Channel("odom", PoseStamped)` raises because the `odom` port requires `pose.json.v1`; specify that encoding for this built-in port.
 
 ```python
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel
 
 print(Channel("pose", PoseStamped).encoding)
+print(Channel("camera_2", Image).encoding)
 print(Channel("health", dict).encoding)
 ```
 
 ```results
-geometry_msgs.PoseStamped.lcm.v1
+geometry_msgs/msg/PoseStamped.cdr.v1
+sensor_msgs/msg/Image.cdr.v1
 json.v1
-```
-
-```python
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.cockpit import Channel
-
-try:
-    Channel("camera_2", Image)
-except ValueError as e:
-    print(e)
-```
-
-```results
-sensor_msgs.Image has no default web encoding (raw pixel buffers; use encoding='jpeg.v1' or a custom @web_encoder)
 ```
 
 ### Custom encoders
@@ -168,14 +237,14 @@ sensor_msgs.Image has no default web encoding (raw pixel buffers; use encoding='
 ```python skip
 import struct
 
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.nav_msgs.msg import Path
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import EncodedPayload, web_encoder
 
 
 @web_encoder("path.points.v1")
 def encode_path_points(msg: Path) -> EncodedPayload:
-    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    payload = b"".join(struct.pack("<ff", p.pose.position.x, p.pose.position.y) for p in msg.poses)
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 

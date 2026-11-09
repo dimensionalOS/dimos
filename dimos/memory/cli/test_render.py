@@ -19,12 +19,11 @@ import numpy as np
 
 from dimos.memory.cli.render import _frame_first_seen, _pair_camera_infos, render_store
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import camera_info, image, pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 def _entry(name: str, data: object) -> tuple:  # type: ignore[type-arg]
@@ -32,13 +31,23 @@ def _entry(name: str, data: object) -> tuple:  # type: ignore[type-arg]
 
 
 def _info(frame_id: str) -> CameraInfo:
-    return CameraInfo.from_intrinsics(
-        fx=500.0, fy=500.0, cx=320.0, cy=240.0, width=640, height=480, frame_id=frame_id
+    return camera_info.from_intrinsics(
+        fx=500.0,
+        fy=500.0,
+        cx=320.0,
+        cy=240.0,
+        width=640,
+        height=480,
+        header=message_time.header_now(frame_id),
     )
 
 
 def _image(frame_id: str) -> Image:
-    return Image(data=np.zeros((4, 4, 3), dtype=np.uint8), frame_id=frame_id)
+    return image.from_array(
+        np.zeros((4, 4, 3), dtype=np.uint8),
+        encoding="bgr8",
+        header=message_time.header_now(frame_id),
+    )
 
 
 def test_pairs_by_frame_id() -> None:
@@ -50,7 +59,7 @@ def test_pairs_by_frame_id() -> None:
     pinholes, paired = _pair_camera_infos(renderable)
     assert set(pinholes) == {"color_image"}
     info, frame = pinholes["color_image"]
-    assert info.frame_id == "camera_optical"
+    assert info.header.frame_id == "camera_optical"
     assert frame == "camera_optical"
     assert paired == {"camera_info"}
 
@@ -98,13 +107,15 @@ def test_no_infos() -> None:
 
 def _tf(child: str, ts: float) -> TFMessage:
     return TFMessage(
-        Transform(
-            translation=Vector3(1.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="world",
-            child_frame_id=child,
-            ts=ts,
-        )
+        transforms=[
+            TransformStamped(
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
+                child_frame_id=child,
+                transform=Transform(
+                    translation=Vector3(1.0, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        ]
     )
 
 
@@ -187,7 +198,7 @@ def test_frame_first_seen_takes_first_ts_per_frame() -> None:
 def test_render_store_attaches_entities_to_their_frame(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import rerun as rr
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.messages.sensor_msgs.msg import PointCloud2
 
     logged: list[tuple[str, object]] = []
     real_log = rr.log
@@ -198,7 +209,9 @@ def test_render_store_attaches_entities_to_their_frame(tmp_path, monkeypatch) ->
         lidar = store.stream("lidar", PointCloud2)
         for ts in (1.0, 2.0):
             lidar.append(
-                PointCloud2.from_numpy(np.zeros((3, 3), np.float32), frame_id="utlidar_lidar"),
+                pointcloud.from_xyz(
+                    np.zeros((3, 3), np.float32), header=message_time.header_now("utlidar_lidar")
+                ),
                 ts=ts,
             )
         store.stream("tf", TFMessage).append(_tf("utlidar_lidar", 1.0), ts=1.0)
@@ -216,7 +229,8 @@ def test_render_store_attaches_entities_to_their_frame(tmp_path, monkeypatch) ->
 def test_render_store_themes_meshes(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import rerun as rr
 
-    from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
+    from dimos.message_utils import mesh as mesh_utils
+    from dimos.messages.dimos_msgs.msg import TriangleMesh
 
     logged: list[tuple[str, object]] = []
     real_log = rr.log
@@ -226,7 +240,10 @@ def test_render_store_themes_meshes(tmp_path, monkeypatch) -> None:  # type: ign
     verts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 1]], np.float32)
     with MemoryStore() as store:
         store.stream("mesh", TriangleMesh).append(
-            TriangleMesh(verts, np.array([[0, 1, 2]])), ts=1.0
+            mesh_utils.from_arrays(
+                verts, np.array([[0, 1, 2]], dtype=np.uint32), header=message_time.header_now()
+            ),
+            ts=1.0,
         )
         render_store(store, out=str(tmp_path / "d.rrd"), no_gui=True)
 
