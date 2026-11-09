@@ -21,21 +21,18 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.urdf_to_usd import PASSTHROUGH_KEY, urdf_to_usd
 from dimos.robot.assets.usd import (
-    PASSTHROUGH_KEY,
-    asset_hash,
     graft_usd,
     prefix_usd_frames,
     rename_usd_frames,
-    require_asset_hashes,
     trivialize_usd,
-    unhashed_assets,
-    urdf_to_usd,
     usd_drives,
     usd_frame_names,
     usd_with_drives,
     usd_with_frames,
 )
+from dimos.robot.assets.usd_assets import asset_hash, require_asset_hashes, unhashed_assets
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
 pytest.importorskip("pxr")
