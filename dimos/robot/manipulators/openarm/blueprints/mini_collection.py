@@ -27,18 +27,20 @@ from dimos.robot.manipulators.openarm.blueprints.mini_teleop import (
     teleop_openarm_mini,
     teleop_openarm_mini_follower,
 )
-from dimos.robot.manipulators.openarm.config import OPENARM_JOINTS
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 
 # Any UVC camera serves as a feed; the front camera is the D455's color node.
 _CAMERAS = ("front", "left_wrist", "right_wrist")
+# The coordinator reports the connection's joints: arm/<urdf joint>, arms then jaws.
+_JOINTS = [f"arm/{joint}" for joint in OpenArmConnection.robot.joint_names]
 
 _state = FeatureSpec(
     stream="coordinator_joint_state",
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(OPENARM_JOINTS),),
-    names=list(OPENARM_JOINTS),
+    shape=(len(_JOINTS),),
+    names=_JOINTS,
 )
 # Arm targets and gripper openings both reach the coordinator, so the action
 # covers every joint; the leaders must be calibrated with their gripper triggers.

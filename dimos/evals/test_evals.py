@@ -42,7 +42,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
+from dimos.evals.agents.mcp_client_adapter import McpClientAdapter, _Turn
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.constants import RAW_README
@@ -945,6 +945,24 @@ def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
     assert first.observation == Observation(
         results=(ObservationResult(source_call_id="c1", content="arrived"),)
     )
+
+
+def test_mcp_client_adapter_turn_waits_for_the_failure_note_of_an_unanswered_call(
+    tmp_path: Path,
+) -> None:
+    """The idle flip can overtake the failure note. A call with no response leaves
+    no trace pair, so the received AIMessages already match the pairs; only the
+    note may end the turn."""
+    _write_trace_pair(tmp_path, 0)
+    _write_trace_pair(tmp_path, 1, response=False)
+    turn = _Turn(tmp_path)
+    turn.on_idle(False)
+    turn.on_agent(AIMessage(content="", tool_calls=[{"name": "move_to", "args": {}, "id": "c1"}]))
+    turn.on_idle(True)
+    assert not turn.done.is_set()
+
+    turn.on_agent(AIMessage(content="failed", additional_kwargs={TURN_FAILED_KEY: True}))
+    assert turn.done.is_set()
 
 
 def test_agents_report_every_available_tool() -> None:
