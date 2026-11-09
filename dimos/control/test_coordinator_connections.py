@@ -41,7 +41,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.control.contract.convert import motor_joints, pose_from_values, twist_to_values
 from dimos.control.contract.limits import BASE_NAME
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -52,6 +52,7 @@ from dimos.control.task import (
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     OPERATOR_HOLD_TASK_NAME,
     OperatorHoldTask,
+    operator_hold_task,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
@@ -186,6 +187,7 @@ class WholeRobot(ControlCoordinator):
     mock_joint_state: In[JointState]
     mock_cmd_vel: Out[Twist]
     mock_odom: In[PoseStamped]
+    mock_velocity_command: Out[JointState]
 
 
 # In-process, with the tick loop stepped by hand.
@@ -274,9 +276,10 @@ class StopsOnEstop(SendsPositions):
 GO2_BASE_AXES = ["go2/base/vx", "go2/base/vy", "go2/base/wz"]
 
 
-def base_velocity_task() -> JointVelocityTask:
-    """A started velocity task driving the fake base's three axes."""
-    task = JointVelocityTask("vel_base", JointVelocityTaskConfig(GO2_BASE_AXES))
+def velocity_task(joints: list[str], timeout: float = 0.2) -> JointVelocityTask:
+    task = JointVelocityTask(
+        "velocity", JointVelocityTaskConfig(joints, priority=10000, timeout=timeout)
+    )
     task.start()
     return task
 
@@ -420,14 +423,7 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
 ) -> None:
     r = rig()
     assert r.coordinator.list_hardware() == ["mock", "go2"]
-    # The connection robots' joints, plus the base's axes for the robot with
-    # a cmd_vel port, claimable by tasks like an adapter base's virtual joints.
-    assert r.coordinator.list_joints() == [
-        *MOCK_JOINTS,
-        "go2/base/vx",
-        "go2/base/vy",
-        "go2/base/wz",
-    ]
+    assert r.coordinator.list_joints() == [*MOCK_JOINTS, *GO2_BASE_AXES]
 
     r.tick()
     assert r.sent == []
@@ -504,485 +500,154 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
     # Held where it reads until told, then open, then closed.
     assert r.positions_sent() == [[0.0, 0.2], [0.0, 0.0], [0.0, 0.85]]
 
-def test_a_velocity_task_drives_a_connection_robots_base(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    task = base_velocity_task()
-    r.coordinator.add_task(task)
-    r.report_base()
-    r.tick()
 
-    # Nothing drives the base yet: every axis is told 0.
-    assert [(t.linear.x, t.linear.y, t.angular.z) for t in r.twists_sent()] == [(0.0, 0.0, 0.0)]
-
-    task.set_velocities([0.4, 0.0, -0.1], t_now=time.perf_counter())
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.1)
-
-    # The task stopped: the base is told 0 again on every axis.
-    task.stop()
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-
-
-def test_arm_positions_and_base_speeds_coexist_in_one_tick(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    """A position task on the joints and a velocity task on the base never
-    mode-conflict: the base axes route separately and rejoin the command."""
-    error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig()
+@pytest.mark.parametrize("target", ["base", "joint", "unsupported"])
+def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], target: str) -> None:
+    r = rig(ArmCoordinator if target == "unsupported" else WholeRobot)
     r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    task = base_velocity_task()
-    r.coordinator.add_task(task)
-    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
-
-    r.report_arm(*AT_REST)
-    r.report_base()
-    r.tick()
-
-    assert r.positions_sent()[-1] == [0.5, *AT_REST[1:]]
-    assert r.twists_sent()[-1].linear.x == 0.4
-    error.assert_not_called()
-
-
-#: The WholeRobot's base axes, as a task claims them.
-MOCK_BASE_AXES = ["mock/base/vx", "mock/base/vy", "mock/base/wz"]
-
-
-def test_one_robots_joint_and_base_commands_arrive_in_the_same_tick(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    """One connection keeps arm position and chassis velocity winners together."""
-    error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig(WholeRobot)
-    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    task = JointVelocityTask("vel_base", JointVelocityTaskConfig(MOCK_BASE_AXES))
-    task.start()
-    r.coordinator.add_task(task)
-    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
-
-    r.report_arm(*AT_REST)
-    r.report_base("mock")
-    sent_before = len(r.sent)
-    r.tick()
-
-    by_port = dict(r.sent[sent_before:])
-    assert set(by_port) == {"mock_position_command", "mock_cmd_vel"}
-    assert list(by_port["mock_position_command"].position) == [0.5, *AT_REST[1:]]
-    twist = by_port["mock_cmd_vel"]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, 0.0)
-    error.assert_not_called()
-
-
-def test_two_connection_joints_keep_their_winning_modes(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    """Different joints on one connection may use different command interfaces."""
-
-    class MixedArm(ArmCoordinator):
-        mock_velocity_command: Out[JointState]
-
-    error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig(MixedArm)
-    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    task = JointVelocityTask("vel_arm", JointVelocityTaskConfig(["mock/joint2"]))
-    task.start()
-    r.coordinator.add_task(task)
-    task.set_velocities([0.3], t_now=time.perf_counter())
-
-    r.report_arm(*AT_REST)
-    r.tick()
-
-    by_port = dict(r.sent)
-    assert list(by_port["mock_velocity_command"].name) == ["mock/joint2"]
-    assert list(by_port["mock_velocity_command"].velocity) == [0.3]
-    assert list(by_port["mock_position_command"].name) == [MOCK_JOINTS[0], *MOCK_JOINTS[2:]]
-    assert r.positions_sent()[-1] == [0.5, *AT_REST[2:]]
-    error.assert_not_called()
-
-
-def test_unsupported_connection_interface_rejects_the_whole_tick(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig(ArmCoordinator)  # Position commands only.
-    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    task = JointVelocityTask("unsupported", JointVelocityTaskConfig(["mock/joint2"]))
-    task.start()
-    r.coordinator.add_task(task)
-    task.set_velocities([0.3], t_now=time.perf_counter())
-    r.report_arm(*AT_REST)
-    r.tick()
-    assert r.sent == []
-    error.assert_called_once_with(
-        "Failed to send a command to mock: mock/joint2 cannot be told its velocity"
+    names = (
+        ["mock/base/vx", "mock/base/vy", "mock/base/wz"] if target == "base" else ["mock/joint2"]
     )
-    task.stop()
-    r.coordinator.remove_task("sends_positions")
+    task = velocity_task(names)
+    r.coordinator.add_task(task, task_type="velocity")
+    r.report_arm(*AT_REST)
+    if target != "unsupported":
+        r.report_base("mock")
+    if target == "base":
+        r.coordinator._make_stream_cb("twist_command")(
+            Twist(linear=Vector3(0.4, -0.2, 0.0), angular=Vector3(0.0, 0.0, 0.3))
+        )
+    else:
+        task.set_velocities([0.4], t_now=time.perf_counter())
     r.tick()
-    assert r.positions_sent()[-1] == AT_REST  # No partial update to joint1's hold.
+    if target == "unsupported":
+        assert r.sent == []
+        task.stop()
+        r.coordinator.remove_task("sends_positions")
+        r.tick()
+        assert r.positions_sent()[-1] == AT_REST  # No partial target update.
+        return
+    commands = dict(r.sent)
+    assert r.positions_sent()[-1] == (
+        [0.5, *AT_REST[1:]] if target == "base" else [0.5, *AT_REST[2:]]
+    )
+    if target == "base":
+        twist = commands["mock_cmd_vel"]
+        assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, -0.2, 0.3)
+        assert "mock_velocity_command" not in commands  # No aliases in JointState.
+        task.stop()
+        r.tick()
+        twist = dict(r.sent)["mock_cmd_vel"]
+        assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+    else:
+        assert list(commands["mock_velocity_command"].name) == names
+        assert list(commands["mock_velocity_command"].velocity) == [0.4]
 
 
-def test_velocity_only_joints_stop_during_hold_regardless_of_name_or_priority(
-    rig: Callable[..., Rig],
-) -> None:
-    class VelocityOnlyArm(ControlCoordinator):
+@pytest.mark.parametrize("base", [False, True])
+def test_connection_hold_lifecycle(rig: Callable[..., Rig], mocker: Any, base: bool) -> None:
+    class VelocityOnly(ControlCoordinator):
         mock_velocity_command: Out[JointState]
         mock_joint_state: In[JointState]
 
-    r = rig(VelocityOnlyArm)
-    hold = OperatorHoldTask(priority=100)
-    r.coordinator.add_task(hold, task_type="operator_hold")
-    velocity = JointVelocityTask(
-        "fast_joint", JointVelocityTaskConfig(["mock/joint2"], priority=10000)
-    )
-    velocity.start()
-    r.coordinator.add_task(velocity)
-
-    def tick_and_speed() -> float:
-        r.report_arm(*AT_REST)
-        velocity.set_velocities([0.4], t_now=time.perf_counter())
-        before = len(r.sent)
-        r.tick()
-        assert len(r.sent) == before + 1
-        port, msg = r.sent[-1]
-        assert port == "mock_velocity_command"
-        assert list(msg.position) == []
-        return float(dict(zip(msg.name, msg.velocity, strict=True))["mock/joint2"])
-
-    assert tick_and_speed() == 0.4
-    hold.request("manual")
-    for _ in range(3):
-        assert tick_and_speed() == 0.0
-    assert r.coordinator.set_estop(True)
-    sent = len(r.sent)
-    r.tick()
-    assert len(r.sent) == sent
-    assert r.coordinator.set_estop(False)
-    r.tick()
-    assert len(r.sent) == sent  # Wait for real feedback after clearing.
-    assert tick_and_speed() == 0.0
-    hold.acknowledge()
-    assert tick_and_speed() == 0.4
-
-
-def test_hold_requested_during_connection_readiness_gates_the_same_tick(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
-    r = rig()
-    hold = OperatorHoldTask()
-    r.coordinator.add_task(hold, task_type="operator_hold")
-    velocity = base_task("moving_base", priority=10000)
-    r.coordinator.add_task(velocity)
-    r.report_base()
-    velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
-    source = r.coordinator._connections["go2"]
-    ready = source.ready_for_control
-
-    def request_before_publish(now: float | None = None) -> bool:
-        hold.request("manual")
-        return ready(now)
-
-    mocker.patch.object(source, "ready_for_control", side_effect=request_before_publish)
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-
-
-def test_new_hold_between_ticks_captures_a_new_target(rig: Callable[..., Rig]) -> None:
-    r = rig(ArmCoordinator)
-    hold = OperatorHoldTask()
-    r.coordinator.add_task(hold, task_type="operator_hold")
-    r.report_arm(0.2, *AT_REST[1:])
-    hold.request("manual")
-    r.tick()
-    assert r.positions_sent()[-1][0] == 0.2
-
-    hold.acknowledge()
-    r.report_arm(0.4, *AT_REST[1:])
-    hold.request("manual")  # No unheld command tick between the two sessions.
-    r.tick()
-    assert r.positions_sent()[-1][0] == 0.4
-
-    r.report_arm(0.6, *AT_REST[1:])
-    hold.request("manual", "same session, new reason")
-    r.tick()
-    assert r.positions_sent()[-1][0] == 0.4
-
-
-def test_connection_hold_recaptures_measured_positions_after_silence_and_estop(
-    rig: Callable[..., Rig], mocker: Any
-) -> None:
     clock = [1000.0]
     mocker.patch.object(time, "monotonic", side_effect=lambda: clock[0])
-    r = rig(WholeRobot)
-    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    velocity = JointVelocityTask(
-        "fast_base", JointVelocityTaskConfig(MOCK_BASE_AXES, priority=10000)
-    )
-    velocity.start()
-    r.coordinator.add_task(velocity)
-    hold = OperatorHoldTask(priority=100)
-    r.coordinator.add_task(hold, task_type="operator_hold")
+    r = rig(WholeRobot if base else VelocityOnly, tasks=[operator_hold_task()])
+    hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
+    assert isinstance(hold, OperatorHoldTask)
+    names = ["mock/base/vx", "mock/base/vy", "mock/base/wz"] if base else ["mock/joint2"]
+    task = velocity_task(names)
+    r.coordinator.add_task(task)
+    if base:
+        r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
 
-    def tick_at(position: float, held: bool = True) -> None:
+    def tick(position: float, expected: float, frozen: float | None = None) -> None:
         r.report_arm(position, *AT_REST[1:])
-        r.report_base("mock")
-        velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
+        if base:
+            r.report_base("mock")
+        task.set_velocities([0.4] * len(names), t_now=time.perf_counter())
+        before = len(r.sent)
         r.tick()
-        assert r.positions_sent()[-1][0] == (position if held else 0.5)
-        twist = dict(r.sent)["mock_cmd_vel"]
-        expected = (0.0, 0.0, 0.0) if held else (0.4, -0.2, 0.3)
-        assert (twist.linear.x, twist.linear.y, twist.angular.z) == expected
+        assert len(r.sent) > before
+        commands = dict(r.sent)
+        if base:
+            twist = commands["mock_cmd_vel"]
+            assert (twist.linear.x, twist.linear.y, twist.angular.z) == (expected,) * 3
+            assert r.positions_sent()[-1][0] == (0.5 if frozen is None else frozen)
+        else:
+            msg = commands["mock_velocity_command"]
+            assert not msg.position
+            assert dict(zip(msg.name, msg.velocity, strict=True))[names[0]] == expected
 
-    tick_at(0.2, held=False)
+    tick(0.2, 0.4)
     hold.request("manual")
-    tick_at(0.2)  # Capture measured 0.2, not the previous commanded 0.5.
+    for _ in range(2):
+        tick(0.2, 0.0, 0.2)  # Fresh priority-10000 commands cannot bypass hold.
+    hold.acknowledge()
+    hold.request("manual")  # New session without an unheld tick.
+    tick(0.3, 0.0, 0.3)
+    hold.request("manual", "same session")
+    tick(0.4, 0.0, 0.3)
     clock[0] += 1.0
     before = len(r.sent)
     r.tick()
     assert len(r.sent) == before
-    tick_at(0.35)  # Recapture, not OperatorHoldTask's old frozen 0.2.
+    tick(0.35, 0.0, 0.35)  # Silence recovery recaptures actual position.
+    before = len(r.sent)
     assert r.coordinator.set_estop(True)
     r.tick()
+    assert len(r.sent) == before
     assert r.coordinator.set_estop(False)
     before = len(r.sent)
     r.tick()
-    assert len(r.sent) == before
-    tick_at(0.45)
+    assert len(r.sent) == before  # Must receive new feedback after clear.
+    tick(0.45, 0.0, 0.45)
     hold.acknowledge()
-    tick_at(0.45, held=False)
+    tick(0.45, 0.4)
 
 
-def test_a_twist_command_reaches_a_connection_robots_base(rig: Callable[..., Rig]) -> None:
-    """The twist pre-hook maps onto the connection robot's base axes, which
-    the card-routed velocity task claims."""
-    r = rig()
-    task = base_velocity_task()
-    r.coordinator.add_task(task, task_type="velocity")
-    r.report_base()
-
-    r.coordinator._make_stream_cb("twist_command")(
-        Twist(linear=Vector3(0.4, 0.0, 0.0), angular=Vector3(0.0, 0.0, -0.1))
-    )
-    r.tick()
-
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.1)
-
-
-def test_every_base_axis_carries_a_non_zero_speed(rig: Callable[..., Rig]) -> None:
-    """vx, vy and wz each reach the base unchanged — none is dropped or
-    rerouted to another axis."""
-    r = rig()
-    task = base_velocity_task()
-    r.coordinator.add_task(task, task_type="velocity")
-    r.report_base()
-
-    task.set_velocities([0.4, -0.2, 0.7], t_now=time.perf_counter())
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, -0.2, 0.7)
-
-    # The same three axes, coming in over the public twist bus this time.
-    r.coordinator._make_stream_cb("twist_command")(
-        Twist(linear=Vector3(-0.1, 0.3, 0.0), angular=Vector3(0.0, 0.0, 0.5))
-    )
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (-0.1, 0.3, 0.5)
-
-
-def base_task(name: str, priority: int, timeout: float = 0.2) -> JointVelocityTask:
-    """A started velocity task on the fake base's axes at ``priority``."""
-    task = JointVelocityTask(
-        name, JointVelocityTaskConfig(GO2_BASE_AXES, priority=priority, timeout=timeout)
-    )
-    task.start()
-    return task
-
-
-def test_two_tasks_arbitrate_the_base_by_priority(rig: Callable[..., Rig]) -> None:
-    """The higher-priority task wins the base axes; when it stops, the lower
-    one drives them again."""
-    r = rig()
-    low = base_task("low", priority=5)
-    high = base_task("high", priority=10)
-    r.coordinator.add_task(low)
-    r.coordinator.add_task(high)
-    r.report_base()
-
-    now = time.perf_counter()
-    low.set_velocities([0.1, 0.0, 0.0], t_now=now)
-    high.set_velocities([0.4, 0.0, -0.2], t_now=now)
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, 0.0, -0.2)
-
-    high.stop()
-    low.set_velocities([0.1, 0.0, 0.0], t_now=time.perf_counter())
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.1, 0.0, 0.0)
-
-
-@pytest.mark.parametrize("configured_hold", [False, True])
-def test_connection_base_hold_is_not_a_virtual_joint_claim(
-    rig: Callable[..., Rig], configured_hold: bool
-) -> None:
-    """Gate all base axes at output, independent of positional task priority."""
-    tasks = (
-        [TaskConfig(name=OPERATOR_HOLD_TASK_NAME, type="operator_hold", priority=100)]
-        if configured_hold
-        else []
-    )
-    r = rig(tasks=tasks)
-    if not configured_hold:
-        r.coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
-    hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
-    assert isinstance(hold, OperatorHoldTask)
-    velocity = base_task("fast_base", priority=10000)
-    r.coordinator.add_task(velocity)
-    commanded = [0.4, -0.2, 0.3]
-    r.report_base()
-    velocity.set_velocities(commanded, t_now=time.perf_counter())
-    r.tick()
-    assert r.twists_sent()[-1].linear.x == 0.4
-
-    hold.request("manual")
-    for _ in range(3):
-        r.report_base()
-        velocity.set_velocities(commanded, t_now=time.perf_counter())
-        before = len(r.twists_sent())
-        r.tick()
-        assert not hold.claim().joints.intersection(GO2_BASE_AXES)
-        assert len(r.twists_sent()) == before + 1
-        twist = r.twists_sent()[-1]
-        assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-
-    hold.acknowledge()
-    r.report_base()
-    velocity.set_velocities(commanded, t_now=time.perf_counter())
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == tuple(commanded)
-
-
-def test_hold_preserves_same_robot_arm_commands_while_gating_its_base(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig(WholeRobot)
-    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    velocity = JointVelocityTask("vel_base", JointVelocityTaskConfig(MOCK_BASE_AXES))
-    velocity.start()
-    r.coordinator.add_task(velocity)
-    hold = OperatorHoldTask()
-    r.coordinator.add_task(hold, task_type="operator_hold")
-    measured = [0.2, *AT_REST[1:]]
-    r.report_arm(*measured)
-    r.report_base("mock")
-    hold.request("manual")
-    velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
-    r.tick()
-    assert r.positions_sent()[-1] == measured
-    assert hold.claim().joints == frozenset(MOCK_JOINTS)
-    twist = dict(r.sent)["mock_cmd_vel"]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-
-    hold.acknowledge()
-    r.report_arm(*measured)
-    r.report_base("mock")
-    velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
-    r.tick()
-    assert r.positions_sent()[-1] == [0.5, *AT_REST[1:]]
-    twist = dict(r.sent)["mock_cmd_vel"]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.4, -0.2, 0.3)
-
-
-def test_the_operator_hold_zeroes_a_running_base_and_keeps_it_after_an_estop_clear(
-    rig: Callable[..., Rig],
-) -> None:
-    """A positional hold gates base output without claiming velocity axes;
-    clearing an e-stop does not bypass the hold until acknowledgement."""
-    r = rig()
-    task = base_task("vel_base", priority=10)
-    r.coordinator.add_task(task)
-    r.coordinator.add_task(OperatorHoldTask(), task_type="operator_hold")
-    r.report_base()
-
-    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
-    r.tick()
-    assert r.twists_sent()[-1].linear.x == 0.4
-
-    r.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "request", {"route": "manual"})
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-
-    assert r.coordinator.set_estop(True)
-    sent = len(r.sent)
-    r.report_base()
-    r.tick()
-    assert len(r.sent) == sent  # e-stopped: nothing is sent
-
-    assert r.coordinator.set_estop(False)
-    r.tick()  # the clear drops the source's holds: nothing until the next reading
-    assert len(r.sent) == sent
-    r.report_base()
-    r.tick()
-
-    # The velocity task is still streaming 0.4, but the hold outranks it:
-    # the base stays at zero until the hold is acknowledged.
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-
-    r.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "acknowledge")
-    task.set_velocities([0.4, 0.0, 0.0], t_now=time.perf_counter())
-    r.tick()
-    assert r.twists_sent()[-1].linear.x == 0.4
-
-
-def test_a_base_is_zeroed_when_its_velocity_task_times_out(
+def test_hold_requested_during_readiness_stops_this_tick(
     rig: Callable[..., Rig], mocker: Any
 ) -> None:
-    """A velocity task's stream going quiet zeroes every base axis — the
-    connection base gets the same zero_on_timeout safety as an adapter base.
-
-    Deterministic, with both clocks controlled: the task's clock
-    (perf_counter, which the tick loop stamps ``state.t_now`` from) is
-    advanced past the task timeout by hand, while the feedback clock
-    (monotonic, which the connection source stamps receipts with and checks
-    their freshness against) never moves — so the task command expires but
-    the feedback cannot go stale, no matter how long the runner pauses. The
-    real sleep below, longer than the reading timeout, proves that: with an
-    uncontrolled feedback clock it would stale the feedback and the strict
-    assertions at the end would fail.
-    """
-    task_clock = [1000.0]
-    feedback_clock = [2000.0]
-    mocker.patch.object(time, "perf_counter", side_effect=lambda: task_clock[0])
-    mocker.patch.object(time, "monotonic", side_effect=lambda: feedback_clock[0])
-
     r = rig()
-    task = base_task("vel_base", priority=10, timeout=0.05)
+    hold = OperatorHoldTask()
+    r.coordinator.add_task(hold, task_type="operator_hold")
+    task = velocity_task(GO2_BASE_AXES)
     r.coordinator.add_task(task)
-
     r.report_base()
-    task.set_velocities([0.4, 0.0, 0.0], t_now=task_clock[0])
+    task.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
+    source = r.coordinator._connections["go2"]
+    ready = source.ready_for_control
+
+    def request(now: float | None = None) -> bool:
+        hold.request("manual")
+        return ready(now)
+
+    mocker.patch.object(source, "ready_for_control", side_effect=request)
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+
+def test_expired_velocity_sends_zero_with_fresh_feedback(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    # Separate command and feedback clocks: a scheduling pause must not hide the zero command.
+    clock = [1000.0]
+    mocker.patch.object(time, "perf_counter", side_effect=lambda: clock[0])
+    mocker.patch.object(time, "monotonic", return_value=2000.0)
+    r = rig()
+    task = velocity_task(GO2_BASE_AXES, timeout=0.05)
+    r.coordinator.add_task(task)
+    r.report_base()
+    task.set_velocities([0.4, -0.2, 0.3], t_now=clock[0])
     r.tick()
     assert r.twists_sent()[-1].linear.x == 0.4
-
-    # The command stream goes quiet past the task's timeout; the feedback
-    # stays fresh, so the robot is still commanded, with zeros, this tick.
-    task_clock[0] += 2 * 0.05
-    r.report_base()
-    twists_before = len(r.twists_sent())
-    time.sleep(0.25)  # a real scheduling pause, past reading_timeout_s
+    clock[0] += 0.1
+    before = len(r.twists_sent())
+    time.sleep(0.25)
     r.tick()
-
-    assert len(r.twists_sent()) == twists_before + 1  # fresh feedback: still commanded
+    assert len(r.twists_sent()) == before + 1
     twist = r.twists_sent()[-1]
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
 
