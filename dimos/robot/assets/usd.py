@@ -233,8 +233,12 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a scene")
     stage = pxr.Usd.Stage.Open(layer)
-    by_link = _link_prim_paths(stage)
     for name, (parent, xyz, rpy) in frames.items():
+        # Read afresh each time, because a frame may hang off one added a moment ago: the Go2's
+        # Mid-360 sits on its front camera, which is itself a frame the rig adds. Reading the
+        # layer's links once before the loop made that "the layer has no frame 'front_camera'",
+        # which is true of the file and not of the stage it is being built into.
+        by_link = _link_prim_paths(stage)
         parent_path = by_link.get(parent)
         if parent_path is None:
             raise ValueError(
