@@ -32,13 +32,19 @@ pytest.importorskip("pxr")
 # them joins this table as it arrives.
 _SENSORS = [
     ("camera", {"frame_id": "left/camera_optical"}, {"left/camera_optical"}),
+    (
+        "livox",
+        {"frame_id": "left/mid360_link", "imu_frame_id": "left/lidar_imu"},
+        {"left/mid360_link", "left/lidar_imu"},
+    ),
 ]
 
 
 def _sensor(kind: str, config: dict[str, Any]) -> Any:
     from dimos.sim2.camera import SimCamera
+    from dimos.sim2.livox import LivoxSim
 
-    return {"camera": SimCamera}[kind](**config)
+    return {"camera": SimCamera, "livox": LivoxSim}[kind](**config)
 
 
 @pytest.mark.parametrize(("kind", "config", "frames"), _SENSORS)
@@ -91,3 +97,18 @@ def _anonymous(usd: str) -> object:
     layer = Sdf.Layer.CreateAnonymous(".usda")
     assert layer.ImportFromString(usd)
     return layer
+
+
+def test_the_simulated_mid360_describes_the_same_box_as_the_real_one() -> None:
+    """A sim twin that described itself differently would change shape with which one is running."""
+    from dimos.hardware.sensors.lidar.livox.module import mid360_usd
+    from dimos.sim2.livox import LivoxSim
+
+    sim = LivoxSim(frame_id="mid360_link", imu_frame_id="imu_link")
+    try:
+        root, usd = sim.get_usd()
+    finally:
+        sim.stop()
+
+    assert usd == mid360_usd("mid360_link", "imu_link")
+    assert root, "the root is the driver's own directory, which is where its mesh lives"
