@@ -137,7 +137,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -181,7 +181,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -225,7 +225,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -269,7 +269,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -313,7 +313,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -357,7 +357,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -401,7 +401,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -445,7 +445,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -489,7 +489,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -533,7 +533,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -577,7 +577,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -621,7 +621,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -665,7 +665,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -709,7 +709,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -753,7 +753,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -797,7 +797,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -841,7 +841,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -885,7 +885,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -929,7 +929,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -973,7 +973,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1017,7 +1017,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1061,7 +1061,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1105,7 +1105,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1149,7 +1149,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1193,7 +1193,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1237,7 +1237,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1281,7 +1281,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1325,7 +1325,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1369,7 +1369,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1413,7 +1413,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1457,7 +1457,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1501,7 +1501,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1545,7 +1545,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1589,7 +1589,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1633,7 +1633,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1677,7 +1677,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1721,7 +1721,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1765,7 +1765,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1809,7 +1809,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1853,7 +1853,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1897,7 +1897,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1941,7 +1941,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -1985,7 +1985,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2029,7 +2029,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2073,7 +2073,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2117,7 +2117,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2161,7 +2161,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2205,7 +2205,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2249,7 +2249,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2293,7 +2293,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2337,7 +2337,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2381,7 +2381,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2425,7 +2425,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2469,7 +2469,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2513,7 +2513,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2557,7 +2557,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2601,7 +2601,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2645,7 +2645,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2689,7 +2689,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2733,7 +2733,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2777,7 +2777,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2821,7 +2821,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2865,7 +2865,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2909,7 +2909,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2953,7 +2953,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -2997,7 +2997,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -3041,7 +3041,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -3085,7 +3085,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -3129,7 +3129,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -3173,7 +3173,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -3217,7 +3217,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -99867,7 +99867,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -99999,7 +99999,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130526,7 +130526,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130570,7 +130570,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130614,7 +130614,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130658,7 +130658,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130702,7 +130702,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130746,7 +130746,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130790,7 +130790,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130834,7 +130834,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130878,7 +130878,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130922,7 +130922,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -130966,7 +130966,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131010,7 +131010,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131054,7 +131054,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131098,7 +131098,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131142,7 +131142,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131186,7 +131186,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131230,7 +131230,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131274,7 +131274,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131318,7 +131318,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131362,7 +131362,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131406,7 +131406,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131450,7 +131450,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131494,7 +131494,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131538,7 +131538,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131582,7 +131582,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131626,7 +131626,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131670,7 +131670,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131714,7 +131714,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131758,7 +131758,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131802,7 +131802,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131846,7 +131846,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131890,7 +131890,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131934,7 +131934,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -131978,7 +131978,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132022,7 +132022,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132066,7 +132066,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132110,7 +132110,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132154,7 +132154,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132198,7 +132198,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132242,7 +132242,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132286,7 +132286,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132330,7 +132330,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132374,7 +132374,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132418,7 +132418,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132462,7 +132462,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132506,7 +132506,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132550,7 +132550,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132594,7 +132594,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132638,7 +132638,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132682,7 +132682,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132726,7 +132726,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132770,7 +132770,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132814,7 +132814,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132858,7 +132858,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132902,7 +132902,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132946,7 +132946,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -132990,7 +132990,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133034,7 +133034,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133078,7 +133078,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133122,7 +133122,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133166,7 +133166,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133210,7 +133210,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133254,7 +133254,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133298,7 +133298,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133342,7 +133342,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133386,7 +133386,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133430,7 +133430,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133474,7 +133474,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133518,7 +133518,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133562,7 +133562,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133606,7 +133606,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133650,7 +133650,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133694,7 +133694,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133738,7 +133738,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133782,7 +133782,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133826,7 +133826,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133870,7 +133870,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133914,7 +133914,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -133958,7 +133958,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134002,7 +134002,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134046,7 +134046,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134090,7 +134090,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134134,7 +134134,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134178,7 +134178,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134222,7 +134222,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134266,7 +134266,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134310,7 +134310,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134354,7 +134354,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134398,7 +134398,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134442,7 +134442,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134486,7 +134486,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -134530,7 +134530,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.93, 0.92, 0.9)] (
+                color3f[] primvars:displayColor = [(0.94, 0.912, 0.855)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -137419,7 +137419,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137453,7 +137453,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137487,7 +137487,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137521,7 +137521,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137555,7 +137555,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137589,7 +137589,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.35
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137669,7 +137669,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137749,7 +137749,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137829,7 +137829,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137909,7 +137909,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -137989,7 +137989,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138069,7 +138069,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138149,7 +138149,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138229,7 +138229,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138309,7 +138309,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138389,7 +138389,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138469,7 +138469,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138549,7 +138549,7 @@ def Xform "office_555" (
                 prepend apiSchemas = ["ShadowAPI"]
             )
             {
-                color3f inputs:color = (1, 0.98, 0.95)
+                color3f inputs:color = (1, 0.955, 0.88)
                 float inputs:intensity = 1.1
                 float inputs:radius = 0.05
                 bool inputs:shadow:enable = 1
@@ -138579,7 +138579,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138624,7 +138624,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138649,7 +138649,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138674,7 +138674,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138699,7 +138699,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138724,7 +138724,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138749,7 +138749,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -138774,7 +138774,7 @@ def Xform "office_555" (
                 uniform double[] mjc:solref = [0.02, 1]
                 float newton:contactGap = 0
                 float physics:density = 1000
-                color3f[] primvars:displayColor = [(0.4, 0.393, 0.378)] (
+                color3f[] primvars:displayColor = [(0.447, 0.408, 0.345)] (
                     interpolation = "constant"
                 )
                 int[] primvars:displayColor:indices = None
@@ -139641,7 +139641,7 @@ def RenderSettings "Look"
     # and know what is occluding what; a single environment map does not, so it fills the floor under
     # a desk exactly as much as the floor beside it and erases the shadow it was meant to soften.
     # Measured: shadow depth went 0.81 -> 0.89. The viewer still supports it for scenes that want it.
-    float dimos:look:saturation = 1.45
+    float dimos:look:saturation = 1.6
     float dimos:look:contrast = 1
 }
 
