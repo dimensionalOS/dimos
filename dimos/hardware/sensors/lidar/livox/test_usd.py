@@ -176,3 +176,17 @@ def test_get_usd_roots_its_assets_at_this_module_rather_than_the_build_machine()
     root = _answer(Mid360Config())[0]
 
     assert Path(root) == Path(__file__).parent
+
+
+def test_the_imu_offset_is_the_one_in_pointlios_config_negated() -> None:
+    """One copy of the calibration. The layer used to restate it, with a comment asking a human
+    to keep the two in step; this fails instead if they drift."""
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
+
+    factory = PointLioConfig.model_fields["extrinsic_t"].default_factory
+    assert factory is not None
+    x, y, z = factory()
+
+    usd = mid360_usd("lidar_frame", "imu_frame")
+
+    assert f"({-x!r}, {-y!r}, {-z!r})" in usd

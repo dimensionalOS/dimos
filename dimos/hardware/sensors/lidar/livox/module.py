@@ -125,9 +125,9 @@ class Mid360Config(NativeModuleConfig):
 #
 # Where the numbers come from:
 #   * the 65 x 65 x 60 mm shell, from the Livox MID-360 specs (265 g, four M3 holes in the base)
-#   * the lidar_link_to_imu_link offset (0.011, 0.02329, -0.04412) m, which is
-#     PointLioConfig.extrinsic_t -- the lidar origin in the IMU frame -- negated. That default
-#     is the in-repo source of truth for this extrinsic; keep the two in step.
+#   * the lidar_link_to_imu_link offset, substituted at @IMU_OFFSET@ from
+#     PointLioConfig.extrinsic_t -- the lidar origin in the IMU frame -- negated. Read rather
+#     than written out here, so there is one copy of the number and nothing to keep in step.
 #   * the -0.020 m shell offset is a PLACEHOLDER, inferred from the IMU sitting 44.12 mm below
 #     the origin and the body being 60 mm tall. It moves the drawn box and nothing measured.
 #
@@ -138,6 +138,7 @@ class Mid360Config(NativeModuleConfig):
 # name that travels; prim names stay fixed USD identifiers, so none of this depends on pxr.
 _LIDAR_TOKEN = "@LIDAR@"
 _IMU_TOKEN = "@IMU@"
+_IMU_OFFSET_TOKEN = "@IMU_OFFSET@"
 
 _MID360_USD = """\
 #usda 1.0
@@ -188,7 +189,7 @@ def Xform "mid360"
             displayName = "@IMU@"
         )
         {
-            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0.011, 0.02329, -0.04412, 1) )
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (@IMU_OFFSET@, 1) )
             uniform token[] xformOpOrder = ["xformOp:transform"]
         }
     }
@@ -213,7 +214,7 @@ def Xform "mid360"
         {
             rel physics:body0 = </mid360/lidar_link>
             rel physics:body1 = </mid360/lidar_link/imu_link>
-            point3f physics:localPos0 = (0.011, 0.02329, -0.04412)
+            point3f physics:localPos0 = (@IMU_OFFSET@)
             point3f physics:localPos1 = (0, 0, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
@@ -224,9 +225,26 @@ def Xform "mid360"
 """
 
 
+def _imu_offset() -> str:
+    """The IMU's origin in the lidar frame, as USD writes a triple.
+
+    PointLioConfig.extrinsic_t is the lidar origin in the IMU frame, so this is its negation.
+    Imported rather than restated: the two were the same three numbers in two files.
+    """
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
+
+    factory = PointLioConfig.model_fields["extrinsic_t"].default_factory
+    assert factory is not None, "extrinsic_t lost its default"
+    return ", ".join(repr(-value) for value in factory())
+
+
 def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
-    """The baked MID-360 layer with its frame names filled in."""
-    return _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame).replace(_IMU_TOKEN, imu_frame)
+    """The baked MID-360 layer with its frame names and the IMU offset filled in."""
+    return (
+        _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame)
+        .replace(_IMU_TOKEN, imu_frame)
+        .replace(_IMU_OFFSET_TOKEN, _imu_offset())
+    )
 
 
 def _resolved_host_ip(config: Mid360Config) -> str | None:
