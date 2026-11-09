@@ -22,7 +22,8 @@ import threading
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.damiao import arm as arm_module, connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
@@ -47,7 +48,15 @@ def _teaching_connection(connection_class, **overrides: object):
 @pytest.mark.parametrize("bad", [4, float("nan"), float("inf")])
 def test_invalid_command_is_rejected_as_a_whole(make_rig, boundary, bad):
     module, commands, _ = make_rig()
-    commands.publish(JointState(name=["arm/joint1", "arm/joint2"], position=[0.7, bad]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1", "arm/joint2"],
+            position=np.asarray([0.7, bad], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     assert boundary[0].groups["left_arm"].commands == []
     assert module.status().last_rejection
 
@@ -55,7 +64,15 @@ def test_invalid_command_is_rejected_as_a_whole(make_rig, boundary, bad):
 @pytest.mark.parametrize("bad", [-0.01, 0.041])
 def test_gripper_rejects_targets_outside_its_finger_range(make_rig, boundary, bad):
     module, commands, _ = make_rig()
-    commands.publish(JointState(name=["arm/left_finger"], position=[bad]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/left_finger"],
+            position=np.asarray([bad], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     assert boundary[0].groups["left_gripper"].commands == []
     assert module.status().last_rejection
 
@@ -63,12 +80,28 @@ def test_gripper_rejects_targets_outside_its_finger_range(make_rig, boundary, ba
 def test_measured_hold_replaces_prior_targets_and_next_command_recovers(make_rig, boundary):
     module, commands, _ = make_rig()
     native = boundary[0]
-    commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.8], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     native.groups["left_arm"].q[:] = [0.3, 0.4]
     module._on_loop(lambda: module._deadman_expired(module._command_seq))
     wait_until(lambda: module.status().deadman_fired, timeout=2)
     np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.3, 0.4])
-    commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.7], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.7, 0.4])
     assert not module.status().deadman_fired
 

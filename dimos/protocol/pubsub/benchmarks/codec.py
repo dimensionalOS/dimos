@@ -21,8 +21,8 @@ from typing import Any
 
 from dimos.core.stream import Stream
 from dimos.core.transport import PubSubTransport
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image
 
 
 class CompressedCodec(PubSubTransport[Image]):
@@ -47,13 +47,13 @@ class CompressedCodec(PubSubTransport[Image]):
         return cls(data["inner"], data["quality"])
 
     def broadcast(self, stream: Stream[Image] | None, msg: Image) -> None:
-        encoded = CompressedImage.from_image(msg, quality=self.quality)
+        encoded = image_utils.to_compressed(msg, quality=self.quality)
         self.inner.broadcast(None, encoded)
 
     def subscribe(
         self, callback: Callable[[Image], Any], selfstream: Stream[Image] | None = None
     ) -> Callable[[], None]:
-        return self.inner.subscribe(lambda m: callback(m.decode()))
+        return self.inner.subscribe(lambda m: callback(image_utils.from_compressed(m)))
 
     def start(self) -> None:
         self.inner.start()

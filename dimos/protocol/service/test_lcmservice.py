@@ -19,7 +19,7 @@ import errno
 import os
 import threading
 import time
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import create_autospec, patch
 
 from lcm import LCM
 import pytest
@@ -339,11 +339,16 @@ class TestTopic:
         topic = Topic(topic="my_topic")
         assert str(topic) == "my_topic"
 
-    def test_str_with_lcm_type(self) -> None:
-        mock_type = MagicMock()
-        mock_type.msg_name = "TestMessage"
-        topic = Topic(topic="my_topic", lcm_type=mock_type)
-        assert str(topic) == "my_topic#TestMessage"
+    def test_str_with_generated_type_is_the_plain_channel(self) -> None:
+        # CDR carries its schema out of band, so a generated-type topic stays the
+        # plain channel name (unlike the retired legacy LCM ``#Type`` suffix).
+        from dimos.messages.geometry_msgs.msg import Vector3
+
+        topic = Topic(topic="my_topic", lcm_type=Vector3)
+        assert str(topic) == "my_topic"
+        assert topic.message is not None
+        assert topic.message.message_type is Vector3
+        assert topic.message.encoding == "cdr"
 
 
 # LCMService tests

@@ -27,8 +27,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,
@@ -69,11 +70,11 @@ def frames(recording: Path) -> list[Frame]:
             if k > 0 and abs(joint_t[k - 1] - t) < abs(joint_t[k] - t):
                 k -= 1
             state = joints[k].data
-            q = pose.data.orientation
+            q = pose.data.pose.orientation
             out.append(
                 Frame(
                     t,
-                    np.array(tuple(pose.data.position), dtype=np.float64),
+                    geometry.vector_array(pose.data.pose.position),
                     np.array([q.w, q.x, q.y, q.z], dtype=np.float64),
                     dict(zip(state.name, state.position, strict=True)),
                 )

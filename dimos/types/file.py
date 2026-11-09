@@ -38,6 +38,7 @@ class File(Timestamped):
 
     @classmethod
     def lcm_decode(cls, data: bytes, **kwargs: object) -> File:
-        ts, uri_length = _HEADER.unpack_from(data)
-        start = _HEADER.size + uri_length
-        return cls(data[_HEADER.size : start].decode(), bytes(data[start:]), ts)
+        ts, size = _HEADER.unpack_from(data)
+        start = _HEADER.size
+        uri = data[start : start + size].decode()
+        return cls(uri, data[start + size :], ts)

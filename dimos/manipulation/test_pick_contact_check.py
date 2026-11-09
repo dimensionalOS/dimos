@@ -30,17 +30,20 @@ from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
     module,
     settled_gripper,
 )
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
+from dimos.message_utils import joint_state, pointcloud, time as message_time
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 
 
 def _table() -> PointCloud2:
     """Camera points of a table top just under the cup (z = 0.175), 2 cm apart, 1 m square."""
     xs = np.arange(-0.4, 0.6, 0.02)
     grid = np.stack(np.meshgrid(xs, xs, [0.175], indexing="ij"), axis=-1).reshape(-1, 3)
-    return PointCloud2.from_numpy(grid.astype(np.float32), frame_id="world", timestamp=2.0)
+    return pointcloud.from_xyz(
+        grid.astype(np.float32),
+        header=Header(stamp=message_time.time_from_seconds(2.0), frame_id="world"),
+    )
 
 
 @pytest.fixture
@@ -51,11 +54,14 @@ def gripper(module: PickAndPlaceModule) -> MagicMock:
     model.keep_clear.side_effect = lambda *args: GraspContactChecker.keep_clear(model, *args)
     module._contact_checkers["arm/tool"] = model
     state: Any = module._manipulation.get_state.return_value
-    state.groups["arm/tool"].joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
+    state.groups["arm/tool"].joints = joint_state.from_mapping(
+        {"name": ["j1", "j2"], "position": [0.1, 0.2]}
+    )
     scene: Any = module._scene
     scene.get_full_scene_pointcloud.return_value = _table()
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
-        Header(1.0, "world"), [_candidate(0.1, 0.9), _candidate(0.12, 0.5)]
+        Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
+        [_candidate(0.1, 0.9), _candidate(0.12, 0.5)],
     )
     return model
 
@@ -77,10 +83,10 @@ def test_pick_skips_grasps_the_contact_check_rejects(
     assert len(poses) == 2
     assert target.shape == (2, 3)
     # The table under the cup, cropped to the gripper's reach.
-    assert 0 < len(obstacles) < len(_table().points_f32())
+    assert 0 < len(obstacles) < len(pointcloud.xyz(_table()))
     assert (frame, contact_margin, obstacle_margin) == ("world", 0.005, 0.003)
     # The IK starts from where the arm is now.
-    assert (seed.name, seed.position) == (["j1", "j2"], [0.1, 0.2])
+    assert seed.name == ["j1", "j2"] and list(seed.position) == [0.1, 0.2]
 
 
 def test_pick_says_when_the_contact_check_rejects_every_grasp(

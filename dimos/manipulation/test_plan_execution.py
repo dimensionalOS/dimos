@@ -334,7 +334,14 @@ def test_status_refresh_observes_nonblocking_execution(module_factory, reader, t
     if terminal is not TrajectoryState.FAULT:
         coordinator.task_invoke.assert_not_called()
     else:
-        coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.ABORTED)
+        coordinator.task_invoke.return_value = TrajectoryStatus(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            state=TrajectoryState.ABORTED,
+            progress=0.0,
+            time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+            time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+            error="",
+        )
         assert module.cancel().status is ExecutionStatus.ABORTED
 
     module._pending_plan = _plan()
@@ -410,7 +417,14 @@ def test_clear_during_execution_preserves_completion(module_factory):
     assert module._state is OperationStatus.EXECUTING
     assert _cancelled(coordinator) == []
 
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=TrajectoryState.COMPLETED,
+        progress=0.0,
+        time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+        time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+        error="",
+    )
     assert module.wait_for_execution(timeout=0).status is ExecutionStatus.COMPLETED
     assert module.get_operation_status() is OperationStatus.IDLE
 
@@ -421,7 +435,14 @@ def test_next_operator_execution_refreshes_finished_nonblocking_execution(module
     module._pending_plan = _plan()
     module._state = OperationStatus.HAS_PLAN
     assert module._execute_generated_plan(module._pending_plan)
-    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    coordinator.task_invoke.return_value = TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=TrajectoryState.COMPLETED,
+        progress=0.0,
+        time_elapsed=deepcopy(message_time.duration_from_seconds(0.0)),
+        time_remaining=deepcopy(message_time.duration_from_seconds(0.0)),
+        error="",
+    )
 
     module.get_operation_status()
     module._pending_plan = _plan(final_position=0.5)

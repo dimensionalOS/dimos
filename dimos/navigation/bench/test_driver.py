@@ -26,11 +26,18 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as PathMsg
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Path as PathMsg
+from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE, EpisodeDriver
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.suite import Case, Manifest, Rules
@@ -71,7 +78,17 @@ class FakeWorld:
 
     def _publish(self, poses: LCMTransport) -> None:
         while not self.stop.is_set():
-            poses.publish(PoseStamped(*self.xy, self.z, ts=time.time(), frame_id="map"))
+            poses.publish(
+                PoseStamped(
+                    header=Header(
+                        stamp=message_time.time_from_seconds(time.time()), frame_id="map"
+                    ),
+                    pose=Pose(
+                        position=Point(self.xy[0], self.xy[1], self.z),
+                        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            )
             time.sleep(0.05)
 
 
@@ -94,8 +111,16 @@ def _verdict(pace_m: float) -> str:
         for into in np.arange(0.0, driver._rules.stuck_s, 0.05):
             x = pace_m * math.sin(math.pi * into)
             ts = now - driver._rules.stuck_s + into
-            driver._on_pose(PoseStamped(x, 0.0, 0.3, ts=ts, frame_id="odom"))
-            driver._on_cmd(Twist([0.5, 0.0, 0.0], [0.0, 0.0, 0.0]))
+            driver._on_pose(
+                PoseStamped(
+                    header=Header(stamp=message_time.time_from_seconds(ts), frame_id="odom"),
+                    pose=Pose(
+                        position=Point(x, 0.0, 0.3),
+                        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            )
+            driver._on_cmd(Twist(linear=Vector3(0.5, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)))
         return driver._watch(now - 2 * driver._rules.stuck_s, None)
     finally:
         driver.stop()
@@ -159,8 +184,12 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
         assert world.scenes == [("office", 1, {})]
         assert len(world.premaps) == 1 and world.premaps[0][1]
         assert world.resets[0][:2] == (1.0, 1.0) and len(world.resets) == 1
-        assert clicks[0].frame_id == "map" and routes[0].frame_id == "map"
-        echo = PointStamped(clicks[0].x, clicks[0].y, clicks[0].z, ts=time.time(), frame_id="odom")
+        assert clicks[0].header.frame_id == "map" and routes[0].header.frame_id == "map"
+        click = clicks[0].point
+        echo = PointStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="odom"),
+            point=Point(click.x, click.y, click.z),
+        )
         transports["goal"].publish(echo)
         _until(lambda: driver._echo is not None, 5.0)
         transports["goal_reached"].publish(Bool(True))
@@ -172,10 +201,10 @@ def test_driver_resets_seeds_sends_the_goal_and_ends_on_arrival(tmp_path: Path) 
             transport.stop()
     record = json.loads((tmp_path / TERMINAL_FILE).read_text())
     assert record["reason"] == "arrived" and record["case_id"] == case.id
-    assert record["t0"] == pytest.approx(echo.ts)
+    assert record["t0"] == pytest.approx(message_time.to_seconds(echo.header.stamp))
     assert record["premap_points"] == PREMAP_POINTS
     assert record["body"] == json.loads(json.dumps(asdict(SHAPE)))
     assert record["route_length"] == pytest.approx(3.0, abs=0.1)
     assert (tmp_path / ROBOT_FILE).exists()
-    assert len(routes) == 1 and routes[0].poses[-1].position.x == pytest.approx(4.0, abs=0.05)
+    assert len(routes) == 1 and routes[0].poses[-1].pose.position.x == pytest.approx(4.0, abs=0.05)
     assert phases == ["reset", "premap", "goal", "navigate", "arrived"]

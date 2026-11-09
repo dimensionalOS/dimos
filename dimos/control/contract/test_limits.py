@@ -37,8 +37,7 @@ from dimos.control.contract.limits import (
     model_limit,
     movable_joints,
 )
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.testing.cbor import roundtrip
 
@@ -250,9 +249,15 @@ def test_joints_come_before_the_base(model: RobotModel) -> None:
 
 def test_a_base_range_below_zero_or_without_end_is_refused() -> None:
     with pytest.raises(ValueError, match="lo above hi"):
-        limits(config(base_range=Twist(linear=Vector3(-1.0, 0.0, 0.0))))
+        limits(
+            config(base_range=Twist(linear=Vector3(-1.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)))
+        )
     with pytest.raises(ValueError, match="non-finite"):
-        limits(config(base_range=Twist(angular=Vector3(0.0, 0.0, math.inf))))
+        limits(
+            config(
+                base_range=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, math.inf))
+            )
+        )
 
 
 def test_a_config_that_commands_nothing_is_refused(model: RobotModel) -> None:

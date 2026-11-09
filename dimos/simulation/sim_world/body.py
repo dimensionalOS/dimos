@@ -25,7 +25,6 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sim_msgs.Contacts import Part
 from dimos.simulation.sensors.lidar import Raycaster, SimLidar
 
 Vec3 = tuple[float, float, float]
@@ -46,7 +45,7 @@ class BodyShape:
     top_center: Vec3
     top_rotation: tuple[Vec3, Vec3, Vec3]
     top_half_extents: Vec3
-    lying_parts: tuple[Part, ...]
+    lying_parts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -106,4 +105,4 @@ class Body(Protocol):
 
     def joint_state(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]: ...
 
-    def part(self, geom: int) -> Part: ...
+    def part(self, geom: int) -> str: ...

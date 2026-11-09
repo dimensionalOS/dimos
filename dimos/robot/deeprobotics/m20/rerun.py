@@ -41,9 +41,9 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
-    from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.messages.dimos_msgs.msg import LineSegments3D
+    from dimos.messages.foxglove_msgs.msg import CompressedVideo
+    from dimos.messages.sensor_msgs.msg import CameraInfo
     from dimos.visualization.rerun.bridge import VisualOverride
 
 
@@ -87,17 +87,15 @@ def _render_h265(msg: CompressedVideo) -> Any:
 
 
 def _render_front_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/front_camera",
-        optical_frame="front_camera_optical",
-    )
+    from dimos.visualization.rerun.cdr import camera_pinhole
+
+    return [("world/front_camera", camera_pinhole(msg, "front_camera_optical"))]
 
 
 def _render_rear_camera_info(msg: CameraInfo) -> Any:
-    return msg.to_rerun(
-        image_topic="world/rear_camera",
-        optical_frame="rear_camera_optical",
-    )
+    from dimos.visualization.rerun.cdr import camera_pinhole
+
+    return [("world/rear_camera", camera_pinhole(msg, "rear_camera_optical"))]
 
 
 def _m20_rerun_blueprint() -> Any:
@@ -148,7 +146,9 @@ def m20_rerun_config() -> dict[str, Any]:
 
 
 def _scene_lines(scene: LineSegments3D) -> Archetype:
-    return scene.to_rerun(radii=0.01)
+    from dimos.visualization.rerun.cdr import lines_archetype
+
+    return lines_archetype(scene, radii=0.01)
 
 
 def _sim_rerun_blueprint() -> Blueprint:

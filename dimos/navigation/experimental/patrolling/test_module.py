@@ -17,7 +17,9 @@ from unittest.mock import call
 
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 from dimos.navigation.experimental.patrolling.module import PatrollingModule
 from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 
@@ -31,7 +33,10 @@ async def patrol(mocker):
         )
         mocker.patch.object(module.goal_request, "publish")
         mocker.patch.object(module, "stop_tool")
-        module._latest_pose = PoseStamped()
+        module._latest_pose = PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
         yield module
     finally:
         module.stop()

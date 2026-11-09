@@ -28,12 +28,11 @@ from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as PathMsg
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.message_utils import geometry
+from dimos.messages.dimos_msgs.msg import Contact, Contacts
+from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped, Twist
+from dimos.messages.nav_msgs.msg import Path as PathMsg
+from dimos.messages.std_msgs.msg import Bool
 from dimos.navigation.bench.suite import Point, Rules
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sim_world.body import BodyShape
@@ -122,6 +121,15 @@ class ContactSample:
     contacts: list[Contact]
 
 
+# A contact's part and kind: generated messages are plain dataclasses, so key
+# them by their fields to hash and order them as the retired value did.
+ContactKey = tuple[str, str]
+
+
+def _key(contact: Contact) -> ContactKey:
+    return (contact.part, contact.kind)
+
+
 @dataclass(frozen=True)
 class Recording:
     """The streams the scorer reads. A stream that was not recorded is None."""
@@ -161,10 +169,12 @@ class Recording:
                 pose=_poses(pose) if pose else None,
                 contacts=None
                 if contacts is None
-                else [ContactSample(float(o.ts), o.data.contacts) for o in contacts],
+                else [ContactSample(float(o.ts), list(o.data.contacts)) for o in contacts],
                 goals=None
                 if goals is None
-                else [(float(o.ts), (o.data.x, o.data.y, o.data.z)) for o in goals],
+                else [
+                    (float(o.ts), (o.data.point.x, o.data.point.y, o.data.point.z)) for o in goals
+                ],
                 planner_paths=_path_samples(paths),
                 local_paths=_path_samples(local),
                 commands=None
@@ -185,8 +195,12 @@ class Recording:
 
 def _poses(observations: list[Observation[PoseStamped]]) -> Poses:
     t = np.array([float(o.ts) for o in observations])
-    xyz = np.array([tuple(o.data.position) for o in observations]).reshape(-1, 3)
-    rpy = np.array([tuple(o.data.orientation.to_euler()) for o in observations]).reshape(-1, 3)
+    xyz = np.array([geometry.vector_array(o.data.pose.position) for o in observations]).reshape(
+        -1, 3
+    )
+    rpy = np.array(
+        [geometry.quaternion_euler(o.data.pose.orientation) for o in observations]
+    ).reshape(-1, 3)
     return Poses(t, xyz, rpy)
 
 
@@ -268,7 +282,7 @@ def score(
     arrival = _arrival(recording, t0, deadline)
     t1 = arrival if arrival is not None else deadline
     pose = _slice(recording.pose, t0, t1)
-    lying = {Contact(part, "floor") for part in shape.lying_parts}
+    lying = {(part, "floor") for part in shape.lying_parts}
     collisions = _collisions(recording.contacts, t0, t1, lying)
     fall = _fall_start(pose, collisions, rules)
     fell = fall is not None
@@ -357,7 +371,10 @@ def _path_samples(observations: list[Observation[PathMsg]] | None) -> list[PathS
     if observations is None:
         return None
     return [
-        PathSample(float(o.ts), np.array([tuple(q.position) for q in o.data.poses]).reshape(-1, 3))
+        PathSample(
+            float(o.ts),
+            np.array([geometry.vector_array(q.pose.position) for q in o.data.poses]).reshape(-1, 3),
+        )
         for o in observations
     ]
 
@@ -474,20 +491,20 @@ class _Collisions:
     count: int
     seconds: float
     lying_s: float
-    started: Counter[Contact]
-    first: tuple[float, Contact] | None
+    started: Counter[ContactKey]
+    first: tuple[float, ContactKey] | None
     lying_spans: list[tuple[float, float]]
 
 
 def _collisions(
-    samples: list[ContactSample] | None, t0: float, t1: float, lying: set[Contact]
+    samples: list[ContactSample] | None, t0: float, t1: float, lying: set[ContactKey]
 ) -> _Collisions | None:
     """Collision episodes and time, from the piecewise-constant contact state over the window."""
     if samples is None:
         return None
     before = [s for s in samples if s.t <= t0]
     state = before[-1].contacts if before else []
-    held, lying_now = _colliding(state), bool(lying & set(state))
+    held, lying_now = _colliding(state), bool(lying & _keys(state))
     count, seconds, lying_s = int(bool(held)), 0.0, 0.0
     started = Counter(held)
     first = (t0, min(held)) if held else None
@@ -503,11 +520,11 @@ def _collisions(
         started.update(now - held)
         if first is None and now:
             first = (sample.t, min(now))
-        if lying_now and not lying & set(sample.contacts):
+        if lying_now and not lying & _keys(sample.contacts):
             lying_spans.append((lying_since, sample.t))
         if not lying_now:
             lying_since = sample.t
-        held, lying_now = now, bool(lying & set(sample.contacts))
+        held, lying_now = now, bool(lying & _keys(sample.contacts))
     seconds += (t1 - t_prev) * bool(held)
     lying_s += (t1 - t_prev) * lying_now
     if lying_now:
@@ -515,9 +532,9 @@ def _collisions(
     return _Collisions(count, seconds, lying_s, started, first, lying_spans)
 
 
-def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> Contact | None:
+def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> ContactKey | None:
     """The colliding contact held for the most time over the window."""
-    seconds: defaultdict[Contact, float] = defaultdict(float)
+    seconds: defaultdict[ContactKey, float] = defaultdict(float)
     before = [s for s in samples if s.t <= t0]
     held, t_prev = _colliding(before[-1].contacts if before else []), t0
     for sample in [*(s for s in samples if t0 < s.t <= t1), ContactSample(t1, [])]:
@@ -527,8 +544,8 @@ def _held_longest(samples: list[ContactSample], t0: float, t1: float) -> Contact
     return max(sorted(seconds), key=seconds.__getitem__, default=None)
 
 
-def _colliding(contacts: list[Contact]) -> set[Contact]:
-    return {c for c in contacts if c.kind in COLLIDING_KINDS}
+def _colliding(contacts: list[Contact]) -> set[ContactKey]:
+    return {_key(c) for c in contacts if c.kind in COLLIDING_KINDS}
 
 
 def contact_name(part: str, kind: str) -> str:
@@ -536,8 +553,12 @@ def contact_name(part: str, kind: str) -> str:
     return f"{part} collided with {KIND_WORDS.get(kind, kind)}"
 
 
-def _name(contact: Contact) -> str:
-    return contact_name(contact.part, contact.kind)
+def _keys(contacts: list[Contact]) -> set[ContactKey]:
+    return {_key(contact) for contact in contacts}
+
+
+def _name(contact: ContactKey) -> str:
+    return contact_name(contact[0], contact[1])
 
 
 def _speed(pose: Poses, t: float) -> float | None:

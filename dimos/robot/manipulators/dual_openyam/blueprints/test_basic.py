@@ -15,11 +15,13 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_control_model,
@@ -56,23 +58,18 @@ def test_deployed_connection_limits_follow_joint_names_not_model_order(mocker):
     source = ConnectionSource(
         "arm", ["position_command"], ["joint_state"], dual_openyam_control_model(robot="arm"), 1
     )
+    joint_names = [
+        *deployed.joint_names,
+        *[f"arm/{name}" for name in DualOpenYamConnection.robot.gripper_joints.values()],
+    ]
     source.on_message(
         "joint_state",
         JointState(
-            name=[
-                *deployed.joint_names,
-                *[f"arm/{name}" for name in DualOpenYamConnection.robot.gripper_joints.values()],
-            ],
-            position=[0.0]
-            * len(
-                [
-                    *deployed.joint_names,
-                    *[
-                        f"arm/{name}"
-                        for name in DualOpenYamConnection.robot.gripper_joints.values()
-                    ],
-                ]
-            ),
+            header=message_time.header_now(),
+            name=joint_names,
+            position=np.zeros(len(joint_names), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
         ),
     )
     # Every name is tested against its own distinct range, independent of XML order.

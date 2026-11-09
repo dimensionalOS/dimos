@@ -30,7 +30,8 @@ import threading
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import pointcloud
+from dimos.messages.geometry_msgs.msg import Vector3
 from dimos.perception.localize.localize import LocalizeTrace, answer_window, memory_key
 from dimos.perception.localize.memento import FrameSpan, Gap, Memento, Sighting
 from dimos.perception.localize.tools.tool_localize import XARM_PARAMS
@@ -166,7 +167,7 @@ def evidence(answers: list[Localization]) -> list[tuple[object, ...]]:
             hit.semantic_score,
             hit.ambiguity_margin,
             hit.n_views,
-            len(hit.point_cloud),
+            len(pointcloud.xyz(hit.point_cloud)),
         )
         for hit in answers
     ]
@@ -274,7 +275,7 @@ def test_asking_a_window_again_reads_nothing_and_answers_the_same(desk: Desk) ->
         assert again_trace.answers == first_trace.answers
         assert again_trace.spans == first_trace.spans
         for a, b in zip(again[label], first[label], strict=True):
-            assert np.array_equal(a.point_cloud.points_f32(), b.point_cloud.points_f32())
+            assert np.array_equal(pointcloud.xyz(a.point_cloud), pointcloud.xyz(b.point_cloud))
 
 
 def test_changing_only_what_builds_the_answer_reads_nothing(desk: Desk) -> None:
@@ -534,7 +535,8 @@ def test_numpy_scalar_timestamps_and_scores_round_trip_and_compare_as_floats(
     found, _ = loaded.recall(["book"], key, (50.0, 100.0), 100.0, read_np)
     assert [s.ts for s in found["book"]] == [80.0]
     assert isinstance(found["book"][0].score, float)
-    assert all(isinstance(v, float) for v in found["book"][0].viewpoint.to_tuple())
+    viewpoint = found["book"][0].viewpoint
+    assert all(isinstance(v, float) for v in (viewpoint.x, viewpoint.y, viewpoint.z))
 
 
 def test_a_failed_read_leaves_nothing_behind(desk: Desk) -> None:
@@ -595,11 +597,16 @@ def test_forgotten_time_is_read_again_and_only_it(desk: Desk) -> None:
 
 
 def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
-    from dimos_lcm.sensor_msgs import CameraInfo
-
     from dimos.memory.store.memory import MemoryStore
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.message_utils import camera_info, image, time as message_time
+    from dimos.messages.geometry_msgs.msg import (
+        Quaternion,
+        Transform,
+        TransformStamped,
+        Vector3,
+    )
+    from dimos.messages.sensor_msgs.msg import Image
+    from dimos.messages.std_msgs.msg import Header
     from dimos.perception.localize.localize import index_frames
     from dimos.perception.localize.rig import Rig, RigCamera, camera_hz
     from dimos.perception.localize.tools.tool_localize import GO2_PARAMS, parse_params
@@ -617,11 +624,10 @@ def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
     # 15 Hz camera stream over 2 seconds (31 frames, dt = 1/15 s)
     for k in range(31):
         ts = 10.0 + k / 15.0
-        img = Image.from_numpy(
+        img = image.from_array(
             np.full((16, 16, 3), 128, dtype=np.uint8),
-            format=ImageFormat.RGB,
-            frame_id="cam",
-            ts=ts,
+            encoding="rgb8",
+            header=Header(stamp=message_time.time_from_seconds(ts), frame_id="cam"),
         )
         color.append(img, ts=ts)
 
@@ -630,9 +636,28 @@ def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
 
     tf = MultiTBuffer(buffer_size=math.inf)
     for k in range(31):
-        tf.receive_transform(Transform(frame_id="world", child_frame_id="cam", ts=10.0 + k / 15.0))
+        ts = 10.0 + k / 15.0
+        tf.receive_transform(
+            TransformStamped(
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
+                child_frame_id="cam",
+                transform=Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                ),
+            )
+        )
+    info = camera_info.from_intrinsics(
+        100.0,
+        100.0,
+        50.0,
+        50.0,
+        100,
+        100,
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="cam"),
+    )
     rig = Rig(
-        cameras={"cam": RigCamera(info=CameraInfo(), color=color, depth=None, hz=hz)},
+        cameras={"cam": RigCamera(info=info, color=color, depth=None, hz=hz)},
         tf=tf,
         world_frame="world",
     )
@@ -650,18 +675,19 @@ def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
 
 
 def test_thin_mask_depth_lift() -> None:
-    from dimos.msgs.geometry_msgs.Transform import Transform
-    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-    from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+    from dimos.message_utils import camera_info, image, time as message_time
+    from dimos.messages.geometry_msgs.msg import (
+        Quaternion,
+        Transform,
+        TransformStamped,
+        Vector3,
+    )
+    from dimos.messages.std_msgs.msg import Header
     from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 
-    img = Image.from_numpy(
-        np.zeros((100, 100, 3), dtype=np.uint8),
-        format=ImageFormat.RGB,
-        frame_id="cam",
-        ts=1.0,
-    )
+    header = Header(stamp=message_time.time_from_seconds(1.0), frame_id="cam")
+    img = image.from_array(np.zeros((100, 100, 3), dtype=np.uint8), encoding="rgb8", header=header)
     pliers_mask = np.zeros((100, 100), dtype=np.uint8)
     pliers_mask[30:40, 20:80] = 255  # 600 px thin strip
 
@@ -676,13 +702,23 @@ def test_thin_mask_depth_lift() -> None:
         mask=pliers_mask,
     )
 
-    depth = Image.from_numpy(
+    depth = image.from_array(
         np.full((100, 100), 400, dtype=np.uint16),
-        format=ImageFormat.DEPTH16,
-        frame_id="cam",
-        ts=1.0,
+        encoding="16UC1",
+        header=header,
     )
-    info = CameraInfo(height=100, width=100, K=[100.0, 0.0, 50.0, 0.0, 100.0, 50.0, 0.0, 0.0, 1.0])
-    lifted = Detection3DPC.from_depth(det_pliers, depth, info, Transform.identity())
+    info = camera_info.from_intrinsics(100.0, 100.0, 50.0, 50.0, 100, 100, header=header)
+    lifted = Detection3DPC.from_depth(
+        det_pliers,
+        depth,
+        info,
+        TransformStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
+            child_frame_id="cam",
+            transform=Transform(
+                translation=Vector3(0.0, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        ),
+    )
     assert lifted is not None
-    assert len(lifted.pointcloud) >= 300
+    assert len(pointcloud.xyz(lifted.pointcloud)) >= 300

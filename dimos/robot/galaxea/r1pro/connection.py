@@ -598,7 +598,11 @@ class R1ProConnection(Module):
             self._cmd_vel_condition.notify()
             if self._cmd_vel_deadline:
                 try:
-                    self._publish_cmd_vel(Twist())
+                    self._publish_cmd_vel(
+                        Twist(
+                            linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)
+                        )
+                    )
                 except (OSError, RuntimeError):
                     logger.exception("Failed to stop R1 Pro chassis during shutdown")
                 finally:
@@ -621,7 +625,11 @@ class R1ProConnection(Module):
                     self._cmd_vel_condition.wait(timeout=remaining)
                     continue
                 try:
-                    self._publish_cmd_vel(Twist())
+                    self._publish_cmd_vel(
+                        Twist(
+                            linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)
+                        )
+                    )
                 except (OSError, RuntimeError):
                     logger.exception("Failed to stop R1 Pro chassis after command timeout")
                     self._cmd_vel_deadline = time.monotonic() + self.config.cmd_vel_timeout_s

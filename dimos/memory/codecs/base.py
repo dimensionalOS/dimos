@@ -79,6 +79,66 @@ def _class_to_id(codec: Any) -> str:
     return name.lower()
 
 
+_HISTORICAL_ALIASES = {
+    "nav_msgs/msg/LineSegments3D": "dimos_msgs/msg/LineSegments3D",
+    "geometry_msgs/msg/Transform": "geometry_msgs/msg/TransformStamped",
+}
+
+
+def legacy_payload_type(payload_module: str) -> type[Any] | None:
+    """Resolve a retired ``dimos.msgs.<pkg>.<Msg>.<Msg>`` name to its generated type.
+
+    Only the historical built-in namespace, in its recorded ``<pkg>.<Msg>.<Msg>``
+    spelling, is accepted; nothing here can import an arbitrary Python module.
+    Returns ``None`` for anything that does not name a registered message, so
+    callers can leave the channel undecoded (raw bytes) instead of guessing.
+    """
+    parts = payload_module.split(".")
+    if len(parts) < 5 or parts[0] != "dimos" or parts[1] != "msgs":
+        return None
+    package, message = parts[2], parts[3]
+    if not package.endswith("_msgs") or parts[4:] != [message]:
+        return None
+    name = _HISTORICAL_ALIASES.get(f"{package}/msg/{message}", f"{package}/msg/{message}")
+    from dimos.protocol.pubsub.message_types import resolve_message_type
+
+    return resolve_message_type(name)
+
+
+def recorded_payload_type(payload_module: str) -> type[Any] | None:
+    """Resolve a recorded ``dimos.payload_type`` spelling to its generated type.
+
+    Recordings name a native channel in one of three ways: the canonical
+    registered name (``std_msgs/msg/String``), the generated module qualname
+    (``dimos.messages.std_msgs.msg.String``), or the retired historical form
+    (``dimos.msgs.std_msgs.String.String``). All three resolve here, through the
+    message registry only — an arbitrary Python module is never imported — and
+    anything unrecognised returns ``None`` so the channel stays raw bytes.
+    """
+    if "/msg/" in payload_module:
+        from dimos.protocol.pubsub.message_types import resolve_message_type
+
+        return resolve_message_type(payload_module)
+    parts = payload_module.split(".")
+    if len(parts) == 5 and parts[:2] == ["dimos", "messages"] and parts[3] == "msg":
+        from dimos.protocol.pubsub.message_types import resolve_message_type
+
+        return resolve_message_type(f"{parts[2]}/msg/{parts[4]}")
+    if len(parts) > 1 and "__msg__" in parts[-1]:
+        # Generated classes may be usertype-backed, so their recorded qualname is
+        # e.g. ``rosbags.usertypes.std_msgs__msg__String``. Accept it only when it
+        # is exactly the qualname of the class the registry resolves to.
+        package, _, message = parts[-1].partition("__msg__")
+        if package and message:
+            from dimos.protocol.pubsub.message_types import resolve_message_type
+
+            kind = resolve_message_type(f"{package}/msg/{message}")
+            if kind is not None and f"{kind.__module__}.{kind.__qualname__}" == payload_module:
+                return kind
+        return None
+    return legacy_payload_type(payload_module)
+
+
 def resolve_payload_type(payload_module: str) -> type[Any]:
     if "/msg/" in payload_module:
         from dimos.protocol.pubsub.message_types import resolve_message_type
@@ -88,15 +148,7 @@ def resolve_payload_type(payload_module: str) -> type[Any]:
             raise ValueError(f"Unregistered payload type {payload_module!r}")
         return resolved
     if payload_module.startswith("dimos.msgs."):
-        parts = payload_module.split(".")
-        name = f"{parts[2]}/msg/{parts[3]}"
-        name = {
-            "nav_msgs/msg/LineSegments3D": "dimos_msgs/msg/LineSegments3D",
-            "geometry_msgs/msg/Transform": "geometry_msgs/msg/TransformStamped",
-        }.get(name, name)
-        from dimos.protocol.pubsub.message_types import resolve_message_type
-
-        resolved = resolve_message_type(name)
+        resolved = legacy_payload_type(payload_module)
         if resolved is None:
             raise ValueError(f"Unknown historical payload type {payload_module!r}")
         return resolved

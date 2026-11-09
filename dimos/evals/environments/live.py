@@ -45,7 +45,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.evals.agents.base import EvalSubject
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.messages.geometry_msgs.msg import PoseStamped
 
 logger = setup_logger()
 

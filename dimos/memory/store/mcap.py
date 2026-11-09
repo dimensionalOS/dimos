@@ -35,11 +35,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
-import re
 from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import codec_for, codec_from_id
+from dimos.memory.codecs.base import codec_for, codec_from_id, recorded_payload_type
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
@@ -300,24 +299,19 @@ class McapStore(Store):
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
-                    # Artifact metadata may select only a built-in message class,
-                    # never an arbitrary Python module or pickle decoder.
-                    match = re.fullmatch(
-                        r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2",
-                        ch.metadata.get("dimos.payload_type", ""),
-                    )
-                    kind = get_dimos_type(f"{match[1]}.{match[2]}") if match else None
-                    if kind is not None and hasattr(kind, "lcm_decode"):
+                    # Artifact metadata may select only a built-in generated message
+                    # class, never an arbitrary Python module or pickle decoder. All
+                    # three recorded spellings (canonical, generated qualname,
+                    # historical) resolve through the registry.
+                    kind = recorded_payload_type(ch.metadata.get("dimos.payload_type", ""))
+                    if kind is not None:
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (
                             Lz4Codec(codec) if ch.message_encoding == "lz4+lcm" else codec
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
-                    kind = JsonCodec.payload_type
-                    if ch.metadata.get("dimos.payload_type") in {
-                        kind.__msgtype__,
-                        f"{kind.__module__}.{kind.__qualname__}",
-                    }:
+                    kind = recorded_payload_type(ch.metadata.get("dimos.payload_type", ""))
+                    if kind is JsonCodec.payload_type:
                         self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = self._available.get(name, 0) + count

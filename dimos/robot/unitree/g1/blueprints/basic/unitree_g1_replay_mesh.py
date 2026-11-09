@@ -26,9 +26,10 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshColours
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.perception.stereo.rgbd_mesh import RgbdMesh
 from dimos.robot.unitree.g1.g1_replay import DEFAULT_G1_DATASET, G1Replay
+from dimos.visualization.rerun.cdr import camera_pinhole
 from dimos.visualization.vis_module import vis_module
 
 
@@ -68,10 +69,8 @@ def _static_robot_body(rr: Any) -> list[Any]:
 
 
 def _convert_camera_info(camera_info: CameraInfo) -> Any:
-    return camera_info.to_rerun(
-        image_topic="/world/color_image",
-        optical_frame=camera_info.frame_id or "d435_color_optical_frame",
-    )
+    optical_frame = camera_info.header.frame_id or "d435_color_optical_frame"
+    return [("/world/color_image", camera_pinhole(camera_info, optical_frame=optical_frame))]
 
 
 _replay_mesh_vis = vis_module(

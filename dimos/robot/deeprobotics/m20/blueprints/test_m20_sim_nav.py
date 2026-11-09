@@ -20,7 +20,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 from dimos.core.module import ModuleBase
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.messages.geometry_msgs.msg import Twist
 from dimos.navigation.embodiment.m20 import M20
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.movement_manager.movement_manager import MovementManager

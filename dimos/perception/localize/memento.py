@@ -31,7 +31,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Vector3
 
 Span = tuple[float, float]  # closed [start, end], seconds
 FrameSpan = tuple[str, float, float]  # (camera, start, end), every frame in it detected
@@ -76,7 +76,9 @@ class Sighting:
     def __post_init__(self) -> None:
         self.ts = float(self.ts)
         self.score = float(self.score)
-        self.viewpoint = Vector3(self.viewpoint)
+        self.viewpoint = Vector3(
+            x=float(self.viewpoint.x), y=float(self.viewpoint.y), z=float(self.viewpoint.z)
+        )
         self.points = np.ascontiguousarray(self.points, dtype=np.float32).reshape(-1, 3)
 
 
@@ -229,7 +231,8 @@ class Memento:
         )
 
     def _insert(self, label: str, key: str, sighting: Sighting) -> int:
-        vx, vy, vz = sighting.viewpoint.to_tuple()
+        viewpoint = sighting.viewpoint
+        vx, vy, vz = viewpoint.x, viewpoint.y, viewpoint.z
         cursor = self._db.execute(
             "INSERT INTO sightings (label, key, ts, camera, score, vx, vy, vz, points) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
