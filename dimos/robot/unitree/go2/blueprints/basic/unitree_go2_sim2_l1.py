@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""unitree-go2-basic in sim2: the walking Go2 in the logistics room, its head L1 and front
-camera.
-
-Two managers, nested, which is the shape every one of these has. The inner one answers for the
-*robot*: the Go2's own layer with each sensor grafted onto the frame it is bolted to. The outer
-one answers for the *world*: the room, with the robot grafted onto a spot on its floor. What
-that outer one composes is what the physics runs and what every sensor renders from.
-"""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -35,28 +27,16 @@ from dimos.sim2.spec import SimulatedRobot
 from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.visualization.vis_module import vis_module
 
-# What the world calls this robot: the entity id its actions are addressed to, and the prefix on
-# every frame of it.
 ROBOT = "go2"
-# Where it stands, said once. The scene's mount frame is the one statement of it: a second xyz
-# on the description could only disagree with the room.
 SPOT = (0.0, 0.0, 0.35)
-# The namespace the scene's manager lives in, and so the name everything that asks it uses. A
-# manager outside every namespace would answer on the same unnamespaced topics as the robot's.
 SCENE = "scene"
 SCENE_MANAGER = f"{SCENE}/{UsdManager.name}"
 
-# The room, with a spot on its floor for the robot. A mounts dict is keyed by frame, and the
-# room arrives with frames for its own furniture and none for anything standing in it.
 _room = UsdModel.from_file(LOGISTICS).with_frames({ROBOT: ("logistics", SPOT, (0.0, 0.0, 0.0))})
 
-# The sensors as their own blueprints, because the manager mounts them by the instance each one
-# deploys: a frame_id alone would name a module the manager cannot address.
 _lidar = SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame, scene_manager=SCENE_MANAGER)
 _camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame, scene_manager=SCENE_MANAGER)
 
-# One manager holding the whole robot: the Go2's own layer, with each sensor grafted onto the
-# frame it is bolted to. Without the mounts the lidar and camera are nowhere in the stage.
 _robot = UsdManager.blueprint(
     model=Go2Sim.usd, mounts={Go2Sim.l1_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera}
 ).remappings([(UsdManager, "coordinator_joint_state", "joint_state")])
@@ -64,18 +44,13 @@ _robot = UsdManager.blueprint(
 _scene = UsdManager.blueprint(
     model=_room,
     mounts={ROBOT: _robot},
-    # It is a scene, not a robot: its frames are the world's and take no prefix.
     frame_id_prefix="",
-    # The room's root link is "logistics" and tf has never heard of it: the robot publishes
-    # world -> go2/base, so "world" is what everything else is placed against.
     tf_renames={"logistics": "world"},
 ).namespace(SCENE, expose={"render_file_request", "file_info", "tf"})
 
 unitree_go2_sim2_l1 = autoconnect(
     sim_module(
         scene_manager=SCENE_MANAGER,
-        # The one thing a layer cannot say: what the world calls this robot, and how often its
-        # controller acts. Its gains and the pose it holds are in the layer.
         robots=[SimulatedRobot(ROBOT, Go2Sim.usd, control_period=CONTROL_DT)],
     ),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),

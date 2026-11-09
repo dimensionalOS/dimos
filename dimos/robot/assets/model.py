@@ -194,7 +194,7 @@ class UsdModel:
         if self._text is not None:
             return self._text
         if self._urdf is not None:
-            from dimos.robot.assets.usd import urdf_to_usd
+            from dimos.robot.assets.urdf_to_usd import urdf_to_usd
 
             return urdf_to_usd(self._urdf)
         path = self.source_path
@@ -223,7 +223,8 @@ class UsdModel:
 
         source = self.source_path
         return RobotModel.from_urdf_string(
-            usd_to_urdf(self.usd), asset_dir=None if source is None else source.parent
+            usd_to_urdf(self.usd, root=self._asset_root()),
+            asset_dir=None if source is None else source.parent,
         ).load()
 
     @property
@@ -242,7 +243,7 @@ class UsdModel:
             return self._urdf.root_link
         from dimos.robot.assets.usd_to_urdf import usd_root_link
 
-        return usd_root_link(self.usd)
+        return usd_root_link(self.usd, self._asset_root())
 
     def get_joint(self, name: str) -> JointDescription | None:
         return next((joint for joint in self.joints if joint.name == name), None)
@@ -267,7 +268,7 @@ class UsdModel:
         conversion does not carry into the layer.
         """
         if self._urdf is None:
-            from dimos.robot.assets.usd import referenced_asset_paths
+            from dimos.robot.assets.usd_assets import referenced_asset_paths
 
             return referenced_asset_paths(self.usd, self._asset_root())
         return self._urdf.referenced_files()
