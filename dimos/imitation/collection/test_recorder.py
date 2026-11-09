@@ -135,10 +135,10 @@ def test_recorder_resolves_every_connected_stream(recorder, mocker):
     ):
         getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
     assert {s.name: s.codec for s in recorder._stream_specs()} == {
-        "camera_0": "jpeg",
-        "camera_1": "jpeg",
-        "measured": "lcm",
-        "commanded": "lcm",
+        "camera_0": "cdrjpeg",
+        "camera_1": "cdrjpeg",
+        "measured": "cdr",
+        "commanded": "cdr",
         "status": "json",
     }
 
@@ -225,7 +225,7 @@ def test_generated_inputs_survive_forkserver_and_fresh_deployment(
 def test_unsupported_message_type_is_rejected(tmp_path):
     profile = _profile(1)
     profile.observations["images.0"].message_type = str
-    with pytest.raises(TypeError, match="native recording"):
+    with pytest.raises(TypeError, match="is not a registered generated message"):
         collect(profile=profile, recording=tmp_path / "invalid.mcap")
 
 

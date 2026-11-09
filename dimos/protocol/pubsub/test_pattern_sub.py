@@ -20,11 +20,11 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 import re
 import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Vector3
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub, PubSub
@@ -48,6 +48,9 @@ class Case(Generic[TopicT, MsgT]):
     # Pattern tests: (pattern_topic, {indices of topic_values that should match})
     glob_patterns: list[tuple[TopicT, set[int]]] = field(default_factory=list)
     regex_patterns: list[tuple[TopicT, set[int]]] = field(default_factory=list)
+    # CDR channels carry no schema suffix; a wildcard consumer decodes only the
+    # channels it declares here (untyped ones stay raw bytes by design).
+    message_types: dict[str, type[Any]] = field(default_factory=dict)
 
 
 @contextmanager
@@ -83,9 +86,14 @@ testcases: list[Case[Any, Any]] = [
         topic_values=[
             (Topic("/sensor/position", Vector3), Vector3(1, 2, 3)),
             (Topic("/sensor/orientation", Quaternion), Quaternion(0, 0, 0, 1)),
-            (Topic("/robot/arm", Pose), Pose(Vector3(4, 5, 6), Quaternion(0, 0, 0, 1))),
+            (Topic("/robot/arm", Pose), Pose(Point(4, 5, 6), Quaternion(0, 0, 0, 1))),
         ],
         tags={"all", "glob", "regex"},
+        message_types={
+            "/sensor/position": Vector3,
+            "/sensor/orientation": Quaternion,
+            "/robot/arm": Pose,
+        },
         glob_patterns=[
             (Topic(topic=Glob("/sensor/*")), {0, 1}),
             (Topic(topic=Glob("/**/arm")), {2}),
@@ -95,7 +103,8 @@ testcases: list[Case[Any, Any]] = [
             (Topic(re.compile(r"/sensor/.*")), {0, 1}),
             (Topic(re.compile(r".*/arm"), Pose), {2}),
             (Topic(re.compile(r".*/arm")), {2}),
-            (Topic(re.compile(r".*/arm#geometry.*")), {2}),
+            # The retired LCM wire appended ``#pkg/Msg`` to typed channels; CDR
+            # carries its schema out of band, so channels are plain topic names.
         ],
     ),
     Case(
@@ -135,13 +144,44 @@ def _topic_matches_prefix(topic: Any, prefix: str = "/") -> bool:
     return topic_str.startswith(prefix)
 
 
+def _matched_topics(results: list[tuple[Any, Any]]) -> set[str]:
+    """The channel names a pattern subscription actually matched."""
+    return {str(r[1].topic) if hasattr(r[1], "topic") else str(r[1]) for r in results}
+
+
+def _assert_pattern_results(
+    collector: CallbackCollector,
+    tc: Case[Any, Any],
+    pattern_topic: Any,
+    expected_indices: set[int],
+) -> None:
+    """Assert pattern selection by channel, and by value where the pattern is typed.
+
+    CDR carries no schema, so an untyped pattern can only deliver raw bytes; the
+    decoded-payload path is covered by ``test_subscribe_all_receives_all_topics``
+    with an explicit ``message_types`` map.
+    """
+    expected_topics = {str(tc.topic_values[i][0].topic) for i in expected_indices}
+    assert _matched_topics(collector.results) == expected_topics
+    if pattern_topic.lcm_type is not None:
+        expected_msgs = [tc.topic_values[i][1] for i in expected_indices]
+        received_msgs = [r[0] for r in collector.results]
+        for expected in expected_msgs:
+            assert expected in received_msgs
+
+
 @pytest.mark.parametrize("tc", all_cases, ids=lambda c: c.name)
 def test_subscribe_all_receives_all_topics(tc: Case[Any, Any], lcm_url: str) -> None:
     """Test that subscribe_all receives messages from all topics."""
     collector = CallbackCollector(len(tc.topic_values))
 
     with tc.pubsub_context(lcm_url) as (pub, sub):
-        sub.subscribe_all(collector)
+        if tc.message_types:
+            # LCM's MessageEncoderMixin accepts declared CDR schemas; the generic
+            # AllPubSub protocol does not, hence the narrowing cast.
+            cast("Any", sub).subscribe_all(collector, message_types=tc.message_types)
+        else:
+            sub.subscribe_all(collector)
         time.sleep(0.01)  # Allow subscription to register
 
         for topic, value in tc.topic_values:
@@ -225,10 +265,7 @@ def test_subscribe_glob(tc: Case[Any, Any], lcm_url: str) -> None:
                 f"got {len(collector.results)}"
             )
 
-            expected_msgs = [tc.topic_values[i][1] for i in expected_indices]
-            received_msgs = [r[0] for r in collector.results]
-            for expected in expected_msgs:
-                assert expected in received_msgs
+            _assert_pattern_results(collector, tc, pattern_topic, expected_indices)
 
 
 @pytest.mark.parametrize("tc", regex_cases, ids=lambda c: c.name)
@@ -251,7 +288,4 @@ def test_subscribe_regex(tc: Case[Any, Any], lcm_url: str) -> None:
                 f"got {len(collector.results)}"
             )
 
-            expected_msgs = [tc.topic_values[i][1] for i in expected_indices]
-            received_msgs = [r[0] for r in collector.results]
-            for expected in expected_msgs:
-                assert expected in received_msgs
+            _assert_pattern_results(collector, tc, pattern_topic, expected_indices)

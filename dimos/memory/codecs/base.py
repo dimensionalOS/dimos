@@ -79,6 +79,32 @@ def _class_to_id(codec: Any) -> str:
     return name.lower()
 
 
+_HISTORICAL_ALIASES = {
+    "nav_msgs/msg/LineSegments3D": "dimos_msgs/msg/LineSegments3D",
+    "geometry_msgs/msg/Transform": "geometry_msgs/msg/TransformStamped",
+}
+
+
+def legacy_payload_type(payload_module: str) -> type[Any] | None:
+    """Resolve a retired ``dimos.msgs.<pkg>.<Msg>.<Msg>`` name to its generated type.
+
+    Only the historical built-in namespace, in its recorded ``<pkg>.<Msg>.<Msg>``
+    spelling, is accepted; nothing here can import an arbitrary Python module.
+    Returns ``None`` for anything that does not name a registered message, so
+    callers can leave the channel undecoded (raw bytes) instead of guessing.
+    """
+    parts = payload_module.split(".")
+    if len(parts) < 5 or parts[0] != "dimos" or parts[1] != "msgs":
+        return None
+    package, message = parts[2], parts[3]
+    if not package.endswith("_msgs") or parts[4:] != [message]:
+        return None
+    name = _HISTORICAL_ALIASES.get(f"{package}/msg/{message}", f"{package}/msg/{message}")
+    from dimos.protocol.pubsub.message_types import resolve_message_type
+
+    return resolve_message_type(name)
+
+
 def resolve_payload_type(payload_module: str) -> type[Any]:
     if "/msg/" in payload_module:
         from dimos.protocol.pubsub.message_types import resolve_message_type
@@ -88,15 +114,7 @@ def resolve_payload_type(payload_module: str) -> type[Any]:
             raise ValueError(f"Unregistered payload type {payload_module!r}")
         return resolved
     if payload_module.startswith("dimos.msgs."):
-        parts = payload_module.split(".")
-        name = f"{parts[2]}/msg/{parts[3]}"
-        name = {
-            "nav_msgs/msg/LineSegments3D": "dimos_msgs/msg/LineSegments3D",
-            "geometry_msgs/msg/Transform": "geometry_msgs/msg/TransformStamped",
-        }.get(name, name)
-        from dimos.protocol.pubsub.message_types import resolve_message_type
-
-        resolved = resolve_message_type(name)
+        resolved = legacy_payload_type(payload_module)
         if resolved is None:
             raise ValueError(f"Unknown historical payload type {payload_module!r}")
         return resolved

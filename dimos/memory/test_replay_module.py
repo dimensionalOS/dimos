@@ -136,7 +136,9 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
     assert decoded.is_set()
     assert errors == []
     with SqliteStore(path=recording) as store:
-        assert [obs.data.ts for obs in store.stream("odom")] == pytest.approx([1.0, 1.1, 1.2])
+        assert [message_time.to_seconds(obs.data.header.stamp) for obs in store.stream("odom")] == (
+            pytest.approx([1.0, 1.1, 1.2])
+        )
 
 
 def test_portless_class_gets_ports_from_dataset(recording: str) -> None:
