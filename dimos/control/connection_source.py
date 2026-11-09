@@ -158,6 +158,8 @@ class ConnectionSource:
         model: Its joints and position limits, named ``<robot>/...``; ``None``
             for a robot with no joint ports.
         reading_timeout_s: How old its newest reading may be, in seconds.
+        zero_stiffness_joints: Joints the connection commands with zero
+            stiffness, so tasks such as hand guiding may follow them by hand.
 
     Raises:
         ValueError: If the coordinator cannot drive it: no reading port, a
@@ -172,6 +174,8 @@ class ConnectionSource:
         readings: Collection[str],
         model: RobotModel | None,
         reading_timeout_s: float,
+        *,
+        zero_stiffness_joints: Collection[str] = (),
     ) -> None:
         if commands and not readings:
             raise ValueError(
@@ -218,6 +222,13 @@ class ConnectionSource:
             )
             for name, limit in joints.items()
         ]
+        unknown = frozenset(zero_stiffness_joints) - set(joints)
+        if unknown:
+            raise ValueError(
+                f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}"
+            )
+        #: Joints this robot's connection commands with zero stiffness.
+        self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
         imu = f"{robot}{SEPARATOR}imu"
         self._sensors = (
             [_SensorReading(imu, i, f"{imu}{SEPARATOR}{i}") for i in IMU_INTERFACES]
@@ -340,7 +351,17 @@ class ConnectionSource:
                 reported = reported | {port}
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
-            self._received_at = time.time()
+            # When the robot says the reading was taken, not when it landed here. On hardware those
+            # are the same clock and within a millisecond of each other. In sim they are not: the
+            # world stamps sim time, which runs slower than the wall whenever the box is loaded, and
+            # a reading restamped on arrival is minutes away from the pose it actually describes.
+            # Everything downstream inherits this -- the coordinator's JointState, and from there
+            # every joint transform UsdManager puts on tf -- so a scan looked up against those
+            # frames is placed against a body that has since moved.
+            stamp = getattr(msg, "ts", None)
+            self._received_at = (
+                float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else time.time()
+            )
             self._freshness.mark(now)
 
     def drop_holds(self) -> None:

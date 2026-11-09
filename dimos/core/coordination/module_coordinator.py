@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 import dataclasses
 import importlib
@@ -318,24 +318,6 @@ class ModuleCoordinator(Resource):
         self._send_on_system_modules()
         return durations
 
-    def _share_configs(self, receiver_names: Iterable[str]) -> None:
-        """Hand each SharedConfigModule among receiver_names every deployed @shared_config value aimed at it."""
-        from dimos.core.shared_config import SharedConfigModule, shared_config_methods
-
-        for receiver_name in receiver_names:
-            receiver_class = self._instance_classes[receiver_name]
-            if not issubclass(receiver_class, SharedConfigModule):
-                continue
-            senders = tuple(
-                (name, getattr(self._deployed_modules[name], method)())
-                for name, cls in self._instance_classes.items()
-                for method, target in shared_config_methods(cls)
-                if issubclass(receiver_class, target)
-            )
-            cast("SharedConfigModule", self._deployed_modules[receiver_name]).deliver_shared_config(
-                senders
-            )
-
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
         return self._class_aliases.get(cls, cls)
 
@@ -484,7 +466,6 @@ class ModuleCoordinator(Resource):
                 coordinator,
                 remote_module_refs=remote_ref_proxies,
             )
-            coordinator._share_configs(coordinator._deployed_modules)
             t2 = time.perf_counter()
             coordinator.build_all_modules()
             t3 = time.perf_counter()
@@ -595,8 +576,6 @@ class ModuleCoordinator(Resource):
             proxy for name, proxy in self._deployed_modules.items() if name not in before
         ]
 
-        self._share_configs([name for name in self._deployed_modules if name not in before])
-
         if new_modules:
             safe_thread_map(new_modules, lambda m: m.build())
             safe_thread_map(new_modules, lambda m: m.start())
@@ -645,24 +624,17 @@ class ModuleCoordinator(Resource):
 
         proxy = self._deployed_modules[name]
 
-        try:
-            proxy.stop()
-        except Exception:
-            logger.error(
-                "Error stopping module during unload",
-                module=name,
-                exc_info=True,
-            )
-
+        # The worker owns module.stop() and undeploy waits for it. A fire-and-forget
+        # stop RPC here would race that stop, and a NativeModule short-circuits the
+        # second stop() call, so the worker would report the module gone while the
+        # old instance still answers on the RPC name its replacement is about to use.
         python_wm = cast("WorkerManagerPython", self._managers["python"])
+        # Propagate failures so restart cannot replace an instance that may still be running.
+        python_wm.undeploy(proxy)
         try:
-            python_wm.undeploy(proxy)
+            proxy.stop_rpc_client()
         except Exception:
-            logger.error(
-                "Error undeploying module from worker",
-                module=name,
-                exc_info=True,
-            )
+            logger.error("Error closing module RPC client", module=name, exc_info=True)
 
         del self._deployed_modules[name]
         del self._instance_classes[name]

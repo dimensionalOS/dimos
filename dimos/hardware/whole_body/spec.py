@@ -88,6 +88,16 @@ class WholeBodyAdapter(Protocol):
     def is_connected(self) -> bool: ...
     def read_motor_states(self) -> list[MotorState]: ...
     def has_motor_states(self) -> bool: ...
+    def motor_states_ts(self) -> float | None:
+        """When the latest motor states were taken, or None where the robot does not say.
+
+        On hardware this is the wall clock and the same as now. In sim it is sim time, which runs
+        slower than the wall whenever the box is loaded, and the difference reaches minutes -- so a
+        reading restamped on arrival describes a pose the robot left long ago. Everything built
+        from these inherits it, down to the joint transforms on tf a lidar scan is placed against.
+        """
+        return None
+
     def read_imu(self) -> IMUState: ...
     def get_limits(self) -> JointLimits | None: ...
 
