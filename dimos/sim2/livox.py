@@ -59,11 +59,6 @@ class LivoxSim(Module):
 
     @property
     def imu_frame_id(self) -> str:
-        """The IMU's frame under this module's namespace, as `frame_id` is for the lidar's.
-
-        Without the prefix three robots with a Livox each declare one frame called "imu_link"
-        and stamp every Imu with it, so tf has one node where it needs three.
-        """
         prefix = self.config.frame_id_prefix
         return f"{prefix}/{self.config.imu_frame_id}" if prefix else self.config.imu_frame_id
 

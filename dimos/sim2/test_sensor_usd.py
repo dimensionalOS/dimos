@@ -100,11 +100,6 @@ def test_the_simulated_mid360_describes_the_same_box_as_the_real_one() -> None:
 
 
 def test_a_namespaced_lidar_puts_its_namespace_on_its_imu_frame_too() -> None:
-    """The lidar's own frame goes through Module.frame_id, which applies frame_id_prefix.
-
-    Its IMU's did not, so three robots with a Livox each declared one frame called "imu_link"
-    and stamped every Imu with it, and tf had one node where it needed three.
-    """
     from dimos.sim2.livox import LivoxSim
 
     sim = LivoxSim(frame_id="mid360_link", frame_id_prefix="left")
