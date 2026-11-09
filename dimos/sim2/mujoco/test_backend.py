@@ -26,14 +26,14 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames
+from dimos.robot.assets.usd import graft_usd, prefix_usd_frames, usd_with_drives
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import sim_module
-from dimos.sim2.spec import Servo, SimulatedRobot
+from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import layer_file, usd_layer
 from dimos.sim2.world_observations import ACT, WorldMirror
 
@@ -279,8 +279,16 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model):
 
 
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
-    robot = SimulatedRobot("dog", robot_model, servos=(Servo("neck", 0.01, 0.001),))
-    backend = MujocoBackend(scene, [robot])
+    """The layer's gains are what the joint starts with; a command carries its own and wins.
+
+    The gains come out of the robot's own layer now -- `usd_with_drives` writes them as MuJoCo's
+    own actuator attributes, which it reads back out of the file -- so there is nothing in the
+    description to set them with and nothing to set them with afterwards.
+    """
+    driven = UsdModel.from_layer(usd_with_drives(robot_model.usd, {"neck": (0.01, 0.001, 0.2)}))
+    backend = MujocoBackend(scene, [SimulatedRobot("dog", driven)])
+    # Held where its layer says, until something commands otherwise.
+    assert backend.data.qpos[backend.model.joint("dog/neck").qposadr[0]] == pytest.approx(0.2)
     published = _Collect()
 
     async def run_briefly() -> None:

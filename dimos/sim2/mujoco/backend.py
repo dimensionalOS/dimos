@@ -35,7 +35,7 @@ import mujoco
 import numpy as np
 
 from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
-from dimos.sim2.mujoco.names import short_names
+from dimos.sim2.mujoco.names import resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
@@ -287,16 +287,28 @@ class MujocoBackend:
         mujoco.mj_forward(self.model, self.data)
 
     def _initial_joints(self) -> dict[str, float]:
-        """Every joint the world starts somewhere other than zero, and holds there until commanded."""
+        """Every joint the world starts somewhere other than zero, and holds there until commanded.
+
+        Read off each robot's own layer, where its drives say what pose it holds -- the same
+        place its gains come from, and the same place a real robot's controller would be
+        configured from. Off its own layer rather than off the composed one, because that is
+        where the names are the ones this robot's parts get prefixed from.
+        """
+        from dimos.robot.assets.usd import usd_drives
+
         initial = {}
         for robot in self._robots.values():
-            held = {servo.joint: servo.initial for servo in robot.servos}
-            initial |= {f"{robot.robot_id}/{name}": value for name, value in held.items()}
+            for joint, (_kp, _kd, target) in usd_drives(robot.model.usd).items():
+                initial[f"{robot.robot_id}/{joint}"] = target
         return initial
 
     def _hold_initial_pose(self) -> None:
-        for name, value in self._initial_joints().items():
-            joint = self.model.joint(name)
+        names = [self.model.joint(i).name for i in range(self.model.njnt)]
+        for wanted, value in self._initial_joints().items():
+            found = resolved(names, wanted)
+            if found is None:
+                continue
+            joint = self.model.joint(found)
             self.data.qpos[joint.qposadr[0]] = value
             self.data.ctrl[self.model.actuator_trnid[:, 0] == joint.id] = value
 
