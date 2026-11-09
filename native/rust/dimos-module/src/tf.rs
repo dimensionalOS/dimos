@@ -26,11 +26,11 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::Notify;
 use tracing::warn;
 
 use crate::time::now_secs;
-use crate::transport::{BoxFuture, Deliver, Dispatch};
+use crate::transport::{BoxFuture, Deliver, Dispatch, Transport};
 
 /// How many seconds of history each edge keeps.
 pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
@@ -345,7 +345,8 @@ impl Graph {
 #[derive(Clone)]
 pub struct Tf {
     graph: Arc<Graph>,
-    sender: mpsc::Sender<Vec<u8>>,
+    topic: String,
+    transport: Arc<dyn Transport>,
 }
 
 impl Tf {
@@ -387,7 +388,7 @@ impl Tf {
         let msg = lcm_msgs::tf2_msgs::TFMessage {
             transforms: transforms.iter().map(to_stamped).collect(),
         };
-        crate::module::publish_encoded(&self.sender, msg.encode()).await
+        self.transport.publish(&self.topic, msg.encode()).await
     }
 }
 
@@ -565,17 +566,18 @@ impl Deliver for TfRoute {
     }
 }
 
-// Builds the shared graph plus the handle and the route that feeds it. The
-// sender carries published messages to the tf topic's publish worker.
+// Builds the shared graph plus the handle that publishes on the tf topic and
+// the route that feeds the graph from it.
 pub(crate) fn tf_subscription(
     topic: String,
     window_secs: f64,
-    sender: mpsc::Sender<Vec<u8>>,
+    transport: Arc<dyn Transport>,
 ) -> (Tf, Dispatch) {
     let graph = Arc::new(Graph::new(window_secs));
     let tf = Tf {
         graph: Arc::clone(&graph),
-        sender,
+        topic: topic.clone(),
+        transport,
     };
     let route = Arc::new(TfRoute { topic, graph });
     (tf, route)
@@ -585,6 +587,27 @@ pub(crate) fn tf_subscription(
 mod tests {
     use super::*;
     use std::f64::consts::PI;
+    use tokio::sync::mpsc;
+
+    /// Forwards every published payload to a channel the test reads.
+    struct ChannelTransport(mpsc::Sender<Vec<u8>>);
+
+    #[async_trait::async_trait]
+    impl Transport for ChannelTransport {
+        async fn publish(&self, _channel: &str, data: Vec<u8>) -> io::Result<()> {
+            let _ = self.0.send(data).await;
+            Ok(())
+        }
+
+        async fn subscribe(&self, _channel: &str, _on_msg: Dispatch) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn sink() -> (Arc<dyn Transport>, mpsc::Receiver<Vec<u8>>) {
+        let (tx, rx) = mpsc::channel(8);
+        (Arc::new(ChannelTransport(tx)), rx)
+    }
 
     fn tf_with(window_secs: f64) -> (Tf, MultiHandle) {
         let (tf, _rx, handle) = tf_with_publish(window_secs);
@@ -593,11 +616,12 @@ mod tests {
 
     fn tf_with_publish(window_secs: f64) -> (Tf, mpsc::Receiver<Vec<u8>>, MultiHandle) {
         let graph = Arc::new(Graph::new(window_secs));
-        let (tx, rx) = mpsc::channel(8);
+        let (transport, rx) = sink();
         (
             Tf {
                 graph: Arc::clone(&graph),
-                sender: tx,
+                topic: "/tf".to_string(),
+                transport,
             },
             rx,
             MultiHandle { graph },
@@ -846,8 +870,8 @@ mod tests {
     // stall cannot block. Guards against the wait deadlocking against tf intake.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn within_is_woken_by_a_transform_dispatched_through_the_route() {
-        let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (transport, _rx) = sink();
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, transport);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(30)).await;
             route.deliver(&stamped_message("a", "b", 5.0, 1.0));
@@ -905,8 +929,8 @@ mod tests {
 
     #[test]
     fn a_zero_rotation_on_the_wire_is_dropped_rather_than_stored_as_nan() {
-        let (tx, _rx) = mpsc::channel(4);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (transport, _rx) = sink();
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, transport);
         route.deliver(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
         assert!(tf.get_latest("a", "b").is_none());
 
@@ -1030,8 +1054,8 @@ mod tests {
         use lcm_msgs::std_msgs::{Header, Time};
         use lcm_msgs::tf2_msgs::TFMessage;
 
-        let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (transport, _rx) = sink();
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, transport);
         let msg = TFMessage {
             transforms: vec![lcm_msgs::geometry_msgs::TransformStamped {
                 header: Header {
@@ -1098,8 +1122,8 @@ mod tests {
             .unwrap();
         let bytes = rx.recv().await.unwrap();
 
-        let (tx, _rx2) = mpsc::channel(8);
-        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (transport, _rx2) = sink();
+        let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, transport);
         route.deliver(&bytes);
 
         let t = tf_in.get_latest("a", "b").unwrap();
@@ -1190,20 +1214,9 @@ mod tests {
 
     #[test]
     fn dispatch_of_undecodable_bytes_leaves_the_graph_empty() {
-        let (tx, _rx) = mpsc::channel(8);
-        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
+        let (transport, _rx) = sink();
+        let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, transport);
         route.deliver(b"garbage");
         assert!(tf.get_latest("a", "b").is_none());
-    }
-
-    #[tokio::test]
-    async fn publish_errors_when_the_background_task_is_gone() {
-        let (tf, rx, _h) = tf_with_publish(DEFAULT_TF_WINDOW_SECS);
-        drop(rx);
-        let err = tf
-            .publish(&[Transform::new("a", "b", 1.0, Isometry3::identity())])
-            .await
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 }
