@@ -18,6 +18,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo
+from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.deeprobotics.m20.blueprints._nav import m20_nav_stack
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
@@ -36,7 +37,7 @@ m20 = (
         ),
         UsdManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
-        m20_nav_stack(),
+        m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
     )
     .global_config(
         n_workers=4,
