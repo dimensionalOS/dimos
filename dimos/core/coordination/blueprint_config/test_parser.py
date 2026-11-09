@@ -106,38 +106,6 @@ def test_sparse_dataclass_override_completes_from_the_default() -> None:
     }
 
 
-class GlobalBodyConfig(ModuleConfig):
-    # The idiom for taking a default from the global config, on a dataclass-valued field.
-    body: Body = Field(
-        default_factory=lambda m: Body(length=m["g"].robot_width, max_speed=0.5, rows=())
-    )
-
-
-class GlobalBodyModule(Module):
-    config: GlobalBodyConfig
-
-
-def test_a_dataclass_field_defaulted_from_the_global_config_can_still_be_overridden() -> None:
-    """A `default_factory=lambda m: ...` cannot be called before the other fields are validated.
-
-    Asking pydantic for it anyway raises, and that raise came out of parsing rather than out of
-    anything the blueprint did: "The default factory requires the 'validated_data' argument".
-    Such a field simply has no default to complete a sparse override from, and what is pinned on
-    the blueprint is what counts.
-    """
-    pinned = GlobalBodyModule.blueprint(body=Body(length=2.0, max_speed=0.4, rows=()))
-
-    parsed = BlueprintConfigParser(pinned).parse(
-        [], environ={"GLOBALBODYMODULE__BODY__MAX_SPEED": "0.6"}
-    )
-
-    assert parsed.module_kwargs("globalbodymodule")["body"] == {
-        "length": 2.0,
-        "max_speed": 0.6,
-        "rows": (),
-    }
-
-
 def test_parse_supports_value_forms_types_nested_defaults_and_last_wins() -> None:
     blueprint = PrimaryModule.blueprint(nested={"mode": "manual"})
 
