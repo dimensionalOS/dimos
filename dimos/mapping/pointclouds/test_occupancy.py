@@ -25,9 +25,9 @@ from dimos.mapping.pointclouds.occupancy import (
     simple_occupancy,
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import image, pointcloud, time as message_time
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
@@ -53,7 +53,10 @@ def big_office() -> PointCloud:
 )
 def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> None:
     expected_image = cv2.imread(str(get_data(output_name)), cv2.IMREAD_GRAYSCALE)
-    cloud = PointCloud2.from_numpy(np.asarray(apartment.points), frame_id="map")
+    cloud = pointcloud.from_xyz(
+        np.asarray(apartment.points),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
+    )
 
     occupancy_grid = occupancy_fn(cloud)
 
@@ -71,8 +74,13 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
     ],
 )
 def test_occupancy2(big_office, occupancy_fn, output_name):
-    expected_image = Image.from_file(get_data(output_name))
-    cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="")
+    expected_image = image.from_array(
+        cv2.imread(str(get_data(output_name))), encoding="bgr8", header=message_time.header_now()
+    )
+    cloud = pointcloud.from_xyz(
+        np.asarray(big_office.points),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+    )
 
     occupancy_grid = occupancy_fn(cloud)
 

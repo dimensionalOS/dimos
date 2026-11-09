@@ -23,14 +23,13 @@ import math
 import time
 from typing import Any, Literal
 
-from dimos_lcm.std_msgs import Bool
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.std_msgs.msg import Bool, Header
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 
@@ -76,10 +75,8 @@ def _yaw_quaternion(yaw_rad: float) -> Quaternion:
 
 def _odom(x: float, y: float, yaw_rad: float, *, ts: float = 1.0) -> PoseStamped:
     return PoseStamped(
-        ts=ts,
-        frame_id="map",
-        position=[x, y, 0.0],
-        orientation=_yaw_quaternion(yaw_rad),
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="map"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=_yaw_quaternion(yaw_rad)),
     )
 
 
@@ -94,13 +91,15 @@ def _path_from_points(points: list[tuple[float, float]]) -> Path:
             yaw = math.atan2(point[1] - prev_point[1], point[0] - prev_point[0])
         poses.append(
             PoseStamped(
-                ts=1.0,
-                frame_id="map",
-                position=[point[0], point[1], 0.0],
-                orientation=_yaw_quaternion(yaw),
+                header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="map"),
+                pose=Pose(
+                    position=Point(point[0], point[1], 0.0), orientation=_yaw_quaternion(yaw)
+                ),
             )
         )
-    return Path(frame_id="map", poses=poses)
+    return Path(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"), poses=poses
+    )
 
 
 def _is_zero_twist(cmd: Twist) -> bool:
@@ -135,7 +134,12 @@ class _ModuleHarness:
         self.module.path.transport.broadcast(None, path)
 
     def feed_empty_path(self) -> None:
-        self.module.path.transport.broadcast(None, Path(frame_id="map", poses=[]))
+        self.module.path.transport.broadcast(
+            None,
+            Path(
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"), poses=[]
+            ),
+        )
 
     def feed_stop(self, value: bool = True) -> None:
         self.module.stop_movement.transport.broadcast(None, Bool(value))

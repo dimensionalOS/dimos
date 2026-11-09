@@ -19,22 +19,21 @@ A local planner is blind or map-aware; both hand the follower the same ``path``.
 A ``path`` with one pose means "hold, no safe route"; with none, "stop".
 
 tf is ``IO`` where the implementers are dimos-module natives (``#[tf]`` both
-subscribes and publishes) and their python twins; ``In`` on the global planner,
-whose native only reads it.
+subscribes and publishes) and their python twins; ``In`` on the Python-only
+blind local planner.
 """
 
 from typing import Protocol
 
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.geometry_msgs.msg import PointStamped, Twist
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 class GlobalPlanner(Protocol):
-    tf: In[TFMessage]
+    tf: IO[TFMessage]
     goal: In[PointStamped]
 
     path: Out[Path]

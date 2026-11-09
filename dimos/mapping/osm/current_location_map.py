@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import cv2
 from PIL import Image as PILImage, ImageDraw
 
 from dimos.mapping.models import LatLon
 from dimos.mapping.osm.osm import MapImage, get_osm_map
 from dimos.mapping.osm.query import query_for_one_position, query_for_one_position_and_context
+from dimos.message_utils import image
 from dimos.models.vl.base import VlModel
 from dimos.utils.logging_config import setup_logger
 
@@ -108,6 +110,6 @@ class CurrentLocationMap:
             self._get_current_map()  # type: ignore[no-untyped-call]
 
         if self._map_image is not None:
-            self._map_image.image.save(filepath)
+            cv2.imwrite(filepath, image.to_bgr(self._map_image.image))
         logger.info(f"Saved OSM map image to {filepath}")
         return filepath
