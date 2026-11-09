@@ -19,12 +19,11 @@ from typing import Any, cast
 import pytest
 
 from dimos.mapping.relocalization.module import PremapModule
-from dimos.mapping.relocalization.named_locations import load_locations, location_frame
+from dimos.mapping.relocalization.named_locations import load_locations
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
     named_pose,
@@ -260,14 +259,11 @@ def test_a_list_in_another_frame_goes_through_tf(make):
     assert positions(module.locations_snapshot()) == {"lamp": (1, 2)}
 
 
-def test_locations_hang_off_the_map_frame_and_follow_every_fix(make):
-    """Each location is a tf frame under map, so a new world -> map moves it with the old map."""
+def test_locations_are_kept_in_the_map_frame_and_follow_every_fix(make):
+    """A location is held in the old map's frame, so a new world -> map moves it with that map."""
     module, _ = make(relocalize_once=False)
     module.submit(FIX)
     publish(module, {"door": at(1, 0, "map")})
-    sent: list[TFMessage] = module.__dict__["sent_tf"]
-    door = [t for t in sent[-1].transforms if t.child_frame_id == location_frame("door")]
-    assert len(door) == 1 and door[0].frame_id == "map"
 
     def door_in_world() -> tuple[float, float]:
         goal = module.reexpress(module._locations["door"], "world")

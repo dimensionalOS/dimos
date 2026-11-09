@@ -28,11 +28,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def location_frame(name: str) -> str:
-    """The tf frame a named location hangs at, under the map frame."""
-    return "location_" + name
-
-
 def same_locations(a: dict[str, PoseStamped], b: dict[str, PoseStamped]) -> bool:
     """The same names at the same poses (a list comes back over the wire bit for bit)."""
     return a.keys() == b.keys() and all(

@@ -21,8 +21,7 @@ premap on ``loaded_map`` once a fix lands. An implementation reads ``self.premap
 fix is good enough, and hands it to :meth:`PremapModule.submit`. See ``lidar/module.py``.
 
 Named locations live here too, in the ``map`` frame, so every new fix moves them with the old
-map. Each is also a tf frame ``location_<name>`` under ``map``; tf has no deletion, so a renamed
-or deleted location leaves its old frame hanging until the process restarts.
+map. They are not tf frames: the list on ``named_locations`` is where they are read from.
 
 ``named_locations`` is in and out: the whole list, as an ``InteractiveMarkerUpdate`` whose
 ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
@@ -58,7 +57,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, Out
 from dimos.mapping.relocalization.named_locations import (
     load_locations,
-    location_frame,
     same_locations,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -193,17 +191,11 @@ class PremapModule(Module):
             )
         )
 
-    def map_anchored(self) -> list[Transform]:
-        """Frames that hang off the old map (they move with every fix); subclasses add theirs."""
-        with self._lock:
-            locations = list(self._locations.items())
-        return [Transform.from_pose(location_frame(name), pose).now() for name, pose in locations]
-
     def publish_tf(self) -> None:
-        """The current fix plus every frame anchored to the old map."""
+        """The current ``world -> map`` fix."""
         if self.fix is None:
             return
-        self.tf.publish(TFMessage(self.fix.now(), *self.map_anchored()))
+        self.tf.publish(TFMessage(self.fix.now()))
 
     @property
     def placed(self) -> bool:
@@ -268,7 +260,6 @@ class PremapModule(Module):
             self._revision += 1
         logger.info(f"named locations: {list(locations)}")
         self.named_locations.publish(self.locations_snapshot())
-        self.publish_tf()
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``: from this module's own fix for world/map, else from tf."""
