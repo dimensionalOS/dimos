@@ -12,7 +12,7 @@ path = "src/main.rs"
 [workspace]
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 realsense-rust = "1.3"
 realsense-sys = "2.56"
