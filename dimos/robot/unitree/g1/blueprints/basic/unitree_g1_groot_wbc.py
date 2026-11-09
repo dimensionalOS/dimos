@@ -307,23 +307,48 @@ else:
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 
     if global_config.simulation == "sim2":
-        from dimos.robot.unitree.g1.sim2 import G1Sim
+        from dimos.robot.assets.model import UsdModel
+        from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
         from dimos.robot.usd_manager import UsdManager
+        from dimos.sim2.assets.logistics import LOGISTICS
         from dimos.sim2.livox import LivoxSim
-        from dimos.sim2.module import Simulation
+        from dimos.sim2.sim import sim_module
+        from dimos.sim2.spec import SimulatedRobot
 
-        # The real stack with each device swapped for its sim twin: G1Sim for the connection, LivoxSim at
-        # G1Sim's Mid-360 frame for the Mid360. The UsdManager serves G1Sim's layer to renderers,
-        # with the lidar grafted onto the frame it is bolted to, so the stage a viewer draws holds
-        # the whole robot rather than the robot alone; the real stack has no joint tf, so neither
-        # does this.
-        _mid360 = LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame).remappings(
-            [(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")]
+        # The real stack with each device swapped for its sim twin: G1Sim for the connection,
+        # LivoxSim at G1Sim's Mid-360 frame for the Mid360.
+        #
+        # Two managers, nested, as every sim2 blueprint has. The inner one answers for the robot
+        # -- G1Sim's layer with the lidar grafted onto the frame it is bolted to, so the stage a
+        # viewer draws holds the whole robot rather than the robot alone -- and the outer one for
+        # the world, the room with the robot standing in it. What the outer one composes is what
+        # the physics runs and what the lidar ranges against. The real stack has no joint tf, so
+        # neither does this.
+        _robot_id = "g1"
+        _scene_manager = f"scene/{UsdManager.name}"
+        _mid360 = LivoxSim.blueprint(
+            frame_id=G1Sim.lidar_mount_frame, scene_manager=_scene_manager
+        ).remappings([(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")])
+        _robot_usd = UsdManager.blueprint(
+            model=G1Sim.usd,
+            publish_joint_tf=False,
+            mounts={G1Sim.lidar_mount_frame: _mid360},
         )
         _backend = autoconnect(
-            Simulation.blueprint(),
-            G1Sim.blueprint(),
-            UsdManager.blueprint(publish_joint_tf=False, mounts={G1Sim.lidar_mount_frame: _mid360}),
+            sim_module(
+                scene_manager=_scene_manager,
+                robots=[SimulatedRobot(_robot_id, G1Sim.usd)],
+            ),
+            G1Sim.blueprint(robot_id=_robot_id, scene_manager=_scene_manager),
+            _robot_usd,
+            UsdManager.blueprint(
+                model=UsdModel.from_file(LOGISTICS).with_frames(
+                    {_robot_id: ("logistics", (0.0, 0.0, HOME_HEIGHT), (0.0, 0.0, 0.0))}
+                ),
+                mounts={_robot_id: _robot_usd},
+                frame_id_prefix="",
+                tf_renames={"logistics": "world"},
+            ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),
         )
         # Nobody to click Activate in sim.
         _auto_arm = True
