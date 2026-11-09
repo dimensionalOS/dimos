@@ -31,9 +31,9 @@ pub struct LcmTransport {
     inner: Arc<Lcm>,
     routes: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
     listening: AtomicBool,
-    /// The runtime the transport was opened on. The recv thread drives the
-    /// socket on it, so in a baked host the shared socket is not tied to
-    /// whichever module happened to subscribe first.
+    /// The runtime the transport was opened on. In a baked host each module has
+    /// its own runtime, so the one shared recv loop must not land on whichever
+    /// module happened to subscribe first.
     runtime: tokio::runtime::Handle,
 }
 
@@ -101,21 +101,17 @@ impl LcmTransport {
         }
     }
 
-    /// The callbacks may block until the module's handler catches up, so the
-    /// loop gets its own thread instead of a runtime worker.
-    fn spawn_recv_loop(&self) -> io::Result<()> {
+    fn spawn_recv_loop(&self) {
         let inner = Arc::clone(&self.inner);
         let routes = Arc::clone(&self.routes);
-        let runtime = self.runtime.clone();
-        std::thread::Builder::new()
-            .name("lcm-recv".to_string())
-            .spawn(move || loop {
-                match runtime.block_on(inner.recv()) {
+        self.runtime.spawn(async move {
+            loop {
+                match inner.recv().await {
                     Ok(msg) => {
                         let callbacks = routes.lock().unwrap().get(&msg.channel).cloned();
                         if let Some(callbacks) = callbacks {
                             for cb in &callbacks {
-                                cb(&msg.data);
+                                cb.deliver_async(&msg.data).await;
                             }
                         }
                     }
@@ -127,8 +123,8 @@ impl LcmTransport {
                         );
                     }
                 }
-            })?;
-        Ok(())
+            }
+        });
     }
 }
 
@@ -145,7 +141,7 @@ impl Transport for LcmTransport {
             .or_default()
             .push(on_msg);
         if !self.listening.swap(true, Ordering::SeqCst) {
-            self.spawn_recv_loop()?;
+            self.spawn_recv_loop();
         }
         Ok(())
     }

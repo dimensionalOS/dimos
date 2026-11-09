@@ -617,6 +617,7 @@ dependencies = [
  "async-channel",
  "dimos-lcm",
  "dimos-module-macros",
+ "futures-util",
  "lcm-msgs",
  "nalgebra",
  "rayon",

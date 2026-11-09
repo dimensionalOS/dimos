@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use futures_util::FutureExt;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::io;
@@ -25,7 +26,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::transport::{Dispatch, Transport};
+use crate::transport::{BoxFuture, Deliver, Dispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
@@ -71,8 +72,13 @@ const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's channel.
 pub(crate) trait Route: Send + Sync {
-    /// Blocks the calling transport thread while the input's buffer is full.
+    /// Blocks the calling thread while the input's buffer is full.
     fn dispatch(&self, data: &[u8]);
+
+    /// Suspends the calling task while the input's buffer is full.
+    fn dispatch_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.dispatch(data) })
+    }
 }
 
 struct TypedRoute<T: Send + 'static> {
@@ -81,15 +87,32 @@ struct TypedRoute<T: Send + 'static> {
     sender: async_channel::Sender<T>,
 }
 
+impl<T: Send + 'static> TypedRoute<T> {
+    fn parse(&self, data: &[u8]) -> Option<T> {
+        match (self.decode)(data) {
+            Ok(msg) => Some(msg),
+            Err(e) => {
+                error!(topic = %self.topic, error = %e, "decode error");
+                None
+            }
+        }
+    }
+}
+
+// A closed channel means the module is stopping.
 impl<T: Send + 'static> Route for TypedRoute<T> {
     fn dispatch(&self, data: &[u8]) {
-        match (self.decode)(data) {
-            // A closed channel means the module is stopping.
-            Ok(msg) => {
-                let _ = self.sender.send_blocking(msg);
-            }
-            Err(e) => error!(topic = %self.topic, error = %e, "decode error"),
+        if let Some(msg) = self.parse(data) {
+            let _ = self.sender.send_blocking(msg);
         }
+    }
+
+    fn dispatch_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            if let Some(msg) = self.parse(data) {
+                let _ = self.sender.send(msg).await;
+            }
+        })
     }
 }
 pub struct Input<T> {
@@ -420,21 +443,38 @@ pub(crate) async fn subscribe_routes<T: Transport>(
     routes: HashMap<String, Vec<Box<dyn Route>>>,
 ) -> io::Result<()> {
     for (channel, routes) in routes {
-        let routes = Arc::new(routes);
-        let dispatch: Dispatch = Arc::new(move |bytes: &[u8]| {
-            for route in routes.iter() {
-                // A panicking handler must not kill the delivery loop.
-                let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    route.dispatch(bytes)
-                }));
+        let dispatch: Dispatch = Arc::new(TopicRoutes(routes));
+        transport.subscribe(&channel, dispatch).await?;
+    }
+    Ok(())
+}
+
+/// Every route on one topic. A panicking route must not kill the delivery loop.
+struct TopicRoutes(Vec<Box<dyn Route>>);
+
+impl Deliver for TopicRoutes {
+    fn deliver(&self, data: &[u8]) {
+        for route in &self.0 {
+            let dispatched =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| route.dispatch(data)));
+            if dispatched.is_err() {
+                error!("dispatch handler panicked; message dropped");
+            }
+        }
+    }
+
+    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            for route in &self.0 {
+                let dispatched = std::panic::AssertUnwindSafe(route.dispatch_async(data))
+                    .catch_unwind()
+                    .await;
                 if dispatched.is_err() {
                     error!("dispatch handler panicked; message dropped");
                 }
             }
-        });
-        transport.subscribe(&channel, dispatch).await?;
+        })
     }
-    Ok(())
 }
 
 /// Spawn one worker per output channel so they don't block each other
@@ -656,7 +696,7 @@ mod tests {
                     let callbacks = subscriptions.lock().unwrap().get(&channel).cloned();
                     if let Some(callbacks) = callbacks {
                         for cb in &callbacks {
-                            cb(&data);
+                            cb.deliver(&data);
                         }
                     }
                     dispatch_log.lock().unwrap().push(Instant::now());
@@ -1258,6 +1298,46 @@ mod tests {
             dispatch_log.lock().unwrap().len() == total
         })
         .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_input_suspends_async_delivery() {
+        let mut builder = Builder::new(topics(&[("data", "/data")]));
+        let mut input = builder.input("data", |b| Ok(b.to_vec()));
+        let routes = Arc::new(TopicRoutes(builder.routes.remove("/data").unwrap()));
+
+        for i in 0..INPUT_BUFFER_LEN {
+            routes.deliver_async(&[i as u8]).await;
+        }
+        let blocked = tokio::spawn({
+            let routes = Arc::clone(&routes);
+            async move { routes.deliver_async(&[INPUT_BUFFER_LEN as u8]).await }
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !blocked.is_finished(),
+            "delivery must suspend on a full input, not drop"
+        );
+
+        assert_eq!(input.recv().await.unwrap(), vec![0u8]);
+        tokio::time::timeout(Duration::from_secs(1), blocked)
+            .await
+            .expect("delivery resumes once the handler drains")
+            .unwrap();
+        for i in 1..=INPUT_BUFFER_LEN {
+            assert_eq!(input.recv().await.unwrap(), vec![i as u8]);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn panicking_route_does_not_starve_siblings_in_async_delivery() {
+        let delivered = Arc::new(AtomicU64::new(0));
+        let routes = TopicRoutes(vec![
+            Box::new(PanicRoute),
+            Box::new(CountingRoute(Arc::clone(&delivered))),
+        ]);
+        routes.deliver_async(&[7u8]).await;
+        assert_eq!(delivered.load(Ordering::SeqCst), 1);
     }
 
     // Exercises the code #[derive(Module)] generates for an #[io] field.

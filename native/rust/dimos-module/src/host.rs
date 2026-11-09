@@ -834,7 +834,7 @@ mod tests {
         async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
             let routes = self.routes.lock().unwrap().get(channel).cloned();
             for route in routes.into_iter().flatten() {
-                route(&data);
+                route.deliver(&data);
             }
             Ok(())
         }

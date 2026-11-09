@@ -17,10 +17,29 @@ use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Per-channel dispatch closure handed to a transport on `subscribe`. The
-/// transport calls it with each message's raw payload. Decode and routing
-/// happen inside it.
-pub type Dispatch = Arc<dyn Fn(&[u8]) + Send + Sync>;
+/// Per-channel delivery handed to a transport on `subscribe`. The transport
+/// calls it with each message's raw payload. Decode and routing happen inside.
+pub trait Deliver: Send + Sync {
+    /// Blocks the calling thread while an input is full. For transports that
+    /// call back from their own threads.
+    fn deliver(&self, data: &[u8]);
+    /// Suspends the calling task while an input is full. For transports that
+    /// own their receive loop.
+    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()>;
+}
+
+pub type Dispatch = Arc<dyn Deliver>;
+
+/// A plain callback is a delivery that never stalls.
+impl<F: Fn(&[u8]) + Send + Sync> Deliver for F {
+    fn deliver(&self, data: &[u8]) {
+        self(data)
+    }
+
+    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self(data) })
+    }
+}
 
 /// Abstraction over the message transport used by a native module.
 ///
@@ -42,7 +61,7 @@ pub trait Transport: Send + Sync + 'static {
     fn set_publisher_qos(&self, _qos: &serde_json::Value) {}
 }
 
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Object-safe view of [`Transport`]. `Transport` returns `impl Future`, so it
 /// can't be made into a trait object. A baked host needs exactly that, because

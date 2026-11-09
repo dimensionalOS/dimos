@@ -57,7 +57,7 @@ async fn main() {
 
 Handlers run one at a time on the module's task. `handle()` is one `select!` loop over every input, so while a handler is awaiting, none of the module's other inputs is served.
 
-Each input holds a buffer of eight messages. When it is full, the transport's receive thread blocks in delivery until the handler takes one out. That stalls every topic the thread carries and pushes the congestion back to the publisher, whose declared QoS resolves it: `block` holds the publisher's `publish()`, `drop` discards at the publisher. The SDK itself never drops a message.
+Each input holds a buffer of eight messages. When it is full, the transport's receive path stalls in delivery until the handler takes one out. That stalls every topic it carries and pushes the congestion back to the publisher, whose declared QoS resolves it: `block` holds the publisher's `publish()`, `drop` discards at the publisher. The SDK itself never drops a message.
 
 Keep handlers short: decode, update state, publish. Long work belongs on a worker task fed from the handler through its own channel, as the ray tracer, the MLS planner and the local planner do. A handler that never returns holds the transport until the module stops.
 
