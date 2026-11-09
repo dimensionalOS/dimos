@@ -192,7 +192,9 @@ def test_materializes_once_with_reordered_groups_heterogeneous_limits_and_distin
     assert module._pending_plan is not None
     assert module._pending_plan.path is not module._pending_plan.trajectory.points
     assert module._pending_plan.trajectory.joint_names == names
-    assert message_time.to_seconds(module._pending_plan.trajectory.points[-1].time_from_start) == 1.0
+    assert (
+        message_time.to_seconds(module._pending_plan.trajectory.points[-1].time_from_start) == 1.0
+    )
 
 
 def test_cartesian_plan_preserves_planner_timestamps_and_velocities(monkeypatch, module_factory):
