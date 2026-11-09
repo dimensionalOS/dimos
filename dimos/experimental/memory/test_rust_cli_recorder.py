@@ -242,7 +242,10 @@ def test_process_exit_before_ready_fails_startup(
 
 
 def test_readiness_timeout_fails_startup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+    request: pytest.FixtureRequest,
 ) -> None:
     hint = mocker.patch.object(rust_cli_recorder, "log_recording_closed")
     process = _FakeProcess(stdout=b"")
@@ -252,9 +255,17 @@ def test_readiness_timeout_fails_startup(
         "dimos.experimental.memory.rust_cli_recorder.subprocess.Popen",
         lambda *args, **kwargs: process,
     )
+    session = RustRecordingSession(_plan(tmp_path))
+    request.addfinalizer(session.stop)
+
+    def late_stdout():
+        assert session._stopping.wait(timeout=1.0)
+        yield b'{"fields":{"message":"memory recorder ready"},"level":"INFO"}\n'
+
+    mocker.patch.object(process, "stdout", late_stdout())
 
     with pytest.raises(RuntimeError, match="did not report ready"):
-        RustRecordingSession(_plan(tmp_path)).start()
+        session.start()
 
     assert process.signals == [signal.SIGTERM]
     hint.assert_not_called()

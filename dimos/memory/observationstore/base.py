@@ -56,6 +56,9 @@ class ObservationStore(Configurable, CompositeResource, Generic[T]):
         """Insert observation metadata, return assigned id."""
         ...
 
+    def validate_query(self, q: StreamQuery) -> None:
+        """Check metadata constraints, including queries dispatched to a vector store."""
+
     @abstractmethod
     def query(self, q: StreamQuery) -> Iterator[Observation[T]]:
         """Execute query against metadata. Blobs are NOT loaded here."""

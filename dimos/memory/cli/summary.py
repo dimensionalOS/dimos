@@ -93,6 +93,9 @@ def main(
             t0, t1 = stream.get_time_range() if n else (None, None)
             rows.append((name, n, t0, t1, stream.size_bytes() or 0, _type_name(stream.data_type)))
             prog.advance(task)
+        from dimos.memory.store.sqlite import SqliteStore
+
+        assert isinstance(store, SqliteStore)
         has_poses = store.has_poses()
     rows.sort(key=lambda r: r[4], reverse=True)
 

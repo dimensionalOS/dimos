@@ -14,18 +14,29 @@
 
 import warnings
 
+import numpy as np
 import pytest
 
+from dimos.models.embedding.base import Embedding
 
-@pytest.mark.parametrize(("operation", "expected"), [("count", 0), ("to_list", [])])
+
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        pytest.param(lambda q, e: q.count(), 0, id="count"),
+        pytest.param(lambda q, e: q.to_list(), [], id="to_list"),
+        pytest.param(lambda q, e: q.search(e).to_list(), [], id="search"),
+    ],
+)
 def test_near_warns_when_stream_has_no_attached_poses(sqlite_store, operation, expected):
     stream = sqlite_store.stream("lidar", float)
-    stream.append(1.0, ts=1.0)
+    embedding = Embedding(vector=np.array([1.0, 0.0], dtype=np.float32))
+    stream.append(1.0, ts=1.0, embedding=embedding)
     # A different posed stream must not hide missing poses on this stream.
     sqlite_store.stream("posed", float).append(1.0, ts=1.0, pose=(1, 2, 3))
 
     with pytest.warns(UserWarning, match="no attached poses.*pose-fill.*--target lidar"):
-        assert getattr(stream.near((1, 2, 3), 1.0), operation)() == expected
+        assert operation(stream.near((1, 2, 3), 1.0), embedding) == expected
 
 
 def test_near_does_not_warn_for_empty_spatial_match(sqlite_store):

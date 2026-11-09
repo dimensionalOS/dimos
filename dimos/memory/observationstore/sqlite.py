@@ -396,7 +396,7 @@ class SqliteObservationStore(ObservationStore[T]):
         with self._lock:
             self._conn.rollback()
 
-    def _warn_missing_poses(self, q: StreamQuery) -> None:
+    def validate_query(self, q: StreamQuery) -> None:
         if not any(isinstance(f, NearFilter) for f in q.filters):
             return
         with self._lock:
@@ -425,7 +425,7 @@ class SqliteObservationStore(ObservationStore[T]):
         if q.search_text is not None:
             raise NotImplementedError("search_text is not supported by SqliteObservationStore")
 
-        self._warn_missing_poses(q)
+        self.validate_query(q)
 
         join = self._join_blobs
         sql, params, python_filters = _compile_query(q, self._name, join_blob=join)
@@ -457,7 +457,7 @@ class SqliteObservationStore(ObservationStore[T]):
         if python_filters:
             return sum(1 for _ in self.query(q))
 
-        self._warn_missing_poses(q)
+        self.validate_query(q)
         with self._lock:
             row = self._conn.execute(sql, params).fetchone()
         return int(row[0]) if row else 0
