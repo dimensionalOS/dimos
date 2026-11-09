@@ -22,9 +22,10 @@ import torch
 import torch.nn.functional as functional
 from transformers import SiglipModel as HFSiglipModel, SiglipProcessor
 
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
 
 TEXT_MAX_LENGTH = 64
 
@@ -61,7 +62,7 @@ class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
     def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images into the shared image-text space."""
-        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
+        pil_images = [PILImage.fromarray(image_utils.to_rgb(img)) for img in images]
 
         with torch.inference_mode():
             inputs = self._processor(images=pil_images, return_tensors="pt")
@@ -71,7 +72,8 @@ class SigLIP2Model(EmbeddingModel, HuggingFaceModel):
                 image_features = functional.normalize(image_features, dim=-1)
 
         embeddings = [
-            Embedding(vector=feat, timestamp=images[i].ts) for i, feat in enumerate(image_features)
+            Embedding(vector=feat, timestamp=message_time.to_seconds(images[i].header.stamp))
+            for i, feat in enumerate(image_features)
         ]
         return embeddings[0] if len(images) == 1 else embeddings
 

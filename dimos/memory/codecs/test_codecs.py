@@ -28,28 +28,33 @@ from dimos.messages.sensor_msgs.msg import Image
 from dimos.messages.std_msgs.msg import Header
 
 
-@pytest.mark.parametrize("encoding,dtype", [("rgb8", np.uint8), ("mono16", np.uint16), ("16UC1", np.uint16), ("32FC1", np.float32)])
-def test_generated_image_storage_preserves_pixels_and_exact_header(encoding,dtype):
-    shape=(4,6,3) if encoding=="rgb8" else (4,6)
-    pixels=np.arange(np.prod(shape),dtype=dtype).reshape(shape)
-    source=image.from_array(pixels,encoding=encoding,header=Header(Time(17,123456789),"camera"))
-    codec=codec_for(Image,sample=source)
-    assert codec_id(codec)=="cdr"
-    decoded=codec.decode(codec.encode(source))
-    assert decoded.header==source.header
-    assert decoded.encoding==encoding
-    np.testing.assert_array_equal(image.view(decoded),pixels)
+@pytest.mark.parametrize(
+    "encoding,dtype",
+    [("rgb8", np.uint8), ("mono16", np.uint16), ("16UC1", np.uint16), ("32FC1", np.float32)],
+)
+def test_generated_image_storage_preserves_pixels_and_exact_header(encoding, dtype):
+    shape = (4, 6, 3) if encoding == "rgb8" else (4, 6)
+    pixels = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    source = image.from_array(
+        pixels, encoding=encoding, header=Header(Time(17, 123456789), "camera")
+    )
+    codec = codec_for(Image, sample=source)
+    assert codec_id(codec) == "cdr"
+    decoded = codec.decode(codec.encode(source))
+    assert decoded.header == source.header
+    assert decoded.encoding == encoding
+    np.testing.assert_array_equal(image.view(decoded), pixels)
 
 
-@pytest.mark.parametrize("value", [42, "hello", {"key":[1,2,3]}])
+@pytest.mark.parametrize("value", [42, "hello", {"key": [1, 2, 3]}])
 def test_arbitrary_python_storage_remains_pickle(value):
-    codec=codec_for(type(value))
-    assert isinstance(codec,PickleCodec)
-    assert codec.decode(codec.encode(value))==value
+    codec = codec_for(type(value))
+    assert isinstance(codec, PickleCodec)
+    assert codec.decode(codec.encode(value)) == value
 
 
 def test_compressed_cdr_storage_chain_preserves_value():
-    codec=codec_from_id("lz4+cdr", "dimos.messages.sensor_msgs.msg.Image")
-    source=image.from_array(np.zeros((4,6,3),dtype=np.uint8),encoding="rgb8")
-    decoded=codec.decode(codec.encode(source))
-    np.testing.assert_array_equal(image.view(decoded),image.view(source))
+    codec = codec_from_id("lz4+cdr", "dimos.messages.sensor_msgs.msg.Image")
+    source = image.from_array(np.zeros((4, 6, 3), dtype=np.uint8), encoding="rgb8")
+    decoded = codec.decode(codec.encode(source))
+    np.testing.assert_array_equal(image.view(decoded), image.view(source))

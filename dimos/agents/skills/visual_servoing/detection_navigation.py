@@ -12,15 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.sensor_msgs import CameraInfo as DimosLcmCameraInfo
+
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud as pointcloud_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import TransformStamped, Twist, Vector3
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.protocol.tf.tf import TFLookup
@@ -59,22 +56,20 @@ class DetectionNavigation:
 
         # Get transform from world frame to camera optical frame
         world_to_optical = self._tf.get(
-            "camera_optical", pointcloud.frame_id, image.ts, time_tolerance=1.0
+            "camera_optical",
+            pointcloud.header.frame_id,
+            message_time.to_seconds(image.header.stamp),
+            time_tolerance=1.0,
         )
         if world_to_optical is None:
             logger.warning("Could not get camera transform")
             return None
 
-        lcm_camera_info = DimosLcmCameraInfo()
-        lcm_camera_info.K = self._camera_info.K
-        lcm_camera_info.width = self._camera_info.width
-        lcm_camera_info.height = self._camera_info.height
-
         # Project to 3D using the pointcloud
         detection_3d = Detection3DPC.from_2d(
             det=detection,
             world_pointcloud=pointcloud,
-            camera_info=lcm_camera_info,
+            camera_info=self._camera_info,
             world_to_optical_transform=world_to_optical,
             filters=[],  # Skip filtering for faster processing in follow loop
         )
@@ -89,7 +84,7 @@ class DetectionNavigation:
             logger.warning("Could not get robot transform")
             return None
 
-        robot_pos = robot_transform.translation
+        robot_pos = robot_transform.transform.translation
 
         # Compute robust target position using front-most points
         target_position = self._compute_robust_target_position(detection_3d.pointcloud, robot_pos)
@@ -119,7 +114,7 @@ class DetectionNavigation:
             Vector3 position representing the front of the detected object,
             or None if not enough valid points.
         """
-        points, _ = pointcloud.as_numpy()
+        points = pointcloud_utils.xyz(pointcloud)
         if len(points) < 10:
             return None
 
@@ -128,7 +123,7 @@ class DetectionNavigation:
         points = points[height_mask]
         if len(points) < 10:
             # Fall back to all points if height filtering removes too many
-            points, _ = pointcloud.as_numpy()
+            points = pointcloud_utils.xyz(pointcloud)
 
         # Compute 2D distance (XY plane) from robot to each point
         dx = points[:, 0] - robot_pos.x
@@ -154,7 +149,9 @@ class DetectionNavigation:
         centroid = front_points.mean(axis=0)
         return Vector3(centroid[0], centroid[1], centroid[2])
 
-    def _compute_twist_from_3d(self, target_position: Vector3, robot_transform: Transform) -> Twist:
+    def _compute_twist_from_3d(
+        self, target_position: Vector3, robot_transform: TransformStamped
+    ) -> Twist:
         """Compute twist command to navigate towards a 3D target position.
 
         Args:
@@ -164,7 +161,7 @@ class DetectionNavigation:
         Returns:
             Twist command for the robot.
         """
-        robot_pos = robot_transform.translation
+        robot_pos = robot_transform.transform.translation
 
         # Compute vector from robot to target in world frame
         dx = target_position.x - robot_pos.x
@@ -176,7 +173,7 @@ class DetectionNavigation:
         angle_to_target = np.arctan2(dy, dx)
 
         # Get robot's current heading from transform
-        robot_yaw = robot_transform.rotation.to_euler().z
+        robot_yaw = geometry.yaw(robot_transform.transform.rotation)
 
         # Angle error (how much to turn)
         angle_error = angle_to_target - robot_yaw

@@ -45,17 +45,17 @@ from dimos.evals.types import (
     recording,
 )
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils
+from dimos.message_utils.time import time_from_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 
 
 def _pose(x: float, y: float) -> PoseStamped:
     return PoseStamped(
-        position=make_vector3(x, y, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="world",
+        header=Header(stamp=time_from_seconds(0.0), frame_id="world"),
+        pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
     )
 
 
@@ -74,7 +74,14 @@ def test_selected_streams_reach_the_prompt(
     frame = np.full((16, 16, 3), 200, dtype=np.uint8)
     images = store.stream("color_image", Image)
     for i in range(3):
-        images.append(Image.from_numpy(frame, frame_id="cam", ts=1000.0 + i), ts=1000.0 + i)
+        images.append(
+            image_utils.from_array(
+                frame,
+                encoding="rgb8",
+                header=Header(stamp=time_from_seconds(1000.0 + i), frame_id="cam"),
+            ),
+            ts=1000.0 + i,
+        )
 
     case = EvalCase(
         id="wiring",
@@ -99,7 +106,9 @@ def test_selected_streams_reach_the_prompt(
     # the actual observation data crossed from memory into the prompt:
     assert len(image_blocks) == 2, "both selected image observations should be encoded"
     assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    assert str(_pose(19.0, 2.5)) in text, "last odom pose must reach the prompt"
+    assert "PoseStamped(pos=[19.000, 2.500, 0.000], euler=[0.0, 0.0, 0.0])" in text, (
+        "last odom pose must reach the prompt"
+    )
     assert case.inputs in text
 
 
@@ -132,7 +141,10 @@ def test_frames_per_stream_downsamples_not_truncates(
         for block in content
         if block["type"] == "text" and block["text"].startswith("[t=")
     ]
-    assert stamped == [f"[t={float(i):.1f}s] {_pose(float(i), 0.0)}" for i in positions]
+    assert stamped == [
+        f"[t={float(i):.1f}s] PoseStamped(pos=[{float(i):.3f}, 0.000, 0.000], euler=[0.0, 0.0, 0.0])"
+        for i in positions
+    ]
 
 
 def test_grader_reads_the_history_the_environment_recorded(
@@ -152,7 +164,7 @@ def test_grader_reads_the_history_the_environment_recorded(
 
     def grade(outcome: Outcome) -> float:
         with recording(outcome) as rec:
-            poses = [obs.data.position.x for obs in rec.streams.odom]
+            poses = [obs.data.pose.position.x for obs in rec.streams.odom]
         assert poses == [5.0, 2.0, 1.0, 0.0]
         return ramp(abs(poses[-1]), band=2.0)
 

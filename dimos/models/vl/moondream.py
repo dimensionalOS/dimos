@@ -21,9 +21,10 @@ from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM
 
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
@@ -63,11 +64,11 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
                 DeprecationWarning,
                 stacklevel=2,
             )
-            image = Image.from_numpy(image)
+            image = image_utils.from_array(image, encoding="bgr8")
 
         image, _ = self._prepare_image(image)
-        rgb_image = image.to_rgb()
-        return PILImage.fromarray(rgb_image.data)
+        rgb_pixels = image_utils.to_rgb(image)
+        return PILImage.fromarray(rgb_pixels)
 
     def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil(image)
@@ -182,7 +183,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
                 class_id=-1,  # Moondream doesn't provide class IDs
                 confidence=1.0,  # Moondream doesn't provide confidence scores
                 name=query,  # Use the query as the object name
-                ts=image.ts,
+                ts=message_time.to_seconds(image.header.stamp),
                 image=image,
             )
 
@@ -222,7 +223,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
                 x=x,
                 y=y,
                 name=query,
-                ts=image.ts,
+                ts=message_time.to_seconds(image.header.stamp),
                 image=image,
                 track_id=track_id,
             )

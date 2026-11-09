@@ -23,10 +23,8 @@ from pydantic import Field, field_validator, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 
 
 def has_nvidia_gpu() -> bool:
@@ -56,7 +54,6 @@ class Depth2DepthCloudConfig(NativeModuleConfig):
     world_frame: str = "odom"
     lidar_history_s: float = Field(default=2.0, ge=0.0, le=30.0)
     max_anchor_range_m: float = Field(default=12.0, ge=0.1, le=200.0)
-    tf_tolerance_s: float = Field(default=0.1, ge=0.0, le=5.0)
     # Frames and scans wait this long for their transform before they are dropped.
     max_tf_lag_s: float = Field(default=0.5, ge=0.0, le=2.0)
     # Calibration (depth2depth::CalibrationConfig): edge-aware spread near lidar, a smooth fit away from it.
@@ -114,6 +111,7 @@ class Depth2DepthCloud(NativeModule):
     camera_info: In[CameraInfo]
     lidar: In[PointCloud2]
     tf: In[TFMessage]
+    tf_static: In[TFMessage]
     depth_cloud: Out[PointCloud2]
 
 

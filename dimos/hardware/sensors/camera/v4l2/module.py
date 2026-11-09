@@ -29,7 +29,7 @@ from pydantic import Field, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+from dimos.messages.sensor_msgs.msg import CompressedImage
 
 
 class V4L2CameraConfig(NativeModuleConfig):

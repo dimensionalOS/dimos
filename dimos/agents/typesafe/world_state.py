@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, TypedDict
 
+import numpy as np
 from typing_extensions import NotRequired
 
 from dimos.agents.typesafe.constants import (
@@ -27,15 +28,36 @@ from dimos.agents.typesafe.constants import (
     SECTOR_NAMES,
     SIZE_WORDS_2D,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseJson, XyzJson
-from dimos.msgs.sensor_msgs.PointCloud2 import SectorJson
-from dimos.msgs.vision_msgs.Detection2DArray import BBoxJson
+from dimos.message_utils import geometry, pointcloud
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-    from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
-    from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+    from dimos.messages.geometry_msgs.msg import PoseStamped
+    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos.messages.vision_msgs.msg import Detection2DArray, Detection3DArray
+
+
+class XyzJson(TypedDict):
+    x: float
+    y: float
+    z: float
+
+
+class PoseJson(TypedDict):
+    position: XyzJson
+    yaw_deg: float
+    heading: str
+
+
+class SectorJson(TypedDict):
+    clear_m: float
+    state: str
+
+
+class BBoxJson(TypedDict):
+    cx: float
+    cy: float
+    w: float
+    h: float
 
 
 class ObjectState(TypedDict):
@@ -84,15 +106,42 @@ def distance_word(d: float) -> str:
 
 def relative(pose: PoseStamped, x: float, y: float) -> tuple[str, float, str, float]:
     """(bearing word, bearing deg, distance word, distance m) of a world XY from the pose."""
-    dx, dy = x - pose.x, y - pose.y
-    dist, rel = math.hypot(dx, dy), math.atan2(dy, dx) - pose.yaw
+    dx, dy = x - pose.pose.position.x, y - pose.pose.position.y
+    dist, rel = math.hypot(dx, dy), math.atan2(dy, dx) - geometry.yaw(pose.pose.orientation)
     deg = round(math.degrees(math.atan2(math.sin(rel), math.cos(rel))), 1)
     return bearing_word(rel), deg, distance_word(dist), round(dist, 2)
 
 
 def _objects_3d(dets: Detection3DArray, pose: PoseStamped) -> list[ObjectState]:
     out: list[ObjectState] = []
-    for d in dets.to_json():
+    for detection in dets.detections:
+        center = detection.bbox.center.position
+        marker_id = str(detection.id).strip()
+        class_id = next(
+            (
+                str(result.hypothesis.class_id).strip()
+                for result in detection.results
+                if str(result.hypothesis.class_id).strip()
+            ),
+            "",
+        )
+        label = (
+            f"{class_id} id={marker_id}"
+            if marker_id and class_id
+            else class_id
+            if class_id
+            else f"id={marker_id}"
+            if marker_id
+            else ""
+        )
+        d: ObjectState = {
+            "label": label,
+            "score": round(
+                max((result.hypothesis.score for result in detection.results), default=0.0), 2
+            ),
+            "position": {"x": round(center.x, 2), "y": round(center.y, 2), "z": round(center.z, 2)},
+            "bearing": "",
+        }
         bearing, deg, distance, dist = relative(pose, d["position"]["x"], d["position"]["y"])
         out.append(
             {
@@ -111,13 +160,30 @@ def _objects_3d(dets: Detection3DArray, pose: PoseStamped) -> list[ObjectState]:
 def _objects_2d(dets: Detection2DArray, image_size: tuple[int, int]) -> list[ObjectState]:
     w, h = image_size
     out: list[ObjectState] = []
-    for d in dets.to_json():
-        b = d["bbox"]
+    for detection in dets.detections:
+        center = detection.bbox.center.position
+        b: BBoxJson = {
+            "cx": round(center.x, 1),
+            "cy": round(center.y, 1),
+            "w": round(detection.bbox.size_x, 1),
+            "h": round(detection.bbox.size_y, 1),
+        }
+        label = next(
+            (
+                str(result.hypothesis.class_id)
+                for result in detection.results
+                if result.hypothesis.class_id
+            ),
+            "",
+        )
+        score = round(
+            max((result.hypothesis.score for result in detection.results), default=0.0), 2
+        )
         area = b["w"] * b["h"] / (w * h)
         out.append(
             {
-                "label": d["label"],
-                "score": d["score"],
+                "label": label,
+                "score": score,
                 "bbox": b,
                 "bearing": BEARING_WORDS_2D[min(4, int(5 * b["cx"] / w))],
                 "size": next(word for limit, word in SIZE_WORDS_2D if area > limit),
@@ -144,9 +210,30 @@ def build_world_state(
         objects = _objects_2d(detections_2d, image_size)
     else:
         objects = []
+    yaw_degrees = math.degrees(geometry.yaw(pose.pose.orientation))
+    headings = (
+        "east",
+        "north_east",
+        "north",
+        "north_west",
+        "west",
+        "south_west",
+        "south",
+        "south_east",
+    )
+    position = pose.pose.position
     state: WorldState = {
         "goal": goal,
-        "robot": {**pose.to_json(), "motion": motion},
+        "robot": {
+            "position": {
+                "x": round(position.x, 2),
+                "y": round(position.y, 2),
+                "z": round(position.z, 2),
+            },
+            "yaw_deg": round(yaw_degrees, 1),
+            "heading": headings[round(yaw_degrees / 45.0) % 8],
+            "motion": motion,
+        },
         "objects": objects,
     }
     if goal_xy is not None:
@@ -161,7 +248,28 @@ def build_world_state(
         }
     if lidar is not None:
         z_min, z_max, max_range = lidar_band
-        state["room"] = lidar.to_json(
-            pose, sectors=SECTOR_NAMES, z_min=z_min, z_max=z_max, max_range=max_range
+        pts = pointcloud.xyz(lidar) - geometry.vector_array(pose.pose.position)
+        c, sine = (
+            np.cos(-geometry.yaw(pose.pose.orientation)),
+            np.sin(-geometry.yaw(pose.pose.orientation)),
         )
+        pts = np.column_stack(
+            (c * pts[:, 0] - sine * pts[:, 1], sine * pts[:, 0] + c * pts[:, 1], pts[:, 2])
+        )
+        radius = np.hypot(pts[:, 0], pts[:, 1])
+        keep = (pts[:, 2] > z_min) & (pts[:, 2] < z_max) & (radius > 0.05) & (radius < max_range)
+        pts, radius = pts[keep], radius[keep]
+        sectors = np.round(
+            np.arctan2(pts[:, 1], pts[:, 0]) / (2 * np.pi / len(SECTOR_NAMES))
+        ).astype(int) % len(SECTOR_NAMES)
+        room: dict[str, SectorJson] = {}
+        for index, name in enumerate(SECTOR_NAMES):
+            clearance = (
+                float(radius[sectors == index].min()) if (sectors == index).any() else max_range
+            )
+            room[name] = {
+                "clear_m": round(clearance, 2),
+                "state": "blocked" if clearance < 0.5 else "tight" if clearance < 1.0 else "clear",
+            }
+        state["room"] = room
     return state

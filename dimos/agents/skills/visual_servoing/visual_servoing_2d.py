@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos.messages.sensor_msgs.msg import CameraInfo
 
 
 class VisualServoing2D:
@@ -91,7 +91,7 @@ class VisualServoing2D:
         estimated_distance = self._estimate_distance(bbox)
 
         if estimated_distance is None:
-            return Twist.zero()
+            return Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
 
         # Calculate distance error (positive = too far, need to move forward)
         distance_error = estimated_distance - self._target_distance
@@ -135,8 +135,8 @@ class VisualServoing2D:
         Returns:
             Normalized x coordinate (tan of angle from optical center)
         """
-        fx = self._camera_info.K[0]  # focal length x
-        cx = self._camera_info.K[2]  # optical center x
+        fx = float(self._camera_info.k[0])  # focal length x
+        cx = float(self._camera_info.k[2])  # optical center x
         return (pixel_x - cx) / fx
 
     def _estimate_distance(self, bbox: tuple[float, float, float, float]) -> float | None:
@@ -161,7 +161,7 @@ class VisualServoing2D:
             return None
 
         # Pinhole camera model: distance = (real_width * fx) / pixel_width
-        fx = self._camera_info.K[0]  # focal length x in pixels
+        fx = float(self._camera_info.k[0])  # focal length x in pixels
         estimated_distance = (self._assumed_object_width * fx) / bbox_width
 
         return estimated_distance
