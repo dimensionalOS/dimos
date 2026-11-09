@@ -835,7 +835,6 @@ def _urdf(tmp_path: Path) -> robot_model.RobotModel:
 
 
 def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
-    """Joints, the root link and the files the URDF names travel beside the layer."""
     model = _urdf(tmp_path).to_usd()
 
     assert [joint.name for joint in model.joints] == ["shoulder"]
@@ -868,7 +867,6 @@ def test_a_usd_model_from_a_file_is_read_lazily(tmp_path: Path) -> None:
     scene = tmp_path / "room.usda"
     model = robot_model.UsdModel.from_file(scene)
 
-    # Built before the file exists, as a blueprint is built wherever it is imported.
     scene.write_text(_SCENE_USDA)
 
     assert model.usd == _SCENE_USDA
@@ -910,11 +908,8 @@ def Xform "arm"
 
 
 def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
-    """A robot described only in USD still has joints to put on tf.
-
-    They are UsdPhysics prims in the layer rather than URDF joints, so they have to be read
-    back before anything can be posed at an angle. Without this a USD-native robot publishes
-    no joint tf at all and every link renders at the origin.
+    """A USD-native robot's joints are UsdPhysics prims, so they have to be read back before
+    anything can be posed at an angle; without this every link renders at the origin.
     """
     pytest.importorskip("pxr")
     source = tmp_path / "arm.usda"
@@ -932,10 +927,8 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
 def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """The URDF is still there, so a robot that was described in URDF needs no usd-core for tf.
-
-    This is the line a 3.10 arm robot stands on: reading a layer back needs pxr, and it must
-    not be on the path a URDF-described robot takes.
+    """Reading a layer back needs pxr, and it must not be on the path a URDF-described robot
+    takes: that is the line a 3.10 arm robot stands on.
     """
     import dimos.robot.assets.usd_to_urdf as usd_to_urdf_module
 
@@ -1002,10 +995,7 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
 
 
 def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
-    """A blueprint is built wherever it is imported, which is not always a machine with usd-core.
-
-    So adding a frame to a scene has to wait for the layer to be asked for, like reading it does.
-    """
+    """A blueprint is built wherever it is imported, which is not always a machine with usd-core."""
     scene = tmp_path / "room.usda"
     model = UsdModel.from_file(scene).with_frames(
         {"spot": ("room", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
