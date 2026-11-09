@@ -248,10 +248,10 @@ def usd_with_frames(
 ) -> str:
     """``usd`` with each named frame added as a link on the frame it hangs off.
 
-    The USD counterpart of ``mjcf_with_frames``. A scene needs somewhere to mount things that
-    are not part of it -- three robots standing in a room need three frames, because grafting
-    two subtrees at one frame is refused and rightly so -- and a converted room arrives with
-    frames for its own furniture and none for its visitors.
+    A scene needs somewhere to mount things that are not part of it -- three robots standing in
+    a room need three frames, because grafting two subtrees at one frame is refused and rightly
+    so -- and a converted room arrives with frames for its own furniture and none for its
+    visitors.
 
     Each value is ``(parent frame, xyz, rpy)``. The frame becomes a prim carrying
     RigidBodyAPI, which is what makes it a link to everything that reads this layer: graft_usd
