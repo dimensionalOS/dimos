@@ -90,11 +90,11 @@
       },
       "locked": {
         "dir": "dimos/navigation/local_planner/rust",
-        "lastModified": 1793071747,
-        "narHash": "sha256-cUz6+2eSGs7ZPXaBqhRRxKfUyxU5LUDTbDw+tnwPmnY=",
+        "lastModified": 1794265362,
+        "narHash": "sha256-dyIltOsU/nf6yqm7jRAz677Ry0/95/K+TkbfN1pQf6o=",
         "owner": "dimensionalOS",
         "repo": "dimos",
-        "rev": "a27986debc3d6548d7f0cc72f1a17078ceccd072",
+        "rev": "332b8feee889c7130a1a22cefc3191cc3c43dc96",
         "type": "github"
       },
       "original": {
