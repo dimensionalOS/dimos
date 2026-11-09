@@ -17,7 +17,6 @@ import asyncio
 from collections.abc import AsyncIterator
 import math
 from pathlib import Path
-import time
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
@@ -111,7 +110,9 @@ class Go2Sim(Module):
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         self._desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
-        self._desired_expires = time.monotonic() + CMD_VEL_TIMEOUT
+        # Sim time, like every other rate here: on wall time a command expires in a quarter of
+        # its intended interval at speed=4, and the robot forgets what it was told.
+        self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
 
     def _act(self) -> None:
         policy, world = self._policy, self._world
@@ -123,7 +124,7 @@ class Go2Sim(Module):
             return
         x, y, z, w = base.pose[3:]
         quat = np.array([w, x, y, z])
-        desired = self._desired if time.monotonic() < self._desired_expires else np.zeros(3)
+        desired = self._desired if stamp < self._desired_expires else np.zeros(3)
         self._command += np.clip(desired - self._command, -COMMAND_SLEW, COMMAND_SLEW)
         if desired[2] == 0:
             self._heading = yaw_of(quat) if self._heading is None else self._heading
