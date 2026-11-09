@@ -197,13 +197,25 @@ class UsdModel:
         """The layer. Converted from the URDF, or read from the file, the first time it is asked."""
         return self._with_added_frames(self._layer())
 
+    def _asset_root(self) -> Path | None:
+        """Where this layer's relative asset paths point, for USD to resolve them against.
+
+        Only so that composing a stage off this layer is quiet: nothing that reads frames or
+        asset names needs the geometry, but USD warns once per mesh prim that it could not open
+        the file, and a room has hundreds of them.
+        """
+        source = self.source_path
+        return source.parent if source is not None else None
+
     def _with_added_frames(self, layer: str) -> str:
         if not self._added_frames:
             return layer
         from dimos.robot.assets.usd import usd_with_frames
 
         return usd_with_frames(
-            layer, {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames}
+            layer,
+            {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames},
+            root=self._asset_root(),
         )
 
     def _layer(self) -> str:
@@ -290,7 +302,7 @@ class UsdModel:
         if self._urdf is None:
             from dimos.robot.assets.usd import usd_frame_names
 
-            return usd_frame_names(self.usd)
+            return usd_frame_names(self.usd, self._asset_root())
         names = {self._urdf.root_link}
         for joint in self._urdf.joints:
             names |= {joint.name, joint.parent_link, joint.child_link}
@@ -305,7 +317,7 @@ class UsdModel:
         if self._urdf is None:
             from dimos.robot.assets.usd import referenced_asset_paths
 
-            return referenced_asset_paths(self.usd)
+            return referenced_asset_paths(self.usd, self._asset_root())
         return self._urdf.referenced_files()
 
     def load(self) -> UsdModel:
