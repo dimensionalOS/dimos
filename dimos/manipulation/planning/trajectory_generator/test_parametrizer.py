@@ -151,7 +151,16 @@ def test_materializes_trajectory_and_preserves_source_path() -> None:
 def _untimed(positions: list[list[float]]) -> PlanningResult:
     return PlanningResult(
         status=PlanningStatus.SUCCESS,
-        path=[JointState(name=["arm/a", "arm/b"], position=p) for p in positions],
+        path=[
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["arm/a", "arm/b"],
+                position=np.asarray(p, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+            for p in positions
+        ],
     )
 
 

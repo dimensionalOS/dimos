@@ -183,9 +183,8 @@ def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr(owned
     with ExitStack() as cleanup:
         source_wire = LCMTransport("voxel_chain_source", PointCloud2, url="memq://")
         map_wire = LCMTransport("voxel_chain_map", PointCloud2, url="memq://")
-        merged_wire = LCMTransport("voxel_chain_merged", PointCloud2, url="memq://")
         cost_wire = LCMTransport("voxel_chain_cost", OccupancyGrid, url="memq://")
-        for wire in (source_wire, map_wire, merged_wire, cost_wire):
+        for wire in (source_wire, map_wire, cost_wire):
             cleanup.callback(wire.stop)
         voxel = VoxelGridMapper(rpc_transport=MemoryRPC, device="CPU:0", voxel_size=0.05)
         cost = CostMapper(
@@ -196,7 +195,6 @@ def test_actual_voxel_to_costmapper_chain_preserves_source_header_over_cdr(owned
         voxel.lidar.transport = source_wire
         voxel.global_map.transport = map_wire
         cost.global_map.transport = map_wire
-        cost.merged_map.transport = merged_wire
         cost.global_costmap.transport = cost_wire
         received = []
         ready = Event()

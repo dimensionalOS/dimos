@@ -26,9 +26,9 @@ from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.perception.detection.project import _world_to_optical, sees
-from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.association import Groups
 from dimos.perception.localize.localize import index_frames
+from dimos.perception.localize.memento import Sighting
 from dimos.perception.localize.module import as_detection_array
 from dimos.perception.localize.rig import Rig, RigCamera, _camera_span
 from dimos.perception.localize.types import Localization
@@ -186,10 +186,6 @@ def test_visibility_uses_mount_and_depth(depth_dtype):
 
 @pytest.mark.parametrize("voxel", [0.0, 0.1])
 def test_group_union_keeps_exact_newest_cloud_header(voxel):
-    header = Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=123456788))
-    image = image_utils.from_array(
-        np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8", header=header
-    )
     groups = Groups()
     for ns, points in [
         (123456789, [[0, 0, 2], [0.01, 0, 2]]),
@@ -199,21 +195,20 @@ def test_group_union_keeps_exact_newest_cloud_header(voxel):
             np.array(points),
             header=Header(frame_id="world", stamp=Time(sec=1700000000, nanosec=ns)),
         )
-        detection = Detection3DPC(
-            image=image,
-            ts=1700000000.1234567,
-            bbox=(0, 0, 2, 2),
-            track_id=-1,
-            class_id=0,
-            confidence=0.9,
-            name="target",
-            pointcloud=cloud,
+        sighting = Sighting(
+            ts=1700000000.123456789,
+            camera="front",
+            score=0.9,
+            points=pointcloud.xyz(cloud),
+            viewpoint=Vector3(x=1.0, y=0.0, z=1.0),
         )
-        assert groups.add(detection, radius=0.1, voxel=voxel) == 0
+        assert groups.add(sighting, radius=0.1, voxel=voxel) == 0
     merged = groups.clouds[0]
-    assert merged.header.stamp == Time(sec=1700000000, nanosec=123456789)
-    assert pointcloud.xyz(merged).mean(axis=0) == pytest.approx([0.015, 0, 2])
-    assert len(pointcloud.xyz(merged)) == (1 if voxel else 4)
+    assert merged.mean(axis=0) == pytest.approx([0.015, 0, 2])
+    assert len(merged) == (1 if voxel else 4)
+    # Both sightings landed in one group, in window order; per-sighting stamps
+    # stay exact floats rather than being folded into the fused point array.
+    assert [s.ts for s in groups.sightings[0]] == [1700000000.123456789] * 2
 
 
 def test_localization_boxes_contain_object_bounds():
@@ -227,6 +222,7 @@ def test_localization_boxes_contain_object_bounds():
         ambiguity_margin=0.2,
         position_world_xyz=(2, 3, 4),
         frame_id="world",
+        first_seen_timestamp=1,
         last_seen_timestamp=2,
         point_cloud=cloud,
         n_views=2,

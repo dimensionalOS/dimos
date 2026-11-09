@@ -15,6 +15,7 @@
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.perception.fiducial.blueprints.desk_marker_tf import (
@@ -49,10 +50,11 @@ def test_desk_marker_tf_blueprint_declares_static_tf_module() -> None:
         desk_marker_tf.blueprints[3].kwargs["marker_namespace_prefix"]
         == DESK_MARKER_NAMESPACE_PREFIX
     )
-    assert (
-        desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)].topic.topic
-        == "marker_detection/detections/cdr/vision_msgs/msg/Detection3DArray"
-    )
+    transport = desk_marker_tf.transport_map[("detections", MarkerDetectionStreamModule)]
+    assert isinstance(transport, LCMTransport)
+    assert transport.topic.topic == "/marker_detection/detections"
+    assert transport.topic.message is not None
+    assert transport.topic.message.encoding == "cdr"
 
 
 def test_create_desk_webcam_config_loads_camera_info_yaml(tmp_path: Path) -> None:

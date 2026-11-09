@@ -86,11 +86,12 @@ def test_mesh_colours_preserves_mesh_and_routes_to_chunk_entity() -> None:
     entries = colours(mesh)
 
     assert is_keyed_by_seq(colours) is True
-    assert len(entries) == 1
-    entry = entries[0]
-    assert isinstance(entry, RerunEntry)
-    assert entry.path == f"{MESH_ENTITY}/-2_3_0"
-    assert entry.static is True
+    # The shared renderer emits the chunk geometry and its vertex colours as two
+    # entries on the same sequence-keyed chunk path (see rerun/test_mesh.py).
+    assert len(entries) == 2
+    assert {entry.path for entry in entries} == {f"{MESH_ENTITY}/-2_3_0"}
+    assert all(isinstance(entry, RerunEntry) for entry in entries)
+    assert all(entry.static is True for entry in entries)
 
 
 def test_rgbd_mesh_integrates_depth_wall_and_emits_a_mesh(
