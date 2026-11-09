@@ -67,12 +67,6 @@ class MujocoSim(Module):
     # the same pair a UsdManager serves a robot's meshes on, for the same reason.
     render_file_request: In[String]
     file_info: Out[File]
-    # The Controller's simulated world layer: it finds the world on scene_info, then asks on
-    # scene_data_request. Geometry as JSON, which is this engine's idea of a scene and nobody
-    # else's, so it lives here.
-    scene_info: Out[String]
-    scene_data_request: In[String]
-    scene_data: Out[String]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -93,9 +87,7 @@ class MujocoSim(Module):
         self.actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
         running = asyncio.create_task(self._run())
-        announcing = asyncio.create_task(self._announce())
         yield
-        announcing.cancel()
         running.cancel()
 
     def _engine(self) -> MujocoBackend:
@@ -142,16 +134,6 @@ class MujocoSim(Module):
             elif not publisher.busy:
                 publisher.offer(frame)
             await asyncio.sleep(0.001)
-
-    async def _announce(self) -> None:
-        while True:
-            self.scene_info.publish(String("mujoco"))
-            await asyncio.sleep(1.0)
-
-    async def handle_scene_data_request(self, request: String) -> None:
-        if self._backend is not None:
-            scene = await asyncio.to_thread(self._backend.scene_data)
-            self.scene_data.publish(String(scene))
 
     def _on_actions(self, message: WorldAction) -> None:
         backend = self._backend
