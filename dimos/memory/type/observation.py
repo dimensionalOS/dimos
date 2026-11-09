@@ -19,8 +19,9 @@ import sys
 import threading
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -65,9 +66,8 @@ def _to_tuple(p: Any) -> PoseTuple | None:
 
     Accepts: `None`, a 3- or 7-tuple, or any object with
     `translation`+`rotation` (Transform) or `position`+`orientation`
-    (Pose / PoseStamped) attributes. 3-tuples are padded with the identity
-    quaternion. Duck-typed to avoid importing `dimos.msgs.geometry_msgs`
-    at module load.
+    (Pose) attributes, including the standard generated stamped/covariance/
+    odometry nesting. 3-tuples are padded with the identity quaternion.
     """
     if p is None:
         return None
@@ -78,6 +78,15 @@ def _to_tuple(p: Any) -> PoseTuple | None:
             x, y, z = p
             return (float(x), float(y), float(z), 0.0, 0.0, 0.0, 1.0)
         raise TypeError(f"Pose tuple must have length 3 or 7, got {len(p)}")
+    # Generated ROS messages retain their declared nesting; only unwrap the
+    # pose-bearing shapes, leaving the indexed storage tuple contract unchanged.
+    name = getattr(type(p), "__msgtype__", None)
+    if name in ("nav_msgs/msg/Odometry", "geometry_msgs/msg/PoseWithCovarianceStamped"):
+        p = p.pose.pose
+    elif name in ("geometry_msgs/msg/PoseStamped", "geometry_msgs/msg/PoseWithCovariance"):
+        p = p.pose
+    elif name == "geometry_msgs/msg/TransformStamped":
+        p = p.transform
     # Use ``is not None`` rather than ``or`` — a Vector3 at the origin is
     # falsy but valid, and falling through to ``position`` on a Transform
     # would crash.
@@ -156,17 +165,21 @@ class Observation(Generic[T]):
         if self.pose_tuple is None:
             return None
 
-        return Pose(*self.pose_tuple)
+        return Pose(
+            position=Point(*self.pose_tuple[:3]), orientation=Quaternion(*self.pose_tuple[3:])
+        )
 
     @property
     def pose_stamped(self) -> PoseStamped | None:
         """Typed :class:`PoseStamped` (or None) carrying this observation's ts."""
         if self.pose_tuple is None:
             return None
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         x, y, z, qx, qy, qz, qw = self.pose_tuple
-        return PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+        return PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(self.ts), frame_id=""),
+            pose=Pose(position=Point(x, y, z), orientation=Quaternion(qx, qy, qz, qw)),
+        )
 
     @property
     def data(self) -> T:

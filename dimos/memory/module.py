@@ -35,7 +35,9 @@ from dimos.memory.store.null import NullStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 
@@ -47,7 +49,6 @@ if TYPE_CHECKING:
         SemanticSearch as SemanticSearch,
         SemanticSearchConfig as SemanticSearchConfig,
     )
-    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -375,7 +376,8 @@ class Recorder(MemoryModule):
 
     def _resolve_ts(self, name: str, msg: Any) -> float:
         """Timestamp to record *msg* at. Override to re-base onto another clock."""
-        return getattr(msg, "ts", None) or time.time()
+        header = getattr(msg, "header", None)
+        return message_time.to_seconds(header.stamp) if header is not None else time.time()
 
     async def _resolve_pose(self, name: str, msg: Any, ts: float) -> Pose | None:
         """Pose to anchor *msg* with.
@@ -391,11 +393,16 @@ class Recorder(MemoryModule):
             return cast("Pose | None", await setter(msg))
         if self._tf is None:
             return None
-        frame_id = getattr(msg, "frame_id", None) or self.config.default_frame_id
+        header = getattr(msg, "header", None)
+        frame_id = (header.frame_id if header is not None else "") or self.config.default_frame_id
         transform = self._tf.get(
             self.config.root_frame, frame_id, time_point=ts, time_tolerance=self.config.tf_tolerance
         )
-        return transform.to_pose() if transform is not None else None
+        if transform is None:
+            return None
+        position = transform.transform.translation
+        rotation = transform.transform.rotation
+        return Pose(position=Point(position.x, position.y, position.z), orientation=rotation)
 
     def _collect_pose_setters(self) -> dict[str, PoseSetter]:
         """Map stream name -> bound ``@pose_setter_for`` method."""
@@ -416,7 +423,11 @@ class Recorder(MemoryModule):
         def on_tf(msg: TFMessage) -> None:
             try:
                 for transform in msg.transforms:
-                    tf_stream.append(TFMessage(transform), ts=transform.ts, pose=None)
+                    tf_stream.append(
+                        TFMessage(transforms=[transform]),
+                        ts=message_time.to_seconds(transform.header.stamp),
+                        pose=None,
+                    )
             except sqlite3.ProgrammingError:
                 # A late LCM callback raced teardown and hit the closed store.
                 pass

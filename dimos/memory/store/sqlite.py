@@ -163,7 +163,9 @@ class SqliteStore(Store):
             # Load path: validate type, assemble from stored config
             if payload_type is not None:
                 actual_module = f"{payload_type.__module__}.{payload_type.__qualname__}"
-                if actual_module != stored["payload_module"]:
+                from dimos.memory.codecs.base import resolve_payload_type
+
+                if resolve_payload_type(stored["payload_module"]) is not payload_type:
                     raise ValueError(
                         f"Stream {name!r} was created with type {stored['payload_module']}, "
                         f"but opened with {actual_module}"

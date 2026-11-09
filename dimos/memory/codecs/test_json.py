@@ -16,7 +16,7 @@ import pytest
 
 from dimos.memory.codecs.base import codec_from_id
 from dimos.memory.codecs.json import JsonCodec
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.std_msgs.msg import String
 
 
 @pytest.mark.parametrize(

@@ -31,12 +31,13 @@ use tracing::{debug, info};
 use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
 
+pub mod cdr;
 mod decoding;
 mod encoding;
 pub mod store;
 
-const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
-const IMAGE_PAYLOAD_TYPE: &str = "dimos.msgs.sensor_msgs.Image.Image";
+const TF_PAYLOAD_TYPE: &str = "tf2_msgs/msg/TFMessage";
+const IMAGE_PAYLOAD_TYPE: &str = "sensor_msgs/msg/Image";
 const QUEUE_CAPACITY: usize = 256;
 const WRITE_BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
@@ -44,20 +45,21 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Codec {
-    Lcm,
+    Cdr,
     Json,
+    #[serde(rename = "cdrjpeg")]
     Jpeg,
-    #[serde(rename = "lz4+lcm")]
-    Lz4Lcm,
+    #[serde(rename = "lz4+cdr")]
+    Lz4Cdr,
 }
 
 impl Codec {
     pub(crate) fn id(self) -> &'static str {
         match self {
-            Self::Lcm => "lcm",
+            Self::Cdr => "cdr",
             Self::Json => "json",
-            Self::Jpeg => "jpeg",
-            Self::Lz4Lcm => "lz4+lcm",
+            Self::Jpeg => "cdrjpeg",
+            Self::Lz4Cdr => "lz4+cdr",
         }
     }
 }
@@ -73,11 +75,17 @@ pub struct StreamConfig {
     pub timestamp_field: Option<String>,
     #[serde(default)]
     pub json_schema: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cdr_schema: Option<cdr::CdrSchema>,
+    /// False preserves the existing opaque CDR contract: reception time and no TF splitting.
+    /// Migrated legacy message streams opt into Header time and per-edge TF observations.
+    #[serde(default)]
+    pub source_timestamp: bool,
 }
 
 impl StreamConfig {
     pub fn is_tf(&self) -> bool {
-        self.payload_type == TF_PAYLOAD_TYPE
+        self.source_timestamp && self.payload_type == TF_PAYLOAD_TYPE
     }
 }
 
@@ -151,7 +159,32 @@ pub struct RecorderEngine {
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
+        let builtins: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(dimos_generated_msgs::ROS2MSG_SCHEMAS)?;
         for stream in &config.streams {
+            if matches!(stream.codec, Codec::Cdr | Codec::Lz4Cdr) && stream.cdr_schema.is_none() {
+                anyhow::ensure!(
+                    builtins.contains_key(&stream.payload_type),
+                    "External CDR codec requires its resolved schema"
+                );
+            }
+            if let Some(schema) = &stream.cdr_schema {
+                anyhow::ensure!(
+                    matches!(stream.codec, Codec::Cdr | Codec::Lz4Cdr | Codec::Jpeg),
+                    "CDR schema requires a CDR storage codec"
+                );
+                schema.validate()?;
+                let expected = if stream.codec == Codec::Jpeg {
+                    "sensor_msgs/msg/CompressedImage"
+                } else {
+                    &stream.payload_type
+                };
+                anyhow::ensure!(
+                    schema.name == expected,
+                    "CDR schema identity must match its stored payload"
+                );
+            }
+
             anyhow::ensure!(
                 stream.codec == Codec::Json
                     || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
@@ -456,9 +489,11 @@ fn write_ready(
 mod tests {
     use std::io::Read;
 
-    use lcm_msgs::sensor_msgs::{Image, Imu};
-    use lcm_msgs::std_msgs::{Header, Time};
-    use lcm_msgs::tf2_msgs::TFMessage;
+    use dimos_generated_msgs::builtin_interfaces::msg::time::Time;
+    use dimos_generated_msgs::sensor_msgs::msg::image::Image;
+    use dimos_generated_msgs::sensor_msgs::msg::imu::Imu;
+    use dimos_generated_msgs::std_msgs::msg::header::Header;
+    use dimos_generated_msgs::tf2_msgs::msg::tf_message::TFMessage;
     use lz4_flex::frame::FrameDecoder;
     use rusqlite::Connection;
     use tempfile::NamedTempFile;
@@ -472,11 +507,20 @@ mod tests {
             payload_type: if is_tf {
                 TF_PAYLOAD_TYPE.to_string()
             } else {
-                "test.Raw".to_string()
+                "test_msgs/msg/Raw".to_string()
             },
             codec,
             timestamp_field: None,
             json_schema: None,
+            cdr_schema: if is_tf {
+                None
+            } else {
+                Some(cdr::CdrSchema {
+                    name: "test_msgs/msg/Raw".into(),
+                    data: "uint8[] data\n".into(),
+                })
+            },
+            source_timestamp: true,
         })
     }
 
@@ -488,6 +532,8 @@ mod tests {
             codec,
             timestamp_field: None,
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: true,
         })
     }
 
@@ -502,11 +548,13 @@ mod tests {
     }
 
     #[test]
-    fn jpeg_codec_preserves_the_lcm_envelope() {
+    fn jpeg_codec_preserves_the_cdr_header() {
         let image = Image {
             header: Header {
-                seq: 9,
-                stamp: Time { sec: 12, nsec: 34 },
+                stamp: Time {
+                    sec: 12,
+                    nanosec: 34,
+                },
                 frame_id: "camera".to_string(),
             },
             height: 2,
@@ -518,29 +566,48 @@ mod tests {
         };
 
         let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Jpeg);
-        let observations = process(&stream, &image.encode(), 100.0).unwrap();
-        let decoded = Image::decode(&observations[0].data).unwrap();
+        let observations =
+            process(&stream, &dimos_module::cdr::encode(&image).unwrap(), 100.0).unwrap();
+        let decoded = dimos_module::cdr::decode::<
+            dimos_generated_msgs::sensor_msgs::msg::compressed_image::CompressedImage,
+        >(&observations[0].data)
+        .unwrap();
 
         assert_eq!(observations[0].ts, 12.000_000_034);
         assert_eq!(decoded.header, image.header);
-        assert_eq!(decoded.encoding, "jpeg");
-        assert_eq!(decoded.step, 0);
+        assert_eq!(decoded.format, "jpeg");
         assert_eq!(&decoded.data[..2], &[0xff, 0xd8]);
     }
 
     #[test]
     fn tf_batches_become_individually_timestamped_observations() {
-        let mut first = lcm_msgs::geometry_msgs::TransformStamped::default();
-        first.header.stamp = Time { sec: 10, nsec: 5 };
+        let mut first = dimos_module::tf::from_isometry(
+            "world",
+            "child",
+            Time { sec: 0, nanosec: 0 },
+            dimos_module::nalgebra::Isometry3::identity(),
+        );
+        first.header.stamp = Time {
+            sec: 10,
+            nanosec: 5,
+        };
         first.child_frame_id = "first".to_string();
-        let mut second = lcm_msgs::geometry_msgs::TransformStamped::default();
-        second.header.stamp = Time { sec: 20, nsec: 7 };
+        let mut second = dimos_module::tf::from_isometry(
+            "world",
+            "child",
+            Time { sec: 0, nanosec: 0 },
+            dimos_module::nalgebra::Isometry3::identity(),
+        );
+        second.header.stamp = Time {
+            sec: 20,
+            nanosec: 7,
+        };
         second.child_frame_id = "second".to_string();
         let message = TFMessage {
             transforms: vec![first, second],
         };
-        let stream = stream("tf", Codec::Lcm, true);
-        let data = message.encode();
+        let stream = stream("tf", Codec::Cdr, true);
+        let data = dimos_module::cdr::encode(&message).unwrap();
 
         let observations = process(&stream, &data, 100.0).unwrap();
 
@@ -549,7 +616,7 @@ mod tests {
         assert_eq!(observations[1].ts, 20.000_000_007);
         let decoded: Vec<TFMessage> = observations
             .iter()
-            .map(|observation| TFMessage::decode(&observation.data).unwrap())
+            .map(|observation| dimos_module::cdr::decode::<TFMessage>(&observation.data).unwrap())
             .collect();
         assert_eq!(decoded[0].transforms.len(), 1);
         assert_eq!(decoded[0].transforms[0].child_frame_id, "first");
@@ -559,42 +626,59 @@ mod tests {
 
     #[test]
     fn stamped_sensor_messages_preserve_their_source_timestamp() {
-        let mut message = Imu::default();
-        message.header.stamp = Time { sec: 42, nsec: 25 };
+        let mut message: Imu = serde_json::from_value(serde_json::json!({"header":{"stamp":{"sec":0,"nanosec":0},"frame_id":"imu"},"orientation":{"x":0.,"y":0.,"z":0.,"w":1.},"orientation_covariance":[0.,0.,0.,0.,0.,0.,0.,0.,0.],"angular_velocity":{"x":0.,"y":0.,"z":0.},"angular_velocity_covariance":[0.,0.,0.,0.,0.,0.,0.,0.,0.],"linear_acceleration":{"x":0.,"y":0.,"z":0.},"linear_acceleration_covariance":[0.,0.,0.,0.,0.,0.,0.,0.,0.]})).unwrap();
+        message.header.stamp = Time {
+            sec: 42,
+            nanosec: 25,
+        };
         let stream = Arc::new(StreamConfig {
             port: "imu".to_string(),
             name: "imu".to_string(),
-            payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
-            codec: Codec::Lcm,
+            payload_type: "sensor_msgs/msg/Imu".to_string(),
+            codec: Codec::Cdr,
             timestamp_field: None,
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: true,
         });
 
-        let observations = decoding::decode(&stream, &message.encode(), 100.0).unwrap();
+        let observations = decoding::decode(
+            &stream,
+            &dimos_module::cdr::encode(&message).unwrap(),
+            100.0,
+        )
+        .unwrap();
         assert_eq!(observations[0].ts, 42.000_000_025);
     }
 
     #[test]
-    fn lcm_storage_encoding_consumes_the_decoded_image() {
+    fn cdr_storage_encoding_consumes_the_decoded_image() {
         let image = Image {
             header: Header {
-                stamp: Time { sec: 42, nsec: 25 },
-                ..Header::default()
+                stamp: Time {
+                    sec: 42,
+                    nanosec: 25,
+                },
+                frame_id: "camera".into(),
             },
             height: 1,
             width: 1,
             encoding: "rgb8".to_string(),
             step: 3,
             data: vec![1, 2, 3],
-            ..Image::default()
+            is_bigendian: 0,
         };
-        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Lcm);
+        let stream = typed_stream("camera", IMAGE_PAYLOAD_TYPE, Codec::Cdr);
 
-        let observations = process(&stream, &image.encode(), 100.0).unwrap();
+        let observations =
+            process(&stream, &dimos_module::cdr::encode(&image).unwrap(), 100.0).unwrap();
 
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].ts, 42.000_000_025);
-        assert_eq!(Image::decode(&observations[0].data).unwrap(), image);
+        assert_eq!(
+            dimos_module::cdr::decode::<Image>(&observations[0].data).unwrap(),
+            image
+        );
     }
 
     #[test]
@@ -605,7 +689,7 @@ mod tests {
                 path: file.path().to_string_lossy().into_owned(),
             },
             encoding_threads: 2,
-            streams: vec![(*stream("samples", Codec::Lcm, false)).clone()],
+            streams: vec![(*stream("samples", Codec::Cdr, false)).clone()],
         };
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
@@ -616,7 +700,7 @@ mod tests {
             sender
                 .send(EncodedBatch {
                     sequence,
-                    stream: stream("samples", Codec::Lcm, false),
+                    stream: stream("samples", Codec::Cdr, false),
                     reception_ts: sequence as f64,
                     observations: Ok(vec![StoredObservation {
                         ts: sequence as f64,
@@ -668,7 +752,7 @@ mod tests {
     fn tf_observations_use_empty_jsonb_tags_without_a_reception_index() {
         let file = NamedTempFile::new().unwrap();
         let connection = Connection::open(file.path()).unwrap();
-        let tf = stream("tf", Codec::Lcm, true);
+        let tf = stream("tf", Codec::Cdr, true);
         drop(connection);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Sqlite {
@@ -710,7 +794,7 @@ mod tests {
     #[test]
     fn mcap_store_writes_indexed_storage_encoded_messages() {
         let file = NamedTempFile::new().unwrap();
-        let samples = stream("samples", Codec::Lz4Lcm, false);
+        let samples = stream("samples", Codec::Lz4Cdr, false);
         let mut recording_store = store::open(
             &store::RecordingStoreConfig::Mcap {
                 path: file.path().to_string_lossy().into_owned(),
@@ -747,8 +831,11 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let message = &messages[0];
         assert_eq!(message.channel.topic, "samples");
-        assert_eq!(message.channel.message_encoding, "lz4+lcm");
-        assert_eq!(message.channel.metadata["dimos.payload_type"], "test.Raw");
+        assert_eq!(message.channel.message_encoding, "lz4+cdr");
+        assert_eq!(
+            message.channel.metadata["dimos.payload_type"],
+            "test_msgs/msg/Raw"
+        );
         assert_eq!(message.log_time, 13_000_000_000);
         assert_eq!(message.publish_time, 12_500_000_000);
         assert_eq!(message.data.as_ref(), encoded);
@@ -757,7 +844,7 @@ mod tests {
     #[test]
     fn engine_uses_the_configured_worker_count_and_flushes_on_shutdown() {
         let file = NamedTempFile::new().unwrap();
-        let raw = stream("raw", Codec::Lcm, false);
+        let raw = stream("raw", Codec::Cdr, false);
         let config = RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
                 path: file.path().to_string_lossy().into_owned(),
@@ -789,14 +876,14 @@ mod tests {
             streams: vec![(*image).clone()],
         };
         let engine = RecorderEngine::start(config).unwrap();
-        engine.handle().record(image, b"not an lcm image");
+        engine.handle().record(image, b"not a CDR image");
 
         let error = engine.shutdown().unwrap_err();
 
         let message = format!("{error:#}");
         assert!(message.contains("camera"));
         assert!(message.contains("sequence 0"));
-        assert!(message.contains("invalid LCM Image"));
+        assert!(message.contains("invalid CDR Image"));
     }
 
     #[test]
@@ -814,17 +901,20 @@ mod tests {
     #[test]
     fn json_storage_is_portable_and_keeps_both_timestamps() {
         let text = r#"{"sent":12.5,"label":"拿起积木"}"#;
-        let message = lcm_msgs::std_msgs::String { data: text.into() };
+        let message = dimos_generated_msgs::std_msgs::msg::string::String { data: text.into() };
         let schema = serde_json::json!({"type":"object","properties":{"sent":{"type":"number"}}});
         let stream = Arc::new(StreamConfig {
             port: "events".into(),
             name: "events".into(),
-            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            payload_type: "std_msgs/msg/String".into(),
             codec: Codec::Json,
             timestamp_field: Some("sent".into()),
             json_schema: Some(schema.clone()),
+            cdr_schema: None,
+            source_timestamp: true,
         });
-        let mut encoded = process(&stream, &message.encode(), 13.0).unwrap();
+        let mut encoded =
+            process(&stream, &dimos_module::cdr::encode(&message).unwrap(), 13.0).unwrap();
         let stored = encoded.pop().unwrap();
         assert_eq!(stored.data, text.as_bytes());
         let observations = [Observation {
@@ -868,5 +958,35 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod raw_cdr_compatibility_tests {
+    use super::*;
+    #[test]
+    fn old_raw_cdr_config_keeps_opaque_bytes_and_reception_time() {
+        let stream: StreamConfig = serde_json::from_value(serde_json::json!({"port":"pose","name":"pose","payload_type":"geometry_msgs/msg/PoseStamped","codec":"cdr","cdr_schema":{"name":"geometry_msgs/msg/PoseStamped","data":"std_msgs/Header header\ngeometry_msgs/Pose pose\n"}})).unwrap();
+        assert!(!stream.source_timestamp);
+        let bytes = vec![0, 1, 0, 0, 1, 2, 3, 4];
+        let result = process(&stream, &bytes, 99.25).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].ts, 99.25);
+        assert_eq!(result[0].data, bytes);
+    }
+    #[test]
+    fn external_schema_is_required_before_creating_artifact() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("missing.mcap");
+        let stream: StreamConfig=serde_json::from_value(serde_json::json!({"port":"custom","name":"custom","payload_type":"acme_msgs/msg/Event","codec":"cdr"})).unwrap();
+        let config = RecorderConfig {
+            store: store::RecordingStoreConfig::Mcap {
+                path: path.to_str().unwrap().into(),
+            },
+            encoding_threads: 1,
+            streams: vec![stream],
+        };
+        assert!(RecorderEngine::start(config).is_err());
+        assert!(!path.exists());
     }
 }
