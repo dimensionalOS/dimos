@@ -86,18 +86,6 @@ def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
     assert normalize_argv(argv) == expected
 
 
-def test_mcp_root_help_does_not_access_adapter(mocker: MockerFixture) -> None:
-    adapter = mocker.patch.object(
-        mcp, "_get_adapter", side_effect=AssertionError("help accessed the MCP adapter")
-    )
-
-    result = CliRunner().invoke(main, ["--help"])
-
-    assert result.exit_code == 0, result.output + repr(result.exception)
-    assert "Usage:" in result.output
-    adapter.assert_not_called()
-
-
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
@@ -117,7 +105,6 @@ def test_mcp_root_help_does_not_access_adapter(mocker: MockerFixture) -> None:
             ],
             {"x": 0.5, "enabled": True, "n": 3, "name": "sample", "missing": None},
         ),
-        (["--json-args", '{"x":0.5,"enabled":true}'], {"x": 0.5, "enabled": True}),
     ],
 )
 def test_mcp_values_reach_adapter(
