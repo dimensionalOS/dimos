@@ -14,30 +14,16 @@
 
 """What sim2 is: a switch between engines, and the little they have in common.
 
-A simulated world is one module. It takes actions on a stream and publishes what changed on
-another, and that is the whole contract. How a world is built, stepped or paced is the engine's
-business, and nothing in this file knows that anything is watching what it sends -- a sensor
-drawing the world is a subscriber like any other, reached through no API of core's.
-
-    from dimos.sim2.sim import sim_module
+A simulated world is one module: actions in on a stream, observations out on another. How it is
+built, stepped or paced is the engine's business, and nothing here knows that anything is
+watching -- a sensor drawing the world is an ordinary subscriber.
 
     sim_module(scene_manager="scene/usdmanager")        # the default engine
-    sim_module("mujoco", scene=Path("room.usda"))       # or one by name, configured as it likes
-
-A backend is any module shaped like `SimulatedWorld` -- actions in, observations out -- which is
-a protocol rather than a base class so that a native one can be one too.
-
-The blueprint says who is in the world, because the blueprint is the one place that already
-knows::
-
+    sim_module("mujoco", scene=Path("room.usda"))       # or one by name
     sim_module(scene_manager="scene/usdmanager", robots=[SimulatedRobot("go2", GO2_USD)])
 
-Said there rather than by each robot module to a receiver. A robot describing itself to the
-simulation meant every robot had to be able to find it and the simulation had to be able to
-hear from anything, which is a lot of mechanism for a fact that is written down in the blueprint
-either way. A sensor says nothing at all: it reads the scene the manager composed, builds its
-own world out of it, and renders from the observations -- so core never learns that anything is
-watching.
+A backend is any module shaped like `SimulatedWorld` -- a protocol rather than a base class, so
+that a native one can be one too. The blueprint says who is in the world.
 """
 
 from importlib import import_module
@@ -67,30 +53,23 @@ _ASSET_RPC = "get_asset"
 
 
 class SceneConfig(ModuleConfig):
-    """What anything that needs the world puts in its config: where to get it from.
-
-    Shared by the engine that runs the world and by every sensor that renders from it, because
-    they have to be pointed at the same manager and there is one right way to say so.
+    """Where to get the world from. Shared by the engine that runs it and by every sensor that
+    renders from it, so they are pointed at the same manager.
     """
 
     # The world, as USD: a layer, or a file holding one. A path is read into a `UsdModel` rather
-    # than handed over as a path, because an engine here is only ever given USD -- the one kind
-    # of description a robot, a scene and a sensor all agree on.
+    # than handed over as a path, because an engine here is only ever given USD.
     scene: Path | UsdModel | None = None
-    # The UsdManager that composes this world, which is the one place that says what is in it:
-    # the room, and everything mounted on it. Asked `get_scene` while the world is being built,
-    # and what it answers with *is* the world; `scene=` is the fallback for a world nobody
-    # manages, which is what the tests are.
+    # The UsdManager that composes this world, asked `get_scene` while the world is being built;
+    # what it answers with *is* the world. `scene=` is the fallback for a world nobody manages.
     scene_manager: Mount | None = None
 
     @field_validator("scene_manager", mode="before")
     @classmethod
     def _normalize_scene_manager(cls, value: object) -> object:
-        """Accept a class, a (namespaced) Blueprint or an instance name, as `mounts=` does.
-
-        The same normalisation and for the same reason: a blueprint is the useful form, because
-        it names the exact instance it deploys, and a Blueprint handed to pydantic as-is is a
-        wall of "Unexpected keyword argument: blueprints, transport_map, ...".
+        """Accept a class, a (namespaced) Blueprint or an instance name, as `mounts=` does: a
+        Blueprint handed to pydantic as-is is a wall of "Unexpected keyword argument: blueprints,
+        transport_map, ...".
         """
         return value if value is None or isinstance(value, Mount) else Mount.of(value)
 
@@ -107,16 +86,10 @@ class SimulatedWorldConfig(SceneConfig):
 
 
 class SimulatedWorld(Protocol):
-    """What sim2's core says a simulated world is: actions in on one stream, observations out on another.
+    """Actions in on one stream, observations out on another.
 
-    A protocol and not a base class, deliberately. A backend does not have to be a Python module
-    subclassing anything -- a native one cannot be -- so this is the shape it has to have rather
-    than the class it has to extend. `SimulatedWorldConfig` is here for a Python backend that
-    wants the usual config without retyping it, and nothing is obliged to use that either.
-
-    This is the whole contract. Core does not own the loop, know which engine is running, hold a
-    list of renderers, or make a view for one: a backend is told what is in the world, finds the
-    world itself through `scene_from`, and does the rest however it likes.
+    A protocol and not a base class, deliberately: a native backend cannot subclass anything.
+    `SimulatedWorldConfig` is here for a Python backend that wants the usual config.
     """
 
     actions: In[WorldAction]
@@ -128,22 +101,16 @@ def scene_from(
 ) -> UsdModel | None:
     """The scene a manager composed, as USD with its assets on disk. Asked once.
 
-    The one way anything here learns what the world is, and used by both kinds of thing that
-    need to know: the engine that is going to run it, and every sensor that is going to render
-    from it. They ask the same manager the same question and get the same layer, which is what
-    makes a scan land on the furniture that is drawn rather than on a generated stand-in.
+    The one way anything here learns what the world is, for both the engine and every sensor: the
+    same question to the same manager gets the same layer, which is what makes a scan land on the
+    furniture that is drawn.
 
-    One call, and no retry and no deadline on this side. `get_scene` does not answer until the
-    manager has every mount's `get_usd` grafted into the scene -- it waits on those itself, with
-    no deadline, because half a world is a room with no robots in it -- so there is nothing here
-    to poll for and nothing to give up on. Ask it after the modules are built, not while they are
-    being built, and it answers once: a manager that is not constructed yet cannot be waited for
-    by anybody.
+    No retry and no deadline on this side: `get_scene` does not answer until every mount's
+    `get_usd` is grafted in, waiting on those itself. Ask it after the modules are built.
 
-    USD either way, and never a path for the asker to go and open: a scene arrives as text that
-    names its assets, which is what lets it reach something sharing no filesystem with whoever
-    composed it, and the names are turned back into files here -- once per machine, keyed by
-    content.
+    USD either way, never a path: a scene arrives as text naming its assets, so it can reach
+    something sharing no filesystem with whoever composed it, and the names are turned back into
+    files here, once per machine, keyed by content.
     """
     if mount is None:
         return UsdModel.from_file(fallback) if isinstance(fallback, Path | str) else fallback
@@ -175,11 +142,8 @@ BACKENDS = {
 
 
 def sim_module(backend: str = "mujoco", **config: Any) -> Blueprint:
-    """The simulated world, run by whichever engine is named: one module, actions in, observations out.
-
-    A switch and nothing else, the way `vis_module` is for viewers. Every option goes straight
-    through to the engine, because what a world needs in order to run is the engine's business
-    and core has no opinions left to add.
+    """One module, actions in, observations out, run by whichever engine is named. A switch and
+    nothing else, the way `vis_module` is for viewers.
     """
     if backend not in BACKENDS:
         raise ValueError(f"unknown simulation backend {backend!r}; one of {sorted(BACKENDS)}")

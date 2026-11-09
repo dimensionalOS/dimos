@@ -24,9 +24,8 @@ the blob once and committing the result::
         --from dimos.robot.unitree.go2.sim2:go2_drives
 
 ``--from`` names a callable returning ``{joint: (kp, kd, target)}``. It lives with the robot,
-because which gains a robot runs on is the robot's business and not this script's; all this does
-is the USD authoring, and the test beside the robot is what keeps the layer honest if the blob
-it came from ever changes.
+because which gains a robot runs on is the robot's business; all this does is the USD
+authoring, and the test beside the robot keeps the layer honest if the blob ever changes.
 """
 
 from __future__ import annotations

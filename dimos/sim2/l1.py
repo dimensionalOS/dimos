@@ -66,10 +66,8 @@ class SimL1(Module):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: the frame this L1 scans from.
-
-        A frame rather than a case: the Go2's utlidar sits under a cover that is part of the
-        robot's own shell, and nobody has measured the unit inside it.
+        """``[asset_root, usd]``: the frame this L1 scans from. A frame rather than a case: the Go2's
+        utlidar sits under a cover that is part of the robot's own shell.
         """
         return frame_usd(self.frame_id, name="sim_l1")
 
@@ -81,11 +79,9 @@ class SimL1(Module):
         self._mapping.cancel()
 
     def _open(self) -> WorldView:
-        """This L1's own world: the composed scene, with a site at its own frame.
-
-        Opened on the first frame rather than at start, because the robots in the world are what
-        the world says they are -- the observations announce them -- and the view has to name its
-        bodies the way the observations do.
+        """This L1's own world: the composed scene, with a site at its own frame. Opened on the first
+        frame rather than at start, because the robots in the world are the ones the observations
+        announce, and the view has to name its bodies the way they do.
         """
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:
@@ -131,10 +127,8 @@ class SimL1(Module):
             )
 
     def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Where the square is cropped around: the robot carrying this L1, or the L1 itself.
-
-        Read off the observations rather than out of the view, because that is where the robot's
-        pose comes from in the first place and the view is only a copy of it.
+        """Where the square is cropped around: the robot carrying this L1, or the L1 itself. Read off
+        the observations rather than out of the view, because that is where the pose comes from.
         """
         entity = self._world.entity(rider) if rider is not None else None
         return origin if entity is None or entity.pose is None else entity.pose[:3]

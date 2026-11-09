@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The room a sim2 blueprint runs in when nobody has a real scene to hand: walls, shelves, a table.
+"""The room a sim2 blueprint runs in when nobody has a real scene to hand: walls, shelves, a
+table.
 
-USD, like every other world here, converted once from the MJCF it used to be written as and
-committed beside this file. Its lighting is written in by hand, because the converter drops
-lights outright ("lights are not supported") and a layer that says nothing about how it is lit
-gets whatever the viewer guesses.
+USD, converted once from the MJCF it used to be and committed beside this file. Its lighting is
+written in by hand, because the converter drops lights outright ("lights are not supported").
 
     MuJoCo: 1 plane, 8 boxes, no joints and nothing that moves
     dimos:  root link "logistics", which is the frame a visitor hangs off

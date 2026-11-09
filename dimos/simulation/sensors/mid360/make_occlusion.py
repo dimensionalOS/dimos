@@ -14,19 +14,14 @@
 
 """Measure which directions a robot's own body blocks, as the OcclusionMap a SimLidar reads.
 
-A sensor bolted to a robot cannot see the robot. The cast itself cannot answer this: a lidar
-sits inside its mount's collision hull rather than proud of its surface, and a hull is a few
-convex shapes wrapped around a shape that is neither -- the G1's Mid-360 is inside the head's,
-so a cast against colliders says "blocked" in every direction including straight up, and a
-convex answer is the one answer that is certainly wrong. The G1's head leaves a gap on each
-side; the hull does not.
+The cast itself cannot answer this: a lidar sits inside its mount's collision hull rather than
+proud of its surface, and a hull is a few convex shapes around a shape that is neither -- the
+G1's Mid-360 is inside the head's, so a cast against colliders says "blocked" in every
+direction including straight up. The G1's head leaves a gap on each side; the hull does not.
 
 So the mount is left out of the cast (``MujocoView.raycaster(mounted_at=...)``) and what it
-really blocks is measured here instead, against the robot's *visual* meshes, which are the
-shape of the actual shell. The result is a probability per one-degree cell: 1 where every
-sample hit the robot, 0 where none did, and a fraction along an edge.
-
-Run it for a robot and a sensor frame:
+really blocks is measured here against the robot's *visual* meshes, which are the shape of the
+actual shell. The result is a probability per one-degree cell.
 
     python -m dimos.simulation.sensors.mid360.make_occlusion \\
         --robot g1 --frame mid360_link --out data/g1_sim/g1_mid360_occlusion.npz
@@ -43,8 +38,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 # How far a hit has to be to count as the robot's own body rather than the world. The robot is
-# a metre tall and a sensor on it is centimetres from its shell, so anything past this is the
-# room: the robot is simulated alone here, but a stray hit would still be the floor.
+# a metre tall and a sensor on it is centimetres from its shell, so anything past this is room.
 _SELF_RANGE = 1.2
 # Samples per cell, jittered inside it: a cell on the edge of the shell is blocked some of the
 # time, and that fraction is the number the lidar wants.
