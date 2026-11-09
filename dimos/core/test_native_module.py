@@ -18,6 +18,7 @@ Every test launches the real native_echo.py subprocess via ModuleCoordinator.bui
 The echo script writes received CLI args to a temp file for assertions.
 """
 
+from collections.abc import Callable
 import contextlib
 import importlib
 from io import BytesIO
@@ -25,7 +26,7 @@ import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Protocol
 from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
@@ -38,6 +39,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
 from dimos.core.module import Module
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
@@ -49,6 +51,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig
+from dimos.spec.utils import Spec
 
 _ECHO = str(Path(__file__).parent / "demos" / "native_echo.py")
 
@@ -100,6 +103,19 @@ class StubNativeModule(NativeModule):
 
 class StubBuildModule(NativeModule):
     pass
+
+
+class DockSpec(Spec, Protocol):
+    def start_dock(self) -> str: ...
+
+
+class StubRpcModule(NativeModule):
+    dock: DockSpec
+    speaker: DockSpec | None
+
+    @rpc(native=True)
+    def plan(self, x: float) -> str:
+        """Served by the native process."""
 
 
 class StubIoModule(NativeModule):
@@ -308,7 +324,13 @@ def test_build_native_forces_build(tmp_path: Path, mocker) -> None:
     assert run_build(tmp_path, mocker, build_native=True).exists()
 
 
-def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> dict[str, Any]:
+def _launch(
+    monkeypatch,
+    transport: TransportBackend,
+    module_class: type[NativeModule] = StubBuildModule,
+    wire: Callable[[NativeModule], None] = lambda module: None,
+    **config_kwargs: Any,
+) -> dict[str, Any]:
     """The launch line the native subprocess would get, without spawning it."""
 
     def unexpected_open(*args, **kwargs):
@@ -328,8 +350,9 @@ def _launch(monkeypatch, transport: TransportBackend, **config_kwargs: Any) -> d
     monkeypatch.setattr(backend, "start", Mock())
     monkeypatch.setattr(backend, "serve_module_rpc", Mock())
     monkeypatch.setattr(backend, "stop", Mock())
-    module = StubBuildModule(executable=_ECHO, stdin_config=True, **config_kwargs)
+    module = module_class(executable=_ECHO, stdin_config=True, **config_kwargs)
     try:
+        wire(module)
         return json.loads(module._stdin_blob({}))
     finally:
         module.stop()
@@ -358,6 +381,29 @@ def test_a_native_can_be_opened_as_the_router(monkeypatch) -> None:
     assert session["mode"] == "router"
     assert session["listen"] == ["tcp/127.0.0.1:17450"]
     assert session["connect"] == []
+
+
+def test_a_module_without_rpc_sends_no_rpc_block(monkeypatch) -> None:
+    assert "rpc" not in _launch(monkeypatch, "zenoh")
+
+
+def test_the_launch_line_carries_the_rpc_names(monkeypatch) -> None:
+    def wire(module: NativeModule) -> None:
+        module.set_module_ref("dock", RPCClient(None, None, "M20Connection", ["start_dock"]))
+
+    rpc = _launch(monkeypatch, "zenoh", StubRpcModule, wire, rpc_timeouts={"plan": 5.0})["rpc"]
+    assert rpc == {
+        "name": "StubRpcModule",
+        "served": ["plan"],
+        "targets": {"dock": "M20Connection", "speaker": None},
+        "timeouts": {"plan": 5.0},
+        "default_timeout": 120.0,
+    }
+
+
+def test_an_unwired_module_ref_fails_before_the_spawn(monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="'dock' has no target"):
+        _launch(monkeypatch, "zenoh", StubRpcModule)
 
 
 def test_a_pinned_session_is_not_a_module_config_field(monkeypatch) -> None:
