@@ -25,7 +25,6 @@ validator = { version = "0.21", features = ["derive"] }
 # Default features pull in ring via QUIC/TLS, which breaks static musl cross-linking.
 zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
 async-channel = "2"
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tracing-test = "0.2"

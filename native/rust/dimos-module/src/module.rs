@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use futures_util::FutureExt;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::io;
@@ -26,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::transport::{BoxFuture, Deliver, Dispatch, Transport};
+use crate::transport::{Deliver, Dispatch, Transport};
 
 /// Marker trait for a config checked by `#[native_config]`: every field required,
 /// no Rust-side defaults, no unknown fields. Implemented only by the macro.
@@ -75,9 +74,11 @@ pub(crate) trait Route: Send + Sync {
     /// Blocks the calling thread while the input's buffer is full.
     fn dispatch(&self, data: &[u8]);
 
-    /// Suspends the calling task while the input's buffer is full.
-    fn dispatch_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.dispatch(data) })
+    /// Never blocks. Returns false when a full buffer dropped the message.
+    /// The default is for routes whose dispatch never blocks.
+    fn try_dispatch(&self, data: &[u8]) -> bool {
+        self.dispatch(data);
+        true
     }
 }
 
@@ -99,20 +100,22 @@ impl<T: Send + 'static> TypedRoute<T> {
     }
 }
 
-// A closed channel means the module is stopping.
 impl<T: Send + 'static> Route for TypedRoute<T> {
     fn dispatch(&self, data: &[u8]) {
         if let Some(msg) = self.parse(data) {
+            // A closed channel means the module is stopping.
             let _ = self.sender.send_blocking(msg);
         }
     }
 
-    fn dispatch_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            if let Some(msg) = self.parse(data) {
-                let _ = self.sender.send(msg).await;
-            }
-        })
+    fn try_dispatch(&self, data: &[u8]) -> bool {
+        let Some(msg) = self.parse(data) else {
+            return true;
+        };
+        match self.sender.try_send(msg) {
+            Err(async_channel::TrySendError::Full(_)) => false,
+            Ok(()) | Err(async_channel::TrySendError::Closed(_)) => true,
+        }
     }
 }
 pub struct Input<T> {
@@ -452,28 +455,31 @@ pub(crate) async fn subscribe_routes<T: Transport>(
 /// Every route on one topic. A panicking route must not kill the delivery loop.
 struct TopicRoutes(Vec<Box<dyn Route>>);
 
-impl Deliver for TopicRoutes {
-    fn deliver(&self, data: &[u8]) {
+impl TopicRoutes {
+    fn each(&self, mut dispatch: impl FnMut(&dyn Route) -> bool) -> bool {
+        let mut accepted = true;
         for route in &self.0 {
-            let dispatched =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| route.dispatch(data)));
-            if dispatched.is_err() {
-                error!("dispatch handler panicked; message dropped");
+            let outcome =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(route.as_ref())));
+            match outcome {
+                Ok(ok) => accepted &= ok,
+                Err(_) => error!("dispatch handler panicked; message dropped"),
             }
         }
+        accepted
+    }
+}
+
+impl Deliver for TopicRoutes {
+    fn deliver(&self, data: &[u8]) {
+        self.each(|route| {
+            route.dispatch(data);
+            true
+        });
     }
 
-    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            for route in &self.0 {
-                let dispatched = std::panic::AssertUnwindSafe(route.dispatch_async(data))
-                    .catch_unwind()
-                    .await;
-                if dispatched.is_err() {
-                    error!("dispatch handler panicked; message dropped");
-                }
-            }
-        })
+    fn try_deliver(&self, data: &[u8]) -> bool {
+        self.each(|route| route.try_dispatch(data))
     }
 }
 
@@ -1300,44 +1306,26 @@ mod tests {
         .await;
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn full_input_suspends_async_delivery() {
+    #[tokio::test]
+    async fn full_input_drops_on_try_deliver_instead_of_blocking() {
         let mut builder = Builder::new(topics(&[("data", "/data")]));
         let mut input = builder.input("data", |b| Ok(b.to_vec()));
-        let routes = Arc::new(TopicRoutes(builder.routes.remove("/data").unwrap()));
+        let routes = TopicRoutes(builder.routes.remove("/data").unwrap());
 
         for i in 0..INPUT_BUFFER_LEN {
-            routes.deliver_async(&[i as u8]).await;
+            assert!(routes.try_deliver(&[i as u8]));
         }
-        let blocked = tokio::spawn({
-            let routes = Arc::clone(&routes);
-            async move { routes.deliver_async(&[INPUT_BUFFER_LEN as u8]).await }
-        });
-        tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
-            !blocked.is_finished(),
-            "delivery must suspend on a full input, not drop"
+            !routes.try_deliver(&[99u8]),
+            "a full input must report the drop, not block"
         );
 
         assert_eq!(input.recv().await.unwrap(), vec![0u8]);
-        tokio::time::timeout(Duration::from_secs(1), blocked)
-            .await
-            .expect("delivery resumes once the handler drains")
-            .unwrap();
-        for i in 1..=INPUT_BUFFER_LEN {
+        assert!(routes.try_deliver(&[100u8]));
+        for i in 1..INPUT_BUFFER_LEN {
             assert_eq!(input.recv().await.unwrap(), vec![i as u8]);
         }
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn panicking_route_does_not_starve_siblings_in_async_delivery() {
-        let delivered = Arc::new(AtomicU64::new(0));
-        let routes = TopicRoutes(vec![
-            Box::new(PanicRoute),
-            Box::new(CountingRoute(Arc::clone(&delivered))),
-        ]);
-        routes.deliver_async(&[7u8]).await;
-        assert_eq!(delivered.load(Ordering::SeqCst), 1);
+        assert_eq!(input.recv().await.unwrap(), vec![100u8]);
     }
 
     // Exercises the code #[derive(Module)] generates for an #[io] field.

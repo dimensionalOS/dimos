@@ -20,12 +20,10 @@ use std::sync::Arc;
 /// Per-channel delivery handed to a transport on `subscribe`. The transport
 /// calls it with each message's raw payload. Decode and routing happen inside.
 pub trait Deliver: Send + Sync {
-    /// Blocks the calling thread while an input is full. For transports that
-    /// call back from their own threads.
+    /// Blocks the calling thread while an input is full.
     fn deliver(&self, data: &[u8]);
-    /// Suspends the calling task while an input is full. For transports that
-    /// own their receive loop.
-    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()>;
+    /// Never blocks. Returns false when a full input dropped the message.
+    fn try_deliver(&self, data: &[u8]) -> bool;
 }
 
 pub type Dispatch = Arc<dyn Deliver>;
@@ -36,8 +34,9 @@ impl<F: Fn(&[u8]) + Send + Sync> Deliver for F {
         self(data)
     }
 
-    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self(data) })
+    fn try_deliver(&self, data: &[u8]) -> bool {
+        self(data);
+        true
     }
 }
 
@@ -61,7 +60,7 @@ pub trait Transport: Send + Sync + 'static {
     fn set_publisher_qos(&self, _qos: &serde_json::Value) {}
 }
 
-pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Object-safe view of [`Transport`]. `Transport` returns `impl Future`, so it
 /// can't be made into a trait object. A baked host needs exactly that, because
