@@ -12,34 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A robot whose base is driven straight from cmd_vel (its three base joints' velocities), with odom/tf like a real connection's."""
+"""A robot whose base is driven straight from cmd_vel (its three base joints' velocities), with odom/tf like a real connection's.
+
+In this package because the joints it drives are this engine's: `BASE_JOINTS` is DimSim's whole
+control surface and no other backend has them. It describes itself to nobody -- the blueprint says
+which robots are in the world -- so all it needs to know is what the world calls this one.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator
-from pathlib import Path
 import time
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.sim2.actions import BASE_JOINTS, JointCommand, world_action
-from dimos.sim2.module import Simulation
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.dimsim.backend import BASE_JOINTS
 from dimos.sim2.world_observations import WorldMirror
 
 
 class SimKinematicBaseConfig(ModuleConfig):
     robot_id: str
-    model: Path
-    root_body: str
-    xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     # Seconds a cmd_vel holds before the base stops, as a real base's watchdog does.
     cmd_vel_timeout: float = 0.5
     # Sim-time rate of odom and tf.
@@ -58,20 +57,12 @@ class SimKinematicBase(Module):
         super().__init__(**kwargs)
         self._expires: float | None = None
 
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        config = self.config
-        return {
-            "simulated": SimulatedRobot(
-                config.robot_id, config.model, config.root_body, xyz=config.xyz
-            )
-        }
-
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
         self._reporting = asyncio.create_task(self._report())
         yield
+        self._reporting.cancel()
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         self._drive([twist.linear.x, twist.linear.y, twist.angular.z])

@@ -1,0 +1,87 @@
+#usda 1.0
+(
+    defaultPrim = "logistics"
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+# The room itself, by reference, so there is one converted copy of it. The reference is on a prim
+# named "logistics" so that the composed root keeps the name the room's own frames hang off: a
+# blueprint mounts a robot at "logistics" and renames it to "world" on tf.
+def Xform "logistics" (
+    prepend references = @./logistics.usda@
+)
+{
+    # Boxes free to push around, down the open corridor along +x.
+    def Scope "Props"
+    {
+        def Cube "box_small" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            float physics:mass = 1
+            color3f[] primvars:displayColor = [(0.85, 0.55, 0.15)] (
+                interpolation = "constant"
+            )
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.15, 0.15, 0.15)
+            double3 xformOp:translate = (1.5, 0, 0.15)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "box_tall" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            float physics:mass = 3
+            color3f[] primvars:displayColor = [(0.2, 0.45, 0.8)] (
+                interpolation = "constant"
+            )
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.2, 0.2, 0.25)
+            double3 xformOp:translate = (2.4, 0.3, 0.25)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Sphere "ball" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+        )
+        {
+            float3[] extent = [(-0.2, -0.2, -0.2), (0.2, 0.2, 0.2)]
+            float physics:mass = 1
+            color3f[] primvars:displayColor = [(0.75, 0.2, 0.25)] (
+                interpolation = "constant"
+            )
+            double radius = 0.2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (1.8, -0.5, 0.2)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+    }
+}
+
+# A reference arc composes only the target's defaultPrim subtree, and the room's physics scene and
+# its hand-written lights sit outside that, so each is referenced by prim path of its own.
+def PhysicsScene "PhysicsScene" (
+    prepend references = @./logistics.usda@</PhysicsScene>
+)
+{
+}
+
+def DistantLight "sun" (
+    prepend references = @./logistics.usda@</sun>
+)
+{
+}
+
+def DomeLight "ambient" (
+    prepend references = @./logistics.usda@</ambient>
+)
+{
+}
