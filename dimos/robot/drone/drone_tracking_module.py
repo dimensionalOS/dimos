@@ -20,7 +20,6 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import String
 import numpy as np
 from numpy.typing import NDArray
 
@@ -28,10 +27,11 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.message_utils import image, time as message_time
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import String
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.drone.drone_visual_servoing_controller import (
     DroneVisualServoingController,
     PIDParams,
@@ -114,7 +114,7 @@ class DroneTrackingModule(Module):
             if self._latest_frame is None:
                 return None
             # Convert Image to numpy array
-            data: np.ndarray[Any, np.dtype[Any]] = self._latest_frame.data
+            data: np.ndarray[Any, np.dtype[Any]] = image.view(self._latest_frame)
             return data
 
     @rpc
@@ -269,7 +269,7 @@ class DroneTrackingModule(Module):
 
                 # Publish velocity command via LCM
                 if self.cmd_vel.transport:
-                    twist = Twist()
+                    twist = Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
                     twist.linear = Vector3(vx, vy, 0)
                     twist.angular = Vector3(0, 0, 0)  # No rotation for now
                     self.cmd_vel.publish(twist)
@@ -279,7 +279,9 @@ class DroneTrackingModule(Module):
                     overlay = self._draw_tracking_overlay(
                         frame, (int(x), int(y), int(w), int(h)), (int(current_x), int(current_y))
                     )
-                    overlay_msg = Image.from_numpy(overlay, format=ImageFormat.BGR)
+                    overlay_msg = image.from_array(
+                        overlay, encoding="bgr8", header=message_time.header_now()
+                    )
                     self.tracking_overlay.publish(overlay_msg)
 
                 # Publish status
@@ -303,7 +305,7 @@ class DroneTrackingModule(Module):
         finally:
             # Stop movement by publishing zero velocity
             if self.cmd_vel.transport:
-                stop_twist = Twist()
+                stop_twist = Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
                 stop_twist.linear = Vector3(0, 0, 0)
                 stop_twist.angular = Vector3(0, 0, 0)
                 self.cmd_vel.publish(stop_twist)
@@ -377,7 +379,7 @@ class DroneTrackingModule(Module):
 
         # Send stop command via LCM
         if self.cmd_vel.transport:
-            stop_twist = Twist()
+            stop_twist = Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
             stop_twist.linear = Vector3(0, 0, 0)
             stop_twist.angular = Vector3(0, 0, 0)
             self.cmd_vel.publish(stop_twist)

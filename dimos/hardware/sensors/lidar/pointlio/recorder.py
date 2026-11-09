@@ -27,9 +27,9 @@ from __future__ import annotations
 from dimos.core.stream import In
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.memory.type.recording import OnExisting
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.geometry_msgs.msg import Pose
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import PointCloud2
 
 
 class PointlioRecorderConfig(RecorderConfig):

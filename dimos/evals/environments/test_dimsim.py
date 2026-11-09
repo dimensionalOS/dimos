@@ -19,7 +19,9 @@ import pytest
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.memory.store.memory import MemoryStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 
 def test_dimsim_launch_setup_and_pose(mocker):
@@ -40,9 +42,14 @@ def test_dimsim_launch_setup_and_pose(mocker):
         with MemoryStore() as store:
             with pytest.raises(LookupError):
                 env.latest_pose(store)
-            pose = PoseStamped(ts=123, frame_id="world")
+            pose = PoseStamped(
+                header=Header(stamp=time_from_seconds(123), frame_id="world"),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
             store.stream("odom", PoseStamped).append(pose)
-            assert env.latest_pose(store).ts == 123
+            assert to_seconds(env.latest_pose(store).header.stamp) == 123
     finally:
         env.stop()
     client.stop.assert_called_once()

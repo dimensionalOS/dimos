@@ -30,23 +30,21 @@ import reactivex as rx
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 
 
 def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
     """Apply a velocity command to a pose (unicycle model)."""
-    yaw = pose.yaw + twist.angular.z * dt
+    yaw = geometry.yaw(pose.orientation) + twist.angular.z * dt
     return Pose(
-        position=(
-            pose.x + twist.linear.x * math.cos(yaw) * dt,
-            pose.y + twist.linear.x * math.sin(yaw) * dt,
-            pose.z,
+        position=Point(
+            pose.position.x + twist.linear.x * math.cos(yaw) * dt,
+            pose.position.y + twist.linear.x * math.sin(yaw) * dt,
+            pose.position.z,
         ),
-        orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
+        orientation=geometry.quaternion_from_euler(0.0, 0.0, yaw),
     )
 
 
@@ -62,8 +60,8 @@ class SimpleRobot(Module):
     config: SimpleRobotConfig
     cmd_vel: In[Twist]
     pose: Out[PoseStamped]
-    _pose = Pose()
-    _vel = Twist()
+    _pose = Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+    _vel = Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
     _vel_time = 0.0
 
     @rpc
@@ -85,16 +83,17 @@ class SimpleRobot(Module):
         now = time.time()
         dt = 1.0 / self.config.update_rate
 
-        vel = self._vel if now - self._vel_time < self.config.cmd_timeout else Twist()
+        vel = (
+            self._vel
+            if now - self._vel_time < self.config.cmd_timeout
+            else Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
+        )
 
         self._pose = apply_twist(self._pose, vel, dt)
 
         self.pose.publish(
             PoseStamped(
-                ts=now,
-                frame_id=self.config.frame_id,
-                position=self._pose.position,
-                orientation=self._pose.orientation,
+                Header(message_time.time_from_seconds(now), self.config.frame_id), self._pose
             )
         )
 
@@ -122,7 +121,7 @@ if __name__ == "__main__":
     print("Robot running.")
     print("  Publishing: /odom (PoseStamped)")
     print("  Subscribing: /cmd_vel (Twist)")
-    print("  Run 'lcmspy' in another terminal to see LCM messages")
+    print("  Messages use generated CDR types on the configured transport")
     print("  Check /examples/language-interop for sending commands from LUA, C++, TS etc.")
     print("  Ctrl+C to exit")
 
@@ -131,14 +130,14 @@ if __name__ == "__main__":
             time.sleep(1)
             print("Forward...")
             for _ in range(8):
-                robot._on_twist(Twist(linear=(1.0, 0, 0)))
+                robot._on_twist(Twist(Vector3(1.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))
                 time.sleep(0.25)
             print("Turn...")
             for _ in range(12):
-                robot._on_twist(Twist(linear=(0.5, 0, 0), angular=(0, 0, 0.5)))
+                robot._on_twist(Twist(Vector3(0.5, 0.0, 0.0), Vector3(0.0, 0.0, 0.5)))
                 time.sleep(0.25)
             print("Stop")
-            robot._on_twist(Twist())
+            robot._on_twist(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))
             time.sleep(1)
         else:
             while True:

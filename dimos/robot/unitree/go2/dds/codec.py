@@ -31,10 +31,8 @@ from dataclasses import dataclass, fields
 import json
 from typing import Any, Protocol, runtime_checkable
 
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import Image, Imu, PointCloud2
 from dimos.robot.unitree.go2.dds import cdr, ros
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent

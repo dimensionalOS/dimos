@@ -13,20 +13,15 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
-    # Generated LCM message headers, consumed via a FetchContent source override.
-    dimos-lcm = {
-      url = "github:dimensionalOS/dimos-lcm/main";
-      flake = false;
-    };
     # Standalone Boost.PFR, consumed by the SDK via a FetchContent source override.
     pfr = {
       url = "github:apolukhin/pfr_non_boost/2.3.2";
       flake = false;
     };
-    dimos-native-cpp.url = "github:dimensionalOS/dimos?dir=native/cpp";
+    dimos-native-cpp.url = "path:../../../native/cpp";
   };
 
-  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, lcm-extended, dimos-lcm, pfr, dimos-native-cpp, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, lcm-extended, pfr, dimos-native-cpp, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -47,7 +42,7 @@
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
+            "-DCMAKE_TOOLCHAIN_FILE=${dimos-native-cpp.packages.${system}.messages}/toolchain.cmake"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             # The header-only SDK lives outside this dir. A git-tree flake can
             # reach it as a path literal within the repo tree.

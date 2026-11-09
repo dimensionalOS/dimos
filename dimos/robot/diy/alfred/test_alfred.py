@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ElementTree
 
+import numpy as np
 import pytest
 
+from dimos.message_utils import geometry
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.diy.alfred.blueprints.vis_nav import DEPTH_FRAME, IR_ENTITY_BY_FRAME
 from dimos.robot.diy.alfred.config import ALFRED_URDF
@@ -72,5 +74,22 @@ def test_mount_tree_rooted_at_mid360_link_composes_back_to_the_urdf():
     for frame in ["mid360_link", *CAMERA_LINKS]:
         leg, expected = rooted.get("base_link", frame), reference.get("base_link", frame)
         assert leg is not None and expected is not None, f"{frame} has no path to base_link"
-        assert (leg.translation - expected.translation).length() < 1e-9
-        assert abs(abs(leg.rotation.dot(expected.rotation)) - 1.0) < 1e-9
+        np.testing.assert_allclose(
+            geometry.transform_matrix(leg.transform)[:3, 3],
+            geometry.transform_matrix(expected.transform)[:3, 3],
+            atol=1e-9,
+        )
+        assert (
+            abs(
+                abs(
+                    float(
+                        np.dot(
+                            geometry.quaternion_array(leg.transform.rotation),
+                            geometry.quaternion_array(expected.transform.rotation),
+                        )
+                    )
+                )
+                - 1.0
+            )
+            < 1e-9
+        )

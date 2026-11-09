@@ -22,8 +22,7 @@ import difflib
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
 from dimos.robot.unitree.g1.connection_spec import G1ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 

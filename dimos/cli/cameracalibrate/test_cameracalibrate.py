@@ -31,8 +31,10 @@ from dimos.cli.cameracalibrate.cameracalibrate import (
     load_frames_from_folder,
     write_camera_info_yaml,
 )
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as DimosCameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import camera_info, image
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 
 
 def _synthetic_chessboard_gray(
@@ -158,15 +160,15 @@ def test_cli_folder_with_synthetic_images_writes_yaml_preview_and_camera_info(
     assert preview_image is not None
     assert preview_image.shape == (480, 640, 3)
 
-    dimos_info = DimosCameraInfo.from_yaml(str(out))
+    dimos_info = camera_info.from_yaml(Path(out), header=Header(Time(0, 0), "camera_optical"))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
-    assert dimos_info.frame_id == "camera_optical"
-    assert dimos_info.get_K_matrix().shape == (3, 3)
-    assert dimos_info.get_D_coeffs().shape == (5,)
-    assert dimos_info.get_R_matrix().shape == (3, 3)
-    assert dimos_info.get_P_matrix().shape == (3, 4)
+    assert dimos_info.header.frame_id == "camera_optical"
+    assert camera_info.intrinsic_matrix(dimos_info).shape == (3, 3)
+    assert dimos_info.d.shape == (5,)
+    assert dimos_info.r.reshape(3, 3).shape == (3, 3)
+    assert dimos_info.p.reshape(3, 4).shape == (3, 4)
 
 
 def test_cli_help_lists_cameracalibrate_flags() -> None:
@@ -228,7 +230,7 @@ def test_cli_folder_writes_only_explicit_yaml_and_prints_rms(tmp_path: Path) -> 
     assert out.exists()
     preview = tmp_path / "camera_info.preview.png"
     assert not preview.exists()
-    dimos_info = DimosCameraInfo.from_yaml(str(out))
+    dimos_info = camera_info.from_yaml(Path(out), header=Header(Time(0, 0), "camera_optical"))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
@@ -464,11 +466,11 @@ def test_capture_frames_from_topic_mocked_space_fills_target(
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    image_msg = Image.from_opencv(bgr)
+    image_msg = image.from_array(bgr, encoding="bgr8")
 
     record: dict[str, object] = {}
     monkeypatch.setattr(
-        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        "dimos.cli.cameracalibrate.cameracalibrate.subscribe_pubsub_uri",
         _make_subscribe_pubsub_uri_stub(fire_with=image_msg, record=record),
     )
 
@@ -501,7 +503,7 @@ def test_capture_frames_from_topic_no_frames_within_timeout_raises(
 ) -> None:
     """Timeout fires if the subscription never delivers a frame."""
     monkeypatch.setattr(
-        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        "dimos.cli.cameracalibrate.cameracalibrate.subscribe_pubsub_uri",
         _make_subscribe_pubsub_uri_stub(fire_with=None),
     )
     monkeypatch.setattr(cv2, "waitKey", lambda _delay=0: 0)
@@ -525,11 +527,11 @@ def test_cli_topic_source_uri_passes_through(
     cols, rows = 9, 6
     gray = _synthetic_chessboard_gray(640, 480, cols, rows, square_px=40)
     bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    image_msg = Image.from_opencv(bgr)
+    image_msg = image.from_array(bgr, encoding="bgr8")
 
     record: dict[str, object] = {}
     monkeypatch.setattr(
-        "dimos.protocol.pubsub.registry.subscribe_pubsub_uri",
+        "dimos.cli.cameracalibrate.cameracalibrate.subscribe_pubsub_uri",
         _make_subscribe_pubsub_uri_stub(fire_with=image_msg, record=record),
     )
     monkeypatch.setattr(cv2, "waitKey", lambda _delay=0: ord(" "))
@@ -801,12 +803,12 @@ def test_write_camera_info_yaml_round_trip_matches_k_d_size_and_model(tmp_path: 
         D=D,
         distortion_model="plumb_bob",
     )
-    dimos_info = DimosCameraInfo.from_yaml(path)
+    dimos_info = camera_info.from_yaml(Path(path), header=Header(Time(0, 0), "camera_optical"))
     assert dimos_info.width == 640
     assert dimos_info.height == 480
     assert dimos_info.distortion_model == "plumb_bob"
-    assert np.allclose(dimos_info.get_K_matrix(), K)
-    assert np.allclose(dimos_info.get_D_coeffs(), D)
+    assert np.allclose(camera_info.intrinsic_matrix(dimos_info), K)
+    assert np.allclose(dimos_info.d, D)
 
 
 def test_write_camera_info_yaml_round_trip(tmp_path: Path) -> None:
@@ -830,15 +832,15 @@ def test_write_camera_info_yaml_round_trip(tmp_path: Path) -> None:
         P=P,
         distortion_model="plumb_bob",
     )
-    dimos_info = DimosCameraInfo.from_yaml(path)
+    dimos_info = camera_info.from_yaml(Path(path), header=Header(Time(0, 0), "camera_optical"))
     assert dimos_info.width == 800
     assert dimos_info.height == 600
     assert dimos_info.distortion_model == "plumb_bob"
-    assert dimos_info.frame_id == "camera_optical"
-    assert np.allclose(dimos_info.get_K_matrix(), K)
-    assert np.allclose(dimos_info.get_D_coeffs(), D)
-    assert np.allclose(dimos_info.get_R_matrix(), R)
-    assert np.allclose(dimos_info.get_P_matrix(), P)
+    assert dimos_info.header.frame_id == "camera_optical"
+    assert np.allclose(camera_info.intrinsic_matrix(dimos_info), K)
+    assert np.allclose(dimos_info.d, D)
+    assert np.allclose(dimos_info.r.reshape(3, 3), R)
+    assert np.allclose(dimos_info.p.reshape(3, 4), P)
 
 
 def test_write_camera_info_yaml_custom_r_p_and_distortion_model(tmp_path: Path) -> None:
@@ -858,11 +860,11 @@ def test_write_camera_info_yaml_custom_r_p_and_distortion_model(tmp_path: Path) 
         P=P,
         distortion_model="rational_polynomial",
     )
-    dimos_info = DimosCameraInfo.from_yaml(path)
+    dimos_info = camera_info.from_yaml(Path(path), header=Header(Time(0, 0), "camera_optical"))
     assert dimos_info.width == 320
     assert dimos_info.height == 240
     assert dimos_info.distortion_model == "rational_polynomial"
-    assert np.allclose(dimos_info.get_K_matrix(), K)
-    assert np.allclose(dimos_info.get_D_coeffs(), D)
-    assert np.allclose(dimos_info.get_R_matrix(), R)
-    assert np.allclose(dimos_info.get_P_matrix(), P)
+    assert np.allclose(camera_info.intrinsic_matrix(dimos_info), K)
+    assert np.allclose(dimos_info.d, D)
+    assert np.allclose(dimos_info.r.reshape(3, 3), R)
+    assert np.allclose(dimos_info.p.reshape(3, 4), P)

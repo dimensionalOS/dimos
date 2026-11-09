@@ -29,11 +29,12 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.memory.module import default_recording_dir
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.messages.sensor_msgs.msg import CameraInfo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_recorder import G1Recorder
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher
+from dimos.visualization.rerun.cdr import camera_pinhole
 from dimos.visualization.vis_module import vis_module
 
 _RECORDING_DIR = default_recording_dir()
@@ -71,18 +72,22 @@ def _static_robot_body(rr: Any) -> list[Any]:
 
 
 def _convert_camera_info(camera_info: CameraInfo) -> Any:
-    return camera_info.to_rerun(
-        image_topic="/world/color_image",
-        optical_frame="d435_color_optical_frame",
-    )
+    return [
+        (
+            "/world/color_image",
+            camera_pinhole(camera_info, optical_frame="d435_color_optical_frame"),
+        )
+    ]
 
 
 def _convert_depth_camera_info(camera_info: CameraInfo) -> Any:
     # Depth is aligned to color, so it shares the color optical frame.
-    return camera_info.to_rerun(
-        image_topic="/world/realsense_depth_image",
-        optical_frame="d435_color_optical_frame",
-    )
+    return [
+        (
+            "/world/realsense_depth_image",
+            camera_pinhole(camera_info, optical_frame="d435_color_optical_frame"),
+        )
+    ]
 
 
 _record_vis = vis_module(

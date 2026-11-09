@@ -23,12 +23,12 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.memory.codecs.legacy import decode_lcm
+from dimos.message_utils import camera_info, image, pointcloud
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.vision_msgs.msg import Detection3DArray
 from dimos.simulation.habitat import server
 
 SERVER_PY = Path(server.__file__)
@@ -36,21 +36,21 @@ SERVER_PY = Path(server.__file__)
 
 def test_color_image_round_trip():
     rgb = np.arange(8 * 12 * 3, dtype=np.uint8).reshape(8, 12, 3)
-    out = Image.lcm_decode(server.image_msg(rgb, "rgb8", "camera_optical", 1.5))
-    np.testing.assert_array_equal(out.data, rgb)
-    assert out.frame_id == "camera_optical"
+    out = decode_lcm(server.image_msg(rgb, "rgb8", "camera_optical", 1.5), Image)
+    np.testing.assert_array_equal(image.view(out), rgb)
+    assert out.header.frame_id == "camera_optical"
 
 
 def test_depth_image_round_trip():
     depth = np.linspace(0.2, 4.5, 8 * 12, dtype=np.float32).reshape(8, 12)
-    out = Image.lcm_decode(server.image_msg(depth, "32FC1", "camera_optical", 1.5))
-    np.testing.assert_allclose(out.data, depth, atol=1e-6)
+    out = decode_lcm(server.image_msg(depth, "32FC1", "camera_optical", 1.5), Image)
+    np.testing.assert_allclose(image.view(out), depth, atol=1e-6)
 
 
 def test_camera_info_round_trip():
     k = {"fx": 320.0, "fy": 320.0, "cx": 320.0, "cy": 180.0, "width": 640.0, "height": 360.0}
-    out = CameraInfo.lcm_decode(server.camera_info_msg(k, "camera_optical", 1.5))
-    matrix = out.get_K_matrix()
+    out = decode_lcm(server.camera_info_msg(k, "camera_optical", 1.5), CameraInfo)
+    matrix = camera_info.intrinsic_matrix(out)
     assert (out.width, out.height) == (640, 360)
     np.testing.assert_allclose([matrix[0, 0], matrix[1, 1]], [320.0, 320.0])
     np.testing.assert_allclose([matrix[0, 2], matrix[1, 2]], [320.0, 180.0])
@@ -59,31 +59,32 @@ def test_camera_info_round_trip():
 def test_cloud_round_trip_keeps_points_and_colour():
     pts = np.array([[1.0, 2.0, 3.0], [-4.0, 0.5, 0.25]], dtype=np.float32)
     colors = np.array([[255, 0, 0], [0, 128, 64]], dtype=np.uint8)
-    out = PointCloud2.lcm_decode(server.cloud_msg(pts, colors, "world", 1.5))
-    got = out.points_f32()
-    assert out.frame_id == "world"
+    out = decode_lcm(server.cloud_msg(pts, colors, "world", 1.5), PointCloud2)
+    got = pointcloud.xyz(out)
+    assert out.header.frame_id == "world"
     np.testing.assert_allclose(np.sort(got, axis=0), np.sort(pts, axis=0), atol=1e-5)
 
 
 def test_empty_cloud_is_valid():
-    out = PointCloud2.lcm_decode(
-        server.cloud_msg(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint8), "world", 1.0)
+    out = decode_lcm(
+        server.cloud_msg(np.zeros((0, 3), np.float32), np.zeros((0, 3), np.uint8), "world", 1.0),
+        PointCloud2,
     )
-    assert len(out) == 0
+    assert out.width == 0
 
 
 def test_odometry_round_trip():
     pos = np.array([1.0, -2.0, 0.5])
     quat = np.array([0.0, 0.0, 0.3826834, 0.9238795])  # 45 deg yaw
-    out = Odometry.lcm_decode(
-        server.odometry_msg(pos, quat, (0.4, 0.0, 0.2), "world", "base_link", 1.5)
+    out = decode_lcm(
+        server.odometry_msg(pos, quat, (0.4, 0.0, 0.2), "world", "base_link", 1.5), Odometry
     )
     np.testing.assert_allclose(
         [out.pose.pose.position.x, out.pose.pose.position.y, out.pose.pose.position.z],
         pos,
         atol=1e-6,
     )
-    assert out.frame_id == "world"
+    assert out.header.frame_id == "world"
     assert out.child_frame_id == "base_link"
 
 
@@ -95,7 +96,19 @@ def test_objects_round_trip_keeps_each_object():
         ],
         1.5,
     )
-    assert Detection3DArray.lcm_decode(msg).to_json() == [
+    assert [
+        {
+            "label": d.results[0].hypothesis.class_id,
+            "score": d.results[0].hypothesis.score,
+            "position": {
+                "x": d.bbox.center.position.x,
+                "y": d.bbox.center.position.y,
+                "z": d.bbox.center.position.z,
+            },
+            "size": {"x": d.bbox.size.x, "y": d.bbox.size.y, "z": d.bbox.size.z},
+        }
+        for d in decode_lcm(msg, Detection3DArray).detections
+    ] == [
         {
             "label": "chair",
             "score": 1.0,
@@ -128,8 +141,8 @@ def test_tf_round_trip_carries_the_optical_link():
         ("base_link", "camera", (0.0, 0.0, 0.45), (0.0, 0.0, 0.0, 1.0)),
         ("camera", "camera_optical", (0.0, 0.0, 0.0), server.frames.OPTICAL_QUAT_XYZW),
     ]
-    out = TFMessage.lcm_decode(server.tf_msg(links, 1.5))
-    pairs = {(t.frame_id, t.child_frame_id) for t in out.transforms}
+    out = decode_lcm(server.tf_msg(links, 1.5), TFMessage)
+    pairs = {(t.header.frame_id, t.child_frame_id) for t in out.transforms}
     assert ("camera", "camera_optical") in pairs
     assert len(out.transforms) == 3
 
@@ -147,28 +160,42 @@ def test_each_tf_link_keeps_its_own_pose():
         ("camera", "camera_optical", (0.0, 0.0, 0.0), server.frames.OPTICAL_QUAT_XYZW),
     ]
     by_child = {
-        t.child_frame_id: t for t in TFMessage.lcm_decode(server.tf_msg(links, 1.5)).transforms
+        t.child_frame_id: t for t in decode_lcm(server.tf_msg(links, 1.5), TFMessage).transforms
     }
 
     base = by_child["base_link"]
     np.testing.assert_allclose(
-        [base.translation.x, base.translation.y, base.translation.z], [1.0, 2.0, 3.0]
+        [base.transform.translation.x, base.transform.translation.y, base.transform.translation.z],
+        [1.0, 2.0, 3.0],
     )
     np.testing.assert_allclose(
-        [base.rotation.x, base.rotation.y, base.rotation.z, base.rotation.w], [0, 0, 0, 1]
+        [
+            base.transform.rotation.x,
+            base.transform.rotation.y,
+            base.transform.rotation.z,
+            base.transform.rotation.w,
+        ],
+        [0, 0, 0, 1],
     )
 
     cam = by_child["camera"]
     np.testing.assert_allclose(
-        [cam.translation.x, cam.translation.y, cam.translation.z], [0.0, 0.0, 0.45]
+        [cam.transform.translation.x, cam.transform.translation.y, cam.transform.translation.z],
+        [0.0, 0.0, 0.45],
     )
 
     opt = by_child["camera_optical"]
     np.testing.assert_allclose(
-        [opt.translation.x, opt.translation.y, opt.translation.z], [0.0, 0.0, 0.0]
+        [opt.transform.translation.x, opt.transform.translation.y, opt.transform.translation.z],
+        [0.0, 0.0, 0.0],
     )
     np.testing.assert_allclose(
-        [opt.rotation.x, opt.rotation.y, opt.rotation.z, opt.rotation.w],
+        [
+            opt.transform.rotation.x,
+            opt.transform.rotation.y,
+            opt.transform.rotation.z,
+            opt.transform.rotation.w,
+        ],
         server.frames.OPTICAL_QUAT_XYZW,
     )
 
@@ -182,11 +209,16 @@ def test_tf_chain_puts_the_camera_looking_forward():
         ("camera", "camera_optical", (0.0, 0.0, 0.0), server.frames.OPTICAL_QUAT_XYZW),
     ]
     by_child = {
-        t.child_frame_id: t for t in TFMessage.lcm_decode(server.tf_msg(links, 1.5)).transforms
+        t.child_frame_id: t for t in decode_lcm(server.tf_msg(links, 1.5), TFMessage).transforms
     }
 
     def rot(t):
-        x, y, z, w = t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w
+        x, y, z, w = (
+            t.transform.rotation.x,
+            t.transform.rotation.y,
+            t.transform.rotation.z,
+            t.transform.rotation.w,
+        )
         return np.array(
             [
                 [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],

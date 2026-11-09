@@ -69,11 +69,10 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.nav_msgs.msg import Odometry, Path as NavPath
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1
@@ -87,6 +86,7 @@ from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
+from dimos.visualization.rerun.cdr import path_archetype
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
 from dimos.visualization.vis_module import vis_module
 
@@ -377,7 +377,7 @@ def _g1_groot_rerun_blueprint() -> Any:
 
 
 def _g1_nav_path(path: NavPath) -> Any:
-    return path.to_rerun(z_offset=0.3)
+    return path_archetype(path, z_offset=0.3)
 
 
 # Mesh root: sim roots under the /odom transform; real hw under the LIO's
@@ -417,20 +417,26 @@ def _g1_pelvis_to_mid360() -> Any:
     return _g1_pelvis_mid360_cache[0]
 
 
-def _g1_real_odometry_root(odom: Any) -> Any:
+def _g1_real_odometry_root(odom: Odometry) -> Any:
     """Robot-mesh root: pelvis pose from the LIO's mid360 odometry (rest offset)."""
     import numpy as np
     import rerun as rr
 
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.message_utils import geometry
 
     t_world_mid360 = np.eye(4)
     # The MID-360 is mounted upside down (the URDF doesn't carry the flip):
     # un-roll by Rx(pi) == diag(1, -1, -1).
-    t_world_mid360[:3, :3] = odom.orientation.to_rotation_matrix() @ np.diag([1.0, -1.0, -1.0])
-    t_world_mid360[:3, 3] = (odom.x, odom.y, odom.z)
+    t_world_mid360[:3, :3] = geometry.pose_matrix(odom.pose.pose)[:3, :3] @ np.diag(
+        [1.0, -1.0, -1.0]
+    )
+    t_world_mid360[:3, 3] = (
+        odom.pose.pose.position.x,
+        odom.pose.pose.position.y,
+        odom.pose.pose.position.z,
+    )
     t_world_pelvis = t_world_mid360 @ np.linalg.inv(_g1_pelvis_to_mid360())
-    q = Quaternion.from_rotation_matrix(t_world_pelvis[:3, :3])
+    q = geometry.quaternion_from_matrix(t_world_pelvis[:3, :3])
     return rr.Transform3D(
         translation=t_world_pelvis[:3, 3].tolist(),
         rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
@@ -550,16 +556,18 @@ _coordinator = _G1GrootCoordinator.blueprint(
     ],
 ).transports(
     {
-        ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-        ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
-        ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
+        ("joint_command", JointState): LCMTransport.spec("/g1/joint_command", JointState),
+        ("g1_joints", JointState): LCMTransport.spec(_G1_JOINTS_TOPIC, JointState),
+        ("cmd_vel", Twist): LCMTransport.spec(_cmd_vel_topic, Twist),
         # Real-hw only: the transport_lcm adapter speaks to
         # G1WholeBodyConnection over these topics. autoconnect already
         # matches by (name, type) so sim doesn't need them; they're
         # harmless when the sim engine doesn't expose those ports.
-        ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-        ("imu", Imu): LCMTransport("/g1/imu", Imu),
-        ("motor_command", MotorCommandArray): LCMTransport("/g1/motor_command", MotorCommandArray),
+        ("motor_states", JointState): LCMTransport.spec("/g1/motor_states", JointState),
+        ("imu", Imu): LCMTransport.spec("/g1/imu", Imu),
+        ("motor_command", MotorCommandArray): LCMTransport.spec(
+            "/g1/motor_command", MotorCommandArray
+        ),
     }
 )
 

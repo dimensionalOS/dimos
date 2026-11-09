@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,9 +27,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
 _g1_joints = make_humanoid_joints("g1")
@@ -71,13 +69,13 @@ unitree_g1_coordinator = (
     # collide with ControlCoordinator's (joint_state/joint_command/...).
     .transports(
         {
-            ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
-            ("imu", Imu): LCMTransport("/g1/imu", Imu),
-            ("motor_command", MotorCommandArray): LCMTransport(
+            ("motor_states", JointState): LCMTransport.spec("/g1/motor_states", JointState),
+            ("imu", Imu): LCMTransport.spec("/g1/imu", Imu),
+            ("motor_command", MotorCommandArray): LCMTransport.spec(
                 "/g1/motor_command", MotorCommandArray
             ),
-            ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
-            ("g1_joints", JointState): LCMTransport("/g1/joints", JointState),
+            ("joint_command", JointState): LCMTransport.spec("/g1/joint_command", JointState),
+            ("g1_joints", JointState): LCMTransport.spec("/g1/joints", JointState),
         }
     )
 )

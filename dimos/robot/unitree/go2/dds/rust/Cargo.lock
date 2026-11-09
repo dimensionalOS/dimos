@@ -286,6 +286,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cdr"
+version = "0.2.4"
+source = "git+https://github.com/TomCC7/cdr-rs?rev=38a4368255d408faf374726653b39d4a4e9735cb#38a4368255d408faf374726653b39d4a4e9735cb"
+dependencies = [
+ "byteorder",
+ "serde",
+]
+
+[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -500,7 +509,7 @@ dependencies = [
 name = "cyclonedds-rs"
 version = "0.6.4"
 dependencies = [
- "cdr",
+ "cdr 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "cyclonedds-sys",
  "murmur3",
  "rc-box",
@@ -661,13 +670,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-generated-messages"
+version = "0.0.14"
+dependencies = [
+ "cdr 0.2.4 (git+https://github.com/TomCC7/cdr-rs?rev=38a4368255d408faf374726653b39d4a4e9735cb)",
+ "heapless",
+ "ros2msg",
+ "serde",
+ "serde-big-array",
+]
+
+[[package]]
 name = "dimos-go2-dds"
 version = "0.1.0"
 dependencies = [
- "cdr",
+ "cdr 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "cyclonedds-rs",
+ "dimos-generated-messages",
  "dimos-module",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?tag=v0.1.6)",
  "serde",
  "serde-big-array",
  "serde_json",
@@ -679,7 +699,7 @@ dependencies = [
 [[package]]
 name = "dimos-lcm"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
+source = "git+https://github.com/dimensionalOS/dimos-lcm.git?rev=04d78e8622500244123ba9cefa4c51b4cb454549#04d78e8622500244123ba9cefa4c51b4cb454549"
 dependencies = [
  "byteorder",
  "socket2 0.5.10",
@@ -688,12 +708,12 @@ dependencies = [
 
 [[package]]
 name = "dimos-module"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
+version = "0.2.0"
 dependencies = [
+ "cdr 0.2.4 (git+https://github.com/TomCC7/cdr-rs?rev=38a4368255d408faf374726653b39d4a4e9735cb)",
+ "dimos-generated-messages",
  "dimos-lcm",
  "dimos-module-macros",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen)",
  "nalgebra",
  "rayon",
  "serde",
@@ -701,6 +721,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "transforms",
  "url",
  "validator",
  "zenoh",
@@ -709,7 +730,6 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1065,6 +1085,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1105,6 +1134,28 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
+
+[[package]]
+name = "heapless"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bfb9eb618601c89945a70e254898da93b13be0388091d42117462b265bb3fad"
+dependencies = [
+ "hash32",
+ "serde",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
@@ -1504,22 +1555,6 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
-name = "lcm-msgs"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?tag=v0.1.6#260db4ebe125b4eeafcb6ac62015c2f4ff3e09c2"
-dependencies = [
- "byteorder",
-]
-
-[[package]]
-name = "lcm-msgs"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
-dependencies = [
- "byteorder",
-]
 
 [[package]]
 name = "libc"
@@ -2458,6 +2493,23 @@ dependencies = [
  "serde_derive",
  "typeid",
  "unicode-ident",
+]
+
+[[package]]
+name = "ros2msg"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2fe291be5cb6d4b8e6bf9c9de80c40bd1cb09ecac50deafa2fdcae0027e04988"
+dependencies = [
+ "heck",
+ "pest",
+ "pest_derive",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.119",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3414,6 +3466,18 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "transforms"
+version = "2.2.0"
+source = "git+https://github.com/TomCC7/transforms?rev=5ae9563de0c02638c04e393aadfad28444a4398e#5ae9563de0c02638c04e393aadfad28444a4398e"
+dependencies = [
+ "approx",
+ "hashbrown 0.17.1",
+ "libm",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

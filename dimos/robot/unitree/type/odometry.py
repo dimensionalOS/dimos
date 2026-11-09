@@ -13,13 +13,9 @@
 # limitations under the License.
 from typing import Literal, TypedDict
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.type.timeseries import (
-    Timestamped,
-)
-from dimos.types.timestamped import to_timestamp
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header as MessageHeader
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -73,32 +69,16 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(PoseStamped, Timestamped):  # type: ignore[misc]
-    name = "geometry_msgs.PoseStamped"
-
-    def __init__(self, frame_id: str = "base_link", *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(frame_id=frame_id, *args, **kwargs)  # type: ignore[misc]
-
-    @classmethod
-    def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
-        pose = msg["data"]["pose"]
-
-        # Extract position
-        pos = Vector3(
-            pose["position"].get("x"),
-            pose["position"].get("y"),
-            pose["position"].get("z"),
-        )
-
-        rot = Quaternion(
-            pose["orientation"].get("x"),
-            pose["orientation"].get("y"),
-            pose["orientation"].get("z"),
-            pose["orientation"].get("w"),
-        )
-
-        ts = to_timestamp(msg["data"]["header"]["stamp"])
-        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
-
-    def __repr__(self) -> str:
-        return f"Odom pos({self.position}), rot({self.orientation})"
+def pose_from_message(msg: RawOdometryMessage) -> PoseStamped:
+    """Parse the Unitree source stamp without converting through floating seconds."""
+    data = msg["data"]
+    pose = data["pose"]
+    position, rotation = pose["position"], pose["orientation"]
+    stamp = data["header"]["stamp"]
+    return PoseStamped(
+        MessageHeader(Time(stamp["sec"], stamp["nanosec"]), "world"),
+        Pose(
+            Point(position["x"], position["y"], position["z"]),
+            Quaternion(rotation["x"], rotation["y"], rotation["z"], rotation["w"]),
+        ),
+    )

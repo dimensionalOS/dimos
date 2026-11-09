@@ -8,8 +8,13 @@ The host contract subscribes to:
 
 - `color_image: Image`
 - `coordinator_joint_state: JointState`
-- `button_pressed: Buttons`
-- `teleop_buttons: Buttons`
+- `button_pressed: UInt32`
+- `teleop_buttons: UInt32`
+
+These are generated CDR messages from `dimos.messages.sensor_msgs.msg` and
+`dimos.messages.std_msgs.msg`. Images must use `rgb8` at the configured size;
+row padding is respected. Joint positions are selected by the configured
+names. The packed button bit layout stays the same as WebXR.
 
 It submits complete, timestamped action chunks to the existing
 `joint_trajectory` task through the control coordinator. The state and action
@@ -60,3 +65,15 @@ cd native/python/lerobot
 uv run --isolated --locked --group tests --with-editable ../../.. python -m pytest
 uv run --isolated --locked --group tests --with-editable ../../.. python -m mypy
 ```
+
+The checks use a fake policy and coordinator, require no checkpoint or robot,
+and exercise real CDR memq/loopback Zenoh inputs. Policy images and state are
+copied at the input boundary; source Header nanoseconds remain in cached state.
+Trajectory RPCs retain their existing interface.
+
+Runtime projects still require the shared checkout described in
+[the isolated Python guide](../../../experimental/isolated_python/README.md).
+Installing a DimOS wheel does not ship this optional runtime project or pin
+that shared checkout to the host revision. Use a matching checkout for a CDR
+host and child; the package/checkout alignment gate remains separate from
+these encoding and policy-lifecycle checks.

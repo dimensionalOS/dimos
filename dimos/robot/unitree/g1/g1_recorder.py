@@ -20,8 +20,7 @@ from pydantic import Field
 
 from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder, PointlioRecorderConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 
 
 class G1RecorderConfig(PointlioRecorderConfig):

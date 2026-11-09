@@ -47,8 +47,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.messages.sensor_msgs.msg import Imu, PointCloud2
 from dimos.spec import perception
 
 

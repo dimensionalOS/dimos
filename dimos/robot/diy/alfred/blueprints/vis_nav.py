@@ -33,7 +33,9 @@ from dimos.mapping.dim_slam.dim_slam import (
     ImuConfig,
     SourceConfig,
 )
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.robot.diy.alfred.blueprints._nav import _alfred_nav, _alfred_rerun_config
+from dimos.visualization.rerun.cdr import camera_pinhole, image_archetype
 from dimos.visualization.vis_module import vis_module
 
 CAMERA_RERUN_ROOT = "world/camera"
@@ -49,21 +51,21 @@ DEPTH_FRAME = "camera_front_depth_optical_frame"
 """Colour is off, so depth is unaligned and arrives in its own frame."""
 
 
-def _image_at(msg: Any, entity_path: str) -> list[tuple[str, Any]]:
-    return [(entity_path, msg.to_rerun())]
+def _image_at(msg: Image, entity_path: str) -> list[tuple[str, Any]]:
+    return [(entity_path, image_archetype(msg))]
 
 
-def _pinhole_at(msg: Any, entity_path: str) -> Any:
-    return msg.to_rerun(image_topic=entity_path, optical_frame=msg.frame_id)
+def _pinhole_at(msg: CameraInfo, entity_path: str) -> Any:
+    return [(entity_path, camera_pinhole(msg, optical_frame=msg.header.frame_id))]
 
 
-def _ir_image(msg: Any) -> list[tuple[str, Any]] | None:
-    entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
+def _ir_image(msg: Image) -> list[tuple[str, Any]] | None:
+    entity_path = IR_ENTITY_BY_FRAME.get(msg.header.frame_id)
     return _image_at(msg, entity_path) if entity_path else None
 
 
-def _ir_pinhole(msg: Any) -> Any:
-    entity_path = IR_ENTITY_BY_FRAME.get(msg.frame_id)
+def _ir_pinhole(msg: CameraInfo) -> Any:
+    entity_path = IR_ENTITY_BY_FRAME.get(msg.header.frame_id)
     return _pinhole_at(msg, entity_path) if entity_path else None
 
 
