@@ -97,3 +97,22 @@ def test_the_simulated_mid360_describes_the_same_box_as_the_real_one() -> None:
 
     assert usd == mid360_usd("mid360_link", "imu_link")
     assert root, "the root is the driver's own directory, which is where its mesh lives"
+
+
+def test_a_namespaced_lidar_puts_its_namespace_on_its_imu_frame_too() -> None:
+    """The lidar's own frame goes through Module.frame_id, which applies frame_id_prefix.
+
+    Its IMU's did not, so three robots with a Livox each declared one frame called "imu_link"
+    and stamped every Imu with it, and tf had one node where it needed three.
+    """
+    from dimos.sim2.livox import LivoxSim
+
+    sim = LivoxSim(frame_id="mid360_link", frame_id_prefix="left")
+    try:
+        assert sim.frame_id == "left/mid360_link"
+        assert sim.imu_frame_id == "left/imu_link"
+        _, usd = sim.get_usd()
+    finally:
+        sim.stop()
+
+    assert {"left/mid360_link", "left/imu_link"} <= usd_frame_names(usd)
