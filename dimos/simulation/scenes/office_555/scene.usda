@@ -137415,19 +137415,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "ceiling_light_1_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.35
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "ceiling_light_2" (
@@ -137449,19 +137436,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "ceiling_light_2_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.35
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "ceiling_light_3" (
@@ -137483,19 +137457,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "ceiling_light_3_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.35
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "ceiling_light_4" (
@@ -137517,19 +137478,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "ceiling_light_4_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.35
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "ceiling_light_5" (
@@ -137551,19 +137499,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "ceiling_light_5_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.35
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "ceiling_light_6" (
@@ -137585,19 +137520,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "ceiling_light_6_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.35
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_1" (
@@ -137665,19 +137587,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_1_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_2" (
@@ -137745,19 +137654,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_2_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_3" (
@@ -137825,19 +137721,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_3_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_4" (
@@ -137905,19 +137788,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_4_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_5" (
@@ -137985,19 +137855,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_5_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_6" (
@@ -138065,19 +137922,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_6_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_7" (
@@ -138145,19 +137989,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_7_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_8" (
@@ -138225,19 +138056,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_8_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_9" (
@@ -138305,19 +138123,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_9_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_10" (
@@ -138385,19 +138190,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_10_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_11" (
@@ -138465,19 +138257,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_11_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "can_light_12" (
@@ -138545,19 +138324,6 @@ def Xform "office_555" (
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
 
-            def SphereLight "can_light_12_light0" (
-                prepend apiSchemas = ["ShadowAPI"]
-            )
-            {
-                color3f inputs:color = (1, 0.955, 0.88)
-                float inputs:intensity = 1.1
-                float inputs:radius = 0.05
-                bool inputs:shadow:enable = 1
-                bool treatAsPoint = 1
-                quatf xformOp:orient = (1, 0, 0, 0)
-                double3 xformOp:translate = (0, 0, 0)
-                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
-            }
         }
 
         def Xform "slab_ground" (
@@ -139603,10 +139369,10 @@ def Xform "office_555" (
     )
     {
         color3f inputs:color = (0.9333333, 0.9333333, 1)
-        # Ambient reaches into a shadow as readily as onto the floor beside it, so it is the last
-        # thing keeping a desk's shadow pale once the lamps overhead are casting. The room has
-        # brightness to spare from the fittings; this only has to keep the corners off black.
-        float inputs:intensity = 0.18
+        # With the fittings gone this is the room's light, the way a World is in Blender: sun through
+        # the skylights makes the bright patches and this fills everything else. 0.18 was sized to be
+        # a whisper next to eighteen lamps; now it has to do their job.
+        float inputs:intensity = 1.8
         bool inputs:shadow:enable = 0
     }
 
