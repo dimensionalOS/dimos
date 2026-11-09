@@ -70,10 +70,10 @@ class MujocoView:
                 elif entity.path in self._robots:
                     self._pose_entity(entity, self._root(entity.path))
                 else:
-                    name = resolved(self._named(mujoco.mjtObj.mjOBJ_BODY), entity.path)
-                    if name is not None:
+                    body = resolved(self._named(mujoco.mjtObj.mjOBJ_BODY), entity.path)
+                    if body is not None:
                         self._pose_entity(
-                            entity, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+                            entity, mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)
                         )
             data.time = world.time
         mujoco.mj_kinematics(self.model, self.data)
