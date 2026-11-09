@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimSim as a module: it takes actions, it publishes what moved, and it owns its own loop.
-
-Reached through `sim_module("dimsim", ...)` rather than named directly, so nothing outside this
-package has to know which engine is running.
-"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -38,25 +33,11 @@ logger = setup_logger()
 
 
 class DimSimSimConfig(SimulatedWorldConfig):
-    # How many steps of physics this world will catch up on in one go. It steps in bursts rather
-    # than one step at a time because macOS oversleeps a short wait, and lag past one burst is
-    # dropped: a command must not land a whole control period late.
     max_burst_steps: int = 5
 
 
 class DimSimSim(Module):
-    """One Rapier world in a Deno subprocess, stepped in real time, publishing a frame of what moved.
-
-    A `SimulatedWorld` by shape rather than by inheritance -- actions in, observations out -- so
-    that what core asks of a backend is something a native module could satisfy too.
-
-    It steps only once every module has started: a module that misses a frame never gets it,
-    because a frame says what *changed* and the first one is the only one that says a robot exists
-    at all.
-    """
-
     config: DimSimSimConfig
-    # The contract core states, and all of it.
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
 
@@ -65,8 +46,6 @@ class DimSimSim(Module):
         try:
             validate(self.config.robots)
         except Exception:
-            # Nothing else will stop a module that threw in its own constructor, and it has
-            # already started the threads `Module.__init__` starts.
             self.stop()
             raise
         self.simulated = self.config.robots
@@ -74,7 +53,6 @@ class DimSimSim(Module):
         self._all_started = Event()
 
     async def main(self) -> AsyncIterator[None]:
-        # Every action is applied: one dropped while busy would be a lost velocity command.
         self.actions.subscribe(self._on_actions)
         running = asyncio.create_task(self._run())
         yield
@@ -99,20 +77,11 @@ class DimSimSim(Module):
         self._all_started.set()
 
     async def _run(self) -> None:
-        """Build the world, then step it, publishing what moved and pacing on the clock.
-
-        Built here rather than in `build()`, because building it means asking the manager for the
-        scene and a manager that is not constructed yet cannot be asked. By the time a module is
-        running, every module exists. On a thread, since the ask is blocking and fetching a room's
-        worth of meshes should not stop this module answering anything else.
-        """
         backend = self._backend = await asyncio.to_thread(self._engine)
         await asyncio.to_thread(self._all_started.wait)
         period = TIMESTEP / max(self.config.speed, 1e-6)
         while True:
             _when, frame = await asyncio.to_thread(backend.step)
-            # Straight from the loop and not off a publisher thread: a step is a round trip to the
-            # Deno world, so a frame is never ready while the one before it is still going out.
             await asyncio.to_thread(self.world_observations.publish, frame)
             await asyncio.sleep(period)
 
@@ -129,7 +98,6 @@ class DimSimSim(Module):
 
     @rpc
     def describe(self) -> dict[str, Any]:
-        """The robots in this world, and where its layer landed. Nothing reads it to build one."""
         return {
             **(self._backend.describe() if self._backend is not None else {}),
             "simulated": list(self.simulated),

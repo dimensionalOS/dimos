@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A robot whose base is driven straight from cmd_vel (its three base joints' velocities), with odom/tf like a real connection's.
-
-In this package because the joints it drives are this engine's: `BASE_JOINTS` is DimSim's whole
-control surface and no other backend has them. It describes itself to nobody -- the blueprint says
-which robots are in the world -- so all it needs to know is what the world calls this one.
-"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -39,9 +33,7 @@ from dimos.sim2.world_observations import WorldMirror
 
 class SimKinematicBaseConfig(ModuleConfig):
     robot_id: str
-    # Seconds a cmd_vel holds before the base stops, as a real base's watchdog does.
     cmd_vel_timeout: float = 0.5
-    # Sim-time rate of odom and tf.
     odom_rate_hz: float = 50.0
 
 

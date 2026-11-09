@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The DimSim engine: a world that steps, a base that slides, a crate that gets pushed, and refusals."""
 
 from typing import Any
 
@@ -28,7 +27,6 @@ from dimos.sim2.sim import BACKENDS, sim_module
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import REFUSED, WorldMirror
 
-# A floor, a wall across +y, and one crate light enough for the toy robot to shove.
 _ROOM = """#usda 1.0
 (
     defaultPrim = "room"
@@ -74,13 +72,9 @@ def scene() -> UsdModel:
 
 
 class _Stepped:
-    """The engine, stepped by hand, and the world as its frames say it is."""
-
     def __init__(self, backend: DimSimBackend) -> None:
         self.backend, self.world = backend, WorldMirror()
         self.received: list[Any] = []
-        # The sim time the engine said it had reached, which is the engine's own clock and not the
-        # wall time a frame is stamped with.
         self.at = 0.0
 
     def apply(self, *actions: Any) -> None:
@@ -107,8 +101,6 @@ def test_the_world_steps_and_says_what_is_in_it(backend):
     world = backend.step(5)
     assert backend.at == pytest.approx(5 * TIMESTEP)
     assert world.entity("world").cbor["backend"] == "dimsim"
-    # The robot is the one its description named, and the crate the one the scene did. The robot
-    # carries its layer, which is what tells a sensor it is a robot and not scenery.
     assert robot_ids(world) == ["bot"]
     assert world.entity("crate").pose[:3] == pytest.approx([1.0, 0.0, 0.2], abs=0.02)
 
@@ -121,14 +113,12 @@ def test_the_base_moves_on_a_base_joint_velocity_and_pushes_a_crate(backend):
         backend.step()
     assert backend.x("bot") > 0.5
     assert backend.x("crate") > 1.1
-    # Its base joints report the velocities they hold.
     assert backend.world.joints("bot")[1][:, 1].tolist() == [1.0, 0.0, 0.0]
 
 
 def test_static_geometry_stops_the_base(backend):
     backend.apply(JointCommand("bot", BASE_JOINTS, velocity=(0.0, 1.0, 0.0)))
     world = backend.step(200)
-    # The wall's near face is at y=2.9; the toy is 0.1 half wide, kept 0.05 off by the controller.
     assert world.entity("bot").pose[1] == pytest.approx(2.75, abs=0.05)
 
 
@@ -136,8 +126,6 @@ def test_what_a_kinematic_base_cannot_do_is_refused(backend):
     backend.step()
     backend.apply(JointCommand("bot", ("neck",), position=(1.0,)))
     backend.step()
-    # A kinematic base has no joints but its base joints, and the world said so rather than
-    # dropping the command.
     assert any(key == REFUSED for _, key, _ in backend.received)
 
 
@@ -147,7 +135,6 @@ def test_a_robot_with_a_controller_is_refused_outright(scene):
 
 
 def test_the_engine_is_reached_by_name_and_builds_its_world_when_it_runs(scene):
-    """`sim_module("dimsim")` names the module and nothing reaches into it."""
     assert BACKENDS["dimsim"] == "dimos.sim2.dimsim.sim.DimSimSim"
     assert sim_module("dimsim", scene=scene) is not None
     sim = DimSimSim(scene=scene, robots=[SimulatedRobot("bot", toy_robot())])

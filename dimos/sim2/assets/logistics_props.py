@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The logistics room with three pushable props: two crates and a ball, down the corridor along +x.
-
-The room itself is `logistics.usda` by reference, so there is one converted copy of it. Each prop
-is a rigid body with an authored mass, which is what makes it a thing a robot can walk into and
-move rather than another wall.
-"""
 
 from pathlib import Path
 

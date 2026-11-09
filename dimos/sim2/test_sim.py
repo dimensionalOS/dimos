@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from importlib import import_module
 from pathlib import Path
 import subprocess
 import sys
@@ -90,3 +91,16 @@ def test_core_names_its_engines_and_imports_none_of_them():
         " assert not [m for m in sys.modules if m.startswith('mujoco')], sorted(sys.modules)"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_there_is_more_than_one_engine_and_each_one_imports():
+    """A switch with one thing in it is not a switch, and a backend protocol with one
+    implementation is whatever that implementation happens to do.
+
+    Each entry is imported rather than checked for being a string: the dict named an engine that
+    existed on no branch for a while, and a test that only looked at the spelling passed anyway.
+    """
+    assert set(BACKENDS) >= {"mujoco", "dimsim"}
+    for path in BACKENDS.values():
+        module, _, name = path.rpartition(".")
+        assert getattr(import_module(module), name), path

@@ -12,16 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A USD scene as Rapier holds it: one body per rigid body, its shapes as colliders in its frame.
-
-`misc/DimSim/cli/sim2/world.ts` takes `scene_data.v1` bodies on its `init` op -- a pose, and
-colliders placed in that pose's frame -- so this is the USD side of that one wire format. A prim
-carrying `UsdPhysics.RigidBodyAPI` is a dynamic body and every gprim under it is one of its
-colliders; a gprim under no such prim is a fixed body of its own, which is what a wall is.
-
-Z is up in USD here and Z is up in world.ts, so no axis moves. The quaternions do: world.ts
-reads a quat as x, y, z, w, which is neither USD's order nor MuJoCo's.
-"""
 
 import base64
 from collections.abc import Iterable, Sequence
@@ -34,26 +24,17 @@ from dimos.sim2.mujoco.names import short_names
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
 
-# What a dynamic body weighs where its layer never said. Rapier needs a number, and a kilogram is
-# light enough that walking into the thing moves it, which is the point of a prop.
 _DEFAULT_MASS = 1.0
-# Every purpose, so a prim modelled as a proxy still has a bound to fall back on.
 PURPOSES = ["default", "proxy", "render", "guide"]
 
 
 def dimsim_bodies(
     usd: "UsdModel", exclude: Iterable[str] = ()
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
-    """The scene's bodies and the meshes they name, as world.ts's `init` op wants them.
+    from dimos.robot.assets.usd import layer_from, load_pxr
 
-    `exclude` holds robot ids. A composed scene arrives with the robots already grafted into it
-    and this engine replaces a whole robot with one kinematic box, so every prim belonging to one
-    is left out.
-    """
-    from dimos.robot.assets.usd import _layer_from, _pxr
-
-    pxr = _pxr()
-    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
     cache = pxr.UsdGeom.BBoxCache(pxr.Usd.TimeCode.Default(), PURPOSES)
     owners = tuple(exclude)
     bodies: dict[str, dict[str, Any]] = {}
@@ -74,8 +55,6 @@ def dimsim_bodies(
         if geom is not None:
             bodies[path]["geoms"].append(geom)
     found = [body for body in bodies.values() if body["geoms"]]
-    # Only the dynamic ones, and for the reason `short_names` gives: a crate that can be pushed is
-    # an entity an action addresses, and a fixed wall is never reported at all.
     short = short_names(body["name"] for body in found if "mass" in body)
     for body in found:
         body["name"] = short.get(body["name"], body["name"])
@@ -83,16 +62,10 @@ def dimsim_bodies(
 
 
 def _owned(path: str, owners: Sequence[str]) -> bool:
-    """Whether this prim belongs to one of the robots.
-
-    The convention `dimos/sim2/mujoco/names.py::_wanted` states and documents: a grafted robot's
-    subtree is nested under a prim named after its id.
-    """
     return any(f"/{owner}/" in path or path.startswith(f"{owner}/") for owner in owners)
 
 
 def _rigid_body(pxr: Any, prim: Any) -> Any:
-    """The nearest prim at or above this one that is a rigid body, or None where there is none."""
     while prim and not prim.IsPseudoRoot():
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
             return prim
@@ -101,11 +74,6 @@ def _rigid_body(pxr: Any, prim: Any) -> Any:
 
 
 def _pose(pxr: Any, prim: Any) -> tuple[dict[str, Any], Any]:
-    """A prim's world pose, and the inverse of it so its shapes can be put in its frame.
-
-    Rotation and translation only: a Rapier body has no scale, so a scale from anywhere above a
-    shape is left in the shape's own transform and baked into its size there.
-    """
     world = pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
     placed = pxr.Gf.Transform(world)
     translation = placed.GetTranslation()
@@ -118,7 +86,6 @@ def _pose(pxr: Any, prim: Any) -> tuple[dict[str, Any], Any]:
 
 
 def _geom(pxr: Any, prim: Any, inverse: Any, cache: Any, meshes: dict[str, Any]) -> Any:
-    """One gprim as a collider in its body's frame, or None where it has no shape at all."""
     local = (
         pxr.UsdGeom.Xformable(prim).ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
         * inverse
@@ -133,8 +100,6 @@ def _geom(pxr: Any, prim: Any, inverse: Any, cache: Any, meshes: dict[str, Any])
             "quat": _xyzw(placed.GetRotation().GetQuat()),
             **shape,
         }
-    # Nothing Rapier has a shape for: the box it fits in, which is what the character controller
-    # has to walk around either way.
     aligned = cache.ComputeWorldBound(prim).Transform(inverse).ComputeAlignedRange()
     if aligned.IsEmpty():
         return None
@@ -151,12 +116,6 @@ def _geom(pxr: Any, prim: Any, inverse: Any, cache: Any, meshes: dict[str, Any])
 def _shape(
     pxr: Any, prim: Any, scale: list[float], meshes: dict[str, Any], name: str
 ) -> dict[str, Any] | None:
-    """The `type` and `size` world.ts's `shape()` reads, with the scale above the prim baked in.
-
-    A capsule's or a cylinder's `size` is (radius, half height) and z-aligned, which is what
-    world.ts rotates y-to-z for itself. One whose USD axis is not Z falls through to the bounding
-    box rather than being silently laid on its side.
-    """
     sx, sy, sz = scale
     if prim.IsA(pxr.UsdGeom.Cube):
         half = float(pxr.UsdGeom.Cube(prim).GetSizeAttr().Get() or 2.0) / 2
@@ -190,11 +149,6 @@ def _shape(
 
 
 def _trimesh(pxr: Any, prim: Any, scale: list[float]) -> dict[str, str] | None:
-    """The mesh as world.ts reads one: base64 little-endian float32 points and uint32 triangles.
-
-    The scale is baked into the points because a Rapier trimesh has none, and a polygon of more
-    than three sides is fanned, because Rapier takes triangles only.
-    """
     mesh = pxr.UsdGeom.Mesh(prim)
     points = np.asarray(mesh.GetPointsAttr().Get() or [], dtype="<f4")
     counts = np.asarray(mesh.GetFaceVertexCountsAttr().Get() or [], dtype=np.int64)
@@ -218,11 +172,6 @@ def _trimesh(pxr: Any, prim: Any, scale: list[float]) -> dict[str, str] | None:
 
 
 def _mass(pxr: Any, prim: Any) -> float:
-    """What a dynamic body weighs: its own authored mass, else its shapes' summed, else the default.
-
-    The shapes are summed because a converted layer puts `physics:mass` on the gprim and not on
-    the body carrying the RigidBodyAPI, which is where the toy robot's box and head have theirs.
-    """
     own = pxr.UsdPhysics.MassAPI(prim).GetMassAttr()
     if own and own.HasAuthoredValue() and float(own.Get() or 0.0) > 0:
         return float(own.Get())

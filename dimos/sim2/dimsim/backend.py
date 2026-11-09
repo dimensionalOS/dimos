@@ -12,17 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The DimSim engine: DimSim's Rapier physics (misc/DimSim/cli/sim2/world.ts), stepped by sim2.
-
-The engine, not the module. It is handed the world as USD and the knobs for running it, it steps,
-and it says what changed -- it owns no streams and publishes nothing. `DimSimSim` in `sim.py` is
-the module around it.
-
-A robot here is DimSim's kind of robot: a kinematic box the size of its layer, moved by velocity
-commands to its three base joints, sliding along static geometry and pushing dynamic bodies. It
-has no articulation at all, so an action it cannot do it refuses rather than drops, and the joint
-drives a robot's layer carries are ignored because there is nothing here to apply them to.
-"""
 
 from collections.abc import Iterable, Sequence
 import json
@@ -47,13 +36,8 @@ if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
 
 _WORLD = Path(__file__).parents[3] / "misc" / "DimSim" / "cli"
-# DimSim's own physics rate.
 TIMESTEP = 0.02
-# A dimsim robot's whole control surface: vx, vy and wz in its own heading frame, each held until
-# another command replaces it.
 BASE_JOINTS = ("base_vx", "base_vy", "base_wz")
-# What a robot weighs where its layer never said. The character controller uses it to decide how
-# hard walking into a crate pushes it, so a number that is wrong is better than no world.
 _DEFAULT_ROBOT_MASS = 10.0
 
 
@@ -65,15 +49,8 @@ class DimSimBackend:
         speed: float = 1.0,
         max_burst_steps: int = 5,
     ) -> None:
-        """A USD layer, what is in it, and how fast to run it. Nothing else.
-
-        `max_burst_steps` is how much physics it will catch up on at once; lag past one burst is
-        dropped, since a command landing a whole control period late is worse than a skip.
-        """
         self._speed = speed
         self._max_burst_steps = max_burst_steps
-        # The world as a file: nothing here opens it, but it is what a person looking at a world
-        # that is not behaving goes and reads.
         self._scene_layer = usd_layer(usd)
         self._robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
         for robot in self._robots:
@@ -89,16 +66,9 @@ class DimSimBackend:
         self._pending: list[Action] = []
         self._lock = Lock()
         self.world = WorldWriter()
-        # Entities the frames have added, and the moves Rapier reported since the last frame.
         self._added: set[str] = set()
         self._moved: dict[str, Any] = {}
-        # Each robot's base joints' held velocities (vx, vy, wz), and whether the world has been
-        # told them since.
         self._base = {robot.robot_id: [0.0, 0.0, 0.0] for robot in self._robots}
-        # Each robot's own layer as a file. Announced on the robot's entity, which is what tells a
-        # sensor reading the observations that this entity is a robot rather than a crate
-        # (`sensor_world.robot_ids`) -- and so what gets the whole robot posed in its view instead
-        # of left standing where its layer had it.
         self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
         self._refusals: list[tuple[str, str]] = []
@@ -118,19 +88,12 @@ class DimSimBackend:
             text=True,
         )
         self._reset()
-        # After the world exists, not before: starting Deno and loading a room into it is time the
-        # world does not owe the clock, and counting it is a first step of nothing but catch-up.
         self._started = time.monotonic()
 
     def describe(self) -> dict[str, Any]:
         return {"backend": "dimsim", "scene": str(self._scene_layer)}
 
     def step(self) -> tuple[float, WorldObservations]:
-        """Advance the world to the clock and say what moved: the sim time reached, and a frame.
-
-        There is no lockstep here and so no `waiting_for`/`ready()`: a kinematic base has no servo
-        controller for the world to hold a tick open for.
-        """
         self._apply_pending()
         steps = int(((time.monotonic() - self._started) * self._speed - self._time) / TIMESTEP)
         if steps > self._max_burst_steps:
@@ -141,17 +104,14 @@ class DimSimBackend:
         return self._advance(steps)
 
     def advance(self, steps: int = 1) -> tuple[float, WorldObservations]:
-        """Apply what is pending and step exactly this many times, off the clock (tests, offline use)."""
         self._apply_pending()
         return self._advance(steps)
 
     def apply(self, actions: Sequence[Action]) -> None:
-        """Take actions now, from whatever thread they arrived on; they land on the next step."""
         with self._lock:
             self._pending.extend(actions)
 
     def close(self) -> None:
-        # __init__ may have failed before starting the world.
         if hasattr(self, "_world") and self._world.poll() is None:
             self._world.kill()
             self._world.wait()
@@ -194,7 +154,6 @@ class DimSimBackend:
             try:
                 self._apply(action)
             except (KeyError, ValueError) as error:
-                # One bad action must not stop the world; its target hears why on the next frame.
                 self._refusals.append(
                     (getattr(action, "entity", "world"), f"{type(action).__name__}: {error}")
                 )
@@ -229,7 +188,6 @@ class DimSimBackend:
             self._moved.update(state["entities"])
 
     def frame(self) -> WorldObservations:
-        """What Rapier moved since the last frame, entities it added, and refusals."""
         world = self.world
         if not self._added:
             world.add("world", backend="dimsim")
@@ -257,17 +215,11 @@ class DimSimBackend:
         return world.end_frame(self._time)
 
     def _robot(self, robot: SimulatedRobot) -> dict[str, Any]:
-        """A robot as DimSim moves one: a box around its layer's geometry, standing at its pose.
+        from dimos.robot.assets.usd import layer_from, load_pxr
 
-        Read off the robot's own layer rather than the composed scene, because that is where its
-        geometry is still the robot's alone -- in the scene it has already been placed, and this
-        box is what gets placed.
-        """
-        from dimos.robot.assets.usd import _layer_from, _pxr
-
-        pxr = _pxr()
+        pxr = load_pxr()
         stage = pxr.Usd.Stage.Open(
-            _layer_from(pxr, robot.model.usd, "a robot", robot.model._asset_root())
+            layer_from(pxr, robot.model.usd, "a robot", robot.model._asset_root())
         )
         root = _root_prim(pxr, stage, robot.root_body)
         inverse = (
@@ -287,8 +239,6 @@ class DimSimBackend:
             raise ValueError(f"{robot.robot_id}: its layer has no geometry to be the size of")
         low, high = np.min(corners, axis=0), np.max(corners, axis=0)
         x, y, z = robot.xyz
-        # Its pose is the root body's, and the root sits wherever its layer has it above the box's
-        # bottom; `xyz` is where the robot stands, so the box's bottom goes there.
         return {
             "id": robot.robot_id,
             "pos": [x, y, z - float(low[2])],
@@ -300,7 +250,6 @@ class DimSimBackend:
 
 
 def _root_prim(pxr: Any, stage: Any, root_body: str) -> Any:
-    """The robot's root link, by the name its description calls it. Raises KeyError naming the rest."""
     bodies = {
         prim.GetPath().pathString: prim
         for prim in stage.Traverse()
