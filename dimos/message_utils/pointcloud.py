@@ -27,7 +27,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.message_utils import camera_info, geometry, image, time as message_time
 from dimos.messages.geometry_msgs.msg import TransformStamped
@@ -310,6 +309,8 @@ def from_rgbd(
     represents meters. Invalid/nonpositive/too-distant samples are removed.
     Scale K when calibration resolution differs, retaining the depth header.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     if (
         not math.isfinite(depth_scale)
         or depth_scale <= 0
@@ -357,6 +358,8 @@ def voxel_downsample(message: PointCloud2, voxel_size: float = 0.025) -> PointCl
     message without copying. Unsupported extra fields are rejected rather than silently dropped.
     Source headers are preserved; generated messages own no numerical methods.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+
     if not math.isfinite(voxel_size):
         raise ValueError("voxel_size must be finite")
     if voxel_size <= 0 or message.width * message.height < 20:
@@ -385,6 +388,7 @@ def voxel_downsample(message: PointCloud2, voxel_size: float = 0.025) -> PointCl
 
 def to_open3d(message: PointCloud2) -> Any:
     """Copy generated XYZ/RGB values into a native geometry algorithm input."""
+    import open3d as o3d  # type: ignore[import-untyped]
 
     result = o3d.geometry.PointCloud()
     result.points = o3d.utility.Vector3dVector(xyz(message))
