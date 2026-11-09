@@ -15,7 +15,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
+use syn::{parse_macro_input, Data, DeriveInput, Field, Fields, Ident, Path, Type};
 
 #[proc_macro_derive(Module, attributes(input, output, io, config, tf, module))]
 pub fn derive_module(input: TokenStream) -> TokenStream {
@@ -177,9 +177,6 @@ fn is_option(ty: &Type) -> bool {
 const ONE_ATTR_ONLY: &str = "field has multiple module attributes; only one of #[input], \
                              #[output], #[io], #[config], #[tf] is allowed";
 
-/// What a `#[tf]` port carries, for the Cargo.toml registry cross-check.
-const TF_PAYLOAD_TYPE: &str = "TFMessage";
-
 enum FieldKind {
     Input {
         decode: Path,
@@ -202,15 +199,6 @@ struct ClassifiedField<'a> {
     name: &'a Ident,
     ty: &'a Type,
     kind: FieldKind,
-    /// The dimos message identity from `msg = "..."`, for a port whose wire
-    /// payload and dimos message type differ.
-    msg: Option<String>,
-}
-
-/// A port field's attribute, parsed.
-struct FieldAttr {
-    kind: FieldKind,
-    msg: Option<String>,
 }
 
 fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
@@ -237,7 +225,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     let mut setup_method: Option<Ident> = None;
     let mut handle_method: Option<Ident> = None;
     let mut teardown_method: Option<Ident> = None;
-    let mut registry_name: Option<syn::LitStr> = None;
     for attr in &input.attrs {
         if attr.path().is_ident("module") {
             attr.parse_nested_meta(|meta| {
@@ -247,12 +234,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                     handle_method = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("teardown") {
                     teardown_method = Some(meta.value()?.parse()?);
-                } else if meta.path.is_ident("name") {
-                    registry_name = Some(meta.value()?.parse()?);
                 } else {
                     return Err(meta.error(
                         "unrecognized #[module] argument; expected `setup = ...`, \
-                         `handle = ...`, `teardown = ...` or `name = \"...\"`",
+                         `handle = ...` or `teardown = ...`",
                     ));
                 }
                 Ok(())
@@ -265,8 +250,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
     for field in fields {
         let name = field.ident.as_ref().expect("named field has an identifier");
-        let attr = classify_field(field, name)?;
-        if matches!(attr.kind, FieldKind::Config) {
+        let kind = classify_field(field, name)?;
+        if matches!(kind, FieldKind::Config) {
             if let Some(prev) = config_seen {
                 return Err(syn::Error::new_spanned(
                     field,
@@ -280,33 +265,9 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
         classified.push(ClassifiedField {
             name,
             ty: &field.ty,
-            kind: attr.kind,
-            msg: attr.msg,
+            kind,
         });
     }
-
-    if let Some(name) = &registry_name {
-        check_registry_ports(name, &classified).map_err(|msg| {
-            syn::Error::new_spanned(
-                struct_name,
-                format!(
-                    "#[module(name = \"{}\")] does not match Cargo.toml: {msg}",
-                    name.value()
-                ),
-            )
-        })?;
-    }
-
-    // check_registry_ports reads Cargo.toml behind rustc's back, so cargo would
-    // not rerun the check on a manifest edit. Embedding the manifest records it
-    // in dep-info, making the cross-check hold on incremental builds too.
-    let manifest_dep: TokenStream2 = if registry_name.is_some() {
-        quote! {
-            const _: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-        }
-    } else {
-        quote!()
-    };
 
     let config_type: Type = classified
         .iter()
@@ -394,8 +355,6 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
 
     Ok(quote! {
-        #manifest_dep
-
         impl ::dimos_module::Module for #struct_name {
             type Config = #config_type;
 
@@ -419,145 +378,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-/// A port as the struct declares it: field name plus the dimos message type it
-/// carries, which is the payload type unless `msg` names a different one.
-#[derive(Debug, PartialEq, Eq)]
-struct PortDecl {
-    name: String,
-    ty: String,
-}
-
-/// The last `::`-separated segment of the single generic argument of
-/// `Input<T>`/`Output<T>`, e.g. `Input<lcm_msgs::sensor_msgs::PointCloud2>` -> `PointCloud2`.
-fn port_payload_type(ty: &Type) -> Option<String> {
-    let Type::Path(p) = ty else { return None };
-    let segment = p.path.segments.last()?;
-    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let syn::GenericArgument::Type(Type::Path(inner)) = args.args.first()? else {
-        return None;
-    };
-    Some(inner.path.segments.last()?.ident.to_string())
-}
-
-fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl> {
-    classified
-        .iter()
-        .filter(|f| match f.kind {
-            FieldKind::Input { .. } => want_input,
-            FieldKind::Output { .. } => !want_input,
-            // A `#[tf]` field is a port like any other as far as the registry
-            // goes. It lists under `inputs` because the registry has no io kind
-            // and a module mostly consumes tf.
-            FieldKind::Tf => want_input,
-            _ => false,
-        })
-        .map(|f| PortDecl {
-            name: f.name.to_string(),
-            // `Tf` carries no generic payload. The port is TFMessage by
-            // construction.
-            // An explicit `msg` wins: a view type's wire payload and the dimos
-            // message it stands for are allowed to differ.
-            ty: match f.kind {
-                FieldKind::Tf => TF_PAYLOAD_TYPE.to_string(),
-                _ => f
-                    .msg
-                    .clone()
-                    .or_else(|| port_payload_type(f.ty))
-                    .unwrap_or_default(),
-            },
-        })
-        .collect()
-}
-
-/// Compare the struct's ports against `[package.metadata.dimos.module.<name>]`
-/// in the crate's own Cargo.toml. The two must not drift.
-fn check_registry_ports(name: &syn::LitStr, classified: &[ClassifiedField]) -> Result<(), String> {
-    if let Some(io) = classified
-        .iter()
-        .find(|f| matches!(f.kind, FieldKind::Io { .. }))
-    {
-        return Err(format!(
-            "port `{}` is #[io], which the module registry does not support yet; \
-             split it into an #[input] and an #[output] field",
-            io.name
-        ));
-    }
-    let dir = std::env::var("CARGO_MANIFEST_DIR")
-        .map_err(|_| "CARGO_MANIFEST_DIR is unset, cannot locate Cargo.toml".to_string())?;
-    let path = std::path::Path::new(&dir).join("Cargo.toml");
-    let src = std::fs::read_to_string(&path)
-        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    check_manifest_ports(
-        &src,
-        &name.value(),
-        &port_decls(classified, true),
-        &port_decls(classified, false),
-    )
-}
-
-/// Manifest half of [`check_registry_ports`], split out so it can be tested
-/// against fixture manifests.
-fn check_manifest_ports(
-    manifest: &str,
-    module_name: &str,
-    inputs: &[PortDecl],
-    outputs: &[PortDecl],
-) -> Result<(), String> {
-    let manifest: toml::Value =
-        toml::from_str(manifest).map_err(|e| format!("failed to parse Cargo.toml: {e}"))?;
-    let entry = ["package", "metadata", "dimos", "module", module_name]
-        .iter()
-        .try_fold(&manifest, |value, key| value.get(key))
-        .ok_or_else(|| {
-            format!("no [package.metadata.dimos.module.{module_name}] section in Cargo.toml")
-        })?;
-
-    check_port_table(entry, "inputs", inputs)?;
-    check_port_table(entry, "outputs", outputs)?;
-    Ok(())
-}
-
-fn check_port_table(entry: &toml::Value, kind: &str, declared: &[PortDecl]) -> Result<(), String> {
-    let empty = toml::value::Table::new();
-    let table = match entry.get(kind) {
-        Some(v) => v
-            .as_table()
-            .ok_or_else(|| format!("`{kind}` must be a table of port = \"msg.Type\""))?,
-        None => &empty,
-    };
-
-    for port in declared {
-        let Some(msg) = table.get(&port.name) else {
-            return Err(format!("port `{}` is missing from `{kind}`", port.name));
-        };
-        let msg = msg
-            .as_str()
-            .ok_or_else(|| format!("`{kind}.{}` must be a string", port.name))?;
-        let want = msg.rsplit('.').next().unwrap_or(msg);
-        if want != port.ty {
-            return Err(format!(
-                "port `{}` is declared `{msg}` in `{kind}` but the struct field carries `{}`",
-                port.name, port.ty
-            ));
-        }
-    }
-
-    for port in table.keys() {
-        if !declared.iter().any(|d| &d.name == port) {
-            return Err(format!(
-                "`{kind}` declares port `{port}`, which the struct has no #[{}] field for",
-                kind.trim_end_matches('s')
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
+fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldKind> {
     let mut found: Option<FieldKind> = None;
-    let mut msg: Option<String> = None;
 
     for attr in &field.attrs {
         let path = attr.path();
@@ -572,12 +394,9 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
                     decode = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("handler") {
                     handler = Some(meta.value()?.parse()?);
-                } else if meta.path.is_ident("msg") {
-                    msg = Some(meta.value()?.parse::<LitStr>()?.value());
                 } else {
                     return Err(meta.error(
-                        "unrecognized #[input] argument; expected `decode = ...`, \
-                         `handler = ...` or `msg = ...`",
+                        "unrecognized #[input] argument; expected `decode = ...` or `handler = ...`",
                     ));
                 }
                 Ok(())
@@ -594,12 +413,10 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("encode") {
                     encode = Some(meta.value()?.parse()?);
-                } else if meta.path.is_ident("msg") {
-                    msg = Some(meta.value()?.parse::<LitStr>()?.value());
                 } else {
-                    return Err(meta.error(
-                        "unrecognized #[output] argument; expected `encode = ...` or `msg = ...`",
-                    ));
+                    return Err(
+                        meta.error("unrecognized #[output] argument; expected `encode = ...`")
+                    );
                 }
                 Ok(())
             })?;
@@ -651,10 +468,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
         }
     }
 
-    Ok(FieldAttr {
-        kind: found.unwrap_or(FieldKind::State),
-        msg,
-    })
+    Ok(found.unwrap_or(FieldKind::State))
 }
 
 #[cfg(test)]
@@ -724,151 +538,5 @@ mod tests {
     #[test]
     fn rejects_enum() {
         check(r#"enum Config { A, B }"#).expect_err("enums are not valid configs");
-    }
-
-    // registry metadata cross-check
-
-    use super::{
-        check_manifest_ports, check_registry_ports, port_payload_type, ClassifiedField, FieldKind,
-        PortDecl,
-    };
-    use syn::parse_quote;
-
-    #[test]
-    fn io_ports_are_rejected_by_the_registry_check() {
-        let name: syn::LitStr = parse_quote!("demo");
-        let ident: syn::Ident = parse_quote!(cmd);
-        let ty: syn::Type = parse_quote!(Io<Twist>);
-        let classified = [ClassifiedField {
-            name: &ident,
-            ty: &ty,
-            kind: FieldKind::Io {
-                decode: parse_quote!(demo::decode),
-                encode: parse_quote!(demo::encode),
-                handler: parse_quote!(on_cmd),
-            },
-            msg: None,
-        }];
-        let err = check_registry_ports(&name, &classified).expect_err("io ports are unsupported");
-        assert!(err.contains("cmd"), "{err}");
-        assert!(err.contains("#[io]"), "{err}");
-    }
-
-    const MANIFEST: &str = r#"
-        [package]
-        name = "demo"
-
-        [package.metadata.dimos.module.demo]
-        path = "demo::module::Demo"
-        python = "dimos.demo.module:Demo"
-        threads = 1
-
-        [package.metadata.dimos.module.demo.inputs]
-        lidar = "sensor_msgs.PointCloud2"
-
-        [package.metadata.dimos.module.demo.outputs]
-        global_map = "sensor_msgs.PointCloud2"
-    "#;
-
-    fn port(name: &str, ty: &str) -> PortDecl {
-        PortDecl {
-            name: name.to_string(),
-            ty: ty.to_string(),
-        }
-    }
-
-    #[test]
-    fn accepts_manifest_matching_the_struct() {
-        check_manifest_ports(
-            MANIFEST,
-            "demo",
-            &[port("lidar", "PointCloud2")],
-            &[port("global_map", "PointCloud2")],
-        )
-        .expect("matching ports should pass");
-    }
-
-    #[test]
-    fn rejects_missing_metadata_section() {
-        let err = check_manifest_ports(MANIFEST, "other", &[], &[])
-            .expect_err("an unregistered module id must fail");
-        assert!(err.contains("package.metadata.dimos.module.other"), "{err}");
-    }
-
-    #[test]
-    fn rejects_port_absent_from_manifest() {
-        let err = check_manifest_ports(
-            MANIFEST,
-            "demo",
-            &[port("lidar", "PointCloud2"), port("odometry", "Odometry")],
-            &[port("global_map", "PointCloud2")],
-        )
-        .expect_err("a struct port missing from the manifest must fail");
-        assert!(err.contains("odometry"), "{err}");
-    }
-
-    #[test]
-    fn rejects_port_absent_from_struct() {
-        let err = check_manifest_ports(MANIFEST, "demo", &[], &[port("global_map", "PointCloud2")])
-            .expect_err("a manifest port with no struct field must fail");
-        assert!(err.contains("lidar"), "{err}");
-    }
-
-    #[test]
-    fn rejects_msg_type_mismatch() {
-        let err = check_manifest_ports(
-            MANIFEST,
-            "demo",
-            &[port("lidar", "Odometry")],
-            &[port("global_map", "PointCloud2")],
-        )
-        .expect_err("a differing payload type must fail");
-        assert!(
-            err.contains("lidar") && err.contains("PointCloud2"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn compares_only_the_last_msg_type_segment() {
-        // The manifest spells the package. The struct spells the imported name.
-        let manifest = MANIFEST.replace(
-            "lidar = \"sensor_msgs.PointCloud2\"",
-            "lidar = \"other_msgs.PointCloud2\"",
-        );
-        check_manifest_ports(
-            &manifest,
-            "demo",
-            &[port("lidar", "PointCloud2")],
-            &[port("global_map", "PointCloud2")],
-        )
-        .expect("package-qualified manifest types match bare struct types");
-    }
-
-    /// A view type's wire payload and the dimos message it stands for differ,
-    /// so the port declares the message and the manifest must match that.
-    #[test]
-    fn an_explicit_msg_names_the_dimos_message_type() {
-        let manifest = MANIFEST.replace(
-            "global_map = \"sensor_msgs.PointCloud2\"",
-            "global_map = \"nav_msgs.LineSegments3D\"",
-        );
-        check_manifest_ports(
-            &manifest,
-            "demo",
-            &[port("lidar", "PointCloud2")],
-            &[port("global_map", "LineSegments3D")],
-        )
-        .expect("a declared msg type matches the manifest");
-    }
-
-    #[test]
-    fn payload_type_is_the_last_generic_segment() {
-        let ty: syn::Type = parse_str("Input<lcm_msgs::sensor_msgs::PointCloud2>").unwrap();
-        assert_eq!(port_payload_type(&ty).as_deref(), Some("PointCloud2"));
-        let ty: syn::Type = parse_str("Output<Path>").unwrap();
-        assert_eq!(port_payload_type(&ty).as_deref(), Some("Path"));
-        let ty: syn::Type = parse_str("Input").unwrap();
-        assert_eq!(port_payload_type(&ty), None);
     }
 }

@@ -122,7 +122,7 @@ impl Config {
 }
 
 #[derive(Module)]
-#[module(name = "mid360", setup = start, handle = wait, teardown = stop)]
+#[module(setup = start, handle = wait, teardown = stop)]
 pub struct Mid360 {
     #[output(encode = PointCloud2::encode)]
     lidar: Output<PointCloud2>,

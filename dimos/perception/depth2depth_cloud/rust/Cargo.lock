@@ -855,7 +855,7 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=93ca305d24721f49bd30d580a8ec353619560744#93ca305d24721f49bd30d580a8ec353619560744"
+source = "git+https://github.com/dimensionalOS/dimos?rev=a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b#a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b"
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
@@ -875,12 +875,11 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=93ca305d24721f49bd30d580a8ec353619560744#93ca305d24721f49bd30d580a8ec353619560744"
+source = "git+https://github.com/dimensionalOS/dimos?rev=a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b#a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.4",
- "toml 1.1.4+spec-1.1.0",
 ]
 
 [[package]]
@@ -4214,21 +4213,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml"
-version = "1.1.4+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3aace63f4bbcdfc2c965b059de67119c89c4017a70d633be6c104910f67056f5"
-dependencies = [
- "indexmap 2.14.1",
- "serde_core",
- "serde_spanned",
- "toml_datetime 1.1.1+spec-1.1.0",
- "toml_parser",
- "toml_writer",
- "winnow 1.0.4",
-]
-
-[[package]]
 name = "toml_datetime"
 version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5130,7 +5114,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "serde_yaml",
- "toml 0.9.12+spec-1.1.0",
+ "toml",
  "tracing",
  "uhlc",
  "validated_struct",

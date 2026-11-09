@@ -12,24 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The python config and the rust struct/registry agree field for field."""
+"""The python config and the rust struct agree field for field."""
 
 import json
 from pathlib import Path
-import sys
 
 from pydantic import ValidationError
 import pytest
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
-
 from dimos.core.native_module import NativeModuleConfig
-from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config, _resolved_host_ip
+from dimos.hardware.sensors.lidar.livox.module import Mid360Config, _resolved_host_ip
 
-_RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
+_RUST_SRC = Path(__file__).parent / "rust" / "src"
 
 
 def _wire_fields() -> set[str]:
@@ -51,7 +45,7 @@ def test_config_dict_is_the_wire_config() -> None:
 
 
 def test_rust_struct_has_every_config_key() -> None:
-    src = (_RUST_MANIFEST.parent / "src" / "module.rs").read_text()
+    src = (_RUST_SRC / "module.rs").read_text()
     struct = src.split("struct Config {", 1)[1].split("}", 1)[0]
     declared = {
         line.split(":")[0].strip()
@@ -79,16 +73,3 @@ def test_pcap_mode_skips_host_ip_resolution(monkeypatch: pytest.MonkeyPatch) -> 
 def test_live_mode_requires_lidar_ip(lidar_ip: str | None) -> None:
     with pytest.raises(RuntimeError, match="MID360__LIDAR_IP"):
         _resolved_host_ip(Mid360Config(lidar_ip=lidar_ip))
-
-
-def test_ports_match_registry() -> None:
-    def ports(cls: type) -> set[str]:
-        return {
-            name
-            for name, hint in cls.__annotations__.items()
-            if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
-        } - {"config"}
-
-    manifest = tomllib.loads(_RUST_MANIFEST.read_text())
-    registry = manifest["package"]["metadata"]["dimos"]["module"]["mid360"]
-    assert set(registry["outputs"]) == ports(Mid360)

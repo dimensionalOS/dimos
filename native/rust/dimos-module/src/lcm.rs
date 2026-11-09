@@ -31,10 +31,6 @@ pub struct LcmTransport {
     inner: Arc<Lcm>,
     routes: Arc<Mutex<HashMap<String, Vec<Dispatch>>>>,
     listening: AtomicBool,
-    /// The runtime the transport was opened on. In a baked host each module has
-    /// its own runtime, so the one shared recv loop must not land on whichever
-    /// module happened to subscribe first.
-    runtime: tokio::runtime::Handle,
 }
 
 /// liblcm reads this, so python modules follow it and native ones have to as well or the
@@ -97,14 +93,13 @@ impl LcmTransport {
             inner: Arc::new(inner),
             routes: Arc::new(Mutex::new(HashMap::new())),
             listening: AtomicBool::new(false),
-            runtime: tokio::runtime::Handle::current(),
         }
     }
 
     fn spawn_recv_loop(&self) {
         let inner = Arc::clone(&self.inner);
         let routes = Arc::clone(&self.routes);
-        self.runtime.spawn(async move {
+        tokio::spawn(async move {
             loop {
                 match inner.recv().await {
                     Ok(msg) => {
@@ -144,26 +139,6 @@ impl Transport for LcmTransport {
             self.spawn_recv_loop();
         }
         Ok(())
-    }
-
-    /// LCM has no per-topic publisher settings and no notion of a session-local
-    /// publisher, so a baked host cannot hide an internal hop on this transport.
-    fn set_publisher_qos(&self, qos: &serde_json::Value) {
-        let suppressed: Vec<&String> = qos
-            .as_object()
-            .map(|map| {
-                map.iter()
-                    .filter(|(_, entry)| entry.get("locality").is_some())
-                    .map(|(channel, _)| channel)
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !suppressed.is_empty() {
-            tracing::warn!(
-                channels = ?suppressed,
-                "LCM cannot suppress a topic; these stay visible on the multicast bus",
-            );
-        }
     }
 }
 

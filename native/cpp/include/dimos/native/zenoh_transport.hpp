@@ -258,7 +258,6 @@ inline void await_connect(const ::zenoh::Session& session,
 /// Unset fields keep zenoh's defaults.
 struct ChannelQos {
     std::optional<::zenoh::CongestionControl> congestion_control;
-    std::optional<::zenoh::Locality> locality;
     std::optional<::zenoh::Reliability> reliability;
 };
 
@@ -291,14 +290,6 @@ inline std::unordered_map<std::string, ChannelQos> parse_channel_qos(
             qos.congestion_control = Z_CONGESTION_CONTROL_DROP;
         } else if (congestion_control == "block") {
             qos.congestion_control = Z_CONGESTION_CONTROL_BLOCK;
-        }
-        const std::string locality = qos_field(fields, "locality");
-        if (locality == "session_local") {
-            qos.locality = Z_LOCALITY_SESSION_LOCAL;
-        } else if (locality == "remote") {
-            qos.locality = Z_LOCALITY_REMOTE;
-        } else if (locality == "any") {
-            qos.locality = Z_LOCALITY_ANY;
         }
         const std::string reliability = qos_field(fields, "reliability");
         if (reliability == "reliable") {
@@ -406,9 +397,6 @@ private:
             const zenoh_detail::ChannelQos& qos = it->second;
             if (qos.congestion_control.has_value()) {
                 options.congestion_control = *qos.congestion_control;
-            }
-            if (qos.locality.has_value()) {
-                options.allowed_destination = *qos.locality;
             }
             if (qos.reliability.has_value()) {
                 options.reliability = *qos.reliability;

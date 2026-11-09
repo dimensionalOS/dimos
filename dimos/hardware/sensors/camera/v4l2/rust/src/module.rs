@@ -54,7 +54,7 @@ pub struct Config {
 }
 
 #[derive(Module)]
-#[module(name = "v4l2_camera", setup = start)]
+#[module(setup = start)]
 pub struct V4L2Camera {
     #[output(encode = CompressedImage::encode)]
     jpeg_out: Output<CompressedImage>,

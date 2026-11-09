@@ -19,7 +19,7 @@ required-features = ["module"]
 # The body the law is parameterized from.
 dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744", optional = true }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"], optional = true }
 tracing = { version = "0.1", optional = true }
@@ -35,19 +35,6 @@ module = ["dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:lc
 [dev-dependencies]
 dimos-local-planner = { path = "../../../local_planner/rust", default-features = false, features = ["test-bodies"] }
 serde_json = "1"
-
-[package.metadata.dimos.module.trajectory_follower]
-path = "dimos_trajectory_follower::module::follower::TrajectoryFollower"
-python = "dimos.navigation.trajectory_follower.fancy.native:TrajectoryFollowerNative"
-threads = 2
-
-[package.metadata.dimos.module.trajectory_follower.inputs]
-path = "nav_msgs.Path"
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.trajectory_follower.outputs]
-nav_cmd_vel = "geometry_msgs.Twist"
-goal_reached = "std_msgs.Bool"
 
 [profile.release]
 lto = "thin"

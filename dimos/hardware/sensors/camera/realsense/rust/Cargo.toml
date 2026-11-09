@@ -11,29 +11,8 @@ path = "src/main.rs"
 
 [workspace]
 
-# Module registry entry, cross-checked at compile time by the module macro.
-[package.metadata.dimos.module.realsense]
-path = "dimos_realsense::RealSense"
-python = "dimos.hardware.sensors.camera.realsense.camera:RealSenseCamera"
-
-[package.metadata.dimos.module.realsense.inputs]
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.realsense.outputs]
-color_image = "sensor_msgs.Image"
-depth_image = "sensor_msgs.Image"
-infrared_left = "sensor_msgs.Image"
-infrared_right = "sensor_msgs.Image"
-imu = "sensor_msgs.Imu"
-imu_info = "sensor_msgs.ImuInfo"
-pointcloud = "sensor_msgs.PointCloud2"
-camera_info = "sensor_msgs.CameraInfo"
-depth_camera_info = "sensor_msgs.CameraInfo"
-infrared_left_camera_info = "sensor_msgs.CameraInfo"
-infrared_right_camera_info = "sensor_msgs.CameraInfo"
-
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 realsense-rust = "1.3"
 realsense-sys = "2.56"

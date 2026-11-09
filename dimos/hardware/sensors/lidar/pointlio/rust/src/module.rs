@@ -115,7 +115,7 @@ fn core_config_parses(cfg: &Config) -> Result<(), ValidationError> {
 }
 
 #[derive(Module)]
-#[module(name = "pointlio", setup = start)]
+#[module(setup = start)]
 pub struct PointLioModule {
     #[input(decode = PointCloud2::decode)]
     lidar_raw: Input<PointCloud2>,

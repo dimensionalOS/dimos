@@ -248,7 +248,7 @@ struct Outs {
 }
 
 #[derive(Module)]
-#[module(name = "realsense", setup = start, teardown = stop)]
+#[module(setup = start, teardown = stop)]
 struct RealSense {
     #[output(encode = Image::encode)]
     color_image: Output<Image>,

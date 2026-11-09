@@ -120,7 +120,7 @@ pub struct Config {
 }
 
 #[derive(Module)]
-#[module(name = "depth2depth_cloud", setup = start, teardown = stop)]
+#[module(setup = start, teardown = stop)]
 pub struct Depth2DepthCloud {
     #[input(decode = CompressedImage::decode, handler = on_image)]
     image: Input<CompressedImage>,

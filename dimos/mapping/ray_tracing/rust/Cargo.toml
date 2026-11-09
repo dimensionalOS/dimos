@@ -13,29 +13,8 @@ path = "src/lib.rs"
 name = "voxel_ray_tracing"
 path = "src/main.rs"
 
-# Module registry entry, cross-checked at compile time by the module macro.
-# threads = 2 keeps per-scan map compute from serializing with publish work.
-[package.metadata.dimos.module.ray_tracing]
-path = "dimos_voxel_ray_tracing::module::RayTracingVoxelMap"
-python = "dimos.mapping.ray_tracing.module:RayTracingVoxelMap"
-threads = 2
-
-[package.metadata.dimos.module.ray_tracing.inputs]
-lidar = "sensor_msgs.PointCloud2"
-loaded_map = "sensor_msgs.PointCloud2"
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.ray_tracing.outputs]
-global_map = "sensor_msgs.PointCloud2"
-local_map = "sensor_msgs.PointCloud2"
-local_map_fine = "sensor_msgs.PointCloud2"
-seed_map = "sensor_msgs.PointCloud2"
-seed_bounds = "geometry_msgs.PoseStamped"
-region_bounds = "geometry_msgs.PoseStamped"
-map_regions = "sensor_msgs.PointCloud2"
-
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "a83b1e8f06a5010dfcfb498f6d09d9d725c54b8b" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }

@@ -100,7 +100,7 @@ struct Shared {
 }
 
 #[derive(Module)]
-#[module(name = "local_planner", setup = spawn_worker, teardown = stop_worker)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
 pub struct LocalPlanner {
     #[input(decode = PointCloud2::decode, handler = on_local_map)]
     local_map: Input<PointCloud2>,

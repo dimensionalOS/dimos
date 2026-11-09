@@ -227,7 +227,7 @@ impl SeedPairs {
 }
 
 #[derive(Module)]
-#[module(name = "mls_planner", setup = spawn_worker, teardown = stop_worker)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
 pub struct MlsPlanner {
     #[input(decode = PointCloud2::decode, handler = on_global_map)]
     global_map: Input<PointCloud2>,
@@ -259,7 +259,7 @@ pub struct MlsPlanner {
     nodes: Output<PointCloud2>,
 
     // The wire payload is a Path. dimos names the channel LineSegments3D.
-    #[output(encode = Path::encode, msg = "LineSegments3D")]
+    #[output(encode = Path::encode)]
     node_edges: Output<Path>,
 
     #[output(encode = Path::encode)]

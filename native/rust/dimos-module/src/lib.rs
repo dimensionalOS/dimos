@@ -17,7 +17,6 @@
 #[cfg(test)]
 extern crate self as dimos_module;
 
-pub mod host;
 pub mod lcm;
 pub mod log;
 pub mod module;
@@ -29,11 +28,10 @@ pub mod workers;
 pub mod zenoh;
 
 pub use dimos_module_macros::{native_config, Module};
-pub use host::{host_main, HostSpec, ModuleEntry};
 pub use lcm::LcmTransport;
 pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
 pub use tf::{Lookup, Tf, Transform};
-pub use transport::{SharedTransport, Transport};
+pub use transport::Transport;
 pub use workers::worker_pool;
 pub use zenoh::ZenohTransport;
 
