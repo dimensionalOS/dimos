@@ -63,7 +63,7 @@ class WorldView(Protocol):
 
 
 def rotation_matrix(wxyz: Vector) -> Vector:
-    return Rotation.from_quat(wxyz, scalar_first=True).as_matrix()
+    return np.asarray(Rotation.from_quat(wxyz, scalar_first=True).as_matrix(), dtype=np.float64)
 
 
 def robot_ids(world: WorldMirror) -> list[str]:
