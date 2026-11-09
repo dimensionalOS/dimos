@@ -43,6 +43,7 @@ from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -128,7 +129,10 @@ class PerceptionLocalize(Module):
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
+        # Unsubscribe inputs before closing the stores they write to.
+        subscriptions = self.register_disposable(CompositeDisposable())
         self._memento = Memento()
+        self.register_disposable(Disposable(self._memento.close))
 
         embed_hz = (
             WALK_EMBED_HZ
@@ -165,6 +169,7 @@ class PerceptionLocalize(Module):
             observation_store=ListObservationStore(name=GEOMETRY_STREAM, max_size=memory_frames),
         )
         self._tf_buffer = TF(self.tf, buffer_size=self.config.horizon_s)
+        subscriptions.add(Disposable(self._tf_buffer.dispose))
 
         def on_camera_info(info: CameraInfo) -> None:
             if self._camera is None:
@@ -175,25 +180,23 @@ class PerceptionLocalize(Module):
             self._geometry_feed.append(msg, ts=msg.ts)
 
         geometry = self.depth_image if self.config.geometry == "depth" else self.lidar
-        self._unsubs = [
-            self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts)),
-            geometry.subscribe(on_geometry),
-            self.camera_info.subscribe(on_camera_info),
-        ]
+        subscriptions.add(
+            Disposable(
+                self.color_image.subscribe(lambda img: self._color_feed.append(img, ts=img.ts))
+            )
+        )
+        subscriptions.add(Disposable(geometry.subscribe(on_geometry)))
+        subscriptions.add(Disposable(self.camera_info.subscribe(on_camera_info)))
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
         self._thread.start()
 
     @rpc
     def stop(self) -> None:
-        # the thread is the last thing start() creates
         if self._thread is not None:
             self._stop.set()
             self._ready.clear()
-            self._thread.join(timeout=5.0)
-            for unsubscribe in self._unsubs:
-                unsubscribe()
-            self._tf_buffer.dispose()
-            self._memento.close()
+            if self._thread.is_alive():
+                self._thread.join(timeout=5.0)
         super().stop()
 
     def _pair_geometry(self, upstream: Iterator[Any]) -> Iterator[Any]:
