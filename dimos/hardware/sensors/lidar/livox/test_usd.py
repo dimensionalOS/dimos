@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The baked MID-360 USD layer: it parses, it carries the configured frames, and it grafts.
-
-Nothing here checks the geometry numbers. The shell box and its offset are hand-set
-placeholders, so a test over them would only restate the constant.
-"""
 
 from __future__ import annotations
 
@@ -44,7 +39,6 @@ def _stage(usd: str) -> Any:
 
 
 def _links(stage: Any) -> set[str]:
-    """Every link by the name it travels under: a link prim is one with RigidBodyAPI."""
     from pxr import UsdPhysics
 
     return {
@@ -67,8 +61,6 @@ def test_the_configured_frames_are_the_names_the_layer_carries() -> None:
 
     stage = _stage(mid360_usd("front/lidar", "front/imu"))
 
-    # displayName is what a UrdfManager matches a mount frame on, so these are the names that
-    # have to follow the config rather than the canonical ones baked into the prim names.
     assert _links(stage) == {"front/lidar", "front/lidar_body", "front/imu"}
 
 
@@ -118,7 +110,6 @@ def Xform "robot" (
 
 
 def test_describing_itself_costs_no_usd_dependency() -> None:
-    # usd-core has no linux-aarch64 wheel, so a Jetson running this driver must never need it.
     import subprocess
 
     code = (
@@ -131,7 +122,6 @@ def test_describing_itself_costs_no_usd_dependency() -> None:
 
 
 def test_the_sensor_satisfies_the_urdf_manager_mount_contract() -> None:
-    # The reason get_usd exists: UrdfManager rejects a mount whose module cannot be asked.
     from dimos.robot.urdf_manager import Mount
 
     mount = Mount.of(Mid360.blueprint(lidar_ip="192.168.1.155").namespace("front"))
@@ -142,8 +132,6 @@ def test_the_sensor_satisfies_the_urdf_manager_mount_contract() -> None:
 
 
 def test_the_baked_layer_authors_no_custom_attributes() -> None:
-    # Standard schemas only, same as everything urdf_to_usd emits: a consumer should need
-    # nothing of ours to read this.
     usd = mid360_usd("lidar_link", "imu_link")
 
     assert "custom " not in usd
@@ -151,16 +139,12 @@ def test_the_baked_layer_authors_no_custom_attributes() -> None:
 
 
 def _answer(config: Mid360Config) -> list[str]:
-    """Mid360.get_usd without a Mid360: a sync @rpc is tagged in place rather than wrapped, so it
-    can be called with anything carrying a config, which keeps these tests off the rust build.
-    """
     from types import SimpleNamespace
 
     return cast("list[str]", Mid360.get_usd(cast("Any", SimpleNamespace(config=config))))
 
 
 def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
-    # Worth covering because swapping the two frames would be silent: both are strings.
     pytest.importorskip("pxr")
     config = Mid360Config(frame_id="chassis/lidar", imu_frame_id="chassis/imu")
 
@@ -170,17 +154,12 @@ def test_get_usd_hands_over_the_two_configured_frames_in_order() -> None:
 
 
 def test_get_usd_roots_its_assets_at_this_module_rather_than_the_build_machine() -> None:
-    """The baked constant is written on a build machine, whose paths mean nothing on a robot, so
-    the root is resolved at call time from this module's own location.
-    """
     root = _answer(Mid360Config())[0]
 
     assert Path(root) == Path(__file__).parent
 
 
 def test_the_imu_offset_is_the_one_in_pointlios_config_negated() -> None:
-    """One copy of the calibration. The layer used to restate it, with a comment asking a human
-    to keep the two in step; this fails instead if they drift."""
     from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 
     factory = PointLioConfig.model_fields["extrinsic_t"].default_factory
