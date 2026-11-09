@@ -24,11 +24,21 @@ from dimos.sim2.l1 import SimL1
 from dimos.sim2.module import Simulation
 from dimos.visualization.vis_module import vis_module
 
+# The sensors as their own blueprints, because the manager mounts them by the instance each one
+# deploys: a frame_id alone would name a module the manager cannot address.
+_lidar = SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame)
+_camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame)
+
 unitree_go2_sim2_l1 = autoconnect(
     Simulation.blueprint(),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     Go2Sim.blueprint(),
-    UsdManager.blueprint().remappings([(UsdManager, "coordinator_joint_state", "joint_state")]),
-    SimL1.blueprint(frame_id=Go2Sim.l1_mount_frame),
-    SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame),
+    # One manager holding the whole robot: the Go2's own layer, with each sensor grafted onto the
+    # frame it is bolted to. Without the mounts it answered for the robot alone, so the lidar and
+    # the camera were nowhere in the stage a viewer draws.
+    UsdManager.blueprint(
+        mounts={Go2Sim.l1_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera}
+    ).remappings([(UsdManager, "coordinator_joint_state", "joint_state")]),
+    _lidar,
+    _camera,
 ).global_config(n_workers=6, robot_model="unitree_go2")
