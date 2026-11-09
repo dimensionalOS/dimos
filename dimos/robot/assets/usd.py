@@ -286,7 +286,7 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
 
 
 def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) -> None:
-    """Say the frame is fixed to the link it hangs off, where that link is one that moves.
+    """Say what holds the frame: the link it hangs off, or the world where that is not a link.
 
     Nesting places a frame but says nothing about how it is held, and a physics engine has to
     decide. MuJoCo's guess is the most permissive one -- a body free in all six degrees -- and a
@@ -295,18 +295,20 @@ def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) ->
     honest statement (a mount bolted to the torso is not free to move) and it costs no degree of
     freedom: MuJoCo folds a welded massless body into its parent.
 
-    Only where the parent is a link. A converted room hangs its visitors' frames off its own
-    root, which is an Xform and not a rigid body, and welding to something that is not a body is
-    not a statement USD can make. Nothing there needs it: a frame nested under static geometry is
-    static too, which is why a scene's stand frames always loaded.
+    Where the parent is *not* a link the frame is welded to the world instead, which is what a
+    FixedJoint naming only body1 means. That is the case for a converted room, whose root is an
+    Xform and not a rigid body: a stand frame hanging off it is a body with no mass and nothing
+    holding it, and the room came back with the same mjMINVAL complaint as the lidar mount did.
+    Leaving the weld out instead does not work either -- a frame is a rigid body because that is
+    what makes MuJoCo give it a body at all, and a prim that is only an Xform is a mount point
+    no engine can find.
     """
     parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
-    if not parent or not parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
-        return
     joint = pxr.UsdPhysics.FixedJoint.Define(
         stage, pxr.Sdf.Path(path).AppendChild(_identifier(pxr, f"{name}_joint"))
     )
-    joint.CreateBody0Rel().SetTargets([parent.GetPath()])
+    if parent and parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+        joint.CreateBody0Rel().SetTargets([parent.GetPath()])
     joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
     # The nesting already placed the frame, so the joint adds no offset of its own.
     joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
