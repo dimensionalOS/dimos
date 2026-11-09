@@ -42,6 +42,9 @@ exclude = [
     "**/*.yml",
     "**/*.json",
     "**/*.urdf",
+    # A scene or a robot committed as a USD layer. Every sim2 blueprint loads one off disk, so a
+    # wheel without them has no worlds in it.
+    "**/*.usda",
     "**/*.html",
     "**/*.css",
     "**/*.js",
