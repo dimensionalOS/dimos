@@ -398,32 +398,36 @@ def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
     actuator.CreateAttribute("mjc:ctrlLimited", pxr.Sdf.ValueTypeNames.Token).Set("false")
 
 
-def usd_with_keyframe(
-    usd: str, qpos: Sequence[float], ctrl: Sequence[float] = (), name: str = "home"
-) -> str:
-    """``usd`` with the pose it starts in, as a keyframe MuJoCo reads back out of the layer.
+def usd_drives(usd: str) -> dict[str, tuple[float, float, float]]:
+    """Every driven joint in ``usd``, as ``{joint: (kp, kd, target)}``. The other half of usd_with_drives.
 
-    A robot that starts wherever its joints happen to be zero starts with its legs straight out,
-    and the pose it is meant to hold is the controller's, not the vendor's. That is one more fact
-    about the robot, so the layer says it -- in MuJoCo's own words, since a keyframe is the thing
-    it already has for "the configuration this model starts in".
+    Read from `UsdPhysics.DriveAPI` rather than from MuJoCo's spelling of the same thing,
+    because this is the standard one and because it is the one that survives composition: a
+    drive sits on the joint prim, so it is still there after a robot has been grafted into a
+    room, whatever the engine then does with it.
 
-    ``qpos`` is the whole model's, in the order it compiles to, which is why this takes the
-    numbers rather than working them out: a caller that can compile the layer knows the order,
-    and this does not have to.
+    Which is the reason there is no keyframe here. A keyframe would be the natural place for
+    "the pose this starts in", and MuJoCo reads one out of a layer -- but a keyframe is the
+    whole model's and a composed world's qpos is a different vector, so a robot's own keyframe
+    means nothing once it is standing in a room. A target on each joint means the same thing and
+    composes.
     """
     pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a robot")
-    stage = pxr.Usd.Stage.Open(layer)
-    root = stage.GetDefaultPrim()
-    keyframe = stage.DefinePrim(
-        root.GetPath().AppendChild("Physics").AppendChild(_identifier(pxr, name)), "MjcKeyframe"
-    )
-    doubles = pxr.Sdf.ValueTypeNames.DoubleArray
-    keyframe.CreateAttribute("mjc:qpos", doubles).Set([float(q) for q in qpos])
-    if len(ctrl):
-        keyframe.CreateAttribute("mjc:ctrl", doubles).Set([float(c) for c in ctrl])
-    return str(layer.ExportToString())
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a robot"))
+    drives = {}
+    for prim in stage.Traverse():
+        if not prim.IsA(pxr.UsdPhysics.Joint):
+            continue
+        drive = pxr.UsdPhysics.DriveAPI(prim, _drive_kind(pxr, prim))
+        stiffness = drive.GetStiffnessAttr()
+        if not stiffness or not stiffness.HasAuthoredValue():
+            continue
+        drives[_frame_name(prim)] = (
+            float(stiffness.Get()),
+            float(drive.GetDampingAttr().Get() or 0.0),
+            float(drive.GetTargetPositionAttr().Get() or 0.0),
+        )
+    return drives
 
 
 def prefix_usd_frames(usd: str, prefix: str) -> str:
