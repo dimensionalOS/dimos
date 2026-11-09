@@ -17,6 +17,7 @@ feedforward/profile calibration, replan reset, and an end-to-end drive."""
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -41,9 +42,9 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     RPPPathFollowerTask,
     create_task,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -83,7 +84,10 @@ def _task(artifact_path: str, **params) -> RPPPathFollowerTask:
 
 def _odom(x=0.0, y=0.0, yaw=0.0) -> PoseStamped:
     return PoseStamped(
-        position=Vector3(x, y, 0.0), orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(
+            position=Point(x, y, 0.0), orientation=geometry.quaternion_from_euler(0.0, 0.0, yaw)
+        ),
     )
 
 
@@ -235,17 +239,17 @@ import math
 from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     _with_tangent_headings,
 )
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.messages.nav_msgs.msg import Path
 
 
 def _ident_path(points):
     """Path with identity orientation on every pose (what MLSPlannerNative emits)."""
     return Path(
-        ts=0.0,
-        frame_id="odom",
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="odom"),
         poses=[
             PoseStamped(
-                ts=0.0, position=Vector3(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
             )
             for x, y in points
         ],
@@ -255,7 +259,7 @@ def _ident_path(points):
 def test_degenerate_path_gets_tangent_headings():
     # Straight +x then turn +y: first segments face 0 rad, the corner faces +pi/2.
     out = _with_tangent_headings(_ident_path([(0, 0), (1, 0), (2, 0), (2, 1), (2, 2)]))
-    yaws = [p.orientation.euler[2] for p in out.poses]
+    yaws = [geometry.quaternion_euler(p.pose.orientation)[2] for p in out.poses]
     assert math.isclose(yaws[0], 0.0, abs_tol=1e-6)
     assert math.isclose(yaws[1], 0.0, abs_tol=1e-6)
     assert math.isclose(yaws[2], math.pi / 2, abs_tol=1e-6)  # tangent into the turn
@@ -267,24 +271,25 @@ def test_degenerate_path_gets_tangent_headings():
 def test_positions_unchanged_by_synthesis():
     pts = [(0, 0), (1, 0), (1, 1)]
     out = _with_tangent_headings(_ident_path(pts))
-    assert [(round(p.position.x, 6), round(p.position.y, 6)) for p in out.poses] == pts
+    assert [(round(p.pose.position.x, 6), round(p.pose.position.y, 6)) for p in out.poses] == pts
 
 
 def test_path_with_real_headings_is_untouched():
     # A planner that already provides per-pose orientations must be left alone.
     oriented = Path(
-        ts=0.0,
-        frame_id="odom",
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="odom"),
         poses=[
             PoseStamped(
-                ts=0.0,
-                position=Vector3(0, 0, 0),
-                orientation=Quaternion.from_euler(Vector3(0, 0, 0.3)),
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=Pose(
+                    position=Point(0, 0, 0), orientation=geometry.quaternion_from_euler(0, 0, 0.3)
+                ),
             ),
             PoseStamped(
-                ts=0.0,
-                position=Vector3(1, 0, 0),
-                orientation=Quaternion.from_euler(Vector3(0, 0, 1.4)),
+                header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                pose=Pose(
+                    position=Point(1, 0, 0), orientation=geometry.quaternion_from_euler(0, 0, 1.4)
+                ),
             ),
         ],
     )

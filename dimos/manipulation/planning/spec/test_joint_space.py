@@ -16,6 +16,7 @@
 
 import math
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -24,7 +25,9 @@ import pytest
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointCoordinate
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -160,7 +163,15 @@ def test_joint_space_wraps_interpolates_lifts_and_builds_finite_domains(
             base_link="base",
         )
     ).joint_space
-    start = space.from_joint_state(JointState(name=["yaw", "x"], position=[math.pi - 0.1, 10.0]))
+    start = space.from_joint_state(
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["yaw", "x"],
+            position=np.asarray([math.pi - 0.1, 10.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     goal = space.normalize_positions([-4.0, -math.pi + 0.1])
 
     assert space.delta(start, goal) == pytest.approx((-14.0, 0.2))
@@ -195,4 +206,12 @@ def test_joint_space_rejects_invalid_input_states(tmp_path, names, positions, me
     ).joint_space
 
     with pytest.raises(ValueError, match=message):
-        space.from_joint_state(JointState(name=names, position=positions))
+        space.from_joint_state(
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray(positions, dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )

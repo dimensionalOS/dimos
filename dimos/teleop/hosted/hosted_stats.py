@@ -28,16 +28,21 @@ import threading
 import time
 from typing import Any
 
+from dimos_cdrgen.registry import decode as cdr_decode
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.dimos_msgs.msg import VideoStats
+from dimos.messages.geometry_msgs.msg import TwistStamped
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.teleop.command_codec import validate_cdr_payload
+from dimos.teleop.utils import video_stats
 from dimos.teleop.utils.stream_stats import LiveStreamStats
-from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import decode_data_frame, peek_data_frame_lengths
 
 logger = setup_logger()
 
@@ -108,7 +113,7 @@ class HostedStatsModule(Module):
         kind = msg.get("type")
         if kind == "video_stats":
             try:
-                self.video_stats.publish(VideoStats.from_dict(msg))
+                self.video_stats.publish(video_stats.from_dict(msg))
             except (TypeError, ValueError):
                 logger.warning("state_reliable: malformed video_stats, dropping")
         elif kind == "clock_report":
@@ -124,10 +129,21 @@ class HostedStatsModule(Module):
         if isinstance(data, str):
             data = data.encode()
         try:
-            cmd = TwistStamped.lcm_decode(data)
+            lengths = peek_data_frame_lengths(data)
+            if lengths is None or lengths[2] != len(data):
+                return
+            frame = decode_data_frame(data)
+            metadata = frame.header.meta or {}
+            if (
+                metadata.get("encoding") != "cdr"
+                or metadata.get("type") != TwistStamped.__msgtype__
+            ):
+                return
+            validate_cdr_payload(frame.payload)
+            cmd = cdr_decode(frame.payload, TwistStamped)
         except Exception:
             return
-        self._cmd_stats.record(cmd.ts, nbytes=len(data))
+        self._cmd_stats.record(message_time.to_seconds(cmd.header.stamp), nbytes=len(data))
         self.cmd_vel_stamped.publish(cmd)
 
     def _on_robot_state(self, data: Any) -> None:

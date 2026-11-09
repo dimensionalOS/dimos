@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -43,10 +44,13 @@ from dimos.manipulation.visualization.config import (
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.message_utils import time as message_time
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.dimos_msgs.msg import GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -97,7 +101,12 @@ class FakeWorld:
     def get_model_config(self) -> RobotModelConfig:
         return RobotModelConfig(
             model=RobotModel.from_file(Path("fake.urdf")),
-            base_pose=PoseStamped(),
+            base_pose=PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            ),
             joint_names=["joint1"],
             planning_groups=[
                 PlanningGroupDefinition(
@@ -160,7 +169,13 @@ class FakeWorld:
         return None
 
     def get_joint_state(self, ctx: object) -> JointState:
-        return JointState({})
+        return JointState(
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            name=[],
+            position=np.asarray([], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
 
     def is_collision_free(self, ctx: object) -> bool:
         return True
@@ -180,7 +195,10 @@ class FakeWorld:
         return True
 
     def get_ee_pose(self, ctx: object) -> PoseStamped:
-        return PoseStamped()
+        return PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
 
     def get_link_pose(self, ctx: object, link_name: str) -> NDArray[np.float64]:
         return np.eye(4, dtype=np.float64)
@@ -189,7 +207,10 @@ class FakeWorld:
         return np.zeros((6, 0), dtype=np.float64)
 
     def get_group_ee_pose(self, ctx: object, group_id: str) -> PoseStamped:
-        return PoseStamped()
+        return PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
 
     def get_group_jacobian(self, ctx: object, group_id: str) -> NDArray[np.float64]:
         return np.zeros((6, 0), dtype=np.float64)
@@ -323,11 +344,18 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         PlanningSceneInfo(model=fake_world.get_prepared_model()), operator=object()
     )
     frame = VisualizationStateFrame(joint_state=None)
-    trajectory = JointTrajectory(joint_names=["arm/j1"], points=[])
+    trajectory = JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        joint_names=["arm/j1"],
+        points=[],
+    )
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         dimensions=(1.0, 1.0, 1.0),
     )
     visualization.initialize(session)
@@ -339,7 +367,9 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     visualization.add_vis_obstacle("box", obstacle)
     visualization.remove_vis_obstacle("box")
     visualization.clear_vis_obstacles()
-    proposals = GraspCandidateArray()
+    proposals = GraspCandidateArray(
+        header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[]
+    )
     visualization.show_grasp_proposals(proposals)
     assert fake_world.visualization_calls == [
         ("initialize", session),
@@ -395,13 +425,18 @@ def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
-        pose=PoseStamped(),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         dimensions=(1.0, 1.0, 1.0),
     )
     world.add_vis_obstacle("box", obstacle)
     world.remove_vis_obstacle("box")
     world.clear_vis_obstacles()
-    world.show_grasp_proposals(GraspCandidateArray())
+    world.show_grasp_proposals(
+        GraspCandidateArray(header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""), candidates=[])
+    )
     world.cancel_preview_animation()
     world.close()
 

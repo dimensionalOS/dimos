@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 
+import math
+import time
+
+import numpy as np
 import pytest
 
 from dimos.control.task import CoordinatorState, JointStateSnapshot
@@ -22,9 +25,10 @@ from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task
     PlanarBaseTrajectoryTaskConfig,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.utils.trigonometry import angle_diff
 
 JOINTS = ["base/vx", "base/vy", "base/wz"]
@@ -58,14 +62,23 @@ class _TwistBase:
 def _line(start, goal, duration, n=60):
     velocity = [(g - s) / duration for s, g in zip(start, goal, strict=True)]
     points = [
-        TrajectoryPoint(
-            time_from_start=duration * i / (n - 1),
-            positions=[s + (g - s) * i / (n - 1) for s, g in zip(start, goal, strict=True)],
-            velocities=velocity,
+        JointTrajectoryPoint(
+            positions=np.asarray(
+                [s + (g - s) * i / (n - 1) for s, g in zip(start, goal, strict=True)],
+                dtype=np.float64,
+            ),
+            velocities=np.asarray(velocity, dtype=np.float64),
+            accelerations=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+            time_from_start=message_time.duration_from_seconds(duration * i / (n - 1)),
         )
         for i in range(n)
     ]
-    return JointTrajectory(points=points, joint_names=["x", "y", "yaw"])
+    return JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        joint_names=["x", "y", "yaw"],
+        points=points,
+    )
 
 
 def _run(task, base, seconds, t=100.0):
@@ -94,7 +107,7 @@ def test_follows_a_timed_trajectory_across_the_yaw_seam():
     task.execute(plan)
 
     _, t = _run(task, base, seconds=2.0)
-    reference, _ = plan.sample(2.0)
+    reference, _ = trajectory_utils.sample(plan, 2.0)
     assert math.hypot(base.x - reference[0], base.y - reference[1]) < 0.01
     assert abs(angle_diff(base.yaw, reference[2])) < 0.01
 
@@ -113,7 +126,7 @@ def test_feedback_pulls_an_offset_base_onto_the_plan():
 
     _run(task, base, seconds=2.0)
 
-    reference, _ = plan.sample(2.0)
+    reference, _ = trajectory_utils.sample(plan, 2.0)
     assert math.hypot(base.x - reference[0], base.y - reference[1]) < 0.02
     assert abs(angle_diff(base.yaw, reference[2])) < 0.02
 
@@ -141,7 +154,7 @@ def test_a_second_trajectory_starts_on_its_first_tick():
     plan = _line((base.x, base.y, base.yaw), (base.x + 1.0, base.y, base.yaw), 2.0)
     task.execute(plan)
     _, t = _run(task, base, seconds=1.0, t=t)
-    assert abs(base.x - plan.sample(1.0)[0][0]) < 0.01
+    assert abs(base.x - trajectory_utils.sample(plan, 1.0)[0][0]) < 0.01
 
     _run(task, base, seconds=2.0, t=t)
     assert task.get_status().state == TrajectoryState.COMPLETED
@@ -152,9 +165,19 @@ def test_rejects_trajectories_it_cannot_follow():
     nan_velocity = _line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), duration=2.0)
     nan_velocity.points[5].velocities = [math.nan, 0.0, 0.0]
     never_ends = _line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), duration=2.0)
-    never_ends.points[-1].time_from_start = math.inf
+    never_ends.points[-1].positions[0] = math.inf
     two_columns = JointTrajectory(
-        points=[TrajectoryPoint(positions=[0.0, 0.0], velocities=[0.0, 0.0])]
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        joint_names=[],
+        points=[
+            JointTrajectoryPoint(
+                positions=np.asarray([0.0, 0.0], dtype=np.float64),
+                velocities=np.asarray([0.0, 0.0], dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
+            )
+        ],
     )
     diagonal_too_fast = _line((0.0, 0.0, 0.0), (1.0, 1.0, 0.0), duration=1.0)
 

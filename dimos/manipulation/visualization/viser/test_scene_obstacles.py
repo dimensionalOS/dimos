@@ -14,17 +14,22 @@
 
 """Obstacle rendering dispatch, without a running Viser server."""
 
+import time
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.messages.geometry_msgs.msg import PoseStamped
 
 
 def _scene() -> ViserManipulationScene:
@@ -35,7 +40,10 @@ def _octree(points: np.ndarray, resolution: float = 0.025) -> Obstacle:
     return Obstacle(
         name="mapping/voxel-map",
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(frame_id="world"),
+        pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         points=points,
         octree_resolution=resolution,
     )

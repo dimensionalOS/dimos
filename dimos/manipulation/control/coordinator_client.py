@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import math
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
@@ -58,9 +58,8 @@ from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
-
-if TYPE_CHECKING:
-    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.message_utils import trajectory as trajectory_utils
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 
 
 class CoordinatorClient:
@@ -294,7 +293,7 @@ def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> N
     print("\n" + "=" * 70)
     print("GENERATED TRAJECTORY")
     print("=" * 70)
-    print(f"Duration: {trajectory.duration:.3f}s")
+    print(f"Duration: {trajectory_utils.duration(trajectory):.3f}s")
     print(f"Points: {len(trajectory.points)}")
     print("-" * 70)
     print(f"{'Time':>6} | {header_str} (degrees)")
@@ -302,8 +301,8 @@ def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> N
 
     num_samples = min(10, max(len(trajectory.points) // 10, 5))
     for i in range(num_samples + 1):
-        t = (i / num_samples) * trajectory.duration
-        q_ref, _ = trajectory.sample(t)
+        t = (i / num_samples) * trajectory_utils.duration(trajectory)
+        q_ref, _ = trajectory_utils.sample(trajectory, t)
         q_deg = [f"{math.degrees(q):7.1f}" for q in q_ref]
         print(f"{t:6.2f} | {' '.join(q_deg)}")
 
@@ -432,7 +431,7 @@ class CoordinatorShell:
             if result.status is TrajectoryExecutionStatus.ACCEPTED:
                 print(
                     "Trajectory accepted "
-                    f"(expected duration: {self._generated_trajectory.duration:.2f}s)"
+                    f"(expected duration: {trajectory_utils.duration(self._generated_trajectory):.2f}s)"
                 )
             else:
                 print(f"Failed to start trajectory: {result.message or result.status.name}")
