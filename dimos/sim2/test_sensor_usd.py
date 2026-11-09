@@ -32,6 +32,7 @@ pytest.importorskip("pxr")
 # them joins this table as it arrives.
 _SENSORS = [
     ("camera", {"frame_id": "left/camera_optical"}, {"left/camera_optical"}),
+    ("imu", {"frame_id": "left/imu_link"}, {"left/imu_link"}),
     (
         "livox",
         {"frame_id": "left/mid360_link", "imu_frame_id": "left/lidar_imu"},
@@ -42,9 +43,10 @@ _SENSORS = [
 
 def _sensor(kind: str, config: dict[str, Any]) -> Any:
     from dimos.sim2.camera import SimCamera
+    from dimos.sim2.imu import SimImu
     from dimos.sim2.livox import LivoxSim
 
-    return {"camera": SimCamera, "livox": LivoxSim}[kind](**config)
+    return {"camera": SimCamera, "imu": SimImu, "livox": LivoxSim}[kind](**config)
 
 
 @pytest.mark.parametrize(("kind", "config", "frames"), _SENSORS)
