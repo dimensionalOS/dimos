@@ -17,46 +17,47 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
-from dimos.sim2.view import open_view, sensor_frame
+from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd import graft_usd, prefix_usd_frames
+from dimos.sim2.assets.toy import toy_robot
+from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
+from dimos.sim2.mujoco.world import SensorMount
+from dimos.sim2.usd_layer import layer_file
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
+
+SCENE = Path(__file__).parent / "assets" / "scene.usda"
 
 
 @pytest.fixture
-def description(tmp_path: Path) -> dict:
-    scene = tmp_path / "scene.xml"
-    scene.write_text("""
-<mujoco>
-  <worldbody>
-    <geom name="floor" type="plane" size="10 10 .1"/>
-    <body name="crate" pos="0 2 .5"><freejoint/><geom type="box" size=".1 .1 .1"/></body>
-  </worldbody>
-</mujoco>
-""")
-    robot = tmp_path / "robot.xml"
-    robot.write_text("""
-<mujoco>
-  <worldbody>
-    <body name="base">
-      <freejoint/>
-      <geom type="box" size=".2 .1 .1" mass="1"/>
-      <site name="imu"/>
-      <body name="head" pos=".2 0 .1"><joint name="neck" type="hinge" axis="0 0 1"/><geom type="sphere" size=".05" mass=".1"/>
-        <site name="eye"/><site name="lidar"/>
-      </body>
-    </body>
-  </worldbody>
-</mujoco>
-""")
-    return {
-        "scene": str(scene),
-        "simulated": [
-            SimulatedRobot("dog", robot, "base"),
-            SimulatedSensor("camera", "eye", robot_id="dog"),
-            SimulatedSensor("imu", "imu", robot_id="dog"),
-            SimulatedSensor("lidar", "lidar", robot_id="dog"),
-        ],
-    }
+def composed() -> Path:
+    """The world as a sensor really gets it: a room with the robot already grafted into it.
+
+    This is what `get_scene` answers with -- the manager composes the room and everything
+    mounted on it into one layer -- so a sensor compiling it is compiling the same thing the
+    physics is running. There is no description anywhere in it: the frames the sensor needs are
+    in the layer because the robot's model carries them.
+    """
+    robot = toy_robot().with_frames(
+        {
+            "imu": ("base", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "eye": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+            "lidar": ("head", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+        }
+    )
+    scene = UsdModel.from_file(SCENE).with_frames(
+        {"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}
+    )
+    layer = graft_usd(scene.usd, {"dog": prefix_usd_frames(robot.usd, "dog")})
+    return layer_file(layer, called="sensor-world")
+
+
+def _view(composed: Path, kind: str = "lidar", frame: str = "dog/lidar"):
+    """A sensor's own world: the composed scene, with this sensor at its own frame.
+
+    The robot id comes from the world, as it does in a sensor: the first frame of observations
+    announces it. Here that is `_World`, which announces the dog the way a backend would.
+    """
+    return open_view(composed, ["dog"], SensorMount(kind, frame, frame))
 
 
 class _World:
@@ -67,7 +68,7 @@ class _World:
         # Sim time zero at wall time zero, so ts is sim time.
         self.writer.start_ns = 0
         self.writer.add("world")
-        self.writer.add("dog")
+        self.writer.add("dog", model="dog.usda")
         self.writer.add("dog/neck")
         self.writer.add("crate")
         self.writer.position("crate", [3.0, 0.0, 0.1, 0, 0, 0, 1])
@@ -79,8 +80,18 @@ class _World:
         return self.mirror
 
 
-def test_the_view_is_posed_by_the_world_alone(description):
-    view = open_view(description)
+def test_the_robots_in_the_world_are_the_ones_the_world_announced():
+    """Nobody tells a sensor what is in the world; the world does, on its first frame.
+
+    A robot is announced with the layer it was drawn from and a crate is not, which is the whole
+    difference. The ids matter because the view has to shorten its own copy for exactly the
+    robots the physics shortened for, or an entity in the observations names nothing it can pose.
+    """
+    assert robot_ids(_World().at(0.0, 0.0, 0.0)) == ["dog"]
+
+
+def test_the_view_is_posed_by_the_world_alone(composed):
+    view = _view(composed, "camera", "dog/eye")
     view.update(_World().at(1.0, 2.0, np.pi / 2))
     assert view.time == 1.0
     assert view.pose("dog/base")[0] == pytest.approx([2.0, 0.0, 1.0])
@@ -92,12 +103,11 @@ def test_the_view_is_posed_by_the_world_alone(description):
         np.array([5.0, 0.0, 1.0]), np.array([[0.0, 0.0, -1.0]]), 10.0
     )
     assert distance[0] == pytest.approx(1.0)
-    assert sensor_frame(description, "eye") == "dog/eye"
     assert view.render("dog/eye", 32, 24).shape == (24, 32, 3)
     view.close()
 
 
-def test_a_sensor_does_not_see_the_body_it_is_mounted_on(description):
+def test_a_sensor_does_not_see_the_body_it_is_mounted_on(composed):
     """The lidar site sits at the centre of the head's sphere, as a real one sits inside its shell.
 
     A collision hull is a few convex shapes around a shape that is neither, so a sensor bolted
@@ -105,7 +115,7 @@ def test_a_sensor_does_not_see_the_body_it_is_mounted_on(description):
     torso_link's. Casting without saying so returns the mount for every ray in every direction,
     and a lidar that drops returns inside its blind range then reports an empty scan.
     """
-    view = open_view(description)
+    view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
     origin, _ = view.pose("dog/lidar")
     # Forward and down, so it clears the base behind it and reaches the floor.
@@ -122,9 +132,9 @@ def test_a_sensor_does_not_see_the_body_it_is_mounted_on(description):
     assert seeing[0] > 1.0
 
 
-def test_blind_to_lets_the_rays_through_further_frames(description):
+def test_blind_to_lets_the_rays_through_further_frames(composed):
     """For what the mount rule does not cover: a radome, a mast, a wall a test wants gone."""
-    view = open_view(description)
+    view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
     # From a metre to the robot's side, level with its base, looking straight at it.
     base, _ = view.pose("dog/base")
@@ -140,8 +150,8 @@ def test_blind_to_lets_the_rays_through_further_frames(description):
     assert through[0] < 0
 
 
-def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(description):
-    view, world = open_view(description), _World()
+def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(composed):
+    view, world = _view(composed, "imu", "dog/imu"), _World()
     view.update(world.at(1.0, 0.0, 0.0))
     gyro, accelerometer, _ = view.imu("dog/imu")
     assert accelerometer == pytest.approx([0.0, 0.0, 9.81])

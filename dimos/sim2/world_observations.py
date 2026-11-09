@@ -20,7 +20,7 @@ Three kinds of observation: a body's Position (its pose), a joint's JointState, 
 what a real sensor's is: a difference of its poses over time.
 
 A backend writes its frames with a WorldWriter; every other module keeps a WorldMirror, which applies each
-frame it gets. There is no catching up: a missed frame is missed, so the Simulation steps only once every
+frame it gets. There is no catching up: a missed frame is missed, so a world steps only once every
 module has started.
 """
 

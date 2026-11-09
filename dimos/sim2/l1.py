@@ -22,21 +22,20 @@ inside the square; the real map's flicker comes from sensor noise this sim does 
 import asyncio
 from collections.abc import AsyncIterator
 import math
-from typing import Any
 
 from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
+from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
+from dimos.sim2.sim import SceneConfig, scene_from
+from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 
@@ -45,9 +44,9 @@ _KEY_BITS = 21
 _KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
-class SimL1Config(ModuleConfig):
-    # The L1's frame, as the robot's URDF names it: where it sits.
-    frame_id: str | None = "utlidar_lidar"
+class SimL1Config(SceneConfig):
+    # The L1's frame, as the robot's description names it: where it sits.
+    frame_id: str = "utlidar_lidar"
     # The rolling map is published in this frame.
     map_frame_id: str = "world"
     period: float = 0.13
@@ -64,11 +63,6 @@ class SimL1(Module):
     config: SimL1Config
     lidar: Out[PointCloud2]
     world_observations: In[WorldObservations]
-    _simulation: SimulationSpec
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedSensor("lidar", self.frame_id)}
 
     @rpc
     def get_usd(self) -> list[str]:
@@ -82,37 +76,52 @@ class SimL1(Module):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        description = self._simulation.describe()
-        site = sensor_frame(description, self.frame_id)
-        # The map is centred on the robot the L1 is on.
-        robot_id = site.split("/")[0]
-        root = next(
-            d.root_body
-            for d in description["simulated"]
-            if isinstance(d, SimulatedRobot) and d.robot_id == robot_id
-        )
-        view = open_view(description)
-        self._mapping = asyncio.create_task(
-            self._map(view, view.raycaster(self.config.geom_groups), site, f"{robot_id}/{root}")
-        )
+        self._mapping = asyncio.create_task(self._map())
         yield
+        self._mapping.cancel()
 
-    async def _map(
-        self, view: WorldView, raycaster: Raycaster, site: str, center_body: str
-    ) -> None:
-        config = self.config
+    def _open(self) -> WorldView:
+        """This L1's own world: the composed scene, with a site at its own frame.
+
+        Opened on the first frame rather than at start, because the robots in the world are what
+        the world says they are -- the observations announce them -- and the view has to name its
+        bodies the way the observations do.
+        """
+        scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
+        if scene is None:
+            raise ValueError(
+                f"{self.frame_id}: nothing says what the scene is, so there is nothing to map."
+                f" Give this L1 the scene_manager that composes the world."
+            )
+        return open_view(
+            usd_layer(scene),
+            robot_ids(self._world),
+            SensorMount("lidar", self.frame_id, self.frame_id),
+        )
+
+    async def _map(self) -> None:
+        config, site = self.config, self.frame_id
+        view: WorldView | None = None
+        raycaster: Raycaster | None = None
+        rider: str | None = None
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
         cells = np.zeros(0, dtype=np.int64)
         # Every period of sim time, so the map keeps its rate per sim second at any speed.
         async for _ in self._world.ticks(1 / config.period):
+            if view is None:
+                view = self._open()
+                raycaster = view.raycaster(config.geom_groups)
+                # The map is centred on the robot the L1 rides, which its own frame names.
+                rider = view.owner(site)
+            assert raycaster is not None
             view.update(self._world)
             origin, orientation = view.pose(site)
             directions = _hemisphere(rng, rays) @ rotation_matrix(orientation).T
             distance, _ = raycaster.cast(origin, directions, config.max_range)
             hit = distance > 0
             cells = np.union1d(cells, self._keys(origin + directions[hit] * distance[hit, None]))
-            cells = self._crop(cells, view.pose(center_body)[0])
+            cells = self._crop(cells, self._center(rider, origin))
             self.lidar.publish(
                 PointCloud2.from_numpy(
                     (self._indices(cells) + 0.5) * config.cell,
@@ -120,6 +129,15 @@ class SimL1(Module):
                     self._world.stamp(),
                 )
             )
+
+    def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Where the square is cropped around: the robot carrying this L1, or the L1 itself.
+
+        Read off the observations rather than out of the view, because that is where the robot's
+        pose comes from in the first place and the view is only a copy of it.
+        """
+        entity = self._world.entity(rider) if rider is not None else None
+        return origin if entity is None or entity.pose is None else entity.pose[:3]
 
     def _keys(self, points: NDArray[np.float64]) -> NDArray[np.int64]:
         index = np.floor(points / self.config.cell).astype(np.int64) + _KEY_OFFSET

@@ -12,126 +12,127 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One simulated world, built from every module that sends Simulation a description.
+"""MuJoCo as a module: it takes actions, it publishes what moved, and it owns its own loop.
 
-class Go2Sim(Module):
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("go2", self.mjcf, "base")}
-
-A sensor names only its frame_id: a site (or body) in a robot's MJCF, where the engine mounts it.
+Reached through `sim_module("mujoco", ...)` rather than named directly, so nothing outside this
+package has to know which engine is running.
 """
 
 import asyncio
 from collections.abc import AsyncIterator
-from pathlib import Path
-import tempfile
 from threading import Event, Thread
-from typing import Any, Protocol
+import time
+from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
-from pydantic import Field
 
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import read_actions
-from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
-from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
-from dimos.spec.utils import Spec
+from dimos.sim2.mujoco.backend import MujocoBackend
+from dimos.sim2.sim import SimulatedWorldConfig, scene_from
+from dimos.sim2.spec import validate
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class SimulationSpec(Spec, Protocol):
-    def describe(self) -> dict[str, Any]: ...
+class MujocoSim(Module):
+    """One compiled MuJoCo world, stepped in real time, publishing a frame of what moved.
 
+    A `SimulatedWorld` by shape rather than by inheritance -- actions in, observations out -- so
+    that what core asks of a backend is something a native module could satisfy too.
 
-class SimulationConfig(ModuleConfig):
-    scene: Path | None = Field(default_factory=lambda m: m["g"].scene_package)
-    backend: str = "mujoco"
-    # Sim seconds per wall second.
-    speed: float = 1.0
-    # Wall seconds the world waits on a stalled controller (one that has acted before) before stepping without it.
-    controller_timeout: float = 0.5
-
-
-class Simulation(SharedConfigModule):
-    """Publishes the world on world_observations and acts on actions, through whichever backend config names.
-
-    It steps only once every module has started: a module that misses a frame never gets it.
+    It steps only once every module has started: a module that misses a frame never gets it,
+    because a frame says what *changed* and the first one is the only one that says a robot
+    exists at all.
     """
 
-    config: SimulationConfig
-    world_observations: Out[WorldObservations]
+    config: SimulatedWorldConfig
+    # The contract core states, and all of it.
     actions: In[WorldAction]
-    # Like UrdfManager: a request names the world file, or a file it names, and gets it on file_info.
+    world_observations: Out[WorldObservations]
+    # A request names the world's layer, or a file it names, and gets it back on file_info --
+    # the same pair a UsdManager serves a robot's meshes on, for the same reason.
     render_file_request: In[String]
     file_info: Out[File]
-    # The Controller's simulated world layer: it finds the world on scene_info, asks on scene_data_request.
+    # The Controller's simulated world layer: it finds the world on scene_info, then asks on
+    # scene_data_request. Geometry as JSON, which is this engine's idea of a scene and nobody
+    # else's, so it lives here.
     scene_info: Out[String]
     scene_data_request: In[String]
     scene_data: Out[String]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._backend: SimulationBackend | None = None
-        self._directory: tempfile.TemporaryDirectory[str] | None = None
+        try:
+            validate(self.config.robots)
+        except Exception:
+            # Nothing else will stop a module that threw in its own constructor, and it has
+            # already started the threads `Module.__init__` starts.
+            self.stop()
+            raise
+        self.simulated = self.config.robots
+        self._backend: MujocoBackend | None = None
         self._publisher: _LatestPublisher | None = None
         self._all_started = Event()
-        # Each sender's "simulated" value, keyed by its instance name.
-        self.simulated: dict[str, Simulated] = {}
-
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        simulated: dict[str, Simulated] = {}
-        for name, config in config_senders:
-            description = config.get("simulated")
-            if set(config) != {"simulated"} or not isinstance(description, Simulated):
-                raise TypeError(
-                    f"{name}'s @shared_config(Simulation) must return"
-                    f" {{'simulated': SimulatedRobot | SimulatedSensor}}, not {config!r}"
-                )
-            simulated[name] = description
-        resolved = resolve(simulated.values())
-        self.simulated = dict(zip(simulated, resolved, strict=True))
-
-    @rpc
-    def build(self) -> None:
-        super().build()
-        validate(self.simulated.values())
-        if self.config.backend not in BACKENDS:
-            raise ValueError(f"unknown backend {self.config.backend!r}; one of {sorted(BACKENDS)}")
-        self._directory = tempfile.TemporaryDirectory(prefix="dimos-sim2-")
-        self._backend = load_backend(self.config.backend)(
-            self.config, self.simulated, Path(self._directory.name)
-        )
 
     async def main(self) -> AsyncIterator[None]:
-        assert self._backend is not None
         # Every action is applied: one dropped while busy would be a lost motor command.
         self.actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
-        self._running = asyncio.create_task(self._run())
+        running = asyncio.create_task(self._run())
         announcing = asyncio.create_task(self._announce())
         yield
         announcing.cancel()
+        running.cancel()
+
+    def _engine(self) -> MujocoBackend:
+        usd = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
+        if usd is None:
+            raise ValueError(
+                "nothing says what this world is: pass scene= a USD layer or a file holding one,"
+                " or scene_manager= the UsdManager that composes it"
+            )
+        return MujocoBackend(usd, self.simulated, speed=self.config.speed)
 
     @rpc
     def on_system_modules(self, _modules: list[Any]) -> None:
         self._all_started.set()
 
     async def _run(self) -> None:
-        assert self._backend is not None and self._publisher is not None
+        """Build the world, then step it, publishing what moved and holding at each tick.
+
+        Built here rather than in `build()`, because building it means asking the manager for the
+        scene and a manager that is not constructed yet cannot be asked. By the time a module is
+        running, every module exists. On a thread, since the ask is blocking and fetching a
+        room's worth of meshes should not stop this module answering anything else.
+        """
+        backend = self._backend = await asyncio.to_thread(self._engine)
+        publisher = self._publisher
+        assert publisher is not None
         await asyncio.to_thread(self._all_started.wait)
-        await self._backend.run(self._publisher)
+        while True:
+            _when, frame = backend.step()
+            if backend.waiting_for:
+                # A tick's frame is what its controllers are waiting on, so it waits out a busy
+                # publisher rather than being dropped the way an ordinary frame is.
+                while publisher.busy:
+                    await asyncio.sleep(0)
+                publisher.offer(frame)
+                deadline = time.monotonic() + self.config.controller_timeout
+                while not backend.ready() and time.monotonic() < deadline:
+                    await asyncio.sleep(0)
+            elif not publisher.busy:
+                publisher.offer(frame)
+            await asyncio.sleep(0.001)
 
     async def _announce(self) -> None:
         while True:
-            self.scene_info.publish(String(self.config.backend))
+            self.scene_info.publish(String("mujoco"))
             await asyncio.sleep(1.0)
 
     async def handle_scene_data_request(self, request: String) -> None:
@@ -155,7 +156,7 @@ class Simulation(SharedConfigModule):
             return
         found = self._backend.assets().get(request.data)
         # Only files the world names: a request is never an arbitrary path into the filesystem.
-        # Others on the topic (a UrdfManager) may answer the rest.
+        # Others on the topic (a UsdManager) may answer the rest.
         if found is None:
             logger.debug(f"render_file_request for {request.data!r}, which the world does not name")
             return
@@ -164,19 +165,17 @@ class Simulation(SharedConfigModule):
 
     @rpc
     def describe(self) -> dict[str, Any]:
-        """The robots and sensors in this world."""
-        values = self.simulated.values()
+        """The robots in this world, and where its layer landed. Nothing reads it to build one.
+
+        A sensor used to: it asked for this and compiled the world the description named, which
+        made the simulation something every renderer had to be able to reach. A sensor reads the
+        composed scene instead, so this is left as what it sounds like -- something to look at
+        when a world is not doing what it was expected to.
+        """
         return {
             **(self._backend.describe() if self._backend is not None else {}),
-            "backend": self.config.backend,
-            # Everything a sensor's view builds the world from, with the backend's scene.
-            "simulated": list(values),
-            "robots": sorted(d.robot_id for d in values if isinstance(d, SimulatedRobot)),
-            "sensors": sorted(
-                f"{d.robot_id or 'world'}/{d.frame_id}"
-                for d in values
-                if isinstance(d, SimulatedSensor)
-            ),
+            "simulated": list(self.simulated),
+            "robots": sorted(d.robot_id for d in self.simulated),
         }
 
     @rpc
@@ -184,14 +183,12 @@ class Simulation(SharedConfigModule):
         super().stop()
         if self._publisher is not None:
             self._publisher.close()
+            self._publisher = None
         self._backend = None
-        if self._directory is not None:
-            self._directory.cleanup()
-            self._directory = None
 
 
 class _LatestPublisher:
-    """Publishes on its own thread. A backend offers a frame only when it is not busy, so none is dropped."""
+    """Publishes on its own thread. A frame is offered only when it is not busy, so none is half-sent."""
 
     def __init__(self, publish: Any) -> None:
         self._publish = publish
