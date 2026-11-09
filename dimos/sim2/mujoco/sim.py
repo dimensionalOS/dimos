@@ -34,7 +34,6 @@ from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.sim import SimulatedWorld
-from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -146,18 +145,18 @@ class MujocoSim(SimulatedWorld):
 
     @rpc
     def describe(self) -> dict[str, Any]:
-        """The robots and sensors in this world, and where its layer landed."""
+        """The robots in this world, and where its layer landed. Nothing reads it to build one.
+
+        A sensor used to: it asked for this and compiled the world the description named, which
+        made the simulation something every renderer had to be able to reach. A sensor reads the
+        composed scene instead, so this is left as what it sounds like -- something to look at
+        when a world is not doing what it was expected to.
+        """
         values = self.simulated.values()
         return {
             **(self._backend.describe() if self._backend is not None else {}),
-            # Everything a sensor needs to build the same world, with this engine's scene.
             "simulated": list(values),
-            "robots": sorted(d.robot_id for d in values if isinstance(d, SimulatedRobot)),
-            "sensors": sorted(
-                f"{d.robot_id or 'world'}/{d.frame_id}"
-                for d in values
-                if isinstance(d, SimulatedSensor)
-            ),
+            "robots": sorted(d.robot_id for d in values),
         }
 
     @rpc

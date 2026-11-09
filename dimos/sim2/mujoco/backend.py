@@ -105,7 +105,7 @@ class MujocoBackend:
         # The world as a file, which is what MuJoCo opens and what a renderer asks for by name.
         self._scene_layer = usd_layer(usd)
         self._robots = {d.robot_id: d for d in simulated.values() if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(self._scene_layer, simulated.values())
+        self.model = compile_world(self._scene_layer, simulated.values()).compile()
         # Robots whose controllers the world steps in lockstep with, and the actions each sent since its last tick.
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)

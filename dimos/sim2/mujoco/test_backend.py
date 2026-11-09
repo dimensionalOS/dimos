@@ -33,9 +33,9 @@ from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, 
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
-from dimos.sim2.mujoco.world import compile_world
+from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import SimulatedWorld, sim_module
-from dimos.sim2.spec import Servo, SimulatedRobot, SimulatedSensor, resolve
+from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import ACT, WorldMirror
 
@@ -61,35 +61,61 @@ def robot_model() -> UsdModel:
     return toy_robot()
 
 
-def test_robots_and_sensors_compile_into_one_world(scene, robot_model):
-    # Two dogs, one with an eye on its head, the other a lidar 20 cm above its base; and a camera over the scene.
+def test_robots_compile_into_one_world(scene, robot_model):
+    """Two dogs in one room, each where its description puts it -- and no sensors in it.
+
+    The world the physics runs holds robots and a room. A sensor is not something the simulation
+    was told about, so there is nothing here to put a camera or a site in it.
+    """
     left = robot_model.with_frames({"eye": ("head", (0, 0, 0), (0, 0, 0))})
     right = robot_model.with_frames({"lidar": ("base", (0, 0, 0.2), (0, 0, 0))})
     model = compile_world(
         usd_layer(scene),
-        resolve(
-            [
-                SimulatedRobot("left", left, xyz=(-1, 0, 0.3)),
-                SimulatedRobot("right", right, xyz=(1, 0, 0.3)),
-                SimulatedSensor("camera", "eye"),
-                SimulatedSensor("lidar", "lidar"),
-                SimulatedSensor("camera", "overhead"),
-            ]
-        ),
-    )
+        [
+            SimulatedRobot("left", left, xyz=(-1, 0, 0.3)),
+            SimulatedRobot("right", right, xyz=(1, 0, 0.3)),
+        ],
+    ).compile()
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
     assert data.body("left/base").xpos.tolist() == pytest.approx([-1, 0, 0.3])
     assert data.body("right/base").xpos.tolist() == pytest.approx([1, 0, 0.3])
     assert model.joint("right/neck") is not None
+    assert model.ncam == 0, "the physics world has no cameras; a camera renders its own copy"
+
+
+def test_a_sensor_mounts_itself_in_a_world_of_its_own(scene, robot_model):
+    """The same scene, compiled again by a sensor, with what that sensor needs added to it.
+
+    A camera's field of view and a lidar's site belong to the sensor that reads them, so they go
+    into the copy it renders from. The mount frames are already there: a robot's model carries
+    them, and a composed scene carries the room's.
+    """
+    left = robot_model.with_frames({"eye": ("head", (0, 0, 0), (0, 0, 0))})
+    spec = compile_world(usd_layer(scene), [SimulatedRobot("left", left, xyz=(-1, 0, 0.3))])
+    mount_sensor(spec, SensorMount("camera", "left/eye", "left/eye", fovy=42.0))
+    mount_sensor(spec, SensorMount("camera", "overhead", "world/overhead"))
+    mount_sensor(spec, SensorMount("imu", "left/base", "left/imu"))
+    model = spec.compile()
+
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
     assert model.camera("left/eye") is not None
+    assert model.cam_fovy[model.camera("left/eye").id] == 42.0
     assert data.cam("world/overhead").xpos.tolist() == pytest.approx([0, 0, 3])
-    assert data.site("right/lidar").xpos.tolist() == pytest.approx([1, 0, 0.5])
+    # An IMU is a site plus the three sensors that read it.
+    assert data.site("left/imu").xpos.tolist() == pytest.approx([-1, 0, 0.3])
+    assert {model.sensor(i).name for i in range(model.nsensor)} == {
+        "left/imu/gyro",
+        "left/imu/accelerometer",
+        "left/imu/orientation",
+    }
 
 
-def test_sensor_at_a_missing_frame_is_rejected(scene):
+def test_mounting_at_a_frame_the_world_does_not_have_is_rejected(scene):
+    spec = compile_world(usd_layer(scene))
     with pytest.raises(ValueError, match="no site or body 'nowhere'"):
-        compile_world(usd_layer(scene), [SimulatedSensor("imu", "nowhere")])
+        mount_sensor(spec, SensorMount("imu", "nowhere", "nowhere"))
 
 
 class _DogConfig(ModuleConfig):
