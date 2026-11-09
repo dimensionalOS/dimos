@@ -41,9 +41,12 @@ from dimos.experimental.world_belief.worldbelief_recorder import (
     WorldBeliefRecorderSpec,
 )
 from dimos.memory.module import MemoryModuleConfig
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.message_utils import (
+    pointcloud as pointcloud_utils,
+    time as message_time,
+)
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos.messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 
@@ -306,9 +309,9 @@ class WorldBeliefModule(Module):
         self.detections_3d.publish(
             to_detection3d_array(present, frame_id=frame_id, ts=result.as_of_ts)
         )
-        cloud = aggregate_pointclouds(present).voxel_downsample(0.005)
-        cloud.frame_id = frame_id
-        cloud.ts = result.as_of_ts
+        cloud = pointcloud_utils.voxel_downsample(aggregate_pointclouds(present), 0.005)
+        cloud.header.frame_id = frame_id
+        cloud.header.stamp = message_time.time_from_seconds(result.as_of_ts)
         self.pointcloud.publish(cloud)
         self.objects.publish(present)
         return SkillResult(
@@ -387,7 +390,11 @@ class WorldBeliefModule(Module):
             "when_ts": round(float(hit.ts), 3),
             "where_camera": None
             if pose is None
-            else [round(pose.x, 3), round(pose.y, 3), round(pose.z, 3)],
+            else [
+                round(pose.pose.position.x, 3),
+                round(pose.pose.position.y, 3),
+                round(pose.pose.position.z, 3),
+            ],
             "where_object": None
             if obj_center is None
             else [

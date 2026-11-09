@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.utils.data import get_data
 
 
@@ -177,7 +179,7 @@ class Visualizer(Module):
     @skill
     def take_a_picture(self) -> Image:
         """Takes a picture."""
-        return Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
+        return image.from_file(get_data("cafe-smol.jpg"))
 
 
 def test_image(agent_setup):

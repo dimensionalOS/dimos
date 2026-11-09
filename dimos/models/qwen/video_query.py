@@ -18,9 +18,9 @@ import json
 
 import numpy as np
 
+from dimos.message_utils import image as image_utils
 from dimos.models.qwen.bbox import BBox
 from dimos.models.vl.qwen import DEFAULT_QWEN_VL_MODEL, QwenVlModel
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 def query_single_frame(
@@ -49,9 +49,8 @@ def query_single_frame(
         ```
     """
     model = QwenVlModel(model_name=model_name, api_key=api_key)
-    # Wrap with the default BGR tag so Image.to_base64()'s to_bgr() is a no-op and the array
-    # reaches Qwen's JPEG encoder unchanged, matching the prior cv2.imencode(".jpg", frame).
-    return model.query(Image.from_numpy(image), query)
+    # OpenCV supplies BGR pixels; preserve that encoding for JPEG conversion.
+    return model.query(image_utils.from_array(image, encoding="bgr8"), query)
 
 
 def get_bbox_from_qwen_frame(frame, object_name: str | None = None) -> BBox | None:  # type: ignore[no-untyped-def]

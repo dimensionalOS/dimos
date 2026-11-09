@@ -17,8 +17,9 @@ from __future__ import annotations
 import pytest
 
 from dimos.experimental.security_demo.security_module import SecurityModule
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import camera_info, image
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.utils.data import get_data
@@ -33,12 +34,12 @@ def yolo_detector():
 
 @pytest.fixture(scope="session")
 def person_image():
-    return Image.from_file(get_data("security_detection.png"))
+    return image.from_file(get_data("security_detection.png"))
 
 
 @pytest.fixture(scope="session")
 def empty_image():
-    return Image.from_file(get_data("security_no_detection.png"))
+    return image.from_file(get_data("security_no_detection.png"))
 
 
 @pytest.fixture()
@@ -49,7 +50,17 @@ def security_module(mocker):
     mocker.patch("dimos.experimental.security_demo.security_module.EdgeTAMProcessor")
     mocker.patch("dimos.experimental.security_demo.security_module.DepthEstimator")
 
-    module = SecurityModule(camera_info=CameraInfo())
+    module = SecurityModule(
+        camera_info=camera_info.from_intrinsics(
+            width=640,
+            height=480,
+            fx=1.0,
+            fy=1.0,
+            cx=0.0,
+            cy=0.0,
+            header=Header(stamp=Time(0, 0), frame_id=""),
+        )
+    )
 
     # Replace output streams with mocks for test assertions
     module.detection = mocker.MagicMock()

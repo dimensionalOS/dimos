@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import numpy as np
 import pytest
@@ -23,29 +23,40 @@ from dimos.evals.vqa.contracts import InsufficientEvidenceError
 from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
 from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
+from dimos.message_utils import (
+    camera_info as camera_info_utils,
+    image as image_utils,
+    pointcloud as pointcloud_utils,
+)
+from dimos.message_utils.time import time_from_seconds, to_seconds
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 
-if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
-
-class _PointCloud:
+class _PointCloud(PointCloud2):
     def __init__(self, points: np.ndarray) -> None:
-        self._points = points
+        cloud = pointcloud_utils.from_xyz(
+            points, header=Header(stamp=time_from_seconds(9.98), frame_id="lidar")
+        )
+        self.__dict__.update(cloud.__dict__)
         self.read_count = 0
-        self.frame_id = "lidar"
-        self.ts = 9.98
 
-    def as_numpy(self) -> tuple[np.ndarray, None]:
-        self.read_count += 1
-        return self._points, None
+
+@pytest.fixture(autouse=True)
+def count_projection_reads(monkeypatch):
+    original = pointcloud_utils.xyz
+
+    def counted(cloud):
+        if isinstance(cloud, _PointCloud):
+            cloud.read_count += 1
+        return original(cloud)
+
+    monkeypatch.setattr(pointcloud_utils, "xyz", counted)
 
 
 class _TestVlModel(VlModel):
@@ -73,7 +84,7 @@ class _Detector(_TestVlModel):
                 class_id=0,
                 confidence=1.0,
                 name=query,
-                ts=image.ts,
+                ts=to_seconds(image.header.stamp),
                 image=image,
             )
             for index, box in enumerate(self._boxes)
@@ -98,7 +109,7 @@ class _NamedDetector(_TestVlModel):
                     class_id=0,
                     confidence=1.0,
                     name=query,
-                    ts=image.ts,
+                    ts=to_seconds(image.header.stamp),
                     image=image,
                 )
             ],
@@ -147,13 +158,26 @@ def _frame(
     cx: float = 5.0,
     cy: float = 5.0,
 ) -> PointCloudFrame:
-    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
+    image = image_utils.from_array(
+        np.zeros((10, 10, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(10.0), frame_id=""),
+    )
     return PointCloudFrame(
         index=index,
         image=image,
         pointcloud=cast("PointCloud2", pointcloud),
-        camera_info=CameraInfo.from_intrinsics(fx, fy, cx, cy, 10, 10),
-        pointcloud_to_camera=transform or Transform.identity(),
+        camera_info=camera_info_utils.from_intrinsics(
+            fx, fy, cx, cy, 10, 10, header=Header(frame_id="", stamp=time_from_seconds(0.0))
+        ),
+        pointcloud_to_camera=TransformStamped(
+            header=Header(stamp=time_from_seconds(10.0), frame_id="camera"),
+            child_frame_id="lidar",
+            transform=transform
+            or Transform(
+                translation=Vector3(0.0, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        ),
         image_observation_timestamp=10.0,
         pointcloud_observation_timestamp=9.98,
         calibration_source="synthetic-calibration",
@@ -176,7 +200,11 @@ def _range_estimator(
 
 
 def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
-    image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=10.0)
+    image = image_utils.from_array(
+        np.zeros((10, 10, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(10.0), frame_id=""),
+    )
     left_mask = np.zeros((10, 10), dtype=np.uint8)
     right_mask = np.zeros((10, 10), dtype=np.uint8)
     left_mask[:, :4] = 1
@@ -200,7 +228,11 @@ def test_mask_estimator_batches_and_caches_without_pointcloud() -> None:
     assert cached is left
     assert segmenter.call_count == 1
 
-    next_image = Image(data=np.zeros((10, 10, 3), dtype=np.uint8), ts=11.0)
+    next_image = image_utils.from_array(
+        np.zeros((10, 10, 3), dtype=np.uint8),
+        encoding="rgb8",
+        header=Header(stamp=time_from_seconds(11.0), frame_id=""),
+    )
     estimator.estimate(next_image, "left person")
 
     assert segmenter.call_count == 2
@@ -218,7 +250,9 @@ def test_projects_transformed_points_and_rejects_invalid_projections() -> None:
     )
     frame = _frame(
         pointcloud,
-        transform=Transform(translation=Vector3(1.0, 0.0, 0.0)),
+        transform=Transform(
+            translation=Vector3(1.0, 0.0, 0.0), rotation=Quaternion(0.0, 0.0, 0.0, 1.0)
+        ),
         cx=0.0,
         cy=0.0,
     )

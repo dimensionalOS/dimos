@@ -22,7 +22,10 @@ import reactivex as rx
 
 from dimos.hardware.sensors.camera.module import WebcamModule, WebcamModuleConfig
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.message_utils import camera_info, image as image_utils
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos.messages.std_msgs.msg import Header
 
 
 def test_camera_config_defaults_to_one_typed_webcam_field() -> None:
@@ -98,32 +101,50 @@ def test_capture_timestamp_is_taken_immediately_after_read(
     capture.read.side_effect = read
     webcam = Webcam(camera_index=2, width=3, height=2, fps=30.0)
     webcam._capture = capture
-    now = mocker.patch("dimos.hardware.sensors.camera.webcam.time.time", side_effect=clock)
+    now = mocker.patch(
+        "dimos.hardware.sensors.camera.webcam.time.time_ns", side_effect=lambda: 42_500_000_000
+    )
     mocker.patch.object(cv2, "cvtColor", side_effect=convert)
 
     image = webcam.capture_frame()
 
     now.assert_called_once_with()
     assert calls == ["read", "clock", "conversion"]
-    assert image.ts == 42.5
-    assert image.data.shape == (2, 3, 3)
+    assert (image.header.stamp.sec, image.header.stamp.nanosec) == (42, 500000000)
+    assert image_utils.view(image).shape == (2, 3, 3)
 
 
 def test_webcam_without_intrinsics_reports_a_nominal_pinhole() -> None:
     info = Webcam(width=1280, height=720).camera_info
     assert (info.width, info.height) == (1280, 720)
-    assert info.K[0] > 0
-    assert info.frame_id == "camera_optical"
+    assert info.k[0] > 0
+    assert info.header.frame_id == "camera_optical"
 
 
 def test_webcam_keeps_configured_intrinsics() -> None:
-    configured = CameraInfo.from_fov(90.0, 640, 480)
+    configured = camera_info.from_fov(
+        90.0, 640, 480, header=Header(stamp=Time(sec=0, nanosec=0), frame_id="")
+    )
     assert Webcam(camera_info=configured).camera_info is configured
 
 
 def test_webcam_with_size_but_no_focal_length_gets_a_nominal_pinhole() -> None:
-    info = Webcam(camera_info=CameraInfo(width=1280, height=720)).camera_info
-    assert info.K[0] > 0
+    info = Webcam(
+        camera_info=CameraInfo(
+            width=1280,
+            height=720,
+            header=Header(stamp=Time(sec=0, nanosec=0), frame_id=""),
+            distortion_model="",
+            d=np.array([], dtype=np.float64),
+            k=np.zeros(9, dtype=np.float64),
+            r=np.zeros(9, dtype=np.float64),
+            p=np.zeros(12, dtype=np.float64),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(x_offset=0, y_offset=0, height=0, width=0, do_rectify=False),
+        )
+    ).camera_info
+    assert info.k[0] > 0
 
 
 def test_webcam_stereo_slice_halves_the_nominal_pinhole_width() -> None:
@@ -164,3 +185,23 @@ def test_module_uses_configured_webcam_and_stops_it_once(camera_module, mocker):
     publish.assert_called_once()
     assert isinstance(publish.call_args.args[0], CameraInfo)
     webcam.stop.assert_called_once_with()
+
+
+@pytest.mark.parametrize("side,start", [("left", 0), ("right", 2)])
+def test_capture_converts_bgr_and_crops(side, start, mocker):
+    camera = Webcam(stereo_slice=side, frame_id_prefix="robot")
+    pixels = np.arange(2 * 4 * 3, dtype=np.uint8).reshape(2, 4, 3)
+    capture = mocker.Mock()
+    capture.read.return_value = (True, pixels)
+    mocker.patch.object(camera, "_capture", capture)
+    mocker.patch("dimos.message_utils.time.time.time_ns", return_value=1700000000123456789)
+    try:
+        message = camera.capture_frame()
+    finally:
+        camera.stop()
+    assert message.encoding == "rgb8"
+    assert (message.width, message.height, message.step) == (2, 2, 6)
+    assert message.header.frame_id == "robot/camera_optical"
+    assert (message.header.stamp.sec, message.header.stamp.nanosec) == (1700000000, 123456789)
+    np.testing.assert_array_equal(image_utils.view(message), pixels[:, start : start + 2, ::-1])
+    capture.release.assert_called_once()

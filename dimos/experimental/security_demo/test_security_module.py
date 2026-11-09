@@ -15,11 +15,13 @@
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
@@ -50,7 +52,10 @@ def test_patrol_step_transitions_to_following_on_detection(
     module._state = "PATROLLING"
     module._has_active_goal = True
     module._latest_image = person_image
-    module._latest_pose = PoseStamped(position=[1, 2, 0], orientation=[0, 0, 0, 1])
+    module._latest_pose = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(1, 2, 0), orientation=Quaternion(0, 0, 0, 1)),
+    )
 
     det = make_detection()
     module._detector.process_image.return_value = ImageDetections2D(
@@ -78,7 +83,10 @@ def test_patrol_step_requests_goal_when_no_active_goal(security_module):
     module._has_active_goal = False
     module._latest_image = None  # causes early return after goal logic
 
-    goal = PoseStamped(position=[5, 5, 0], orientation=[0, 0, 0, 1])
+    goal = PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(5, 5, 0), orientation=Quaternion(0, 0, 0, 1)),
+    )
     module._router.next_goal.return_value = goal
 
     module._patrol_step()
@@ -100,7 +108,7 @@ def test_follow_step_publishes_twist_when_tracking(
         image=person_image, detections=[det]
     )
 
-    twist = Twist(linear=[0.3, 0, 0], angular=[0, 0, 0.1])
+    twist = Twist(linear=Vector3(0.3, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.1))
     module._visual_servo.compute_twist.return_value = twist
 
     mocker.patch("dimos.experimental.security_demo.security_module.time.sleep")
@@ -125,7 +133,7 @@ def test_follow_step_transitions_to_patrolling_on_person_lost(security_module, p
 
     # Zero twist should be published to stop the robot
     published_twist = module.cmd_vel.publish.call_args[0][0]
-    assert published_twist.is_zero()
+    assert published_twist == Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
 
     module._speak_skill.speak.assert_called_with(
         "Lost sight of intruder, resuming patrol", blocking=False
@@ -157,7 +165,7 @@ def test_main_loop_stops_cleanly(security_module):
 
     # Verify zero twist published on shutdown
     last_twist = module.cmd_vel.publish.call_args[0][0]
-    assert last_twist.is_zero()
+    assert last_twist == Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0))
 
     # Verify state transitions: PATROLLING then IDLE
     state_values = [call.args[0].data for call in module.security_state.publish.call_args_list]

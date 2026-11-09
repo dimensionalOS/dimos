@@ -22,9 +22,10 @@ import torch
 import torch.nn.functional as functional
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
-from dimos.msgs.sensor_msgs.Image import Image
 
 
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
@@ -57,7 +58,7 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         # Convert to PIL images
-        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
+        pil_images = [PILImage.fromarray(image_utils.to_rgb(img)) for img in images]
 
         # Process images
         with torch.inference_mode():
@@ -70,7 +71,7 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
         # Create embeddings (keep as torch.Tensor on device)
         embeddings: list[Embedding] = []
         for i, feat in enumerate(image_features):
-            timestamp = images[i].ts
+            timestamp = message_time.to_seconds(images[i].header.stamp)
             embeddings.append(Embedding(vector=feat, timestamp=timestamp))
 
         return embeddings[0] if len(images) == 1 else embeddings
