@@ -21,6 +21,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_cdrgen.registry import decode
 import pytest
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
@@ -29,7 +30,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.messages.geometry_msgs.msg import PoseStamped
 from dimos.simulation.dimsim.config import DIMSIM_PORT
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 
@@ -104,10 +105,10 @@ def serve_channel() -> Iterator[Callable[..., str]]:
             serve_dir=serve_dir,
             **atom.kwargs,
         )
-        bridge_transport = make_transport(topic)
+        bridge_transport = make_transport(topic, type(message))
         bridge_transport.start()
         getattr(module, stream).transport = bridge_transport
-        publisher = make_transport(topic)
+        publisher = make_transport(topic, type(message))
         publisher.start()
         stop = threading.Event()
 
@@ -231,9 +232,9 @@ def spawn_wall_on_pose(lcm_spy: LcmSpy, dim_sim: DimSimClient):
         def on_odom(data):
             if triggered.is_set():
                 return
-            pose = PoseStamped.lcm_decode(data)
-            dx = pose.x - px
-            dy = pose.y - py
+            pose = decode(data, PoseStamped)
+            dx = pose.pose.position.x - px
+            dy = pose.pose.position.y - py
             if dx * dx + dy * dy < threshold_sq:
                 triggered.set()
 

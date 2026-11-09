@@ -32,9 +32,10 @@ import pytest
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 
 pytestmark = pytest.mark.bake_e2e
 
@@ -117,7 +118,9 @@ def ground_patch(ts: float) -> PointCloud2:
     points = np.stack([xs.ravel(), ys.ravel(), np.full(xs.size, -SENSOR_Z)], axis=1).astype(
         np.float32
     )
-    return PointCloud2.from_numpy(points, frame_id="lidar", timestamp=ts)
+    return pointcloud.from_xyz(
+        points, header=Header(stamp=message_time.time_from_seconds(ts), frame_id="lidar")
+    )
 
 
 @pytest.fixture
@@ -155,7 +158,7 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
             transports.append(transport)
 
         lidar = make_transport("lidar", PointCloud2)
-        tf = make_transport("tf", Transform)
+        tf = make_transport("tf", TransformStamped)
         transports += [lidar, tf]
         lidar.start()
         tf.start()
@@ -166,11 +169,13 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
             ts = time.time()
             tf.broadcast(
                 None,
-                Transform(
-                    translation=Vector3(0.0, 0.0, SENSOR_Z),
-                    frame_id="odom",
+                TransformStamped(
+                    header=Header(stamp=message_time.time_from_seconds(ts), frame_id="odom"),
                     child_frame_id="lidar",
-                    ts=ts,
+                    transform=Transform(
+                        translation=Vector3(0.0, 0.0, SENSOR_Z),
+                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
                 ),
             )
             time.sleep(0.05)
