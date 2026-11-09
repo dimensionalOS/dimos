@@ -13,16 +13,14 @@
 # limitations under the License.
 
 
-"""The office_555 room, converted once from its MJCF and committed beside this file."""
+"""The office_555 room, converted once from its MJCF and committed beside this file.
+
+The path and nothing else. There used to be a `UsdModel` here as well, which read all 139
+thousand lines of the layer at import of this module and was used by nobody: every blueprint
+that wants the room builds its own, because it has frames of its own to add. And a `CLEAR_FLOOR`
+spot, which the one blueprint that needed it had written out by hand anyway.
+"""
 
 from pathlib import Path
 
-from dimos.robot.assets.model import UsdModel
-
 SCENE = Path(__file__).parent / "scene.usda"
-OFFICE_555 = UsdModel.from_file(SCENE)
-
-# 5.74 m of clear floor, the widest in the room: measured by taking every geom below 2 m with
-# its bounding radius and finding the point furthest from all of them. Where a robot can stand
-# without being inside the furniture.
-CLEAR_FLOOR = (-0.85, -7.66)
