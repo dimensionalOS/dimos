@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Go2's head L1 as GO2Connection's `lidar` sees it: the robot's rolling occupancy map, not a scan.
-
-Measured on real recordings: 5 cm world-anchored cells, the whole map resent every 0.13 s,
-cropped to a world-axis-aligned 128x128-cell square around the robot. Cells persist while
-inside the square; the real map's flicker comes from sensor noise this sim does not have.
-"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -39,15 +33,12 @@ from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 
-# Cell keys pack three offset 21-bit indices into one int64.
 _KEY_BITS = 21
 _KEY_OFFSET = 1 << (_KEY_BITS - 1)
 
 
 class SimL1Config(SceneConfig):
-    # The L1's frame, as the robot's description names it: where it sits.
     frame_id: str = "utlidar_lidar"
-    # The rolling map is published in this frame.
     map_frame_id: str = "world"
     period: float = 0.13
     points_per_second: float = 21_600.0
@@ -55,7 +46,7 @@ class SimL1Config(SceneConfig):
     cell: float = 0.05
     half_width_cells: int = 64
     z_range: tuple[float, float] = (-0.6, 1.3)
-    geom_groups: tuple[int, ...] = (0,)
+    geom_groups: tuple[int, ...] = (0, 3)
     seed: int = 0
 
 
@@ -66,9 +57,6 @@ class SimL1(Module):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: the frame this L1 scans from. A frame rather than a case: the Go2's
-        utlidar sits under a cover that is part of the robot's own shell.
-        """
         return frame_usd(self.frame_id, name="sim_l1")
 
     async def main(self) -> AsyncIterator[None]:
@@ -79,10 +67,6 @@ class SimL1(Module):
         self._mapping.cancel()
 
     def _open(self) -> WorldView:
-        """This L1's own world: the composed scene, with a site at its own frame. Opened on the first
-        frame rather than at start, because the robots in the world are the ones the observations
-        announce, and the view has to name its bodies the way they do.
-        """
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:
             raise ValueError(
@@ -103,12 +87,10 @@ class SimL1(Module):
         rng = np.random.default_rng(config.seed)
         rays = int(config.points_per_second * config.period)
         cells = np.zeros(0, dtype=np.int64)
-        # Every period of sim time, so the map keeps its rate per sim second at any speed.
         async for _ in self._world.ticks(1 / config.period):
             if view is None:
                 view = self._open()
                 raycaster = view.raycaster(config.geom_groups)
-                # The map is centred on the robot the L1 rides, which its own frame names.
                 rider = view.owner(site)
             assert raycaster is not None
             view.update(self._world)
@@ -127,9 +109,6 @@ class SimL1(Module):
             )
 
     def _center(self, rider: str | None, origin: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Where the square is cropped around: the robot carrying this L1, or the L1 itself. Read off
-        the observations rather than out of the view, because that is where the pose comes from.
-        """
         entity = self._world.entity(rider) if rider is not None else None
         return origin if entity is None or entity.pose is None else entity.pose[:3]
 
@@ -157,7 +136,6 @@ class SimL1(Module):
 
 
 def _hemisphere(rng: np.random.Generator, count: int) -> NDArray[np.float64]:
-    """Uniform directions over the sensor's +z hemisphere: 360 degrees around, 90 up."""
     z = rng.uniform(0.0, 1.0, count)
     azimuth = rng.uniform(0.0, 2 * math.pi, count)
     ring = np.sqrt(1 - z**2)

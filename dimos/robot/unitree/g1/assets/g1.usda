@@ -4,8 +4,7 @@
         string creator = "MuJoCo USD Converter v0.9.0"
     }
     defaultPrim = "g1_29dof_rev_1_0"
-    doc = """Generated from Composed Stage of root layer /tmp/claude-1000/-home-dimos/ff9ad774-151d-43c4-9774-fa96d8ad90f5/scratchpad/g1usd/converted_plain/g1_29dof_rev_1_0.usda
-"""
+    doc = """Converted from assets/g1_29dof.xml by scripts/mjcf_to_usd.py."""
     kilogramsPerUnit = 1
     metersPerUnit = 1
     upAxis = "Z"

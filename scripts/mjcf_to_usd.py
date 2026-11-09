@@ -67,24 +67,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# The geometry a referenced mesh file supplies for itself.
 _BAKED = frozenset({"points", "faceVertexIndices", "faceVertexCounts", "normals", "extent"})
-# The two primvars that are the mesh's appearance rather than its geometry. One value per prim,
-# not per vertex, so keeping them costs nothing -- and dropping them left every piece of
-# office_555's furniture at MuJoCo's default grey, because the MJCF gives those geoms an rgba
-# the exporter writes here and the sidecar does not carry.
 _KEPT_PRIMVARS = frozenset({"primvars:displayColor", "primvars:displayOpacity"})
-# What a sidecar is written as: binary, because nothing hands these around as text -- they are
-# fetched as bytes, one file per mesh, exactly like the STL beside them.
 _SIDECAR_SUFFIX = ".usdc"
 
 
 def write_sidecar(source: Path, pxr: Any) -> Path:
-    """``source`` as a one-prim USD layer beside it, so a reference to it is valid USD.
-
-    Rewritten every run rather than cached: a stale sidecar is a robot whose geometry silently
-    does not match its meshes.
-    """
     import trimesh
 
     out = source.with_suffix(_SIDECAR_SUFFIX)
@@ -92,9 +80,6 @@ def write_sidecar(source: Path, pxr: Any) -> Path:
     if isinstance(loaded, trimesh.Scene):
         loaded = loaded.to_geometry()
     if len(loaded.faces) == 0:
-        # Refusing beats writing an empty sidecar. A git-lfs **pointer** parses as a mesh with no
-        # faces, so running this against an unmaterialised worktree produced 427 identical 737-byte
-        # layers and the scene died much later inside MuJoCo as "at least 4 vertices required".
         raise ValueError(
             f"{source} has no faces. If it is {source.stat().st_size} bytes it is a git-lfs "
             f"pointer: run `git lfs checkout` on its directory first."
@@ -105,8 +90,6 @@ def write_sidecar(source: Path, pxr: Any) -> Path:
     mesh.CreatePointsAttr([pxr.Gf.Vec3f(*point) for point in loaded.vertices.tolist()])
     mesh.CreateFaceVertexIndicesAttr([int(i) for i in loaded.faces.reshape(-1).tolist()])
     mesh.CreateFaceVertexCountsAttr([3] * len(loaded.faces))
-    # Without an extent a consumer has to load every point to frame the robot. A degenerate
-    # mesh has no bounds to state, and saying nothing is better than saying something wrong.
     bounds = loaded.bounds
     if bounds is not None:
         mesh.CreateExtentAttr(
@@ -118,19 +101,6 @@ def write_sidecar(source: Path, pxr: Any) -> Path:
 
 
 def mesh_files(mjcf: Path) -> dict[str, str]:
-    """Every name a baked prim might carry -> the mesh file behind it.
-
-    Three spellings, because the converter names a mesh prim after whichever the MJCF gave it:
-
-    * the **mesh asset's** own name, which is what a robot MJCF uses;
-    * the **file's stem**, for a `<mesh file=...>` with no name -- MuJoCo's rule, and how the Go2
-      declares all sixteen of its meshes. Reading only the explicit spelling found one;
-    * the **geom's** name, which is what a scene MJCF uses (office_555 names every geom and has
-      them reference meshes called `asset_0`, `asset_1`, ...).
-
-    Without the geom spelling the office scene re-points nothing: 3547 meshes stay baked and the
-    layer comes out 35 MB.
-    """
     root = ET.fromstring(mjcf.read_text())
     files = {}
     for mesh in root.iter("mesh"):
@@ -146,10 +116,6 @@ def mesh_files(mjcf: Path) -> dict[str, str]:
 
 
 def _mesh_of(prim_name: str, files: dict[str, str]) -> str | None:
-    """The mesh file a prim's name refers to, allowing for the converter's de-duplication: two
-    geoms on one body using the same mesh become two prims, the second named ``<mesh>_1``. Without
-    this every such prim stays baked, which on the G1 is 23 of 58.
-    """
     if prim_name in files:
         return files[prim_name]
     stripped = re.sub(r"_\d+$", "", prim_name)
@@ -159,13 +125,6 @@ def _mesh_of(prim_name: str, files: dict[str, str]) -> str | None:
 def rereference(
     stage: Any, files: dict[str, str], meshes: Path, out_dir: Path, pxr: Any
 ) -> tuple[int, int]:
-    """Swap each baked mesh for a reference to its file, with the file's hash beside it. Returns
-    how many were re-pointed and how many were left alone.
-
-    A mesh the MJCF does not name is left baked rather than dropped: a hole in the robot is worse
-    than a large layer. References are written **relative to the layer**, because the layer is
-    committed and the path it was converted at means nothing on anyone else's machine.
-    """
     done = skipped = 0
     for prim in list(stage.Traverse()):
         if not prim.IsA(pxr.UsdGeom.Mesh):
@@ -175,8 +134,6 @@ def rereference(
             logger.warning(f"{prim.GetPath()} has no mesh of that name in the MJCF; left baked")
             skipped += 1
             continue
-        # --meshes is authoritative, so a `file=` carrying a directory is matched by its basename
-        # rather than pasted onto the directory a second time.
         path = next(
             (
                 candidate
@@ -189,9 +146,6 @@ def rereference(
             logger.warning(f"no {file} under {meshes}; {prim.GetPath()} left baked")
             skipped += 1
             continue
-        # Everything per-vertex goes: the reference supplies it, and it is what made the layer large.
-        # primvars included -- the converter bakes normals there. Transform ops, material bindings and
-        # the mesh's own colour stay, since the file carries none of them.
         for property in list(prim.GetPropertyNames()):
             if property.startswith(("xformOp", "material:")) or property in _KEPT_PRIMVARS:
                 continue
@@ -200,7 +154,6 @@ def rereference(
         sidecar = write_sidecar(path, pxr)
         relative = os.path.relpath(path, out_dir)
         prim.GetReferences().ClearReferences()
-        # The sidecar, not the mesh file: a reference composes a USD layer and nothing else.
         prim.GetReferences().AddReference(os.path.relpath(sidecar, out_dir))
         digest = hash_of_file(str(path))
         info = prim.GetAssetInfo() or {}
@@ -213,15 +166,6 @@ def rereference(
 
 
 def name_joints(stage: Any, pxr: Any) -> int:
-    """Give every unnamed joint prim the name of the body it moves. Returns how many.
-
-    The converter leaves a joint it was not given a name for as the bare schema name, so a scene of
-    loose furniture comes out with **every** weld called `PhysicsFixedJoint` -- office_555 has 448
-    of them. Legal USD, but useless as a frame source: `usd_frame_names` returns one name for 448
-    edges, and a URDF converted from it has 448 joints of the same name and will not load.
-
-    `<child>_joint` matches what the robot layers already carry (`left_ankle_roll_joint`).
-    """
     renamed = 0
     for prim in list(stage.Traverse()):
         if not prim.IsA(pxr.UsdPhysics.Joint) or prim.GetName() != prim.GetTypeName():
@@ -264,13 +208,8 @@ def main() -> int:
 
     files = mesh_files(args.mjcf)
 
-    # Flattened, because the converter writes a root that payloads several binary layers and a
-    # scene has to leave here as one text layer.
     stage = Usd.Stage.Open(str(args.converted))
     flat = Usd.Stage.Open(stage.Flatten())
-    # A model of boxes and spheres names no meshes, which is fine. A stage full of them whose MJCF
-    # names none is the --mjcf being the wrong file, and re-pointing nothing would quietly write a
-    # layer of baked geometry.
     baked = any(prim.IsA(UsdGeom.Mesh) for prim in flat.Traverse())
     if baked and not files:
         print(
@@ -283,8 +222,6 @@ def main() -> int:
     named = name_joints(flat, pxr)
     done, skipped = rereference(flat, files, args.meshes, args.out.parent.resolve(), pxr)
 
-    # The ROOT LAYER, not the stage: Stage.Export() flattens composition, which resolves the
-    # reference arcs we just authored back into baked geometry -- the opposite of the point.
     flat.GetRootLayer().Export(str(args.out))
     size = args.out.stat().st_size
     print(f"{done} mesh(es) re-pointed with a .usdc sidecar, {skipped} left baked")
