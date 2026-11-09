@@ -32,6 +32,9 @@ from dimos.sim2.sim import (
 )
 from dimos.sim2.spec import SimulatedRobot, validate
 
+# usd-core is an optional extra, unavailable on aarch64 before Python 3.11.
+pytest.importorskip("pxr")
+
 TOY = Path(__file__).parent / "assets" / "toy.usda"
 
 
@@ -96,13 +99,6 @@ def test_a_world_nobody_described_is_no_world_at_all():
 def test_an_unknown_engine_is_refused_by_name():
     with pytest.raises(ValueError, match="unknown simulation backend 'bullet'"):
         sim_module("bullet")
-
-
-def test_there_is_more_than_one_engine_to_switch_between():
-    """A switch with one thing in it is not a switch, and a backend protocol with one
-    implementation is whatever that implementation happens to do.
-    """
-    assert set(BACKENDS) >= {"mujoco", "dimsim"}
 
 
 def test_core_names_its_engines_and_imports_none_of_them():

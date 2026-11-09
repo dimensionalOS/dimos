@@ -31,15 +31,16 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd_assets import resolve_usd_assets
-from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
+from dimos.robot.usd_manager import ASSET_ROOT, ASSET_RPC, SCENE_RPC, USD, Mount
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import scene_as_files
 from dimos.utils.logging_config import setup_logger
@@ -48,8 +49,14 @@ logger = setup_logger()
 
 # The one place that says what a world contains: the manager that composes it. A scene travels
 # as text naming its assets, and `get_asset` is how a consumer that has to open files gets them.
-_SCENE_RPC = "get_scene"
-_ASSET_RPC = "get_asset"
+
+
+# As long as it takes. `get_scene` does not answer until every mount's `get_usd` is grafted in
+# and waits on those with no deadline of its own, so the rpc must not impose one either -- and
+# the timeout map has no way to spell "never", so this is the same figure the build rpc uses for
+# the same reason. Without it the call inherits default_rpc_timeout and an office scene whose
+# mounts take two minutes to come up raises TimeoutError in the world and in every sensor.
+SCENE_RPC_TIMEOUT_S = 86_400.0
 
 
 class SceneConfig(ModuleConfig):
@@ -63,6 +70,10 @@ class SceneConfig(ModuleConfig):
     # The UsdManager that composes this world, asked `get_scene` while the world is being built;
     # what it answers with *is* the world. `scene=` is the fallback for a world nobody manages.
     scene_manager: Mount | None = None
+    # Overridden so that asking for a scene cannot time out; see SCENE_RPC_TIMEOUT_S.
+    rpc_timeouts: dict[str, float] = Field(
+        default_factory=lambda: {**DEFAULT_RPC_TIMEOUTS, SCENE_RPC: SCENE_RPC_TIMEOUT_S}
+    )
 
     @field_validator("scene_manager", mode="before")
     @classmethod
@@ -115,30 +126,27 @@ def scene_from(
     if mount is None:
         return UsdModel.from_file(fallback) if isinstance(fallback, Path | str) else fallback
     client = (
-        RPCClient(None, None, mount.remote_name, {_SCENE_RPC, _ASSET_RPC}, rpc=rpc)
+        RPCClient(None, None, mount.remote_name, {SCENE_RPC, ASSET_RPC}, rpc=rpc)
         if mount.module is None
         else RPCClient.remote(mount.module, mount.remote_name, rpc=rpc)
     )
-    answer = getattr(client, _SCENE_RPC)([])
+    answer = getattr(client, SCENE_RPC)([])
     if not answer:
         raise ValueError(
-            f"{mount.remote_name}.{_SCENE_RPC}() answered {answer!r}, which is not a scene. It "
+            f"{mount.remote_name}.{SCENE_RPC}() answered {answer!r}, which is not a scene. It "
             f"answers [asset_root, usd] once it has composed one, and waits until it can."
         )
-    logger.info(f"sim2: the scene came from {mount.remote_name}.{_SCENE_RPC}()")
+    logger.info(f"sim2: the scene came from {mount.remote_name}.{SCENE_RPC}()")
     layer = scene_as_files(
         resolve_usd_assets(answer[USD], answer[ASSET_ROOT]),
-        lambda name: getattr(client, _ASSET_RPC)(name),
+        lambda name: getattr(client, ASSET_RPC)(name),
     )
     return UsdModel.from_file(layer)
 
 
 # Which module runs the world, by name: the only thing core knows about any engine, and it knows
 # it as a string so core imports none of them.
-BACKENDS = {
-    "mujoco": "dimos.sim2.mujoco.sim.MujocoSim",
-    "dimsim": "dimos.sim2.dimsim.sim.DimSimSim",
-}
+BACKENDS = {"mujoco": "dimos.sim2.mujoco.sim.MujocoSim"}
 
 
 def sim_module(backend: str = "mujoco", **config: Any) -> Blueprint:

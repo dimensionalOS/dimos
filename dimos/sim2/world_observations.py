@@ -159,8 +159,8 @@ def _difference(
 class WorldMirror:
     """The world as the WorldObservations this module got say it is.
 
-    subscribe applies every frame on the thread that receives it, never dropping one for being busy;
-    read under lock. Work paced by sim time awaits reached().
+    subscribe applies every frame on the thread that receives it, never dropping one for being
+    busy; the readers below take the lock themselves. Work paced by sim time awaits reached().
     """
 
     def __init__(self) -> None:
@@ -222,8 +222,9 @@ class WorldMirror:
             listener(self)
 
     def entity(self, path: str) -> Entity | None:
-        entity_id = self.ids.get(path)
-        return None if entity_id is None else self.entities.get(entity_id)
+        with self.lock:
+            entity_id = self.ids.get(path)
+            return None if entity_id is None else self.entities.get(entity_id)
 
     def stamp(self) -> float:
         """The current frame's timestamp, what sim-timed messages are stamped with."""
@@ -232,19 +233,22 @@ class WorldMirror:
     def joint_ids(self, robot: str) -> list[int]:
         """The robot's joints' ids, in the order the world added them."""
         prefix = f"{robot}/"
-        return sorted(i for path, i in self.ids.items() if path.startswith(prefix))
+        with self.lock:
+            return sorted(i for path, i in self.ids.items() if path.startswith(prefix))
 
     def joints(self, robot: str) -> tuple[list[str], NDArray[np.float64]]:
         """The robot's joint names (without its "<robot>/") and a row of position, velocity, effort each."""
-        members = [self.entities[i] for i in self.joint_ids(robot) if i in self.entities]
-        names = [m.path.removeprefix(f"{robot}/") for m in members]
-        rows = [m.joint if m.joint is not None else np.zeros(3) for m in members]
+        with self.lock:
+            members = [self.entities[i] for i in self.joint_ids(robot) if i in self.entities]
+            names = [m.path.removeprefix(f"{robot}/") for m in members]
+            rows = [m.joint if m.joint is not None else np.zeros(3) for m in members]
         return names, np.array(rows, dtype=np.float64).reshape(-1, 3)
 
     def got(self, path: str, key: str) -> bool:
         """Whether this frame set key on the entity at path."""
-        entity_id = self.ids.get(path)
-        return any(e == entity_id and k == key for e, k, _ in self.received)
+        with self.lock:
+            entity_id = self.ids.get(path)
+            return any(e == entity_id and k == key for e, k, _ in self.received)
 
     async def reached(self, ts: float) -> None:
         """Returns once a frame has come with a ts of at least ts seconds."""
