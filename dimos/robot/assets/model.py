@@ -194,7 +194,7 @@ class UsdModel:
         if self._text is not None:
             return self._text
         if self._urdf is not None:
-            from dimos.robot.assets.usd import urdf_to_usd
+            from dimos.robot.assets.urdf_to_usd import urdf_to_usd
 
             return urdf_to_usd(self._urdf)
         path = self.source_path
@@ -267,7 +267,7 @@ class UsdModel:
         conversion does not carry into the layer.
         """
         if self._urdf is None:
-            from dimos.robot.assets.usd import referenced_asset_paths
+            from dimos.robot.assets.usd_assets import referenced_asset_paths
 
             return referenced_asset_paths(self.usd, self._asset_root())
         return self._urdf.referenced_files()
