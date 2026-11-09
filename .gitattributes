@@ -32,6 +32,11 @@ docs/assets/favicon.png -filter -diff -merge
 misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
+# A vendored robot's meshes. They were committed as pointer text with no filter on the path, so
+# a clone got the pointers and nothing turned them back into meshes -- the sim then refused the
+# robot's first body with "at least 4 vertices required". The layer beside them stays text and
+# out of LFS on purpose (see pyproject): a scene travels as a string, so it has to be readable.
+dimos/robot/*/*/assets/meshes/** filter=lfs diff=lfs merge=lfs -text binary
 misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text
 # Machine-generated, and reviewed as artifacts rather than as source: a lock file
 # is cargo's output, and motion's planner crate is what an autoresearch lab

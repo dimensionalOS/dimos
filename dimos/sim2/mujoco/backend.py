@@ -13,11 +13,15 @@
 # limitations under the License.
 
 
-"""The MuJoCo backend: one compiled world, stepped in real time, each frame a WorldObservations of what moved."""
+"""The MuJoCo engine: one compiled world, advanced to the clock, each frame what moved.
 
-import asyncio
+The engine, not the module. It is handed a USD layer and some config, it steps, and it says
+what changed -- it owns no streams, publishes nothing, and does not know a controller is on the
+other end of the actions it is given. `MujocoSim` in `sim.py` is the module around it.
+"""
+
 import base64
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 import json
 from pathlib import Path
 import re
@@ -31,15 +35,14 @@ import mujoco
 import numpy as np
 
 from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
-from dimos.sim2.backend import Publisher
+from dimos.sim2.mujoco.names import resolved, short_names
 from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import Simulated, SimulatedRobot
-from dimos.sim2.usd_layer import scene_layer, usd_layer
+from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
-    from dimos.sim2.module import SimulationConfig
 
 # Physics catches up to the wall clock in bursts, publishing after each, since macOS oversleeps short
 # waits. Lag past one burst is dropped: a controller's command must not land a whole control period late.
@@ -87,16 +90,22 @@ def _mesh_data(model: mujoco.MjModel, mesh: int) -> dict[str, str]:
 class MujocoBackend:
     def __init__(
         self,
-        config: "SimulationConfig",
-        world: "UsdModel | Path | None",
-        simulated: Mapping[str, Simulated],
-        directory: Path,
+        usd: "UsdModel",
+        simulated: Iterable[Simulated] = (),
+        speed: float = 1.0,
     ) -> None:
-        self._config = config
+        """A USD layer, what is in it, and how fast to run it. Nothing else.
+
+        `simulated` is what the robots and sensors said about themselves; `speed` is sim seconds
+        per wall second. Both are config in the sense that matters: an engine is handed the world
+        and the knobs for running it, and works out everything else from the layer.
+        """
+        simulated = list(simulated)
+        self._speed = speed
         # The world as a file, which is what MuJoCo opens and what a renderer asks for by name.
-        self._scene_layer = scene_layer(world)
-        self._robots = {d.robot_id: d for d in simulated.values() if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(self._scene_layer, simulated.values())
+        self._scene_layer = usd_layer(usd)
+        self._robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
+        self.model = compile_world(self._scene_layer, simulated).compile()
         # Robots whose controllers the world steps in lockstep with, and the actions each sent since its last tick.
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)
@@ -113,6 +122,10 @@ class MujocoBackend:
         self._sent: dict[str, np.ndarray] = {}
         self._sent_joints: dict[str, np.ndarray] = {}
         self._refusals: list[tuple[str, str]] = []
+        # The wall clock this world is pacing itself against, and the robots it is holding for.
+        self._started = time.monotonic()
+        self._rebase = True
+        self._waiting: tuple[str, ...] = ()
         self._files = _files_named_by(self._scene_layer, None)
         # A robot's layer as a file: the name a renderer asks for it by, and what the files it
         # names are relative to.
@@ -122,7 +135,7 @@ class MujocoBackend:
         self._reset()
 
     def describe(self) -> dict[str, Any]:
-        return {"scene": str(self._scene_layer)}
+        return {"backend": "mujoco", "scene": str(self._scene_layer)}
 
     def assets(self) -> Mapping[str, Path | bytes]:
         # Under its own name as well as "world.xml": a renderer that has the description knows
@@ -136,6 +149,9 @@ class MujocoBackend:
     def scene_data(self) -> str:
         model = self.model
         robot_roots = {self._roots[robot_id] for robot_id in self._robots}
+        # By the same short names the entities carry, since a viewer matching one against the
+        # other is the point: off a USD layer MuJoCo calls everything by its whole prim path.
+        short = short_names(model.body(body).name or "world" for body in range(model.nbody))
         bodies, meshes = [], {}
         for body in range(model.nbody):
             if model.body_rootid[body] in robot_roots:
@@ -166,8 +182,8 @@ class MujocoBackend:
             if geoms:
                 bodies.append(
                     {
-                        "name": model.body(body).name or "world",
-                        "label": model.body(body).name or "world",
+                        "name": short[model.body(body).name or "world"],
+                        "label": short[model.body(body).name or "world"],
                         "pos": self.data.xpos[body].tolist(),
                         "quat": _xyzw(self.data.xquat[body]),
                         "mocap": bool(model.body_mocapid[body] >= 0),
@@ -187,36 +203,64 @@ class MujocoBackend:
             }
         )
 
+    def step(self, actions: Sequence[Action] = ()) -> tuple[float, WorldObservations]:
+        """Advance the world to the clock and say what moved: the sim time reached, and a frame.
+
+        It stops short of the clock at a controller's tick, with that controller named in the
+        frame's `act`. That is what lockstep is: the caller publishes the frame, waits until
+        `ready()` (or gives up on it), and steps again -- so a policy running at 50 Hz sees every
+        tick and the world never runs ahead of the commands it is waiting for.
+
+        Physics catches up in bursts rather than one step at a time, because macOS oversleeps a
+        short wait; lag past one burst is dropped, since a command landing a whole control period
+        late is worse than a world that skipped.
+        """
+        model, data = self.model, self.data
+        if actions:
+            self.apply(actions)
+        self._apply_pending()
+        if self._rebase:
+            # Time spent waiting on a controller is not time the world owes the clock.
+            self._started = time.monotonic() - data.time / self._speed
+            self._rebase = False
+        max_steps = max(1, int(_MAX_BURST_SECONDS / model.opt.timestep))
+        steps = int(
+            ((time.monotonic() - self._started) * self._speed - data.time) / model.opt.timestep
+        )
+        if steps > max_steps:
+            self._started += (steps - max_steps) * model.opt.timestep / self._speed
+            steps = max_steps
+        for _ in range(steps):
+            due = self._due()
+            if due:
+                return float(data.time), self.frame(due)
+            mujoco.mj_step(model, data)
+        return float(data.time), self.frame()
+
+    @property
+    def waiting_for(self) -> tuple[str, ...]:
+        """The robots whose actions this world is holding for; empty unless the last step hit a tick."""
+        return self._waiting
+
+    def ready(self) -> bool:
+        """Every robot it is waiting for has acted since the tick."""
+        with self._lock:
+            return all(self._acted.get(robot_id) for robot_id in self._waiting)
+
     def apply(self, actions: Sequence[Action]) -> None:
+        """Take actions now, from whatever thread they arrived on; they land on the next step."""
         with self._lock:
             self._pending.extend(actions)
             for action in actions:
                 if isinstance(action, JointCommand) and action.entity in self._acted:
                     self._acted[action.entity] += 1
 
-    async def run(self, world_observations: Publisher) -> None:
-        model, data = self.model, self.data
-        self._reset()
-        started = time.monotonic()
-        max_steps = max(1, int(_MAX_BURST_SECONDS / model.opt.timestep))
-        while True:
-            self._apply_pending()
-            steps = int(
-                ((time.monotonic() - started) * self._config.speed - data.time) / model.opt.timestep
-            )
-            if steps > max_steps:
-                started += (steps - max_steps) * model.opt.timestep / self._config.speed
-                steps = max_steps
-            for _ in range(steps):
-                if await self._hold_for_controllers(world_observations):
-                    started = time.monotonic() - data.time / self._config.speed
-                mujoco.mj_step(model, data)
-            if not world_observations.busy:
-                world_observations.offer(self.frame())
-            await asyncio.sleep(0.001)
+    def _due(self) -> tuple[str, ...]:
+        """The controllers whose tick has come, booking their next one and what to wait for.
 
-    async def _hold_for_controllers(self, world_observations: Publisher) -> bool:
-        """At a controller's tick, send it the world and wait for its actions; True if the world waited."""
+        A controller that has never acted is not there yet and is not waited for -- otherwise a
+        world with a controller that never starts holds still for the timeout, every tick.
+        """
         now = self.data.time
         due = [
             robot.robot_id
@@ -224,27 +268,17 @@ class MujocoBackend:
             if now >= tick - self.model.opt.timestep / 2
         ]
         if not due:
-            return False
+            self._waiting = ()
+            return ()
         for i, robot in enumerate(self._controllers):
             if robot.robot_id in due:
                 self._next_ticks[i] += robot.control_period  # type: ignore[operator]
         with self._lock:
-            # One that never acted is not there yet; the world does not wait for it.
-            waiting = [robot_id for robot_id in due if self._acted.get(robot_id)]
+            self._waiting = tuple(robot_id for robot_id in due if self._acted.get(robot_id))
             for robot_id in due:
                 self._acted[robot_id] = 0
-        # The tick's frame must reach its controllers, so it waits out a busy publisher rather than being dropped.
-        while world_observations.busy:
-            await asyncio.sleep(0)
-        world_observations.offer(self.frame(tuple(due)))
-        deadline = time.monotonic() + self._config.controller_timeout
-        while time.monotonic() < deadline:
-            with self._lock:
-                if all(self._acted.get(robot_id) for robot_id in waiting):
-                    break
-            await asyncio.sleep(0)
-        self._apply_pending()
-        return bool(waiting)
+        self._rebase = bool(self._waiting)
+        return tuple(due)
 
     def _reset(self) -> None:
         self._next_ticks = [0.0] * len(self._controllers)
@@ -253,16 +287,28 @@ class MujocoBackend:
         mujoco.mj_forward(self.model, self.data)
 
     def _initial_joints(self) -> dict[str, float]:
-        """Every joint the world starts somewhere other than zero, and holds there until commanded."""
+        """Every joint the world starts somewhere other than zero, and holds there until commanded.
+
+        Read off each robot's own layer, where its drives say what pose it holds -- the same
+        place its gains come from, and the same place a real robot's controller would be
+        configured from. Off its own layer rather than off the composed one, because that is
+        where the names are the ones this robot's parts get prefixed from.
+        """
+        from dimos.robot.assets.usd import usd_drives
+
         initial = {}
         for robot in self._robots.values():
-            held = {servo.joint: servo.initial for servo in robot.servos}
-            initial |= {f"{robot.robot_id}/{name}": value for name, value in held.items()}
+            for joint, (_kp, _kd, target) in usd_drives(robot.model.usd).items():
+                initial[f"{robot.robot_id}/{joint}"] = target
         return initial
 
     def _hold_initial_pose(self) -> None:
-        for name, value in self._initial_joints().items():
-            joint = self.model.joint(name)
+        names = [self.model.joint(i).name for i in range(self.model.njnt)]
+        for wanted, value in self._initial_joints().items():
+            found = resolved(names, wanted)
+            if found is None:
+                continue
+            joint = self.model.joint(found)
             self.data.qpos[joint.qposadr[0]] = value
             self.data.ctrl[self.model.actuator_trnid[:, 0] == joint.id] = value
 
@@ -343,9 +389,17 @@ class MujocoBackend:
         }
         robot_roots = set(roots.values())
         jointed = set(model.body_rootid[model.jnt_bodyid])
-        for body in range(1, model.nbody):
-            if model.body_parentid[body] == 0 and body not in robot_roots and body in jointed:
-                roots[model.body(body).name or f"body{body}"] = body
+        objects = [
+            body
+            for body in range(1, model.nbody)
+            if model.body_parentid[body] == 0 and body not in robot_roots and body in jointed
+        ]
+        # By a name somebody can write: an object with a joint is an entity an action addresses
+        # and a viewer places, and off a USD layer MuJoCo calls it by its whole prim path.
+        names = [model.body(body).name or f"body{body}" for body in objects]
+        short = short_names(names)
+        for body, name in zip(objects, names, strict=True):
+            roots[short[name]] = body
         return roots
 
     def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldObservations:

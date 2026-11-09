@@ -737,9 +737,12 @@ def Xform "g1_29dof_rev_1_0" (
                                     }
 
                                     def PhysicsRevoluteJoint "left_ankle_roll_joint" (
-                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                     )
                                     {
+                                        float drive:angular:physics:damping = 0.2
+                                        float drive:angular:physics:stiffness = 2
+                                        float drive:angular:physics:targetPosition = 0
                                         uniform double mjc:actuatorfrcrange:max = 50
                                         uniform double mjc:actuatorfrcrange:min = -50
                                         float newton:armature = 0.01
@@ -757,9 +760,12 @@ def Xform "g1_29dof_rev_1_0" (
                                 }
 
                                 def PhysicsRevoluteJoint "left_ankle_pitch_joint" (
-                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                 )
                                 {
+                                    float drive:angular:physics:damping = 1
+                                    float drive:angular:physics:stiffness = 20
+                                    float drive:angular:physics:targetPosition = -0.363
                                     uniform double mjc:actuatorfrcrange:max = 50
                                     uniform double mjc:actuatorfrcrange:min = -50
                                     float newton:armature = 0.01
@@ -777,9 +783,12 @@ def Xform "g1_29dof_rev_1_0" (
                             }
 
                             def PhysicsRevoluteJoint "left_knee_joint" (
-                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                             )
                             {
+                                float drive:angular:physics:damping = 2
+                                float drive:angular:physics:stiffness = 75
+                                float drive:angular:physics:targetPosition = 0.669
                                 uniform double mjc:actuatorfrcrange:max = 139
                                 uniform double mjc:actuatorfrcrange:min = -139
                                 float newton:armature = 0.01
@@ -797,9 +806,12 @@ def Xform "g1_29dof_rev_1_0" (
                         }
 
                         def PhysicsRevoluteJoint "left_hip_yaw_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 2
+                            float drive:angular:physics:stiffness = 75
+                            float drive:angular:physics:targetPosition = 0
                             uniform double mjc:actuatorfrcrange:max = 88
                             uniform double mjc:actuatorfrcrange:min = -88
                             float newton:armature = 0.01
@@ -817,9 +829,12 @@ def Xform "g1_29dof_rev_1_0" (
                     }
 
                     def PhysicsRevoluteJoint "left_hip_roll_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 2
+                        float drive:angular:physics:stiffness = 75
+                        float drive:angular:physics:targetPosition = 0
                         uniform double mjc:actuatorfrcrange:max = 139
                         uniform double mjc:actuatorfrcrange:min = -139
                         float newton:armature = 0.01
@@ -837,9 +852,12 @@ def Xform "g1_29dof_rev_1_0" (
                 }
 
                 def PhysicsRevoluteJoint "left_hip_pitch_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 2
+                    float drive:angular:physics:stiffness = 75
+                    float drive:angular:physics:targetPosition = -0.312
                     uniform double mjc:actuatorfrcrange:max = 88
                     uniform double mjc:actuatorfrcrange:min = -88
                     float newton:armature = 0.01
@@ -1403,9 +1421,12 @@ def Xform "g1_29dof_rev_1_0" (
                                     }
 
                                     def PhysicsRevoluteJoint "right_ankle_roll_joint" (
-                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                     )
                                     {
+                                        float drive:angular:physics:damping = 0.2
+                                        float drive:angular:physics:stiffness = 2
+                                        float drive:angular:physics:targetPosition = 0
                                         uniform double mjc:actuatorfrcrange:max = 50
                                         uniform double mjc:actuatorfrcrange:min = -50
                                         float newton:armature = 0.01
@@ -1423,9 +1444,12 @@ def Xform "g1_29dof_rev_1_0" (
                                 }
 
                                 def PhysicsRevoluteJoint "right_ankle_pitch_joint" (
-                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                 )
                                 {
+                                    float drive:angular:physics:damping = 1
+                                    float drive:angular:physics:stiffness = 20
+                                    float drive:angular:physics:targetPosition = -0.363
                                     uniform double mjc:actuatorfrcrange:max = 50
                                     uniform double mjc:actuatorfrcrange:min = -50
                                     float newton:armature = 0.01
@@ -1443,9 +1467,12 @@ def Xform "g1_29dof_rev_1_0" (
                             }
 
                             def PhysicsRevoluteJoint "right_knee_joint" (
-                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                             )
                             {
+                                float drive:angular:physics:damping = 2
+                                float drive:angular:physics:stiffness = 75
+                                float drive:angular:physics:targetPosition = 0.669
                                 uniform double mjc:actuatorfrcrange:max = 139
                                 uniform double mjc:actuatorfrcrange:min = -139
                                 float newton:armature = 0.01
@@ -1463,9 +1490,12 @@ def Xform "g1_29dof_rev_1_0" (
                         }
 
                         def PhysicsRevoluteJoint "right_hip_yaw_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 2
+                            float drive:angular:physics:stiffness = 75
+                            float drive:angular:physics:targetPosition = 0
                             uniform double mjc:actuatorfrcrange:max = 88
                             uniform double mjc:actuatorfrcrange:min = -88
                             float newton:armature = 0.01
@@ -1483,9 +1513,12 @@ def Xform "g1_29dof_rev_1_0" (
                     }
 
                     def PhysicsRevoluteJoint "right_hip_roll_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 2
+                        float drive:angular:physics:stiffness = 75
+                        float drive:angular:physics:targetPosition = 0
                         uniform double mjc:actuatorfrcrange:max = 139
                         uniform double mjc:actuatorfrcrange:min = -139
                         float newton:armature = 0.01
@@ -1503,9 +1536,12 @@ def Xform "g1_29dof_rev_1_0" (
                 }
 
                 def PhysicsRevoluteJoint "right_hip_pitch_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 2
+                    float drive:angular:physics:stiffness = 75
+                    float drive:angular:physics:targetPosition = -0.312
                     uniform double mjc:actuatorfrcrange:max = 88
                     uniform double mjc:actuatorfrcrange:min = -88
                     float newton:armature = 0.01
@@ -2373,9 +2409,12 @@ def Xform "g1_29dof_rev_1_0" (
                                                     }
 
                                                     def PhysicsRevoluteJoint "left_wrist_yaw_joint" (
-                                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                                     )
                                                     {
+                                                        float drive:angular:physics:damping = 0.2
+                                                        float drive:angular:physics:stiffness = 2
+                                                        float drive:angular:physics:targetPosition = 0
                                                         uniform double mjc:actuatorfrcrange:max = 5
                                                         uniform double mjc:actuatorfrcrange:min = -5
                                                         float newton:armature = 0.01
@@ -2393,9 +2432,12 @@ def Xform "g1_29dof_rev_1_0" (
                                                 }
 
                                                 def PhysicsRevoluteJoint "left_wrist_pitch_joint" (
-                                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                                 )
                                                 {
+                                                    float drive:angular:physics:damping = 0.2
+                                                    float drive:angular:physics:stiffness = 2
+                                                    float drive:angular:physics:targetPosition = 0
                                                     uniform double mjc:actuatorfrcrange:max = 5
                                                     uniform double mjc:actuatorfrcrange:min = -5
                                                     float newton:armature = 0.01
@@ -2413,9 +2455,12 @@ def Xform "g1_29dof_rev_1_0" (
                                             }
 
                                             def PhysicsRevoluteJoint "left_wrist_roll_joint" (
-                                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                             )
                                             {
+                                                float drive:angular:physics:damping = 0.2
+                                                float drive:angular:physics:stiffness = 2
+                                                float drive:angular:physics:targetPosition = 0
                                                 uniform double mjc:actuatorfrcrange:max = 25
                                                 uniform double mjc:actuatorfrcrange:min = -25
                                                 float newton:armature = 0.01
@@ -2433,9 +2478,12 @@ def Xform "g1_29dof_rev_1_0" (
                                         }
 
                                         def PhysicsRevoluteJoint "left_elbow_joint" (
-                                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                         )
                                         {
+                                            float drive:angular:physics:damping = 2
+                                            float drive:angular:physics:stiffness = 75
+                                            float drive:angular:physics:targetPosition = 0.6
                                             uniform double mjc:actuatorfrcrange:max = 25
                                             uniform double mjc:actuatorfrcrange:min = -25
                                             float newton:armature = 0.01
@@ -2453,9 +2501,12 @@ def Xform "g1_29dof_rev_1_0" (
                                     }
 
                                     def PhysicsRevoluteJoint "left_shoulder_yaw_joint" (
-                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                     )
                                     {
+                                        float drive:angular:physics:damping = 2
+                                        float drive:angular:physics:stiffness = 75
+                                        float drive:angular:physics:targetPosition = 0
                                         uniform double mjc:actuatorfrcrange:max = 25
                                         uniform double mjc:actuatorfrcrange:min = -25
                                         float newton:armature = 0.01
@@ -2473,9 +2524,12 @@ def Xform "g1_29dof_rev_1_0" (
                                 }
 
                                 def PhysicsRevoluteJoint "left_shoulder_roll_joint" (
-                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                 )
                                 {
+                                    float drive:angular:physics:damping = 2
+                                    float drive:angular:physics:stiffness = 75
+                                    float drive:angular:physics:targetPosition = 0.2
                                     uniform double mjc:actuatorfrcrange:max = 25
                                     uniform double mjc:actuatorfrcrange:min = -25
                                     float newton:armature = 0.01
@@ -2493,9 +2547,12 @@ def Xform "g1_29dof_rev_1_0" (
                             }
 
                             def PhysicsRevoluteJoint "left_shoulder_pitch_joint" (
-                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                             )
                             {
+                                float drive:angular:physics:damping = 2
+                                float drive:angular:physics:stiffness = 75
+                                float drive:angular:physics:targetPosition = 0.2
                                 uniform double mjc:actuatorfrcrange:max = 25
                                 uniform double mjc:actuatorfrcrange:min = -25
                                 float newton:armature = 0.01
@@ -3070,9 +3127,12 @@ def Xform "g1_29dof_rev_1_0" (
                                                     }
 
                                                     def PhysicsRevoluteJoint "right_wrist_yaw_joint" (
-                                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                                     )
                                                     {
+                                                        float drive:angular:physics:damping = 0.2
+                                                        float drive:angular:physics:stiffness = 2
+                                                        float drive:angular:physics:targetPosition = 0
                                                         uniform double mjc:actuatorfrcrange:max = 5
                                                         uniform double mjc:actuatorfrcrange:min = -5
                                                         float newton:armature = 0.01
@@ -3090,9 +3150,12 @@ def Xform "g1_29dof_rev_1_0" (
                                                 }
 
                                                 def PhysicsRevoluteJoint "right_wrist_pitch_joint" (
-                                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                                 )
                                                 {
+                                                    float drive:angular:physics:damping = 0.2
+                                                    float drive:angular:physics:stiffness = 2
+                                                    float drive:angular:physics:targetPosition = 0
                                                     uniform double mjc:actuatorfrcrange:max = 5
                                                     uniform double mjc:actuatorfrcrange:min = -5
                                                     float newton:armature = 0.01
@@ -3110,9 +3173,12 @@ def Xform "g1_29dof_rev_1_0" (
                                             }
 
                                             def PhysicsRevoluteJoint "right_wrist_roll_joint" (
-                                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                             )
                                             {
+                                                float drive:angular:physics:damping = 0.2
+                                                float drive:angular:physics:stiffness = 2
+                                                float drive:angular:physics:targetPosition = 0
                                                 uniform double mjc:actuatorfrcrange:max = 25
                                                 uniform double mjc:actuatorfrcrange:min = -25
                                                 float newton:armature = 0.01
@@ -3130,9 +3196,12 @@ def Xform "g1_29dof_rev_1_0" (
                                         }
 
                                         def PhysicsRevoluteJoint "right_elbow_joint" (
-                                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                         )
                                         {
+                                            float drive:angular:physics:damping = 2
+                                            float drive:angular:physics:stiffness = 75
+                                            float drive:angular:physics:targetPosition = 0.6
                                             uniform double mjc:actuatorfrcrange:max = 25
                                             uniform double mjc:actuatorfrcrange:min = -25
                                             float newton:armature = 0.01
@@ -3150,9 +3219,12 @@ def Xform "g1_29dof_rev_1_0" (
                                     }
 
                                     def PhysicsRevoluteJoint "right_shoulder_yaw_joint" (
-                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                     )
                                     {
+                                        float drive:angular:physics:damping = 2
+                                        float drive:angular:physics:stiffness = 75
+                                        float drive:angular:physics:targetPosition = 0
                                         uniform double mjc:actuatorfrcrange:max = 25
                                         uniform double mjc:actuatorfrcrange:min = -25
                                         float newton:armature = 0.01
@@ -3170,9 +3242,12 @@ def Xform "g1_29dof_rev_1_0" (
                                 }
 
                                 def PhysicsRevoluteJoint "right_shoulder_roll_joint" (
-                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                                 )
                                 {
+                                    float drive:angular:physics:damping = 2
+                                    float drive:angular:physics:stiffness = 75
+                                    float drive:angular:physics:targetPosition = -0.2
                                     uniform double mjc:actuatorfrcrange:max = 25
                                     uniform double mjc:actuatorfrcrange:min = -25
                                     float newton:armature = 0.01
@@ -3190,9 +3265,12 @@ def Xform "g1_29dof_rev_1_0" (
                             }
 
                             def PhysicsRevoluteJoint "right_shoulder_pitch_joint" (
-                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                                apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                             )
                             {
+                                float drive:angular:physics:damping = 2
+                                float drive:angular:physics:stiffness = 75
+                                float drive:angular:physics:targetPosition = 0.2
                                 uniform double mjc:actuatorfrcrange:max = 25
                                 uniform double mjc:actuatorfrcrange:min = -25
                                 float newton:armature = 0.01
@@ -3210,9 +3288,12 @@ def Xform "g1_29dof_rev_1_0" (
                         }
 
                         def PhysicsRevoluteJoint "waist_pitch_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 2
+                            float drive:angular:physics:stiffness = 75
+                            float drive:angular:physics:targetPosition = 0.073
                             uniform double mjc:actuatorfrcrange:max = 50
                             uniform double mjc:actuatorfrcrange:min = -50
                             float newton:armature = 0.01
@@ -3230,9 +3311,12 @@ def Xform "g1_29dof_rev_1_0" (
                     }
 
                     def PhysicsRevoluteJoint "waist_roll_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 2
+                        float drive:angular:physics:stiffness = 75
+                        float drive:angular:physics:targetPosition = 0
                         uniform double mjc:actuatorfrcrange:max = 50
                         uniform double mjc:actuatorfrcrange:min = -50
                         float newton:armature = 0.01
@@ -3250,9 +3334,12 @@ def Xform "g1_29dof_rev_1_0" (
                 }
 
                 def PhysicsRevoluteJoint "waist_yaw_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 2
+                    float drive:angular:physics:stiffness = 75
+                    float drive:angular:physics:targetPosition = 0
                     uniform double mjc:actuatorfrcrange:max = 88
                     uniform double mjc:actuatorfrcrange:min = -88
                     float newton:armature = 0.01
@@ -3420,291 +3507,320 @@ def Xform "g1_29dof_rev_1_0" (
 
         def MjcActuator "left_hip_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -10.3186, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.8798
             uniform double mjc:ctrlRange:min = -2.5307
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/left_hip_pitch_link/left_hip_pitch_joint>
         }
 
         def MjcActuator "left_hip_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -15.8008, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.9671
             uniform double mjc:ctrlRange:min = -0.5236
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/left_hip_pitch_link/left_hip_roll_link/left_hip_roll_joint>
         }
 
         def MjcActuator "left_hip_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -5.78319, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.7576
             uniform double mjc:ctrlRange:min = -2.7576
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/left_hip_pitch_link/left_hip_roll_link/left_hip_yaw_link/left_hip_yaw_joint>
         }
 
         def MjcActuator "left_knee_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -9.0796, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.8798
             uniform double mjc:ctrlRange:min = -0.087267
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/left_hip_pitch_link/left_hip_roll_link/left_hip_yaw_link/left_knee_link/left_knee_joint>
         }
 
         def MjcActuator "left_ankle_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.92387, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -20, -1, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.5236
             uniform double mjc:ctrlRange:min = -0.87267
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/left_hip_pitch_link/left_hip_roll_link/left_hip_yaw_link/left_knee_link/left_ankle_pitch_link/left_ankle_pitch_joint>
         }
 
         def MjcActuator "left_ankle_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.54435, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.2618
             uniform double mjc:ctrlRange:min = -0.2618
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/left_hip_pitch_link/left_hip_roll_link/left_hip_yaw_link/left_knee_link/left_ankle_pitch_link/left_ankle_roll_link/left_ankle_roll_joint>
         }
 
         def MjcActuator "right_hip_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -10.319, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.8798
             uniform double mjc:ctrlRange:min = -2.5307
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/right_hip_pitch_link/right_hip_pitch_joint>
         }
 
         def MjcActuator "right_hip_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -15.8059, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.5236
             uniform double mjc:ctrlRange:min = -2.9671
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/right_hip_pitch_link/right_hip_roll_link/right_hip_roll_joint>
         }
 
         def MjcActuator "right_hip_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -5.78385, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.7576
             uniform double mjc:ctrlRange:min = -2.7576
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/right_hip_pitch_link/right_hip_roll_link/right_hip_yaw_link/right_hip_yaw_joint>
         }
 
         def MjcActuator "right_knee_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -9.07956, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.8798
             uniform double mjc:ctrlRange:min = -0.087267
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/right_hip_pitch_link/right_hip_roll_link/right_hip_yaw_link/right_knee_link/right_knee_joint>
         }
 
         def MjcActuator "right_ankle_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.92387, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -20, -1, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.5236
             uniform double mjc:ctrlRange:min = -0.87267
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/right_hip_pitch_link/right_hip_roll_link/right_hip_yaw_link/right_knee_link/right_ankle_pitch_link/right_ankle_pitch_joint>
         }
 
         def MjcActuator "right_ankle_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.54436, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.2618
             uniform double mjc:ctrlRange:min = -0.2618
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/right_hip_pitch_link/right_hip_roll_link/right_hip_yaw_link/right_knee_link/right_ankle_pitch_link/right_ankle_roll_link/right_ankle_roll_joint>
         }
 
         def MjcActuator "waist_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -10.2633, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.618
             uniform double mjc:ctrlRange:min = -2.618
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_yaw_joint>
         }
 
         def MjcActuator "waist_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -16.1981, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.52
             uniform double mjc:ctrlRange:min = -0.52
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/waist_roll_joint>
         }
 
         def MjcActuator "waist_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -9.28048, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 0.52
             uniform double mjc:ctrlRange:min = -0.52
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/waist_pitch_joint>
         }
 
         def MjcActuator "left_shoulder_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -10.8177, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.6704
             uniform double mjc:ctrlRange:min = -3.0892
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_pitch_joint>
         }
 
         def MjcActuator "left_shoulder_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -9.96963, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.2515
             uniform double mjc:ctrlRange:min = -1.5882
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_roll_link/left_shoulder_roll_joint>
         }
 
         def MjcActuator "left_shoulder_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -7.34707, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.618
             uniform double mjc:ctrlRange:min = -2.618
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_roll_link/left_shoulder_yaw_link/left_shoulder_yaw_joint>
         }
 
         def MjcActuator "left_elbow_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -7.11109, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.0944
             uniform double mjc:ctrlRange:min = -1.0472
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_roll_link/left_shoulder_yaw_link/left_elbow_link/left_elbow_joint>
         }
 
         def MjcActuator "left_wrist_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.55255, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.97222
             uniform double mjc:ctrlRange:min = -1.97222
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_roll_link/left_shoulder_yaw_link/left_elbow_link/left_wrist_roll_link/left_wrist_roll_joint>
         }
 
         def MjcActuator "left_wrist_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.9566, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.61443
             uniform double mjc:ctrlRange:min = -1.61443
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_roll_link/left_shoulder_yaw_link/left_elbow_link/left_wrist_roll_link/left_wrist_pitch_link/left_wrist_pitch_joint>
         }
 
         def MjcActuator "left_wrist_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.73822, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.61443
             uniform double mjc:ctrlRange:min = -1.61443
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/left_shoulder_pitch_link/left_shoulder_roll_link/left_shoulder_yaw_link/left_elbow_link/left_wrist_roll_link/left_wrist_pitch_link/left_wrist_yaw_link/left_wrist_yaw_joint>
         }
 
         def MjcActuator "right_shoulder_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -10.8107, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.6704
             uniform double mjc:ctrlRange:min = -3.0892
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_pitch_joint>
         }
 
         def MjcActuator "right_shoulder_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -9.96966, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.5882
             uniform double mjc:ctrlRange:min = -2.2515
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_roll_link/right_shoulder_roll_joint>
         }
 
         def MjcActuator "right_shoulder_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -7.34738, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.618
             uniform double mjc:ctrlRange:min = -2.618
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_roll_link/right_shoulder_yaw_link/right_shoulder_yaw_joint>
         }
 
         def MjcActuator "right_elbow_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -7.10947, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -75, -2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 2.0944
             uniform double mjc:ctrlRange:min = -1.0472
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [75, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_roll_link/right_shoulder_yaw_link/right_elbow_link/right_elbow_joint>
         }
 
         def MjcActuator "right_wrist_roll_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.55255, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.97222
             uniform double mjc:ctrlRange:min = -1.97222
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_roll_link/right_shoulder_yaw_link/right_elbow_link/right_wrist_roll_link/right_wrist_roll_joint>
         }
 
         def MjcActuator "right_wrist_pitch_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.95657, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.61443
             uniform double mjc:ctrlRange:min = -1.61443
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_roll_link/right_shoulder_yaw_link/right_elbow_link/right_wrist_roll_link/right_wrist_pitch_link/right_wrist_pitch_joint>
         }
 
         def MjcActuator "right_wrist_yaw_joint"
         {
-            uniform double[] mjc:biasPrm = [0, -500, -4.73822, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:biasPrm = [0, -2, -0.2, 0, 0, 0, 0, 0, 0, 0]
             uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 1.61443
             uniform double mjc:ctrlRange:min = -1.61443
-            uniform double[] mjc:gainPrm = [500, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            uniform double[] mjc:gainPrm = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </g1_29dof_rev_1_0/Geometry/pelvis/waist_yaw_link/waist_roll_link/torso_link/right_shoulder_pitch_link/right_shoulder_roll_link/right_shoulder_yaw_link/right_elbow_link/right_wrist_roll_link/right_wrist_pitch_link/right_wrist_yaw_link/right_wrist_yaw_joint>
         }
     }

@@ -12,19 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compile a scene, its robots and their sensor mounts into one MuJoCo model."""
+"""Compile a scene and its robots into one MuJoCo model, and mount a sensor in a copy of it.
+
+Two callers, which is why the sensor part is separate. `compile_world` builds the world the
+physics runs, and that world holds no sensors at all: a sensor is not something the simulation
+was told about. A sensor builds its *own* world out of the same scene and calls `mount_sensor`
+on it, so a camera's resolution and field of view are its own business and nothing in the
+physics has an opinion about either.
+"""
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.mujoco.names import resolve, resolved, shorten
-from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, Vector, validate
+from dimos.sim2.mujoco.names import resolved, shorten
+from dimos.sim2.spec import Simulated, SimulatedRobot, Vector, validate
 from dimos.sim2.usd_layer import usd_layer
 
 # Sites only mark a pose; keep them invisible and negligible.
@@ -34,6 +42,24 @@ _IMU_SENSORS = {
     "accelerometer": mujoco.mjtSensor.mjSENS_ACCELEROMETER,
     "orientation": mujoco.mjtSensor.mjSENS_FRAMEQUAT,
 }
+
+
+@dataclass(frozen=True)
+class SensorMount:
+    """What a sensor tells *its own* world about itself: where it sits and what to build there.
+
+    Not a description anything else sees. It used to travel to the simulation over
+    @shared_config, which made the difference between a camera and a lidar core's business and
+    left this engine reading a `kind` nobody else had any use for. A sensor knows what it is; it
+    only has to say so to the world it renders with.
+    """
+
+    kind: Literal["camera", "lidar", "imu"]
+    # Its frame as the composed scene names it: a site or a body, of a robot or of the room.
+    frame_id: str
+    # The name it is mounted under, which is what the sensor then renders from.
+    name: str
+    fovy: float = 60.0
 
 
 # USD suffixes MuJoCo will read, once its reader is registered.
@@ -58,8 +84,10 @@ def _register_usd_reader(scene: Path) -> None:
         ) from error
 
 
-def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel:
-    """Robots are prefixed "<robot_id>/"; scene-mounted sensors are prefixed "world/".
+def compile_world(
+    scene: Path, simulated: Iterable[Simulated] = (), ids: Iterable[str] | None = None
+) -> mujoco.MjSpec:
+    """The world the physics runs: the scene, with each robot prefixed "<robot_id>/".
 
     A robot the world already holds is configured where it stands. A composed scene arrives with
     its robots grafted in -- that is what `get_scene` answers with, and the layer the viewer draws
@@ -68,20 +96,23 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
     only a room gets a robot at all.
     """
     _register_usd_reader(Path(scene))
-    descriptions = list(simulated)
-    robots = [d for d in descriptions if isinstance(d, SimulatedRobot)]
-    sensors = [d for d in descriptions if isinstance(d, SimulatedSensor)]
-    validate(descriptions)
+    robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
+    validate(robots)
+    # The robots whose parts get short names. Named explicitly by a *sensor*, which compiles the
+    # same composed scene and has no descriptions to read them off: it is told what is in the
+    # world by the world, and has to shorten exactly what the physics shortened or the entity
+    # ids in the observations will not match the bodies it is posing.
+    owners = [robot.robot_id for robot in robots] if ids is None else list(ids)
 
     world = mujoco.MjSpec.from_file(str(scene))
     # Before anything looks for a robot in it: a composed world names everything by prim path,
     # and what a robot's parts are called leaves the simulation as entity ids and tf frames.
-    shorten(world, ids=[robot.robot_id for robot in robots])
+    shorten(world, ids=owners)
     for robot in robots:
         prefix = f"{robot.robot_id}/"
         standing = resolved([body.name for body in world.bodies], prefix + robot.root_body)
         if standing is not None:
-            _configure(world, robot, sensors, root=world.body(standing), prefix=prefix)
+            _configure(world, robot, root=world.body(standing), prefix=prefix)
             continue
         layer = usd_layer(robot.model)
         _register_usd_reader(layer)
@@ -96,7 +127,7 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
         # The description places the robot, not the source asset.
         root.pos = (0.0, 0.0, 0.0)
         root.quat = (1.0, 0.0, 0.0, 0.0)
-        _configure(spec, robot, sensors, root=root, prefix="", layer=layer)
+        _configure(spec, robot, root=root, prefix="", layer=layer)
         frame = world.worldbody.add_frame(pos=robot.xyz, quat=_quaternion(robot.rpy))
         world.attach(spec, prefix=prefix, frame=frame)
         # Contact pairs naming a geom the robot lacks (its floor) mean the scene's geom of that name.
@@ -105,22 +136,74 @@ def compile_world(scene: Path, simulated: Iterable[Simulated]) -> mujoco.MjModel
                 name = getattr(pair, side).removeprefix(prefix)
                 if getattr(pair, side) != name and name not in robot_geoms:
                     setattr(pair, side, name)
-    for sensor in sensors:
-        if sensor.robot_id is None:
-            _mount(world, sensor, "world", prefix="world/")
-    return world.compile()
+    # A floating robot that arrived grafted into a scene has nothing holding it *and* nothing
+    # letting it move, so it needs a free joint here. See _free_if_unjointed.
+    fixed = {robot.robot_id for robot in robots if not robot.floating}
+    for robot_id in owners:
+        if robot_id not in fixed:
+            _free_if_unjointed(world, robot_id)
+    return world
+
+
+def _free_if_unjointed(spec: mujoco.MjSpec, robot_id: str) -> None:
+    """Give this robot a free joint if nothing in the layer gave it one.
+
+    A graft says "this subtree floats on its mount" with a generic six-degree `PhysicsJoint`,
+    which is how USD says it. MuJoCo's USD reader does not read that one -- "Unsupported joint
+    type for /scene/dog/toy/dog_mount" on the way past -- and a nested rigid body with no joint
+    is welded to its parent. So a composed world came out with every robot bolted to the room:
+    it started, it stood, it never fell over, and it never walked either, with nothing in the
+    log but that one warning.
+
+    The joint goes on the *mount frame*, not on the robot's own root: MuJoCo allows a free joint
+    only on a top-level body ("free joint can only be used on top level"), and in a composed
+    scene the robot hangs off a frame that the room holds. The frame carries no mass and is
+    welded to the root, so MuJoCo folds the two together and the robot floats as one body --
+    which is what the graft was saying all along.
+
+    A robot attached from its own layer already has the free joint its layer declares, which is
+    why this only ever fires for the composed case. A robot that is not floating is left alone,
+    and so is a mount frame with nothing grafted onto it: a stand for a camera does not move.
+    """
+    prefix = f"{robot_id}/"
+    for body in list(spec.bodies):
+        name = body.name or ""
+        parent = body.parent
+        if not name.startswith(prefix) or (parent.name or "").startswith(prefix):
+            continue
+        # Up to the body MuJoCo will let hold a free joint, which is the one under the world.
+        holder = body
+        while holder.parent is not None and (holder.parent.name or "") != "world":
+            holder = holder.parent
+        if not any(part.joints for part in _chain(body, holder)):
+            holder.add_freejoint()
+
+
+def _chain(body: Any, holder: Any) -> list[Any]:
+    """``body`` up to and including ``holder``: the bodies a joint anywhere on which would move it."""
+    parts = [body]
+    while parts[-1] is not holder and parts[-1].parent is not None:
+        parts.append(parts[-1].parent)
+    return parts
 
 
 def _configure(
     spec: mujoco.MjSpec,
     robot: SimulatedRobot,
-    sensors: Iterable[SimulatedSensor],
     *,
     root: Any,
     prefix: str,
     layer: Path | None = None,
 ) -> None:
-    """Turn the described robot's actuators into servos and mount its sensors, in ``spec``.
+    """What is left to do to a robot after its layer has been read: hold it still if it is fixed.
+
+    Its gains are not here any more. They are in its layer, as a drive on each joint and as
+    MuJoCo's own actuator attributes beside it, so MuJoCo arrives at a position servo by reading
+    the file -- nothing has to turn a motor into one afterwards, and there is no second place for
+    a robot's gains to disagree with the robot.
+
+    Keyframes are dropped, because a vendor layer's pose is not the one the controller holds and
+    a composed world's qpos is not the shape a robot's own keyframe was written for.
 
     Called once per robot, on its own layer before it is attached or on the world it already
     stands in. ``prefix`` is how that robot's parts are named in ``spec``: nothing on its own
@@ -130,59 +213,27 @@ def _configure(
         root.mocap = True
     for key in list(spec.keys):
         spec.delete(key)
-    actuators = {actuator.target: actuator for actuator in spec.actuators}
-    for servo in robot.servos:
-        try:
-            actuator = actuators[resolve(actuators, prefix + servo.joint)]
-        except KeyError as error:
-            # Naming where it looked, because "no 'left_hip_pitch_joint' among " with nothing
-            # after it says only that the model arrived without its actuators, not which model
-            # or from where.
-            where = layer or "the world it stands in"
-            raise ValueError(
-                f"{robot.robot_id}: no actuator on {servo.joint!r} in {where} "
-                f"({len(actuators)} actuator(s) there): {error}"
-            ) from error
-        # A motor's control range, if it has one, is its torque limit; a position actuator keeps its own (or its joint's).
-        motor = (
-            actuator.biastype == mujoco.mjtBias.mjBIAS_NONE
-            and actuator.ctrlrange[0] < actuator.ctrlrange[1]
-        )
-        torque_limit = actuator.ctrlrange.copy()
-        actuator.set_to_position(kp=servo.kp, kv=servo.kd)
-        actuator.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
-        if motor:
-            actuator.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
-            actuator.forcerange = torque_limit
-    for sensor in sensors:
-        if sensor.robot_id == robot.robot_id:
-            _mount(spec, sensor, robot.robot_id, prefix=prefix, look=prefix)
 
 
-def _mount(
-    spec: mujoco.MjSpec,
-    sensor: SimulatedSensor,
-    owner: str,
-    prefix: str = "",
-    look: str = "",
-) -> None:
-    """At its frame: a site of the model (on that site's body, at its pose), a body (at its origin), or "world".
+def mount_sensor(spec: mujoco.MjSpec, sensor: SensorMount) -> None:
+    """Mount the sensor at its frame: a site of the model, a body, or the world itself.
+
+    In the sensor's own copy of the world, never in the one the physics runs: a camera here has
+    the field of view that sensor was configured with, and the physics neither needs it nor
+    should have a say in it.
 
     A frame read out of USD is named by its prim path, so the name the description uses is
     resolved against what the model actually calls things; a scene written as an MJCF names it
     the same either way.
 
-    Two prefixes, because where a frame is found and what the thing mounted at it is called are
-    not always the same. ``look`` is how that frame is named *in this spec*: nothing on a robot's
-    own layer, "<robot_id>/" in a world the robot already stands in. ``prefix`` is what the site
-    or camera is named, which for a scene-mounted sensor is "world/" and for a robot is whatever
-    its parts are already called.
+    A frame read out of USD is named by its prim path, so the name the sensor uses is resolved
+    against what the model actually calls things.
     """
     frame = sensor.frame_id
     site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])
     if frame != "world":
-        site_name = resolved([s.name for s in spec.sites], look + frame)
-        body_name = resolved([b.name for b in spec.bodies], look + frame)
+        site_name = resolved([s.name for s in spec.sites], frame)
+        body_name = resolved([b.name for b in spec.bodies], frame)
         site = spec.site(site_name) if site_name else None
         body = spec.body(body_name) if body_name else None
         if site is not None:
@@ -191,8 +242,11 @@ def _mount(
             index = compiled.site(site_name).id
             body, pos, quat = site.parent, compiled.site_pos[index], compiled.site_quat[index]
         elif body is None:
-            raise ValueError(f"{owner}: no site or body {look + frame!r} for its {sensor.kind}")
-    name = prefix + frame
+            raise ValueError(
+                f"no site or body {frame!r} to mount a {sensor.kind} on; this world has "
+                f"{sorted(b.name for b in spec.bodies)[:8]}..."
+            )
+    name = sensor.name
     if sensor.kind == "camera":
         # The frame is the optical frame (z forward, y down); a MuJoCo camera looks down -z, y up.
         optical = Rotation.from_quat(quat, scalar_first=True) * Rotation.from_euler("x", np.pi)

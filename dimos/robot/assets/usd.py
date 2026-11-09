@@ -286,7 +286,7 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
 
 
 def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) -> None:
-    """Say the frame is fixed to the link it hangs off, where that link is one that moves.
+    """Say what holds the frame: the link it hangs off, or the world where that is not a link.
 
     Nesting places a frame but says nothing about how it is held, and a physics engine has to
     decide. MuJoCo's guess is the most permissive one -- a body free in all six degrees -- and a
@@ -295,18 +295,20 @@ def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) ->
     honest statement (a mount bolted to the torso is not free to move) and it costs no degree of
     freedom: MuJoCo folds a welded massless body into its parent.
 
-    Only where the parent is a link. A converted room hangs its visitors' frames off its own
-    root, which is an Xform and not a rigid body, and welding to something that is not a body is
-    not a statement USD can make. Nothing there needs it: a frame nested under static geometry is
-    static too, which is why a scene's stand frames always loaded.
+    Where the parent is *not* a link the frame is welded to the world instead, which is what a
+    FixedJoint naming only body1 means. That is the case for a converted room, whose root is an
+    Xform and not a rigid body: a stand frame hanging off it is a body with no mass and nothing
+    holding it, and the room came back with the same mjMINVAL complaint as the lidar mount did.
+    Leaving the weld out instead does not work either -- a frame is a rigid body because that is
+    what makes MuJoCo give it a body at all, and a prim that is only an Xform is a mount point
+    no engine can find.
     """
     parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
-    if not parent or not parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
-        return
     joint = pxr.UsdPhysics.FixedJoint.Define(
         stage, pxr.Sdf.Path(path).AppendChild(_identifier(pxr, f"{name}_joint"))
     )
-    joint.CreateBody0Rel().SetTargets([parent.GetPath()])
+    if parent and parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+        joint.CreateBody0Rel().SetTargets([parent.GetPath()])
     joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
     # The nesting already placed the frame, so the joint adds no offset of its own.
     joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
@@ -314,6 +316,129 @@ def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) ->
     joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
     joint.GetPrim().SetDisplayName(f"{name}_joint")
+
+
+def usd_with_drives(usd: str, drives: Mapping[str, tuple[float, float, float]]) -> str:
+    """``usd`` with each named joint driven as a position servo, by ``(kp, kd, target)``.
+
+    Where a robot's gains belong. They are a fact about the robot -- what holds its leg up is
+    the controller it ships with -- and saying them in the layer means whatever runs the robot
+    reads them from the same place, instead of each simulation being handed them separately and
+    a real robot being configured somewhere else again.
+
+    Written twice, because two kinds of reader want two different spellings of it:
+
+    * ``UsdPhysics.DriveAPI`` on the joint (stiffness, damping, target), which is the standard
+      and what Isaac reads: an ImplicitActuator takes its gains off the joint prim unless the
+      config overrides them.
+    * MuJoCo's own ``MjcActuator`` attributes on whichever actuator drives that joint --
+      ``mjc:gainPrm[0] = kp`` and ``mjc:biasPrm = [0, -kp, -kd]`` with ``mjc:biasType =
+      "affine"``, which is a position servo written out longhand. MuJoCo reads that straight out
+      of the layer, so nothing has to turn a motor into a servo after loading.
+
+    A motor's control range, where it has one, is its torque limit, so it moves to the force
+    range and the control limit comes off: a servo's control signal is a position, and leaving a
+    torque range on it as a control range clamps the position instead.
+    """
+    if not drives:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a robot")
+    stage = pxr.Usd.Stage.Open(layer)
+    joints = {_frame_name(prim): prim for prim in stage.Traverse() if _is_joint(pxr, prim)}
+    actuators = {
+        str(targets[0]): prim
+        for prim in stage.Traverse()
+        if prim.GetTypeName() == "MjcActuator"
+        and (targets := prim.GetRelationship("mjc:target").GetTargets())
+    }
+    missing = sorted(set(drives) - set(joints))
+    if missing:
+        raise ValueError(f"no joint for {missing} in this layer; it has {sorted(joints)}")
+    for name, (kp, kd, target) in drives.items():
+        joint = joints[name]
+        drive = pxr.UsdPhysics.DriveAPI.Apply(joint, _drive_kind(pxr, joint))
+        drive.CreateStiffnessAttr(float(kp))
+        drive.CreateDampingAttr(float(kd))
+        drive.CreateTargetPositionAttr(float(target))
+        actuator = actuators.get(str(joint.GetPath()))
+        if actuator is None:
+            continue
+        _write_mjc_servo(pxr, actuator, kp, kd)
+    return str(layer.ExportToString())
+
+
+def _drive_kind(pxr: Any, joint: Any) -> str:
+    """ "angular" for a hinge, "linear" for a slide: DriveAPI is applied under one of the two."""
+    return "linear" if joint.IsA(pxr.UsdPhysics.PrismaticJoint) else "angular"
+
+
+def _is_joint(pxr: Any, prim: Any) -> bool:
+    return bool(prim.IsA(pxr.UsdPhysics.Joint))
+
+
+def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
+    """MuJoCo's longhand for a position servo, on an actuator prim it will read back.
+
+    What happens to the control range depends on what the actuator *was*. A plain motor's
+    control signal is a torque, so its range is a torque limit and moves to the force range: a
+    servo is commanded a position, and a torque range left in place would clamp the position
+    instead. An actuator that already biases is already a servo -- the G1's layer arrives with
+    kp=500 and the joint's own travel as its control range -- and moving that to the force range
+    would limit each joint to a couple of newton-metres, which is not enough to hold a leg up.
+
+    The control limit comes off either way: a servo is commanded where to go, and whatever it
+    is allowed to reach is the joint's own range to enforce.
+    """
+    bias = actuator.GetAttribute("mjc:biasType")
+    was_a_motor = not (bias and bias.HasAuthoredValue() and str(bias.Get()) != "none")
+    doubles = pxr.Sdf.ValueTypeNames.DoubleArray
+    actuator.CreateAttribute("mjc:gainPrm", doubles).Set([float(kp), *[0.0] * 9])
+    actuator.CreateAttribute("mjc:biasPrm", doubles).Set([0.0, -float(kp), -float(kd), *[0.0] * 7])
+    actuator.CreateAttribute("mjc:biasType", pxr.Sdf.ValueTypeNames.Token).Set("affine")
+    limits = actuator.GetAttribute("mjc:ctrlRange:min"), actuator.GetAttribute("mjc:ctrlRange:max")
+    if was_a_motor and all(limit and limit.HasAuthoredValue() for limit in limits):
+        low, high = (float(limit.Get()) for limit in limits)
+        if low < high:
+            # MuJoCo's tri-state tokens ("auto"/"true"/"false"), not booleans.
+            token = pxr.Sdf.ValueTypeNames.Token
+            double = pxr.Sdf.ValueTypeNames.Double
+            actuator.CreateAttribute("mjc:forceLimited", token).Set("true")
+            actuator.CreateAttribute("mjc:forceRange:min", double).Set(low)
+            actuator.CreateAttribute("mjc:forceRange:max", double).Set(high)
+    actuator.CreateAttribute("mjc:ctrlLimited", pxr.Sdf.ValueTypeNames.Token).Set("false")
+
+
+def usd_drives(usd: str) -> dict[str, tuple[float, float, float]]:
+    """Every driven joint in ``usd``, as ``{joint: (kp, kd, target)}``. The other half of usd_with_drives.
+
+    Read from `UsdPhysics.DriveAPI` rather than from MuJoCo's spelling of the same thing,
+    because this is the standard one and because it is the one that survives composition: a
+    drive sits on the joint prim, so it is still there after a robot has been grafted into a
+    room, whatever the engine then does with it.
+
+    Which is the reason there is no keyframe here. A keyframe would be the natural place for
+    "the pose this starts in", and MuJoCo reads one out of a layer -- but a keyframe is the
+    whole model's and a composed world's qpos is a different vector, so a robot's own keyframe
+    means nothing once it is standing in a room. A target on each joint means the same thing and
+    composes.
+    """
+    pxr = _pxr()
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a robot"))
+    drives = {}
+    for prim in stage.Traverse():
+        if not prim.IsA(pxr.UsdPhysics.Joint):
+            continue
+        drive = pxr.UsdPhysics.DriveAPI(prim, _drive_kind(pxr, prim))
+        stiffness = drive.GetStiffnessAttr()
+        if not stiffness or not stiffness.HasAuthoredValue():
+            continue
+        drives[_frame_name(prim)] = (
+            float(stiffness.Get()),
+            float(drive.GetDampingAttr().Get() or 0.0),
+            float(drive.GetTargetPositionAttr().Get() or 0.0),
+        )
+    return drives
 
 
 def prefix_usd_frames(usd: str, prefix: str) -> str:

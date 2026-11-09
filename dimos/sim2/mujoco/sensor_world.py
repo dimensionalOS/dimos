@@ -12,20 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a simulated sensor sees: the world as Simulation describes it, posed only from world_observations.
+"""What a simulated sensor sees: its own world, built from the composed scene and posed from observations.
 
-A sensor never reads a physics engine, so it works the same whichever backend steps the world.
-The renderer drawing the view is chosen by name, as backends are.
+A sensor never reads a physics engine and is never described to one. It asks the manager for the
+scene -- the same layer the engine is running -- builds a world of its own out of it, adds
+whatever it needs at its own mount, applies the observations as they arrive, and reports what
+its copy says. So it works the same whichever engine steps the world, and a scan lands on the
+furniture that is drawn rather than on a generated stand-in.
 """
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Protocol
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.spec import SimulatedSensor
+from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 
@@ -48,6 +52,9 @@ class WorldView(Protocol):
     def render(self, camera: str, width: int, height: int) -> NDArray[np.uint8]:
         """An RGB image from a camera mount."""
 
+    def owner(self, frame: str) -> str | None:
+        """The robot whose subtree this frame is in, or None where it is the room's."""
+
     def raycaster(self, groups: Sequence[int]) -> Raycaster:
         """Casts into the geoms in these groups (robots' meshes sit outside group 0)."""
 
@@ -61,38 +68,26 @@ def rotation_matrix(wxyz: Vector) -> Vector:
     return Rotation.from_quat(wxyz, scalar_first=True).as_matrix()
 
 
-def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
-    """The view's name for the sensor at frame_id in the world Simulation.describe() returned.
+def robot_ids(world: WorldMirror) -> list[str]:
+    """The robots in the world, as the world itself announced them.
 
-    Raises naming what the world does hold. This used to be a bare `next()`, so a sensor the
-    world had never heard of came out of a module's `main` as `RuntimeError: coroutine raised
-    StopIteration` -- six of them, one per sensor, with nothing to say which frame was missing
-    or what the alternatives were.
+    A sensor is not told what is in the world by anybody; it is told by the world. The first
+    frame of observations adds each entity, and the ones that are robots carry the layer they
+    were drawn from, which is what distinguishes a robot from a crate. Those ids are what the
+    view has to shorten its own copy for, so that an entity in the observations names a body it
+    can pose.
     """
-    sensor = next(
-        (
-            d
-            for d in description["simulated"]
-            if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
-        ),
-        None,
-    )
-    if sensor is None:
-        known = sorted(
-            d.frame_id for d in description["simulated"] if isinstance(d, SimulatedSensor)
-        )
-        raise KeyError(f"no sensor at frame {frame_id!r} in this world; it has sensors at {known}")
-    return f"{sensor.robot_id or 'world'}/{frame_id}"
+    with world.lock:
+        return sorted(entity.path for entity in world.entities.values() if "model" in entity.cbor)
 
 
-def open_view(description: Mapping[str, Any]) -> WorldView:
-    """A sensor's own world, built from the same description the simulation was built from.
+def open_view(scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None) -> WorldView:
+    """A sensor's own world: the composed scene, with what this sensor needs at its own mount.
 
-    A sensor does not read the simulation's world: it instantiates one, applies the observations
-    it is sent, and reports what its own copy says. So this belongs to the sensors and to the
-    engine they build with -- not to sim2's core, which only instantiates a backend, publishes
-    observations and takes actions, and has no business knowing that anything is watching.
+    This belongs to the sensors and to the engine they build with -- not to sim2's core, which
+    instantiates a backend, publishes observations and takes actions, and has no business
+    knowing that anything is watching.
     """
     from dimos.sim2.mujoco.view import MujocoView
 
-    return MujocoView(description)
+    return MujocoView(scene, ids, mount)

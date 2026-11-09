@@ -14,8 +14,11 @@
 
 """A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
 
-Go2Sim.usd is the committed Go2 layer with the rig's sensor frames added: a sensor names one (Go2Sim.lidar_mount_frame, ...)
-as its frame_id, and Go2Sim hands a UsdManager the URDF of it, which poses the same frames on tf.
+Go2Sim.usd is the committed Go2 layer with the rig's sensor frames added: a sensor names one
+(Go2Sim.lidar_mount_frame, ...) as its frame_id, and the blueprint hands the same layer to a
+UsdManager, which poses those frames on tf, and to `sim_module`, which runs them. The layer
+carries the policy's gains and its home pose as drives (see `go2_drives`), so what holds this
+robot up is stated once, where the robot is described.
 """
 
 import asyncio
@@ -29,7 +32,6 @@ from dimos_lcm.world_msgs import WorldAction, WorldObservations
 import numpy as np
 
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -46,14 +48,29 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_XYZ,
     OPTICAL_RPY,
 )
-from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.module import Simulation
 from dimos.sim2.mujoco.sensor_world import rotation_matrix
-from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.world_observations import ACT, WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
-from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of
+from dimos.simulation.go2_legged.robot import COMMAND_SLEW, projected_gravity, yaw_of
+
+
+def go2_drives() -> dict[str, tuple[float, float, float]]:
+    """The gains and home pose the walking policy runs on, as `usd_with_drives` wants them.
+
+    Read out of the policy blob, which carries its own kp, kd and default pose: the gains that
+    hold this robot up are the controller's, not the vendor's. Called by
+    `scripts/usd_drives.py` to write them into the committed layer, and by the test that keeps
+    the layer honest if the blob ever changes -- never at runtime, because by then the layer is
+    what says it.
+    """
+    policy = load_policy(None)
+    return {
+        joint: (float(kp), float(kd), float(q))
+        for joint, kp, kd, q in zip(
+            policy.joint_names, policy.kp, policy.kd, policy.default_pose, strict=True
+        )
+    }
 
 
 class Go2SimConfig(ModuleConfig):
@@ -101,27 +118,6 @@ class Go2Sim(Module):
         self._desired_expires = 0.0
         self._command = np.zeros(3)
         self._heading: float | None = None
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        config, policy = self.config, self._policy
-        servos = zip(policy.joint_names, policy.kp, policy.kd, policy.default_pose, strict=True)
-        return {
-            "simulated": SimulatedRobot(
-                config.robot_id,
-                self.usd,
-                xyz=config.xyz,
-                control_period=CONTROL_DT,
-                servos=tuple(
-                    Servo(joint, float(kp), float(kd), float(q)) for joint, kp, kd, q in servos
-                ),
-            )
-        }
-
-    @shared_config(UsdManager)
-    def description(self) -> dict[str, UsdModel]:
-        # The same layer the simulation runs: one description, not a converted copy of one.
-        return {"model": self.usd}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()

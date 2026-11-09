@@ -31,7 +31,9 @@ from dimos.robot.assets.usd import (
     trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
+    usd_drives,
     usd_frame_names,
+    usd_with_drives,
     usd_with_frames,
 )
 
@@ -370,11 +372,14 @@ def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
     assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
 
 
-def test_a_frame_added_to_something_that_is_not_a_link_is_not_welded(toy: Any) -> None:
+def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(toy: Any) -> None:
     """A converted room hangs its visitors' frames off its own root, which is an Xform.
 
-    Welding to something that is not a rigid body is not a statement USD can make, and nothing
-    there needs it: a frame nested under static geometry is static too.
+    Welding to that is not a statement USD can make, so the frame is welded to the *world*
+    instead -- a FixedJoint naming only body1. Nesting under static geometry is not enough: the
+    frame is a rigid body, because that is what makes an engine give it a body at all, and an
+    unheld rigid body with no mass is "mass and inertia of moving bodies must be larger than
+    mjMINVAL" -- the same complaint a robot's lidar mount made, now from a room.
     """
     from pxr import UsdPhysics
 
@@ -383,13 +388,111 @@ def test_a_frame_added_to_something_that_is_not_a_link_is_not_welded(toy: Any) -
     )
 
     frame = _prim_by_link(stage, "spot")
-    assert frame, "the frame is a link whether or not it is welded"
-    assert not [
+    assert frame, "the frame is a link"
+    welds = [
         prim
         for prim in stage.Traverse()
         if prim.IsA(UsdPhysics.FixedJoint)
         and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
-    ], "nothing holds the frame: it is nested under static geometry, which is static too"
+    ]
+    assert len(welds) == 1, "the frame is held by exactly one weld"
+    # No body0: that is how USD says "to the world".
+    assert welds[0].GetRelationship("physics:body0").GetTargets() == []
+
+
+def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
+    """A robot's gains are a fact about the robot, so the layer carries them.
+
+    Twice over, because two readers want two spellings: `UsdPhysics.DriveAPI` on the joint,
+    which is the standard and what Isaac takes its actuator gains from, and MuJoCo's own
+    longhand on the actuary -- gainPrm, biasPrm and an affine biasType, which is a position
+    servo written out. Neither is a conversion of the other; both are authored.
+    """
+    from pxr import UsdPhysics
+
+    grown = usd_with_drives(urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25)})
+    stage = _stage(grown)
+
+    joint = next(
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.Joint) and prim.GetName() == "base_to_mount"
+    )
+    drive = UsdPhysics.DriveAPI(joint, "angular")
+    assert drive.GetStiffnessAttr().Get() == pytest.approx(40.0)
+    assert drive.GetDampingAttr().Get() == pytest.approx(2.0)
+    assert drive.GetTargetPositionAttr().Get() == pytest.approx(0.25)
+
+
+def _with_actuator(usd: str, joint: str, *, biased: bool) -> str:
+    """``usd`` with a MuJoCo actuator on ``joint``, carrying a control range of plus/minus 23.7."""
+    from pxr import Sdf, Usd, UsdPhysics
+
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    stage = Usd.Stage.Open(layer)
+    prim = next(p for p in stage.Traverse() if p.IsA(UsdPhysics.Joint) and p.GetName() == joint)
+    actuator = stage.DefinePrim(f"/toy/Physics/{joint}", "MjcActuator")
+    actuator.CreateRelationship("mjc:target").SetTargets([prim.GetPath()])
+    double = Sdf.ValueTypeNames.Double
+    actuator.CreateAttribute("mjc:ctrlRange:min", double).Set(-23.7)
+    actuator.CreateAttribute("mjc:ctrlRange:max", double).Set(23.7)
+    if biased:
+        actuator.CreateAttribute("mjc:biasType", Sdf.ValueTypeNames.Token).Set("affine")
+    return str(layer.ExportToString())
+
+
+def test_a_motors_control_range_becomes_its_torque_limit(toy: Any) -> None:
+    """Because that is what a motor's control signal is, and a servo's is a position."""
+    usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=False)
+
+    stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
+    driven = stage.GetPrimAtPath("/toy/Physics/base_to_mount")
+
+    assert str(driven.GetAttribute("mjc:biasType").Get()) == "affine"
+    assert driven.GetAttribute("mjc:forceRange:max").Get() == pytest.approx(23.7)
+    # Commanded a position now, so whatever it may reach is the joint's range to enforce.
+    assert str(driven.GetAttribute("mjc:ctrlLimited").Get()) == "false"
+
+
+def test_an_actuator_that_already_biases_keeps_its_control_range_alone(toy: Any) -> None:
+    """It is already a servo, and that range is the joint's travel rather than a torque.
+
+    The G1's layer arrives like this -- kp=500, with each joint's own travel as its control
+    range. Moving that to the force range limits the joint to a couple of newton-metres, which
+    is not enough to hold a leg up and is a thing you find out by watching a robot sit down.
+    """
+    usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=True)
+
+    stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
+    driven = stage.GetPrimAtPath("/toy/Physics/base_to_mount")
+
+    assert driven.GetAttribute("mjc:gainPrm").Get()[0] == pytest.approx(40.0)
+    assert not driven.GetAttribute("mjc:forceRange:max").HasAuthoredValue()
+
+
+def test_a_joint_the_layer_does_not_have_cannot_be_driven(toy: Any) -> None:
+    with pytest.raises(ValueError, match="no joint for \\['nowhere'\\]"):
+        usd_with_drives(urdf_to_usd(toy), {"nowhere": (1.0, 0.1, 0.0)})
+
+
+def test_the_drives_read_back_as_they_were_written(toy: Any) -> None:
+    """Including the target, which is where "the pose this starts in" lives.
+
+    On the joint rather than in a keyframe, because a keyframe is the whole model's: a robot's
+    own keyframe means nothing once it has been grafted into a room, where qpos is a different
+    vector. A target per joint says the same thing and survives being composed.
+    """
+    grown = usd_with_drives(
+        urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25), "mount_to_arm": (8.0, 0.4, -1.5)}
+    )
+
+    assert usd_drives(grown) == {
+        "base_to_mount": pytest.approx((40.0, 2.0, 0.25)),
+        "mount_to_arm": pytest.approx((8.0, 0.4, -1.5)),
+    }
+    # A joint nobody drives is not in there, which is what tells a reader it has no gains.
+    assert "nowhere" not in usd_drives(urdf_to_usd(toy))
 
 
 def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:

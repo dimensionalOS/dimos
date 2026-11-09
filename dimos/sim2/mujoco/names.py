@@ -60,6 +60,20 @@ def resolved(names: Iterable[str], wanted: str) -> str | None:
         return None
 
 
+def short_names(names: Iterable[str]) -> dict[str, str]:
+    """Each name mapped to its last path segment, where that segment names only one of them.
+
+    For the handful of things in a *scene* that are addressed rather than merely drawn: a crate
+    with a free joint is an entity an action can push and a viewer places, and off a USD layer it
+    arrives called ``/warehouse/Geometry/crate``. The room's own walls are not renamed -- there
+    are hundreds of them, nothing addresses one, and two of them ending alike is likely -- so
+    this is applied to the entities and not to the model.
+    """
+    full = list(names)
+    tails = Counter(name.rsplit("/", 1)[-1] for name in full)
+    return {name: tail if tails[tail := name.rsplit("/", 1)[-1]] == 1 else name for name in full}
+
+
 def shorten(spec: Any, ids: Iterable[str] = ()) -> dict[str, str]:
     """Rename a loaded model's parts to the names a description uses. Returns what was renamed.
 

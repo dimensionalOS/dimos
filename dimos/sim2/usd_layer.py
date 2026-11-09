@@ -20,8 +20,8 @@ several subtrees. An engine opens a *file*, and a layer's references are relativ
 was written, so handing it one means writing the text out with its asset paths resolved first.
 
 Written under a content hash and reused. That matters for more than speed: the world is compiled
-in more than one process -- Simulation steps it while a sensor's view draws it -- and each would
-otherwise write its own copy of the same layer and name it something different, which is exactly
+in more than one process -- the world steps it while a sensor's own copy draws it -- and each
+would otherwise write its own copy and name it something different, which is exactly
 what a renderer asking for a model by name cannot cope with.
 """
 
@@ -79,23 +79,6 @@ def _name_of(model: UsdModel) -> str:
     """Something recognisable in front of the hash: a path a person has to read says whose it is."""
     source = model.source_path
     return source.stem if source is not None else "layer"
-
-
-def scene_layer(scene: UsdModel | Path | str | None) -> Path:
-    """The file an engine opens for the world a config names.
-
-    A world given as USD is materialised like a robot's: written out with its asset paths
-    resolved, because a composed scene exists nowhere until it is. A world given as a file is
-    already one, and is handed over as it stands.
-
-    That second case is deliberate: a file on disk needs nothing done to it, and what formats an
-    engine can open is the engine's business, not this function's. Composing is the only thing
-    that needs the layer parsed, and a world nobody composed does not need composing. The *robot*
-    descriptions are the ones held to USD and nothing else.
-    """
-    if isinstance(scene, UsdModel):
-        return usd_layer(scene)
-    return Path(scene) if scene is not None else Path(__file__).with_name("logistics.xml")
 
 
 def scene_as_files(usd: str, fetch: Callable[[str], bytes]) -> Path:

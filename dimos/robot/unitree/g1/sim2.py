@@ -23,12 +23,10 @@ from collections.abc import AsyncIterator
 import math
 from pathlib import Path
 import time
-from typing import Any
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -41,11 +39,11 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.g1.g1_tf_publisher import _TORSO_MID360_XYZ, MID360_PITCH
 from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
-from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
-from dimos.sim2.module import Simulation, SimulationSpec
-from dimos.sim2.mujoco.sensor_world import WorldView, open_view
-from dimos.sim2.spec import Servo, SimulatedRobot
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
+from dimos.sim2.mujoco.world import SensorMount
+from dimos.sim2.sim import SceneConfig, scene_from
+from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
 from dimos.utils.logging_config import setup_logger
 
@@ -70,34 +68,45 @@ _ARM = (
     ("wrist_pitch", 0, 2, 0.2),
     ("wrist_yaw", 0, 2, 0.2),
 )
-SERVOS = (
-    tuple(
-        Servo(f"{side}_{name}_joint", kp, kd, initial)
+
+
+def g1_drives() -> dict[str, tuple[float, float, float]]:
+    """The gains and home pose the GR00T controller holds the robot at, as `usd_with_drives` wants.
+
+    Written into the committed layer by `scripts/usd_drives.py`, which is where a robot's gains
+    belong: whatever runs this robot reads them from the same place, and the test beside it
+    notices if the two drift apart. Never called at runtime.
+    """
+    return {
+        f"{side}_{name}_joint": (kp, kd, _home(side, name, initial))
         for side in ("left", "right")
-        for name, initial, kp, kd in _LEG
-    )
-    + tuple(Servo(f"{name}_joint", kp, kd, initial) for name, initial, kp, kd in _WAIST)
-    + tuple(
-        Servo(
-            f"{side}_{name}_joint",
-            kp,
-            kd,
-            -initial if side == "right" and name == "shoulder_roll" else initial,
-        )
-        for side in ("left", "right")
-        for name, initial, kp, kd in _ARM
-    )
+        for name, initial, kp, kd in _LEG + _ARM
+    } | {f"{name}_joint": (kp, kd, initial) for name, initial, kp, kd in _WAIST}
+
+
+def _home(side: str, name: str, initial: float) -> float:
+    """The arms are mirrored, so the right shoulder's roll is the left's the other way."""
+    return -initial if side == "right" and name == "shoulder_roll" else initial
+
+
+# The joints the whole-body connection sends and expects back, in its order.
+SERVO_JOINTS = (
+    tuple(f"{side}_{name}_joint" for side in ("left", "right") for name, *_ in _LEG)
+    + tuple(f"{name}_joint" for name, *_ in _WAIST)
+    + tuple(f"{side}_{name}_joint" for side in ("left", "right") for name, *_ in _ARM)
 )
 
 
 logger = setup_logger()
 
 
-# The MJCF body the URDF is rooted at, and so the frame odometry moves.
+# The body the layer is rooted at, and so the frame odometry moves.
 ROOT_BODY = "pelvis"
+# The IMU the whole-body controller is fed, which is the one in the pelvis and not the lidar's.
+IMU_FRAME = "imu_in_pelvis"
 
 
-class G1SimConfig(ModuleConfig):
+class G1SimConfig(SceneConfig):
     robot_id: str = "g1"
     xy: tuple[float, float] = (0.0, 0.0)
     frame_id: str = "g1_pelvis"
@@ -130,36 +139,17 @@ class G1Sim(Module):
     # the Mid-360's mount among them -- is reported as missing from the tf tree.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
-    _simulation: SimulationSpec
     _view: WorldView | None = None
     _soft_start: float | None = None
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        x, y = self.config.xy
-        return {
-            "simulated": SimulatedRobot(
-                self.config.robot_id,
-                self.usd,
-                xyz=(x, y, HOME_HEIGHT),
-                servos=SERVOS,
-            )
-        }
-
-    @shared_config(UsdManager)
-    def description(self) -> dict[str, UsdModel]:
-        # The same layer the simulation runs: one description, not a converted copy of one.
-        return {"model": self.usd}
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        self._view = open_view(self._simulation.describe())
         self._publishing = asyncio.create_task(self._publish())
         yield
 
     async def handle_motor_command(self, command: MotorCommandArray) -> None:
-        if command.num_joints != len(SERVOS):
+        if command.num_joints != len(SERVO_JOINTS):
             return
         now = time.monotonic()
         if self._soft_start is None:
@@ -171,7 +161,7 @@ class G1Sim(Module):
                 self._world,
                 JointCommand(
                     self.config.robot_id,
-                    tuple(servo.joint for servo in SERVOS),
+                    SERVO_JOINTS,
                     position=tuple(command.q),
                     velocity=tuple(command.dq),
                     effort=tuple(tau * scale for tau in command.tau),
@@ -204,17 +194,39 @@ class G1Sim(Module):
         self.tf.publish(TFMessage(Transform.from_pose(root, odom)))
         self.odom.publish(odom)
 
+    def _open(self) -> WorldView:
+        """This robot's own world, for the IMU in its pelvis: the scene, with a site at that frame.
+
+        A robot reads its own IMU the way a sensor module does, out of a copy of the world it
+        builds itself. Opened on the first frame rather than at start, because the robots in the
+        world are what the world says they are and the view has to name its bodies the way the
+        observations do.
+        """
+        scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
+        if scene is None:
+            raise ValueError(
+                f"{self.config.robot_id}: nothing says what the scene is, so there is no IMU to"
+                f" read. Give this robot the scene_manager that composes the world."
+            )
+        return open_view(
+            usd_layer(scene),
+            robot_ids(self._world),
+            SensorMount("imu", f"{self.config.robot_id}/{IMU_FRAME}", IMU_FRAME),
+        )
+
     async def _publish(self) -> None:
-        robot, view, world = self.config.robot_id, self._view, self._world
-        assert view is not None
+        robot, world = self.config.robot_id, self._world
+        view: WorldView | None = None
         async for _ in world.ticks(self.config.publish_rate_hz):
+            if view is None:
+                view = self._open()
             with world.lock:
                 names, rows = world.joints(robot)
                 stamp = world.stamp()
             if not names:
                 continue
             index = {name: i for i, name in enumerate(names)}
-            rows = rows[[index[servo.joint] for servo in SERVOS]]
+            rows = rows[[index[joint] for joint in SERVO_JOINTS]]
             self.motor_states.publish(
                 JointState(
                     ts=stamp,
@@ -227,7 +239,7 @@ class G1Sim(Module):
             )
             self._publish_pose(world, robot, stamp)
             view.update(world)
-            gyro, accelerometer, (w, x, y, z) = view.imu(f"{robot}/imu_in_pelvis")
+            gyro, accelerometer, (w, x, y, z) = view.imu(IMU_FRAME)
             self.imu.publish(
                 Imu(
                     angular_velocity=Vector3(*gyro),
