@@ -47,7 +47,7 @@ from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
-from dimos.simulation.scenes.office_555 import SCENE
+from dimos.simulation.scenes.office_555.room import SCENE
 from dimos.utils.data import LfsPath
 from dimos.visualization.vis_module import vis_module
 
