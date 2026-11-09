@@ -232,12 +232,15 @@ scene_manager = UsdManager.blueprint(
 )
 
 three_g1_office_555 = autoconnect(
-    # The world comes from the manager that composes it rather than from a file: the room, its
-    # three mount frames, and the three robots standing on them -- the same layer the viewer
-    # draws. One statement of what is in this world, for the physics and the picture both. By
-    # instance name, not the blueprint object: a config value is read again in the worker the
-    # module lands in, and a blueprint reaches it flattened to a plain dict.
-    Simulation.blueprint(scene_manager=_manager_name(scene_manager)),
+    # Back on the file while the sim2 redesign lands. `scene_manager=_manager_name(scene_manager)`
+    # is the composed path and it works from a cold asset cache -- 3733 references over 927 files,
+    # Blueprint started, no errors -- but with the cache warm the start goes wrong two different
+    # ways: once a module's `start()` rpc never returned, once a sensor began before its streams
+    # were wired ("'NoneType' object has no attribute 'subscribe'"). Both are the coordinator's
+    # build/wire/start ordering meeting a Simulation.build that now does an rpc and rewrites four
+    # thousand asset references, and both go away with the redesign that moves the loop into the
+    # backend module. Not worth leaving the sim broken in the meantime.
+    Simulation.blueprint(scene=SCENE),
     vis_module(viewer_backend=global_config.viewer),
     scene_manager,
     *_robots.values(),
