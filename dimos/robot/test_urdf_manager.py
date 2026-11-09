@@ -41,7 +41,6 @@ from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd import usd_frame_names
-from dimos.robot.assets.usd_assets import unhashed_assets
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
@@ -610,6 +609,13 @@ def _link_of(stage: Any, path: str) -> str:
     return str(prim.GetDisplayName() or prim.GetName())
 
 
+def _asset(module: UrdfManager, name: str) -> bytes:
+    """The bytes out of get_asset, on a loop of this test's own, as _scene does."""
+    owner = type(module)
+    coroutine = cast("Any", owner.get_asset).aio.__get__(module, owner)
+    return cast("bytes", asyncio.run(coroutine(name)))
+
+
 def _scene(module: UrdfManager) -> str:
     """The USD out of get_scene, on a loop of this test's own so its executor dies with it."""
     return _scene_answer(module)[1]
@@ -969,6 +975,34 @@ def test_a_published_asset_is_named_from_where_it_first_appears(
     published = next(iter(module._published_assets))
     assert published.startswith("/dimos/assets/")
     assert published.endswith("arm.stl")
+
+
+def test_get_asset_serves_a_published_mesh_and_nothing_else(
+    make_manager: Callable[..., UrdfManager], tmp_path: Path
+) -> None:
+    """The fetch behind a published name, for a consumer that has to open the scene.
+
+    A viewer draws lazily and is served by `render_file_request`; a physics engine cannot start
+    until every mesh is on its disk, so it asks for them one at a time and wants an error rather
+    than a message that never comes.
+    """
+    pytest.importorskip("pxr")
+    mesh = tmp_path / "meshes" / "arm.stl"
+    mesh.parent.mkdir()
+    mesh.write_bytes(b"solid arm\n")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(subtree, asset_root=str(tmp_path))
+    )
+
+    _scene(module)
+    published = next(iter(module._published_assets))
+
+    assert _asset(module, published) == b"solid arm\n"
+    # Only names it published: a request is never an arbitrary path into the filesystem.
+    with pytest.raises(KeyError, match="neither a file this description names"):
+        _asset(module, "../../../etc/passwd")
 
 
 def test_one_mesh_on_two_mounts_is_published_once(
@@ -1389,60 +1423,6 @@ def test_the_published_scene_carries_no_asset_root_to_resolve_against(
     assert _scene_answer(module)[0] == ""
 
 
-def test_trivialize_leaves_the_frames_and_drops_the_geometry(
-    make_manager: Callable[..., UrdfManager],
-) -> None:
-    pytest.importorskip("pxr")
-    full = make_manager()
-    thin = make_manager(trivialize=True)
-
-    assert usd_frame_names(thin.get_usd()[USD]) == usd_frame_names(full.get_usd()[USD])
-    assert "Cube" in full.get_usd()[USD]
-    assert "Cube" not in thin.get_usd()[USD]
-
-
-def test_a_trivialized_robot_publishes_the_same_tf_as_a_full_one(
-    make_manager: Callable[..., UrdfManager],
-) -> None:
-    state = JointState(ts=1.0, name=["shoulder"], position=[0.0])
-    full = make_manager().joint_transforms(state)
-    thin = make_manager(trivialize=True).joint_transforms(state)
-
-    assert [(t.frame_id, t.child_frame_id) for t in thin] == [
-        (t.frame_id, t.child_frame_id) for t in full
-    ]
-
-
-def test_a_trivialized_robot_names_no_assets_to_serve(
-    make_manager: Callable[..., UrdfManager], tmp_path: Path
-) -> None:
-    pytest.importorskip("pxr")
-    mesh = tmp_path / "cube.stl"
-    trimesh.creation.box(extents=[0.2, 0.2, 0.2]).export(mesh)
-    urdf = _URDF.replace('<box size="0.2 0.2 0.2"/>', f'<mesh filename="{mesh}"/>')
-    module = make_manager(trivialize=True, urdf_xml=urdf)
-
-    assert unhashed_assets(module.get_usd()[USD]) == {}
-    assert "cube.stl" not in module.get_usd()[USD]
-
-
-def test_trivialize_leaves_a_mounted_subtree_alone(
-    make_manager: Callable[..., UrdfManager],
-) -> None:
-    pytest.importorskip("pxr")
-    module = make_manager(trivialize=True, mounts={"arm": _FakeArm})
-    module._subtree_clients["_FakeArm"] = cast(
-        "Any", _FakeClient(_subtree_usd("fake_arm", "fake_arm_base", mesh="/opt/arm/arm.stl"))
-    )
-
-    scene = _scene(module)
-
-    # The root's own box went; the arm's mesh stayed and is served under a published name.
-    assert "Cube" not in scene
-    assert "Mesh" in scene
-    assert list(module._published_assets.values()) == ["/opt/arm/arm.stl"]
-
-
 def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
     make_filter: Callable[..., UrdfManagerPointClearing],
 ) -> None:
@@ -1569,15 +1549,12 @@ def test_a_usd_model_poses_its_own_frames_on_tf(scene_file: Path) -> None:
         module.dispose()
 
 
-def test_a_usd_model_is_still_trivialized_and_renamed(scene_file: Path) -> None:
+def test_a_usd_model_is_renamed(scene_file: Path) -> None:
     pytest.importorskip("pxr")
-    module = UrdfManager(
-        model=UsdModel.from_file(scene_file), trivialize=True, tf_renames={"table": "desk"}
-    )
+    module = UrdfManager(model=UsdModel.from_file(scene_file), tf_renames={"table": "desk"})
     try:
         usd = module.get_usd()[USD]
 
-        assert "Mesh" not in usd
         assert "desk" in usd_frame_names(usd)
     finally:
         module.dispose()
@@ -1616,7 +1593,7 @@ def test_a_manager_needs_no_usd_until_a_layer_is_asked_for(
     def refuse(*args: Any, **kwargs: Any) -> str:
         raise AssertionError("the layer was built before anything asked for it")
 
-    monkeypatch.setattr("dimos.robot.assets.usd.urdf_to_usd", refuse)
+    monkeypatch.setattr("dimos.robot.assets.urdf_to_usd.urdf_to_usd", refuse)
     module = make_manager(tf_renames={"arm": "gripper"})
 
     (transform,) = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.0]))

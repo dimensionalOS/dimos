@@ -180,17 +180,27 @@ class UrdfManagerPointClearing(UrdfManager):
                 motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
         return motions
 
+    def _published(self, frame: str) -> str:
+        """``frame`` as tf carries it: renamed and namespaced only if it is one of this robot's own.
+
+        A sensor's frame_id is published by the sensor's own module and arrives already in tf's
+        names, so `frame()` is the wrong thing to put it through: that prepends this manager's
+        frame_id_prefix unconditionally, and a namespaced manager was looking up
+        "g1/livox_frame" for a cloud published as "livox_frame" -- missing every time, and
+        reported only as "Dropping cloud: capture-time robot state or TF unavailable".
+        """
+        return self.frame(frame) if frame in self._own_frame_names() else frame
+
     def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
         """One tf lookup, in the description's names.
 
         The renaming happens here rather than at the call sites -- this module works in its URDF's
         names, tf carries the names the manager publishes, and tf_renames is the difference -- so a
-        lookup added later cannot forget it. A frame that is not this robot's own (a sensor's) is not
-        a rename key, so it passes through.
+        lookup added later cannot forget it.
         """
         return self.tfbuffer.get(
-            self.frame(parent),
-            self.frame(child),
+            self._published(parent),
+            self._published(child),
             time_point=stamp,
             time_tolerance=self.config.tf_tolerance_s,
             forward_tolerance=self.config.tf_forward_tolerance_s,
