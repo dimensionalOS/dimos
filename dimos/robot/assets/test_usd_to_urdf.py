@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import urdf_to_usd
+from dimos.robot.assets.urdf_to_usd import urdf_to_usd
 from dimos.robot.assets.usd_to_urdf import usd_to_urdf
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).

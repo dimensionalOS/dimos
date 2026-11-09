@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Every sensor describes itself in USD, and describes the frame it was configured with.
-
-A sensor answering with a hardcoded frame name looks right in a one-robot world and silently
-collides in a three-robot one, so the point of each of these is the *configured* frame coming
-back.
-"""
 
 import math
 from typing import Any
@@ -28,8 +22,6 @@ from dimos.robot.assets.usd import usd_frame_names
 
 pytest.importorskip("pxr")
 
-# Each sim sensor, the config that places it, and the frames its layer has to name. Every one of
-# them joins this table as it arrives.
 _SENSORS = [
     ("camera", {"frame_id": "left/camera_optical"}, {"left/camera_optical"}),
     (
@@ -64,9 +56,6 @@ def test_a_sensor_describes_itself_at_the_frames_it_was_given(
 
 
 def test_a_camera_says_what_it_can_see_from_its_frame() -> None:
-    """A frame is a pose; a camera is a pose and some optics, and USD has somewhere to put both.
-    Stated in the layer rather than only in this module's config.
-    """
     from pxr import Usd, UsdGeom
 
     from dimos.sim2.camera import SimCamera
@@ -84,7 +73,6 @@ def test_a_camera_says_what_it_can_see_from_its_frame() -> None:
     aperture = lens.GetVerticalApertureAttr().Get()
     focal = lens.GetFocalLengthAttr().Get()
     assert math.degrees(2 * math.atan(aperture / 2 / focal)) == pytest.approx(90.0)
-    # Facing the way USD faces: a camera prim looks down -z, an optical frame along +z.
     forward = lens.ComputeLocalToWorldTransform(Usd.TimeCode.Default()).TransformDir((0, 0, -1))
     assert tuple(round(axis, 6) for axis in forward) == (0.0, 0.0, 1.0)
 
