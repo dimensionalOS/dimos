@@ -109,7 +109,7 @@ def test_global_cli_exports_cdr_and_view_reads_it(
         str(recorded_dataset),
         "--device",
         "CPU:0",
-        "--export",
+        "--export-pc2",
         "--full-pgo",
         "--no-gui",
         "--out",
