@@ -318,6 +318,114 @@ def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) ->
     joint.GetPrim().SetDisplayName(f"{name}_joint")
 
 
+def usd_with_drives(usd: str, drives: Mapping[str, tuple[float, float, float]]) -> str:
+    """``usd`` with each named joint driven as a position servo, by ``(kp, kd, target)``.
+
+    Where a robot's gains belong. They are a fact about the robot -- what holds its leg up is
+    the controller it ships with -- and saying them in the layer means whatever runs the robot
+    reads them from the same place, instead of each simulation being handed them separately and
+    a real robot being configured somewhere else again.
+
+    Written twice, because two kinds of reader want two different spellings of it:
+
+    * ``UsdPhysics.DriveAPI`` on the joint (stiffness, damping, target), which is the standard
+      and what Isaac reads: an ImplicitActuator takes its gains off the joint prim unless the
+      config overrides them.
+    * MuJoCo's own ``MjcActuator`` attributes on whichever actuator drives that joint --
+      ``mjc:gainPrm[0] = kp`` and ``mjc:biasPrm = [0, -kp, -kd]`` with ``mjc:biasType =
+      "affine"``, which is a position servo written out longhand. MuJoCo reads that straight out
+      of the layer, so nothing has to turn a motor into a servo after loading.
+
+    A motor's control range, where it has one, is its torque limit, so it moves to the force
+    range and the control limit comes off: a servo's control signal is a position, and leaving a
+    torque range on it as a control range clamps the position instead.
+    """
+    if not drives:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a robot")
+    stage = pxr.Usd.Stage.Open(layer)
+    joints = {_frame_name(prim): prim for prim in stage.Traverse() if _is_joint(pxr, prim)}
+    actuators = {
+        str(targets[0]): prim
+        for prim in stage.Traverse()
+        if prim.GetTypeName() == "MjcActuator"
+        and (targets := prim.GetRelationship("mjc:target").GetTargets())
+    }
+    missing = sorted(set(drives) - set(joints))
+    if missing:
+        raise ValueError(f"no joint for {missing} in this layer; it has {sorted(joints)}")
+    for name, (kp, kd, target) in drives.items():
+        joint = joints[name]
+        drive = pxr.UsdPhysics.DriveAPI.Apply(joint, _drive_kind(pxr, joint))
+        drive.CreateStiffnessAttr(float(kp))
+        drive.CreateDampingAttr(float(kd))
+        drive.CreateTargetPositionAttr(float(target))
+        actuator = actuators.get(str(joint.GetPath()))
+        if actuator is None:
+            continue
+        _write_mjc_servo(pxr, actuator, kp, kd)
+    return str(layer.ExportToString())
+
+
+def _drive_kind(pxr: Any, joint: Any) -> str:
+    """ "angular" for a hinge, "linear" for a slide: DriveAPI is applied under one of the two."""
+    return "linear" if joint.IsA(pxr.UsdPhysics.PrismaticJoint) else "angular"
+
+
+def _is_joint(pxr: Any, prim: Any) -> bool:
+    return bool(prim.IsA(pxr.UsdPhysics.Joint))
+
+
+def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
+    """MuJoCo's longhand for a position servo, on an actuator prim it will read back."""
+    doubles = pxr.Sdf.ValueTypeNames.DoubleArray
+    actuator.CreateAttribute("mjc:gainPrm", doubles).Set([float(kp), *[0.0] * 9])
+    actuator.CreateAttribute("mjc:biasPrm", doubles).Set([0.0, -float(kp), -float(kd), *[0.0] * 7])
+    actuator.CreateAttribute("mjc:biasType", pxr.Sdf.ValueTypeNames.Token).Set("affine")
+    limits = actuator.GetAttribute("mjc:ctrlRange:min"), actuator.GetAttribute("mjc:ctrlRange:max")
+    if all(limit and limit.HasAuthoredValue() for limit in limits):
+        low, high = (float(limit.Get()) for limit in limits)
+        if low < high:
+            # It was a motor and that range was its torque limit; a servo is commanded a
+            # position, so the range moves to the force and the control limit comes off.
+            # These are MuJoCo's tri-state tokens ("auto"/"true"/"false"), not booleans.
+            token = pxr.Sdf.ValueTypeNames.Token
+            double = pxr.Sdf.ValueTypeNames.Double
+            actuator.CreateAttribute("mjc:forceLimited", token).Set("true")
+            actuator.CreateAttribute("mjc:forceRange:min", double).Set(low)
+            actuator.CreateAttribute("mjc:forceRange:max", double).Set(high)
+    actuator.CreateAttribute("mjc:ctrlLimited", pxr.Sdf.ValueTypeNames.Token).Set("false")
+
+
+def usd_with_keyframe(
+    usd: str, qpos: Sequence[float], ctrl: Sequence[float] = (), name: str = "home"
+) -> str:
+    """``usd`` with the pose it starts in, as a keyframe MuJoCo reads back out of the layer.
+
+    A robot that starts wherever its joints happen to be zero starts with its legs straight out,
+    and the pose it is meant to hold is the controller's, not the vendor's. That is one more fact
+    about the robot, so the layer says it -- in MuJoCo's own words, since a keyframe is the thing
+    it already has for "the configuration this model starts in".
+
+    ``qpos`` is the whole model's, in the order it compiles to, which is why this takes the
+    numbers rather than working them out: a caller that can compile the layer knows the order,
+    and this does not have to.
+    """
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a robot")
+    stage = pxr.Usd.Stage.Open(layer)
+    root = stage.GetDefaultPrim()
+    keyframe = stage.DefinePrim(
+        root.GetPath().AppendChild("Physics").AppendChild(_identifier(pxr, name)), "MjcKeyframe"
+    )
+    doubles = pxr.Sdf.ValueTypeNames.DoubleArray
+    keyframe.CreateAttribute("mjc:qpos", doubles).Set([float(q) for q in qpos])
+    if len(ctrl):
+        keyframe.CreateAttribute("mjc:ctrl", doubles).Set([float(c) for c in ctrl])
+    return str(layer.ExportToString())
+
+
 def prefix_usd_frames(usd: str, prefix: str) -> str:
     """``usd`` with every link and joint name it carries moved under ``prefix``.
 

@@ -32,7 +32,9 @@ from dimos.robot.assets.usd import (
     unhashed_assets,
     urdf_to_usd,
     usd_frame_names,
+    usd_with_drives,
     usd_with_frames,
+    usd_with_keyframe,
 )
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
@@ -396,6 +398,50 @@ def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(to
     assert len(welds) == 1, "the frame is held by exactly one weld"
     # No body0: that is how USD says "to the world".
     assert welds[0].GetRelationship("physics:body0").GetTargets() == []
+
+
+def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
+    """A robot's gains are a fact about the robot, so the layer carries them.
+
+    Twice over, because two readers want two spellings: `UsdPhysics.DriveAPI` on the joint,
+    which is the standard and what Isaac takes its actuator gains from, and MuJoCo's own
+    longhand on the actuary -- gainPrm, biasPrm and an affine biasType, which is a position
+    servo written out. Neither is a conversion of the other; both are authored.
+    """
+    from pxr import UsdPhysics
+
+    grown = usd_with_drives(urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25)})
+    stage = _stage(grown)
+
+    joint = next(
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.Joint) and prim.GetName() == "base_to_mount"
+    )
+    drive = UsdPhysics.DriveAPI(joint, "angular")
+    assert drive.GetStiffnessAttr().Get() == pytest.approx(40.0)
+    assert drive.GetDampingAttr().Get() == pytest.approx(2.0)
+    assert drive.GetTargetPositionAttr().Get() == pytest.approx(0.25)
+
+
+def test_a_joint_the_layer_does_not_have_cannot_be_driven(toy: Any) -> None:
+    with pytest.raises(ValueError, match="no joint for \\['nowhere'\\]"):
+        usd_with_drives(urdf_to_usd(toy), {"nowhere": (1.0, 0.1, 0.0)})
+
+
+def test_the_pose_a_robot_starts_in_is_a_keyframe_in_its_layer(toy: Any) -> None:
+    """A robot whose joints start at zero starts with its legs straight out.
+
+    The pose it is meant to hold is the controller's, so it is one more fact the layer states --
+    in MuJoCo's words, since a keyframe is what it already has for "the configuration this model
+    starts in".
+    """
+    stage = _stage(usd_with_keyframe(urdf_to_usd(toy), [0.0, 0.25, -0.5], [0.25, -0.5]))
+
+    keyframes = [prim for prim in stage.Traverse() if prim.GetTypeName() == "MjcKeyframe"]
+    assert len(keyframes) == 1
+    assert list(keyframes[0].GetAttribute("mjc:qpos").Get()) == pytest.approx([0.0, 0.25, -0.5])
+    assert list(keyframes[0].GetAttribute("mjc:ctrl").Get()) == pytest.approx([0.25, -0.5])
 
 
 def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
