@@ -23,6 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.usd_names import resolve
 from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
@@ -34,8 +35,11 @@ class MujocoView:
     def __init__(self, description: Mapping[str, Any]) -> None:
         # Its own model of the world: nothing here reads the backend.
         self.model = compile_world(Path(description["scene"]), description["simulated"])
+        # Each robot's id and what its description calls the body everything else hangs off.
         self._robots = {
-            d.robot_id for d in description["simulated"] if isinstance(d, SimulatedRobot)
+            d.robot_id: d.root_body
+            for d in description["simulated"]
+            if isinstance(d, SimulatedRobot)
         }
         self._joints: dict[str, int] = {}
         self._robot_roots: dict[str, int] = {}
@@ -224,13 +228,21 @@ class MujocoView:
         return self._joints[name]
 
     def _root(self, robot_id: str) -> int:
-        # Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading
-        # this 200 times a second would otherwise rescan every body in the scene each time.
+        """The body this robot's description calls its root.
+
+        By name, not by position in the tree. This used to take the one top-level body whose name
+        started with the robot's id, which holds when `compile_world` attaches a robot to the
+        worldbody and not when the world arrives composed -- there the robots hang under the room
+        and nothing is top-level but the room. The bare `next()` then raised from inside a
+        sensor's task as `coroutine raised StopIteration`, twice per robot, saying nothing.
+
+        Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading this
+        200 times a second would otherwise rescan every body in the scene each time.
+        """
         if robot_id not in self._robot_roots:
-            bodies = [b for b in range(1, self.model.nbody) if self.model.body_parentid[b] == 0]
-            self._robot_roots[robot_id] = next(
-                b for b in bodies if self.model.body(b).name.startswith(f"{robot_id}/")
-            )
+            wanted = f"{robot_id}/{self._robots[robot_id]}"
+            names = [self.model.body(b).name for b in range(self.model.nbody)]
+            self._robot_roots[robot_id] = int(self.model.body(resolve(names, wanted)).id)
         return self._robot_roots[robot_id]
 
     def _pose_entity(self, entity: Entity, body: int) -> None:
