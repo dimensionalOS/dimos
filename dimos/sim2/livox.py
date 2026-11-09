@@ -43,9 +43,13 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-"""How many casts to time before saying how long they take. Enough to have a median worth
-reporting, few enough to be over within a few seconds of starting."""
-COST_SAMPLES = 50
+"""Windows of casts to time, as (first scan, last scan).
+
+Two of them, because the first casts run while everything is still starting and the box is at its
+busiest, and a median taken only from those overstates the steady state. The second window is far
+enough out that the room is up and the robots are walking.
+"""
+COST_WINDOWS = ((10, 60), (300, 350))
 
 
 class LivoxSimConfig(ModuleConfig):
@@ -101,7 +105,8 @@ class LivoxSim(Module):
 
     async def _scan(self, view: WorldView, sensor: SimLidar, site: str) -> None:
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
-        cast_cost: list[float] = []
+        cast_cost: tuple[list[float], ...] = tuple([] for _ in COST_WINDOWS)
+        scans = 0
         # Scans and IMU readings pace on sim time, so both keep their rates per sim second at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
             # Snapshot and stamp together, under the world's lock, so the time belongs to the
@@ -123,17 +128,20 @@ class LivoxSim(Module):
                 sensor.cast, position, rotation_matrix(orientation), points_per_scan
             )
             # How much world went by during the cast, which is how far a scan used to be mis-dated
-            # and so how far a turning robot's cloud was thrown off. Said once, because the number
-            # is the thing worth knowing and the rate it happens at is not.
-            if len(cast_cost) < COST_SAMPLES:
-                cast_cost.append(self._world.stamp() - taken_at)
-                if len(cast_cost) == COST_SAMPLES:
-                    median = sorted(cast_cost)[len(cast_cost) // 2]
-                    logger.info(
-                        f"lidar cast spans {1000 * median:.0f} ms of sim time "
-                        f"({points_per_scan} rays); a scan dated at the end of it rather than at "
-                        f"its pose is thrown that far round by a turning robot"
-                    )
+            # and so how far a turning robot's cloud was thrown off.
+            scans += 1
+            for window, costs in zip(COST_WINDOWS, cast_cost, strict=True):
+                if window[0] < scans <= window[1]:
+                    costs.append(self._world.stamp() - taken_at)
+                    if scans == window[1]:
+                        ordered = sorted(costs)
+                        logger.info(
+                            f"lidar cast spans {1000 * ordered[len(ordered) // 2]:.0f} ms of sim "
+                            f"time (median of scans {window[0] + 1}-{window[1]}, "
+                            f"{points_per_scan} rays, {1000 * ordered[0]:.0f}-"
+                            f"{1000 * ordered[-1]:.0f} ms): a scan dated at the end of that rather "
+                            f"than at its pose is thrown that far round by a turning robot"
+                        )
             # The Mid360's own layout; each scan is cast from one pose, so every point is at offset 0.
             self.lidar.publish(
                 PointCloud2.from_numpy(
