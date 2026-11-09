@@ -66,6 +66,23 @@ const voxels = spec({ ch: "global_map", encoding: "voxels.zlib.v1", delivery: "l
 const map3dPanel = panel({ id: "map3d", kind: "map3d", channels: ["global_map", "odom"] });
 
 describe("subscribableChannels", () => {
+  it("previews small CDR values but only subscribes CDR sequences through a panel", () => {
+    const small = spec({
+      ch: "scalar",
+      encoding: "demo_msgs/msg/Scalar.cdr.v1",
+      params: { cdr: { type: "demo_msgs/msg/Scalar", definition: "float64 value\n" } },
+    });
+    const bulk = spec({
+      ch: "bulk",
+      encoding: "demo_msgs/msg/Bulk.cdr.v1",
+      params: { cdr: { type: "demo_msgs/msg/Bulk", definition: "uint8[] data\n" } },
+    });
+    const view = panel({ id: "view", kind: "video", channels: ["bulk"] });
+    expect(channelSubscribable(small, [])).toBe(true);
+    expect(channelSubscribable(bulk, [])).toBe(false);
+    expect(channelSubscribable(bulk, [view])).toBe(true);
+    expect(channelSubscribable({ ...bulk, params: {} }, [view])).toBe(false);
+  });
   it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {
     expect(subscribableChannels([odom, jpeg, future], [videoPanel])).toEqual([odom, jpeg]);
     expect(subscribableChannels([future], [])).toEqual([]);

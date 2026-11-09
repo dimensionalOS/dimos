@@ -20,26 +20,66 @@ import pytest
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.memory.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
 from dimos.memory.vis.space.space import Space
-from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path as Path
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.message_utils import image as image_utils, occupancy
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.geometry_msgs import msg as geometry_messages
+from dimos.messages.geometry_msgs.msg import Point as GeoPoint, PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path as Path
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.vision_msgs.msg import BoundingBox3D, Detection3D
+
+
+def _header():
+    return Header(Time(0, 0), "")
+
+
+def _pose_value(x=0.0, y=0.0, z=0.0, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
+    return geometry_messages.Pose(
+        geometry_messages.Point(x, y, z), geometry_messages.Quaternion(qx, qy, qz, qw)
+    )
+
+
+def _pose(x=0.0, y=0.0, z=0.0, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
+    return PoseStamped(_header(), _pose_value(x, y, z, qx, qy, qz, qw))
+
+
+def _image(data):
+    return image_utils.from_array(data, encoding="bgr8")
+
+
+def _path(poses):
+    return Path(header=_header(), poses=poses)
+
+
+def _grid(grid=None, resolution=0.05):
+    return occupancy.from_array(
+        np.empty((0, 0), dtype=np.int8) if grid is None else grid,
+        header=_header(),
+        resolution=resolution,
+    )
+
+
+def _detection():
+    return Detection3D(
+        header=_header(),
+        results=[],
+        bbox=BoundingBox3D(center=_pose_value(), size=geometry_messages.Vector3(0, 0, 0)),
+        id="",
+    )
 
 
 class TestElementTypes:
     """Element types wrap msgs with rendering intent + style."""
 
     def test_pose_wraps_posestamped(self):
-        ps = PoseStamped(3.2, 1.5, 0.0)
+        ps = _pose(3.2, 1.5, 0.0)
         p = Pose(ps, color="red", label="fridge")
         assert p.msg is ps
         assert p.color == "red"
         assert p.label == "fridge"
 
     def test_arrow_wraps_posestamped(self):
-        ps = PoseStamped(1, 2, 0, 0, 0, 0.1, 1)
+        ps = _pose(1, 2, 0, 0, 0, 0.1, 1)
         a = Arrow(ps, color="orange", length=0.8)
         assert a.msg is ps
         assert a.length == 0.8
@@ -51,22 +91,21 @@ class TestElementTypes:
         assert p.msg.x == pytest.approx(7.1)
 
     def test_point_wraps_posestamped(self):
-        ps = PoseStamped(3, 1, 0)
+        ps = _pose(3, 1, 0)
         p = Point(ps, radius=0.5)
-        assert p.msg.x == pytest.approx(3.0)
+        assert p.msg.pose.position.x == pytest.approx(3.0)
 
     def test_box3d_from_center_size(self):
-        from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+        from dimos.messages.geometry_msgs.msg import Vector3
 
-        b = Box3D(center=GeoPose(5, 3, 0), size=Vector3(2, 1, 0.5), label="table")
-        assert b.center.x == pytest.approx(5.0)
+        b = Box3D(center=_pose_value(5, 3, 0), size=Vector3(2, 1, 0.5), label="table")
+        assert b.center.position.x == pytest.approx(5.0)
         assert b.size.x == pytest.approx(2.0)
         assert b.label == "table"
 
     def test_camera_with_image(self):
-        ps = PoseStamped(1, 2, 0)
-        img = Image(np.zeros((480, 640, 3), dtype=np.uint8))
+        ps = _pose(1, 2, 0)
+        img = _image(np.zeros((480, 640, 3), dtype=np.uint8))
         c = Camera(pose=ps, image=img, color="purple")
         assert c.pose is ps
         assert c.image is img
@@ -83,7 +122,7 @@ class TestSpaceExplicitElements:
 
     def test_add_pose(self):
         s = Space()
-        ps = PoseStamped(3, 1, 0)
+        ps = _pose(3, 1, 0)
         pose = Pose(ps, color="red")
         s.add(pose)
         assert len(s) == 1
@@ -91,7 +130,7 @@ class TestSpaceExplicitElements:
 
     def test_add_multiple_types(self):
         s = Space()
-        ps = PoseStamped(3, 1, 0)
+        ps = _pose(3, 1, 0)
         s.add(Pose(ps, color="red"))
         s.add(Arrow(ps, color="orange"))
         s.add(Point(GeoPoint(1, 2, 0), label="x"))
@@ -99,7 +138,7 @@ class TestSpaceExplicitElements:
         assert len(s) == 4
 
     def test_chaining(self):
-        ps = PoseStamped(1, 1, 0)
+        ps = _pose(1, 1, 0)
         s = Space().add(Pose(ps)).add(Arrow(ps)).add(Text((0, 0, 0), "hi"))
         assert len(s) == 3
 
@@ -109,7 +148,7 @@ class TestSpaceAutoWrap:
 
     def test_posestamped_becomes_pose(self):
         s = Space()
-        ps = PoseStamped(3.2, 1.5, 0)
+        ps = _pose(3.2, 1.5, 0)
         s.add(ps, color="blue", label="auto")
         assert len(s) == 1
         el = s.elements[0]
@@ -129,7 +168,7 @@ class TestSpaceAutoWrap:
 
     def test_path_becomes_polyline(self):
         s = Space()
-        p = Path(poses=[PoseStamped(i, 0, 0) for i in range(3)])
+        p = _path(poses=[_pose(i, 0, 0) for i in range(3)])
         s.add(p, color="blue", width=0.1)
         el = s.elements[0]
         assert isinstance(el, Polyline)
@@ -139,12 +178,12 @@ class TestSpaceAutoWrap:
 
     def test_occupancy_grid_passthrough(self):
         s = Space()
-        grid = OccupancyGrid()
+        grid = _grid()
         s.add(grid)
         assert s.elements[0] is grid
 
     def test_detection3d_becomes_box3d(self):
-        det = Detection3D()
+        det = _detection()
         det.bbox.center.position.x = 5.0
         det.bbox.center.position.y = 3.0
         det.bbox.size.x = 2.0
@@ -169,7 +208,7 @@ class TestSpaceObservations:
     """Space.add() smart dispatch for Observation types."""
 
     def test_image_observation_stored_as_observation(self):
-        img = Image(np.zeros((480, 640, 3), dtype=np.uint8))
+        img = _image(np.zeros((480, 640, 3), dtype=np.uint8))
         obs = Observation(id=1, ts=1.0, pose=(3, 1, 0, 0, 0, 0, 1), _data=img)
 
         s = Space()
@@ -188,15 +227,13 @@ class TestSpaceObservations:
         assert el.data == "some_data"
 
     def test_posestamped_observation_stored_as_observation(self):
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as PS
-
-        obs = Observation(id=3, ts=3.0, pose=(1, 2, 0, 0, 0, 0, 1), _data=PS(5, 2, 0))
+        obs = Observation(id=3, ts=3.0, pose=(1, 2, 0, 0, 0, 0, 1), _data=_pose(5, 2, 0))
 
         s = Space()
         s.add(obs)
         el = s.elements[0]
         assert isinstance(el, Observation)
-        assert el.data.x == pytest.approx(5.0)
+        assert el.data.pose.position.x == pytest.approx(5.0)
 
     def test_embedded_observation_stored_as_arrow(self):
         obs = EmbeddedObservation(
@@ -218,13 +255,13 @@ class TestSpaceConvenience:
     """Space convenience methods: base_map."""
 
     def test_base_map(self):
-        grid = OccupancyGrid()
+        grid = _grid()
         s = Space().base_map(grid)
         assert len(s) == 1
         assert isinstance(s.elements[0], OccupancyGrid)
 
     def test_add_list_of_msgs(self):
-        poses = [PoseStamped(i, 0, 0) for i in range(3)]
+        poses = [_pose(i, 0, 0) for i in range(3)]
         s = Space()
         s.add(poses, color="red")
         assert len(s) == 3
@@ -239,7 +276,7 @@ class TestSpaceRepr:
 
     def test_repr_with_elements(self):
         s = Space()
-        ps = PoseStamped(0, 0, 0)
+        ps = _pose(0, 0, 0)
         s.add(Pose(ps))
         s.add(Pose(ps))
         s.add(Arrow(ps))
@@ -268,7 +305,7 @@ class TestSVGRender:
         from dimos.memory.vis import color
 
         s = Space()
-        s.add(Pose(PoseStamped(1, 2, 0), color="blue"))
+        s.add(Pose(_pose(1, 2, 0), color="blue"))
         svg = s.to_svg()
         assert "<polygon" in svg
         assert color.blue.hex() in svg
@@ -277,7 +314,7 @@ class TestSVGRender:
         from dimos.memory.vis import color
 
         s = Space()
-        s.add(Arrow(PoseStamped(0, 0, 0, 0, 0, 0.38, 0.92), color="orange"))
+        s.add(Arrow(_pose(0, 0, 0, 0, 0, 0.38, 0.92), color="orange"))
         svg = s.to_svg()
         assert "<polygon" in svg
         assert color.orange.hex() in svg
@@ -286,7 +323,7 @@ class TestSVGRender:
         s = Space()
         s.add(
             Polyline(
-                msg=Path(poses=[PoseStamped(i, i * 0.5, 0) for i in range(5)]),
+                msg=_path(poses=[_pose(i, i * 0.5, 0) for i in range(5)]),
                 color="blue",
             )
         )
@@ -294,11 +331,10 @@ class TestSVGRender:
         assert "<polyline" in svg
 
     def test_box3d_renders_rect(self):
-        from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+        from dimos.messages.geometry_msgs.msg import Vector3
 
         s = Space()
-        s.add(Box3D(center=GeoPose(5, 3, 0), size=Vector3(2, 1, 0), label="table"))
+        s.add(Box3D(center=_pose_value(5, 3, 0), size=Vector3(2, 1, 0), label="table"))
         svg = s.to_svg()
         assert "<rect" in svg
         assert "table" in svg
@@ -314,13 +350,13 @@ class TestSVGRender:
         from dimos.memory.vis import color
 
         s = Space()
-        s.add(Camera(pose=PoseStamped(1, 2, 0), color="purple"))
+        s.add(Camera(pose=_pose(1, 2, 0), color="purple"))
         svg = s.to_svg()
         assert "<circle" in svg
         assert color.purple.hex() in svg
 
     def test_occupancy_grid_renders_image(self):
-        grid = OccupancyGrid(
+        grid = _grid(
             grid=np.zeros((10, 10), dtype=np.int8),
             resolution=0.1,
         )
@@ -331,7 +367,7 @@ class TestSVGRender:
 
     def test_mixed_space(self):
         s = Space()
-        ps = PoseStamped(3, 1, 0)
+        ps = _pose(3, 1, 0)
         s.add(Pose(ps, color="red", label="robot"))
         s.add(Arrow(ps, color="orange"))
         s.add(Point(GeoPoint(5, 5, 0), color="green", label="goal"))

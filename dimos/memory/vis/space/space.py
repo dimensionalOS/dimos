@@ -35,14 +35,10 @@ from dimos.memory.vis.space.elements import (
     SpaceElement,
     Text,
 )
-from dimos.msgs.geometry_msgs.Point import Point as GeoPoint
-from dimos.msgs.geometry_msgs.Pose import Pose as GeoPose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.protocol import DimosMsg
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3D import Detection3D
+from dimos.messages.geometry_msgs.msg import Point as GeoPoint, Pose as GeoPose, PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid, Path as NavPath
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.vision_msgs.msg import Detection3D
 
 
 def _autocolor_value(item: Any) -> float | None:
@@ -83,7 +79,7 @@ class Space:
 
         if isinstance(element, (Pose, Arrow, Point, Box3D, Camera, Polyline, Text)):
             self._elements.append(element)
-        elif isinstance(element, DimosMsg):
+        elif hasattr(type(element), "__msgtype__"):
             self.add_dimos_msg(element, **kwargs)
         elif isinstance(element, EmbeddedObservation):
             self.add_embedded_observation(element, **kwargs)
@@ -110,7 +106,7 @@ class Space:
 
         return self
 
-    def add_dimos_msg(self, msg: DimosMsg, **kwargs: Any) -> None:
+    def add_dimos_msg(self, msg: Any, **kwargs: Any) -> None:
         """Dispatch a DimosMsg to its default element type."""
         if isinstance(msg, PoseStamped):
             self._elements.append(Pose(msg=msg, **kwargs))

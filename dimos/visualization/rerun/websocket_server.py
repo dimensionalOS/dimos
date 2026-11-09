@@ -29,9 +29,9 @@ import websockets.asyncio.server as ws_server
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.generic import connect_host
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RERUN_WEBSOCKET_PORT
@@ -217,11 +217,13 @@ class RerunWebSocketServer(Module):
         if msg_type == "click":
             self.clicked_point.publish(
                 PointStamped(
-                    x=_num(msg.get("x")),
-                    y=_num(msg.get("y")),
-                    z=_num(msg.get("z")),
-                    ts=_num(msg.get("timestamp_ms")) / 1000.0,
-                    frame_id=str(msg.get("entity_path", "")),
+                    header=Header(
+                        stamp=message_time.time_from_seconds(
+                            _num(msg.get("timestamp_ms")) / 1000.0
+                        ),
+                        frame_id=str(msg.get("entity_path", "")),
+                    ),
+                    point=Point(_num(msg.get("x")), _num(msg.get("y")), _num(msg.get("z"))),
                 )
             )
 
@@ -242,4 +244,4 @@ class RerunWebSocketServer(Module):
             )
 
         elif msg_type == "stop":
-            self.tele_cmd_vel.publish(Twist.zero())
+            self.tele_cmd_vel.publish(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))

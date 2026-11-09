@@ -33,20 +33,24 @@ from typing import Any
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.message_utils import geometry, occupancy, time
+from dimos.messages.geometry_msgs.msg import Point, Pose
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.messages.std_msgs.msg import Header
 from dimos.web.relay_bridge.builtin_codecs import encode_costmap
 from dimos.web.relay_bridge.locate import find_web_dir
 
 
 def grid_msg(rows: list[list[int]], res: float, x: float, y: float, yaw: float) -> OccupancyGrid:
     """Fixture-shaped OccupancyGrid; also used by test_costmap_encoding.py."""
-    quat = Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
-    origin = Pose(x, y, 0.0, quat.x, quat.y, quat.z, quat.w)
-    grid = np.array(rows, dtype=np.int8)
-    return OccupancyGrid(grid=grid, resolution=res, origin=origin, ts=1752576000.5)
+    quat = geometry.quaternion_from_euler(0.0, 0.0, yaw)
+    origin = Pose(position=Point(x=x, y=y, z=0.0), orientation=quat)
+    return occupancy.from_array(
+        np.array(rows, dtype=np.int8),
+        header=Header(stamp=time.time_from_seconds(1752576000.5), frame_id=""),
+        resolution=res,
+        origin=origin,
+    )
 
 
 # name -> (rows, res, origin x, origin y, origin yaw). small_map covers every
@@ -86,7 +90,7 @@ def build_vectors() -> list[dict[str, Any]]:
         encoded = encode_costmap(msg)
         assert encoded is not None
         payload, meta = encoded.payload, encoded.meta
-        cells = np.where(msg.grid == -1, 255, msg.grid).astype(np.uint8)
+        cells = np.where(occupancy.view(msg) == -1, 255, occupancy.view(msg)).astype(np.uint8)
         vectors.append(
             {
                 "name": name,
