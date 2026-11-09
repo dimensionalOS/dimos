@@ -12,25 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a simulated sensor sees: the world as Simulation describes it, posed only from world_observations.
+"""What a simulated sensor sees: its own world, built from the composed scene and posed from observations.
 
-A sensor never reads a physics engine, so it works the same whichever backend steps the world.
-The renderer drawing the view is chosen by name, as backends are.
+A sensor never reads a physics engine and is never described to one. It asks the manager for the
+scene -- the same layer the engine is running -- builds a world of its own out of it, adds
+whatever it needs at its own mount, applies the observations as they arrive, and reports what
+its copy says. So it works the same whichever engine steps the world, and a scan lands on the
+furniture that is drawn rather than on a generated stand-in.
 """
 
-from collections.abc import Mapping, Sequence
-from importlib import import_module
-from typing import Any, Protocol
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.spec import SimulatedSensor
+from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
-
-RENDERERS = {"mujoco": "dimos.sim2.mujoco_view.MujocoView"}
 
 Vector = NDArray[np.float64]
 
@@ -64,17 +65,26 @@ def rotation_matrix(wxyz: Vector) -> Vector:
     return Rotation.from_quat(wxyz, scalar_first=True).as_matrix()
 
 
-def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
-    """The view's name for the sensor at frame_id in the world Simulation.describe() returned."""
-    sensor = next(
-        d
-        for d in description["simulated"]
-        if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
-    )
-    return f"{sensor.robot_id or 'world'}/{frame_id}"
+def robot_ids(world: WorldMirror) -> list[str]:
+    """The robots in the world, as the world itself announced them.
+
+    A sensor is not told what is in the world by anybody; it is told by the world. The first
+    frame of observations adds each entity, and the ones that are robots carry the layer they
+    were drawn from, which is what distinguishes a robot from a crate. Those ids are what the
+    view has to shorten its own copy for, so that an entity in the observations names a body it
+    can pose.
+    """
+    with world.lock:
+        return sorted(entity.path for entity in world.entities.values() if "model" in entity.cbor)
 
 
-def open_view(description: Mapping[str, Any], renderer: str = "mujoco") -> WorldView:
-    """A view of the world that Simulation.describe() returned."""
-    module, _, cls = RENDERERS[renderer].rpartition(".")
-    return getattr(import_module(module), cls)(description)  # type: ignore[no-any-return]
+def open_view(scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None) -> WorldView:
+    """A sensor's own world: the composed scene, with what this sensor needs at its own mount.
+
+    This belongs to the sensors and to the engine they build with -- not to sim2's core, which
+    instantiates a backend, publishes observations and takes actions, and has no business
+    knowing that anything is watching.
+    """
+    from dimos.sim2.mujoco.view import MujocoView
+
+    return MujocoView(scene, ids, mount)

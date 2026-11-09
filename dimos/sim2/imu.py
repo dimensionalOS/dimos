@@ -12,31 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An IMU at its frame, read from its own view of the world as world_observations moves it."""
+"""An IMU at its frame, read from a world of its own as the observations move it.
+
+It describes itself to nobody: a manager mounts its `get_usd` -- the frame it reads at, which is
+all an IMU is -- onto whatever it is bolted to, so the composed scene has it. This then asks the
+manager for that scene, builds its own world out of it, and differences the pose it is given.
+"""
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Any
 
 from dimos_lcm.world_msgs import WorldObservations
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
+from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor_usd import frame_usd
-from dimos.sim2.spec import SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, sensor_frame
+from dimos.sim2.sim import SceneConfig, scene_from
+from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
 
 
-class SimImuConfig(ModuleConfig):
-    # The IMU's frame, as a robot's URDF or the scene names it: where it sits.
-    frame_id: str | None = "imu_link"
+class SimImuConfig(SceneConfig):
+    # The IMU's frame, as a robot's description or the scene names it: where it sits.
+    frame_id: str = "imu_link"
     rate_hz: float = 200.0
 
 
@@ -44,11 +48,6 @@ class SimImu(Module):
     config: SimImuConfig
     imu: Out[Imu]
     world_observations: In[WorldObservations]
-    _simulation: SimulationSpec
-
-    @shared_config(Simulation)
-    def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedSensor("imu", self.frame_id)}
 
     @rpc
     def get_usd(self) -> list[str]:
@@ -58,17 +57,37 @@ class SimImu(Module):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        description = self._simulation.describe()
-        self._reading = asyncio.create_task(
-            self._read(open_view(description), sensor_frame(description, self.frame_id))
-        )
+        self._reading = asyncio.create_task(self._read())
         yield
+        self._reading.cancel()
 
-    async def _read(self, view: WorldView, sensor: str) -> None:
+    def _open(self) -> WorldView:
+        """This IMU's own world: the composed scene, with a site at its own frame.
+
+        Opened on the first frame rather than at start, because the robots in the world are what
+        the world says they are -- the observations announce them -- and the view has to name its
+        bodies the way the observations do.
+        """
+        scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
+        if scene is None:
+            raise ValueError(
+                f"{self.frame_id}: nothing says what the scene is, so there is nothing to read."
+                f" Give this IMU the scene_manager that composes the world."
+            )
+        return open_view(
+            usd_layer(scene),
+            robot_ids(self._world),
+            SensorMount("imu", self.frame_id, self.frame_id),
+        )
+
+    async def _read(self) -> None:
         # rate_hz of sim time: its readings difference velocities over sim time, so they hold at any speed.
+        view: WorldView | None = None
         async for _ in self._world.ticks(self.config.rate_hz):
+            if view is None:
+                view = self._open()
             view.update(self._world)
-            gyro, accelerometer, (w, x, y, z) = view.imu(sensor)
+            gyro, accelerometer, (w, x, y, z) = view.imu(self.frame_id)
             self.imu.publish(
                 Imu(
                     angular_velocity=Vector3(*gyro),
