@@ -149,12 +149,14 @@ python -m dimos.teleop.openarm_mini.cli.setup_motor_id --help
 
 ## Viser bring-up (mock follower)
 
-`teleop-openarm-mini` runs the leader module, the OpenArm coordinator and
-Viser on one machine. The leader ports you pass select the sides: one port
-drives one arm and the other arm holds, both ports drive both arms.
+`teleop-openarm-mini` runs the leader module, the OpenArm coordinator, its
+connection and Viser on one machine. The leader ports you pass select the
+sides: one port drives one arm and the other arm holds, both ports drive both
+arms. `--simulation` swaps the CAN connection for an independent mock, as the
+other OpenArm blueprints do.
 
 ```bash
-dimos run teleop-openarm-mini --port-left <left-feetech-port>
+dimos --simulation run teleop-openarm-mini --port-left <left-feetech-port>
 ```
 
 Teleop defaults to the standard Feetech serial baudrate of `1000000`. Override
@@ -168,33 +170,34 @@ The blueprint requires:
 - a valid calibration artifact for each configured side
 - Viser dependencies from `uv sync --extra manipulation` or `uv sync --extra all`
 
-Without CAN ports the follower is in-memory. The leader-derived `joint_command`
-streams through the coordinator's `joint_trajectory` task into mock follower
-hardware, and `ManipulationModule` renders the follower-observed
+The leader-derived `joint_command` streams through the coordinator's
+`joint_trajectory` task into the connection (the mock under `--simulation`),
+and `ManipulationModule` renders the follower-observed
 `coordinator_joint_state` in Viser. Leader joint N drives follower joint N with no
 reordering; each target is clamped to the OpenArm v2.0 joint limits on the sender
 side and rate-limited by the trajectory task on the follower side. The
-published coordinator joint names are `openarm_left_joint1` through
-`openarm_left_joint7` and `openarm_right_joint1` through `openarm_right_joint7`.
+coordinator's joints carry the connection's `arm/` prefix: `arm/openarm_left_joint1`
+through `arm/openarm_left_joint7` and `arm/openarm_right_joint1` through
+`arm/openarm_right_joint7`; the leader blueprints target those names.
 
 ## Driving the real OpenArm follower
 
-The same blueprint drives the physical bimanual OpenArm 2.0 when both CAN ports
-are supplied. Bring the CAN interfaces up first with `dimos hardware can setup
-<interface>`, then add the coordinator ports:
+Without `--simulation` the same blueprint drives the physical bimanual OpenArm
+2.0 through `OpenArmConnection`, which requires both CAN selectors. Bring the
+CAN interfaces up first with `dimos hardware can setup <interface>`, then pass
+the ports:
 
 ```bash
 dimos run teleop-openarm-mini \
   --port-left <left-feetech-port> \
   --port-right <right-feetech-port> \
-  --controlcoordinator.left-can-port can1 \
-  --controlcoordinator.right-can-port can2
+  --left-can-port can1 --right-can-port can2
 ```
 
-Both CAN ports are required for the physical adapter, also when only one leader
-is connected; the non-driven arm holds its position. Start with each leader
-posed near its follower arm so the first streamed target is a short move, and
-keep the follower workspace clear.
+Both CAN ports are required also when only one leader is connected; the
+non-driven arm holds its position. Start with each leader posed near its
+follower arm so the first streamed target is a short move, and keep the
+follower workspace clear.
 
 ## Leaders on a separate machine
 
@@ -215,7 +218,7 @@ bus-wide `Coordinator` name, because the robot stack owns it.
 # robot computer, once per boot: a zenoh router on 7447
 nix run nixpkgs#zenoh -- --listen tcp/0.0.0.0:7447
 
-# robot computer: the follower, mock until CAN ports are given
+# robot computer: the follower (add --simulation for a mock connection)
 dimos run teleop-openarm-mini-follower --left-can-port can1 --right-can-port can2
 
 # operator laptop: the leaders (one port drives one arm, two ports both)

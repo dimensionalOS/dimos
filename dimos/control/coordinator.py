@@ -122,6 +122,10 @@ class ControlCoordinatorConfig(ModuleConfig):
     # How old a robot's newest reading may be, in seconds, before it is no
     # longer commanded.
     reading_timeout_s: float = 0.2
+    # Joints, named "<robot>/<joint>", whose connection commands zero
+    # stiffness. The connection keeps those gains; this declaration only
+    # lets tasks that require zero stiffness (hand guiding) accept the robot.
+    zero_stiffness_joints: list[str] = field(default_factory=lambda: [])
 
 
 class ControlCoordinator(Module):
@@ -384,7 +388,11 @@ class ControlCoordinator(Module):
         from dimos.control.tasks.registry import control_task_registry
 
         return control_task_registry.create(
-            cfg.type, cfg, hardware=self._hardware, model=self.config.model
+            cfg.type,
+            cfg,
+            hardware=self._hardware,
+            connections=self._connections,
+            model=self.config.model,
         )
 
     def _frame_pose_port(self) -> Out[TFMessage]:
@@ -440,6 +448,11 @@ class ControlCoordinator(Module):
                     readings.get(robot, []),
                     self.config.model,
                     self.config.reading_timeout_s,
+                    zero_stiffness_joints=[
+                        joint
+                        for joint in self.config.zero_stiffness_joints
+                        if joint.startswith(f"{robot}/")
+                    ],
                 )
                 self._connections[robot] = source
                 self._command_ports[robot] = {
@@ -447,6 +460,12 @@ class ControlCoordinator(Module):
                 }
                 for joint in source.joint_names:
                     self._joint_to_hardware[joint] = robot
+        declared = {joint for source in self._connections.values() for joint in source.joint_names}
+        unknown = set(self.config.zero_stiffness_joints) - declared
+        if unknown:
+            raise ValueError(
+                f"zero-stiffness joints belong to no robot driven here: {sorted(unknown)}"
+            )
         for robot, source in self._connections.items():
             for kind in source.reading_ports:
                 handler = functools.partial(source.on_message, kind)

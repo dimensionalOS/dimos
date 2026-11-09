@@ -49,6 +49,7 @@ _EXCLUDED_MODULE_NAMES = {
     "ModuleBase",
     "StreamModule",
     "ConnectionModule",
+    "DamiaoConnection",
     "SimWorld",
     "CollectionModule",  # Requires profile-owned ports; compose with collect(profile=...).
 }

@@ -193,6 +193,7 @@ export class Sidebar implements Component {
   }
 
   render(width: number): string[] {
+    width = Math.min(width, SIDEBAR_COLUMNS - GUTTER.length);
     const source = this.source();
     const now = Date.now() as EpochMs;
     const content: string[] = [];
