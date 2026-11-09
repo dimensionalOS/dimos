@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One URDF and the live joint state: every joint on tf, and the robot as USD for renderers."""
+"""One URDF and the live joint state: every joint on tf, and the URDF and its files for renderers."""
 
 from __future__ import annotations
 
@@ -20,14 +20,13 @@ import asyncio
 from pathlib import Path
 from threading import RLock
 import time
-from typing import Any
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -35,7 +34,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.usd import graft_usd, require_asset_hashes, urdf_to_usd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -43,16 +41,6 @@ logger = setup_logger()
 
 # Their pose comes from tf (odometry, a planar base), so they are read from tf, never published to it.
 MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
-
-# The RPC every mounted module answers with its own subtree as a USD string.
-SUBTREE_RPC = "get_usd"
-
-# What a renderer asks for to get the scene itself. The URDF is this module's input, not its
-# output: what it serves is USD.
-USD_SUFFIXES = (".usd", ".usda")
-
-# get_scene waits forever, so say so periodically rather than hang silently.
-_WAITING_LOG_EVERY = 20
 
 
 class UrdfManagerConfig(ModuleConfig):
@@ -64,24 +52,18 @@ class UrdfManagerConfig(ModuleConfig):
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
-    # What is bolted to this robot: a frame of its URDF -> the module owning the subtree there.
-    # Nothing else reads it, so the empty default leaves tf and file serving untouched.
-    mounts: dict[str, type[Module]] = Field(default_factory=dict)
-    # How often to re-ask a module that is not up yet. There is no deadline: a scene missing an
-    # arm is not a scene, so a mount that never comes up hangs the caller.
-    scene_retry_s: float = Field(default=0.5, gt=0.0)
 
 
 class UrdfManager(Module):
-    """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
+    """Poses the URDF from the joint state onto tf, and serves the URDF and the files it names to renderers."""
 
     config: UrdfManagerConfig
 
     # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
-    # A request for a *.usd or *.usda gets the scene as a USD layer; one for a file that layer
-    # names (mesh, texture, splat, ...) gets that file. Either goes out on file_info as requested.
+    # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
+    # gets that file. Either goes out on file_info named as requested.
     render_file_request: In[String]
     file_info: Out[File]
 
@@ -89,142 +71,21 @@ class UrdfManager(Module):
         super().__init__(**kwargs)
         self._lock = RLock()
         self._description = self.config.model.load()
-        self._file_paths = self._description.referenced_files()
+        self._file_paths = _files_named_by(self._description.xml)
         self._joints = {joint.name: joint for joint in self._description.joints}
         self._next_joint_tf_t = 0.0
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
-        self._usd: str | None = None
-        # Its own lock: baking meshes into a USD takes seconds, and self._lock is on the tf path.
-        self._usd_lock = RLock()
-        # The last scene get_scene assembled. A renderer wants the whole tree, not just this
-        # robot, and only get_scene knows what is mounted.
-        self._scene: str | None = None
-        self._subtree_clients: dict[type[Module], RPCClient] = {}
-        try:
-            self._check_mounts()
-        except Exception:
-            # super().__init__ already took a loop thread and an RPC session; hand them back
-            # rather than leave a half-built module behind for the caller to notice.
-            self.dispose()
-            raise
-
-    def _check_mounts(self) -> None:
-        """Fail here rather than at get_scene time, which is a blueprint's last step before start."""
-        links = {self._description.root_link, *(j.child_link for j in self._description.joints)}
-        for frame_id, module in self.config.mounts.items():
-            if frame_id not in links:
-                raise ValueError(
-                    f"mounts names frame {frame_id!r}, which is not a link of this "
-                    f"URDF (it has {sorted(links)})"
-                )
-            if SUBTREE_RPC not in module.rpcs:
-                raise ValueError(
-                    f"mounts attaches {module.__name__} at {frame_id!r}, but it has "
-                    f"no @rpc {SUBTREE_RPC}() to ask for its subtree"
-                )
 
     @rpc
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
 
-    @rpc
-    def stop(self) -> None:
-        for client in self._subtree_clients.values():
-            client.stop_rpc_client()
-        self._subtree_clients.clear()
-        super().stop()
-
-    @rpc
-    def get_usd(self) -> str:
-        """This robot's own URDF as a USD layer, with nothing attached to it.
-
-        Anything mountable answers this, UrdfManager included, so a robot on a robot is no
-        special case.
-        """
-        with self._usd_lock:
-            if self._usd is None:
-                self._usd = urdf_to_usd(self._description)
-            return self._usd
-
-    @rpc
-    async def get_scene(self) -> str:
-        """The whole tree as one USD layer: this URDF with every mounted subtree on it.
-
-        Async and meant to be called before start(). It waits with no deadline: half a scene is
-        a robot with no arm, so a mount that never answers hangs the caller instead.
-        """
-        subtrees = await self._subtrees()
-        # Off the loop thread: building the layer imports usd-core and converts the whole
-        # URDF, which is a tenth of a second on a real robot and would stall tf meanwhile.
-        root = await asyncio.to_thread(self.get_usd)
-        self._scene = await asyncio.to_thread(graft_usd, root, subtrees) if subtrees else root
-        return self._scene
-
-    async def _subtrees(self) -> dict[str, str]:
-        mounts = self.config.mounts
-        if not mounts:
-            return {}
-        results = await asyncio.gather(
-            *(self._subtree(frame_id, module) for frame_id, module in mounts.items())
-        )
-        return dict(zip(mounts, results, strict=True))
-
-    async def _subtree(self, frame_id: str, module: type[Module]) -> str:
-        """``module``'s USD, retried until it answers; no deadline (see get_scene)."""
-        client = self._subtree_clients.setdefault(
-            # Hand-rolled rather than a module ref: a ref is one annotated attribute resolved by
-            # type, and this is a mapping. Addresses by class name, so two instances of one class
-            # are not reachable this way yet.
-            module,
-            RPCClient.remote(module, rpc=self.rpc),
-        )
-        attempts = 0
-        while True:
-            attempts += 1
-            usd = await asyncio.to_thread(self._ask_for_usd, client, frame_id)
-            if usd:
-                logger.info(
-                    f"subtree for {frame_id} from {module.__name__} after {attempts} ask(s)"
-                )
-                # Refused rather than retried: a subtree whose assets are not identified by
-                # content will not become identified by asking again, and the error carries
-                # the hashes it should have had.
-                await asyncio.to_thread(
-                    require_asset_hashes,
-                    usd,
-                    what=f"the subtree {module.__name__} answered for frame {frame_id!r}",
-                )
-                return usd
-            if attempts % _WAITING_LOG_EVERY == 0:
-                logger.warning(
-                    f"still waiting on {module.__name__} for {SUBTREE_RPC}() at frame "
-                    f"{frame_id!r} after {attempts} asks"
-                )
-            await asyncio.sleep(self.config.scene_retry_s)
-
-    def _ask_for_usd(self, client: Any, frame_id: str) -> str | None:
-        """One RPC attempt; a module that is not serving yet is a retry, not a failure."""
-        try:
-            usd = getattr(client, SUBTREE_RPC)()
-        except Exception as exc:
-            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} did not answer yet: {exc}")
-            return None
-        if not isinstance(usd, str) or not usd:
-            logger.debug(f"{SUBTREE_RPC}() for {frame_id!r} answered {usd!r}, retrying")
-            return None
-        return usd
-
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
-        if name.endswith(USD_SUFFIXES):
-            # to_thread for the same reason as get_scene: the first request is the one that
-            # pays for the import and the conversion, and it arrives while tf is flowing.
-            usd = self._scene
-            if usd is None:
-                usd = await asyncio.to_thread(self.get_usd)
-            self.file_info.publish(File(name, usd.encode()))
+        if name.endswith(".urdf"):
+            self.file_info.publish(File(name, self._description.xml.encode()))
             return
         # Only files the URDF names: a request is never an arbitrary path into the filesystem.
         if name not in self._file_paths:
@@ -283,3 +144,12 @@ class UrdfManager(Module):
             for joint in self._joints.values()
             if joint.type not in MULTI_DOF_JOINT_TYPES
         ]
+
+
+def _files_named_by(xml: str) -> set[str]:
+    """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
+    return {
+        element.attrib["filename"]
+        for element in ET.fromstring(xml).iter()
+        if "filename" in element.attrib
+    }
