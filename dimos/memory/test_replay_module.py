@@ -255,9 +255,19 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
                     Transform(frame_id="base", child_frame_id="camera", ts=10.0),
                 )
             )
-            sqlite_store.stream("odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
+            # Sort after TF to also catch priming that delays another subscription.
+            sqlite_store.stream("z_odom", PoseStamped).append(PoseStamped(ts=ts), ts=ts)
 
     scheduler = TestScheduler()
+    preparing = True
+    decode = ReplayStream._decode
+
+    def slow_decode(stream, observation):
+        if preparing and observation.ts == 10.0:
+            scheduler.sleep(0.1)  # Consume setup time without running queued callbacks.
+        return decode(stream, observation)
+
+    mocker.patch.object(ReplayStream, "_decode", side_effect=slow_decode, autospec=True)
     mocker.patch.object(replay_mod.time, "time", side_effect=lambda: scheduler.clock)
     mocker.patch.object(replay_mod, "TimeoutScheduler", return_value=scheduler)
     interval = rm.interval
@@ -271,23 +281,25 @@ def test_mixed_tf_starts_dynamic_playback_without_losing_frozen_edges(sqlite_sto
     with ExitStack() as cleanup:
         module = replay_module(path)(dataset=path, rpc_transport=ZenohRPC, loop=True)
         cleanup.callback(module.stop)
-        module.register_disposable(Disposable(module.outputs["odom"].subscribe(odom.append)))
+        module.register_disposable(Disposable(module.outputs["z_odom"].subscribe(odom.append)))
         module.register_disposable(
             Disposable(
                 module.outputs["tf"].subscribe(lambda message: tf.extend(message.transforms))
             )
         )
         module.start()
-        scheduler.advance_to(0.01)
+        preparing = False
+        started = scheduler.clock
+        scheduler.advance_to(started + 0.01)
         assert [m.ts for m in odom] == [1000.0]
         assert [(t.frame_id, t.child_frame_id, t.ts) for t in tf] == [
             ("base", "camera", 10.0),
             ("world", "base", 1000.0),
         ]
-        scheduler.advance_to(1.01)
+        scheduler.advance_to(started + 1.01)
         assert [m.ts for m in odom] == [1000.0, 1001.0]
         assert [t.ts for t in tf if t.frame_id == "world"] == [1000.0, 1001.0]
-        scheduler.advance_to(2.06)
+        scheduler.advance_to(started + 2.06)
         assert [m.ts for m in odom] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "world"] == [1000.0, 1001.0] * 2
         assert [t.ts for t in tf if t.frame_id == "base"] == [10.0] * 3

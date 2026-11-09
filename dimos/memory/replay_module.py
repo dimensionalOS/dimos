@@ -171,16 +171,16 @@ class ReplayModule(Module):
         for name, message in static.items():
             if isinstance(message, TFMessage):
                 self.outputs[name].publish(message)
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
-        port: Out[DimosMsg]
-        for name, port in self.outputs.items():
-            logger.info("Replaying %s -> %s", name, port)
-            if name in static:
-                self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, static[name]))
-                )
-            if name in timed_streams:
-                self.register_disposable(timed_streams[name].subscribe(port.publish))
+        with replay.prepare(min(timed_starts) if timed_starts else None):
+            port: Out[DimosMsg]
+            for name, port in self.outputs.items():
+                logger.info("Replaying %s -> %s", name, port)
+                if name in static:
+                    self.register_disposable(
+                        interval(1.0).subscribe(partial(_republish, port, static[name]))
+                    )
+                if name in timed_streams:
+                    self.register_disposable(timed_streams[name].subscribe(port.publish))
 
     @rpc
     def stop(self) -> None:

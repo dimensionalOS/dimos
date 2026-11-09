@@ -23,6 +23,7 @@ advance together. Late subscribers skip past data already behind wall time.
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 import threading
 import time
@@ -76,6 +77,7 @@ class Replay(Configurable):
         self.store = store
         self._anchor: tuple[float, float] | None = None
         self._anchor_lock = threading.Lock()
+        self._pending: list[tuple[Callable[[], None], Callable[[], None]]] | None = None
 
     @property
     def streams(self) -> StreamAccessor[ReplayStream[Any]]:
@@ -111,6 +113,41 @@ class Replay(Configurable):
         first = self.first_ts() if ts is None else ts
         if first is not None:
             self._resolve_anchor(first)
+
+    @contextmanager
+    def prepare(self, ts: float | None = None) -> Iterator[None]:
+        """Prime startup subscriptions before pinning their shared playback clock.
+
+        Subscriptions inside this context own their iterators as usual, but do
+        not schedule until successful exit. A failed preparation cancels them.
+        Once playback has started, new subscriptions use normal late skipping.
+        """
+        with self._anchor_lock:
+            if self._anchor is not None or self._pending is not None:
+                raise RuntimeError("Replay preparation requires an unstarted replay")
+            self._pending = []
+            pending = self._pending
+        try:
+            try:
+                yield
+                self.pin_anchor(ts)
+            finally:
+                with self._anchor_lock:
+                    self._pending = None
+            for start, _ in pending:
+                start()
+        except BaseException:
+            with ExitStack() as cleanup:
+                for _, dispose in pending:
+                    cleanup.callback(dispose)
+            raise
+
+    def _start_or_defer(self, start: Callable[[], None], dispose: Callable[[], None]) -> None:
+        with self._anchor_lock:
+            if self._pending is not None:
+                self._pending.append((start, dispose))
+                return
+        start()
 
     def reset_anchor(self) -> None:
         """Forget the pinned anchor. Next ``.observable()`` re-pins it."""
@@ -274,33 +311,15 @@ class ReplayStream(Generic[T]):
             iterator = make_iterator()
 
             try:
-                first_ts, first_data, _ = next(iterator)
+                first = next(iterator)
             except StopIteration:
                 observer.on_completed()
                 return Disposable()
 
-            wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
-            now_replay = replay_t0 + (time.time() - wall_t0) * speed
-
-            # Late-subscribe skip: drop frames behind the wall clock. Stop
-            # if the iterator wraps — that means we've exhausted
-            # one full pass without finding a forward frame.
+            wall_t0: float
+            replay_t0: float
             wrap_offset = 0.0
-            prev_skip = first_ts
-            while first_ts < now_replay - _LATE_TOLERANCE:
-                try:
-                    cand_ts, cand_data, wrapped = next(iterator)
-                except StopIteration:
-                    observer.on_completed()
-                    return Disposable()
-                if wrapped or cand_ts < prev_skip:
-                    wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
-                    first_ts, first_data = cand_ts, cand_data
-                    break
-                first_ts, first_data = cand_ts, cand_data
-                prev_skip = cand_ts
-
-            prev_ts = first_ts
+            prev_ts = first[0]
 
             def schedule(message: tuple[float, Any, bool], wrap_off: float, prev: float) -> None:
                 if disposed.is_set():
@@ -340,7 +359,33 @@ class ReplayStream(Generic[T]):
                 pending.disposable = scheduled
                 scheduled.disposable = sched.schedule_relative(delay, emit)
 
-            schedule((first_ts, first_data, False), wrap_offset, prev_ts)
+            def start() -> None:
+                nonlocal wall_t0, replay_t0, wrap_offset, prev_ts
+                with emission_lock:
+                    if disposed.is_set():
+                        return
+                    first_ts, first_data, _ = first
+                    wall_t0, replay_t0 = replay._resolve_anchor(first_ts)
+                    now_replay = replay_t0 + (time.time() - wall_t0) * speed
+
+                    # Late subscribers still skip elapsed playback. A wrap
+                    # ends the search after one pass even for a singleton loop.
+                    prev_skip = first_ts
+                    while first_ts < now_replay - _LATE_TOLERANCE:
+                        try:
+                            cand_ts, cand_data, wrapped = next(iterator)
+                        except StopIteration:
+                            observer.on_completed()
+                            return
+                        if wrapped or cand_ts < prev_skip:
+                            wrap_offset += (prev_skip - cand_ts) + _LOOP_GAP
+                            first_ts, first_data = cand_ts, cand_data
+                            break
+                        first_ts, first_data = cand_ts, cand_data
+                        prev_skip = cand_ts
+
+                    prev_ts = first_ts
+                    schedule((first_ts, first_data, False), wrap_offset, prev_ts)
 
             def dispose() -> None:
                 disposed.set()
@@ -350,6 +395,11 @@ class ReplayStream(Generic[T]):
                 with emission_lock:
                     iterator.close()
 
+            try:
+                replay._start_or_defer(start, dispose)
+            except BaseException:
+                dispose()
+                raise
             return Disposable(dispose)
 
         return rx.create(subscribe)
