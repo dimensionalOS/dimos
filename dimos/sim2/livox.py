@@ -39,6 +39,13 @@ from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
 from dimos.simulation.sensors.mid360.lidar import sim_mid360
 from dimos.simulation.sensors.mid360.pattern import POINT_RATE
 from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+"""How many casts to time before saying how long they take. Enough to have a median worth
+reporting, few enough to be over within a few seconds of starting."""
+COST_SAMPLES = 50
 
 
 class LivoxSimConfig(ModuleConfig):
@@ -94,6 +101,7 @@ class LivoxSim(Module):
 
     async def _scan(self, view: WorldView, sensor: SimLidar, site: str) -> None:
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
+        cast_cost: list[float] = []
         # Scans and IMU readings pace on sim time, so both keep their rates per sim second at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
             view.update(self._world)
@@ -110,6 +118,18 @@ class LivoxSim(Module):
             points = await asyncio.to_thread(
                 sensor.cast, position, rotation_matrix(orientation), points_per_scan
             )
+            # How much world went by during the cast, which is how far a scan used to be mis-dated
+            # and so how far a turning robot's cloud was thrown off. Said once, because the number
+            # is the thing worth knowing and the rate it happens at is not.
+            if len(cast_cost) < COST_SAMPLES:
+                cast_cost.append(self._world.stamp() - taken_at)
+                if len(cast_cost) == COST_SAMPLES:
+                    median = sorted(cast_cost)[len(cast_cost) // 2]
+                    logger.info(
+                        f"lidar cast spans {1000 * median:.0f} ms of sim time "
+                        f"({points_per_scan} rays); a scan dated at the end of it rather than at "
+                        f"its pose is thrown that far round by a turning robot"
+                    )
             # The Mid360's own layout; each scan is cast from one pose, so every point is at offset 0.
             self.lidar.publish(
                 PointCloud2.from_numpy(
