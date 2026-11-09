@@ -110,7 +110,6 @@ class Go2Sim(Module):
             "simulated": SimulatedRobot(
                 config.robot_id,
                 self.usd,
-                "base",
                 xyz=config.xyz,
                 control_period=CONTROL_DT,
                 servos=tuple(

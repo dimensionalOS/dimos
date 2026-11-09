@@ -92,7 +92,7 @@ class _Dog(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
         config = self.config
-        robot = SimulatedRobot("dog", config.model, "base", control_period=config.control_period)
+        robot = SimulatedRobot("dog", config.model, control_period=config.control_period)
         return {"simulated": robot}
 
     async def main(self) -> AsyncIterator[None]:

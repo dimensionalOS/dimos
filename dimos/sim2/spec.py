@@ -40,7 +40,6 @@ class SimulatedRobot:
     # Its USD: its sensors' frames are frames in it (UsdModel.with_frames adds them), and the
     # files it names travel with it, so there is no second place to say where its meshes are.
     model: UsdModel
-    root_body: str
     xyz: Vector = (0.0, 0.0, 0.0)
     rpy: Vector = (0.0, 0.0, 0.0)
     floating: bool = True
@@ -48,6 +47,17 @@ class SimulatedRobot:
     control_period: float | None = None
 
     servos: tuple[Servo, ...] = ()
+
+    @property
+    def root_body(self) -> str:
+        """The body everything else on this robot hangs off, as its own layer names it.
+
+        Read from the description rather than stated beside it. A layer already says which of its
+        links is the root -- it is the one no joint has as a child -- so a description that said
+        so again could disagree with the robot it is describing, and the only way to find out
+        would be a world that compiled with the wrong body as its base.
+        """
+        return self.model.root_link
 
 
 @dataclass(frozen=True)

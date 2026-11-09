@@ -68,8 +68,8 @@ def test_robots_and_sensors_compile_into_one_world(scene, robot_model, tmp_path)
         scene,
         resolve(
             [
-                SimulatedRobot("left", left, "base", xyz=(-1, 0, 0.3)),
-                SimulatedRobot("right", right, "base", xyz=(1, 0, 0.3)),
+                SimulatedRobot("left", left, xyz=(-1, 0, 0.3)),
+                SimulatedRobot("right", right, xyz=(1, 0, 0.3)),
                 SimulatedSensor("camera", "eye"),
                 SimulatedSensor("lidar", "lidar"),
                 SimulatedSensor("camera", "overhead"),
@@ -100,7 +100,7 @@ class _Dog(Module):
 
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("dog", self.config.model, "base")}
+        return {"simulated": SimulatedRobot("dog", self.config.model)}
 
 
 def test_simulation_builds_the_world_its_blueprint_describes(scene, robot_model):
@@ -134,7 +134,7 @@ def test_backend_steps_physics_and_takes_commands(scene, robot_model, tmp_path):
     backend = MujocoBackend(
         SimulationConfig(scene=scene),
         scene,
-        {"dog": SimulatedRobot("dog", robot_model, "base", xyz=(0, 0, 1))},
+        {"dog": SimulatedRobot("dog", robot_model, xyz=(0, 0, 1))},
         tmp_path,
     )
     published = _Collect()
@@ -166,7 +166,7 @@ def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_mo
     backend = MujocoBackend(
         SimulationConfig(scene=scene),
         scene,
-        {"dog": SimulatedRobot("dog", robot_model, "base")},
+        {"dog": SimulatedRobot("dog", robot_model)},
         tmp_path,
     )
     backend.apply([JointCommand("dog", ("neck",), effort=(0.5,))])
@@ -185,7 +185,7 @@ def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, rob
     backend = MujocoBackend(
         SimulationConfig(scene=scene),
         scene,
-        {"dog": SimulatedRobot("dog", robot_model, "base")},
+        {"dog": SimulatedRobot("dog", robot_model)},
         tmp_path,
     )
     seen = _Collect()
@@ -205,7 +205,7 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, t
     backend = MujocoBackend(
         SimulationConfig(scene=scene),
         scene,
-        {"dog": SimulatedRobot("dog", robot_model, "base")},
+        {"dog": SimulatedRobot("dog", robot_model)},
         tmp_path,
     )
     data = json.loads(backend.scene_data())
@@ -221,7 +221,7 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, t
 
 
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model, tmp_path):
-    robot = SimulatedRobot("dog", robot_model, "base", servos=(Servo("neck", 0.01, 0.001),))
+    robot = SimulatedRobot("dog", robot_model, servos=(Servo("neck", 0.01, 0.001),))
     backend = MujocoBackend(SimulationConfig(scene=scene), scene, {"dog": robot}, tmp_path)
     published = _Collect()
 
@@ -242,7 +242,7 @@ def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model, t
 
 
 def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model, tmp_path):
-    robot = SimulatedRobot("dog", robot_model, "base", control_period=0.02)
+    robot = SimulatedRobot("dog", robot_model, control_period=0.02)
     backend = MujocoBackend(SimulationConfig(scene=scene), scene, {"dog": robot}, tmp_path)
     tick_times: list[float] = []
 

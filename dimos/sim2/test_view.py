@@ -44,7 +44,7 @@ def description(tmp_path: Path) -> dict:
     return {
         "scene": str(scene),
         "simulated": [
-            SimulatedRobot("dog", robot, "base"),
+            SimulatedRobot("dog", robot),
             SimulatedSensor("camera", "eye", robot_id="dog"),
             SimulatedSensor("imu", "imu", robot_id="dog"),
             SimulatedSensor("lidar", "lidar", robot_id="dog"),

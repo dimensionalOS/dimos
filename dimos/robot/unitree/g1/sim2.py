@@ -141,7 +141,6 @@ class G1Sim(Module):
             "simulated": SimulatedRobot(
                 self.config.robot_id,
                 self.usd,
-                ROOT_BODY,
                 xyz=(x, y, HOME_HEIGHT),
                 servos=SERVOS,
             )

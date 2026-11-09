@@ -40,7 +40,7 @@ def _simulation(**simulated: object) -> Simulation:
 
 def test_simulation_describes_its_world(model):
     simulation = _simulation(
-        dog=SimulatedRobot("dog", model, "base"),
+        dog=SimulatedRobot("dog", model),
         cam=SimulatedSensor("camera", "camera_optical"),
         imu=SimulatedSensor("imu", "imu"),
         head=SimulatedSensor("lidar", "head"),
@@ -61,7 +61,7 @@ def test_simulation_describes_its_world(model):
 
 
 @pytest.mark.parametrize(
-    "config", [{"simulatd": SimulatedRobot("dog", toy_robot(), "base")}, {"simulated": 1}]
+    "config", [{"simulatd": SimulatedRobot("dog", toy_robot())}, {"simulated": 1}]
 )
 def test_a_malformed_description_is_rejected(config):
     simulation = Simulation()
@@ -73,9 +73,7 @@ def test_a_malformed_description_is_rejected(config):
 
 
 def test_duplicate_robots_are_rejected(model):
-    simulation = _simulation(
-        a=SimulatedRobot("dog", model, "base"), b=SimulatedRobot("dog", model, "base")
-    )
+    simulation = _simulation(a=SimulatedRobot("dog", model), b=SimulatedRobot("dog", model))
     try:
         with pytest.raises(ValueError, match="duplicate"):
             simulation.build()

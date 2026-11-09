@@ -17,7 +17,7 @@
 class Go2Sim(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("go2", self.mjcf, "base")}
+        return {"simulated": SimulatedRobot("go2", self.usd)}
 
 A sensor names only its frame_id: a site (or body) in a robot's MJCF, where the engine mounts it.
 """
