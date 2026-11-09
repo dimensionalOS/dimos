@@ -313,13 +313,17 @@ else:
         from dimos.sim2.module import Simulation
 
         # The real stack with each device swapped for its sim twin: G1Sim for the connection, LivoxSim at
-        # G1Sim's Mid-360 frame for the Mid360. The UsdManager serves G1Sim's URDF (sent it through
-        # shared_config) to renderers; the real stack has no joint tf, so neither does this.
-        _backend = autoconnect(
-            Simulation.blueprint(), G1Sim.blueprint(), UsdManager.blueprint(publish_joint_tf=False)
-        )
+        # G1Sim's Mid-360 frame for the Mid360. The UsdManager serves G1Sim's layer to renderers,
+        # with the lidar grafted onto the frame it is bolted to, so the stage a viewer draws holds
+        # the whole robot rather than the robot alone; the real stack has no joint tf, so neither
+        # does this.
         _mid360 = LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame).remappings(
             [(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")]
+        )
+        _backend = autoconnect(
+            Simulation.blueprint(),
+            G1Sim.blueprint(),
+            UsdManager.blueprint(publish_joint_tf=False, mounts={G1Sim.lidar_mount_frame: _mid360}),
         )
         # Nobody to click Activate in sim.
         _auto_arm = True
