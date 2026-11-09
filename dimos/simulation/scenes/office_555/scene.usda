@@ -139376,7 +139376,10 @@ def Xform "office_555" (
         # With the fittings gone this is the room's light, the way a World is in Blender: sun through
         # the skylights makes the bright patches and this fills everything else. 0.18 was sized to be
         # a whisper next to eighteen lamps; now it has to do their job.
-        float inputs:intensity = 3.2
+        # 3.2 was picked to replace eighteen fittings and it over-replaced them: measured p5 of 0.608,
+        # meaning nothing in frame was dark at all, and the occlusion pass had nothing left to darken.
+        # A world light is meant to be the floor of the lighting, not the whole of it.
+        float inputs:intensity = 1.9
         bool inputs:shadow:enable = 0
     }
 
@@ -139385,7 +139388,9 @@ def Xform "office_555" (
     )
     {
         color3f inputs:color = (1, 0.9636363, 0.9090909)
-        float inputs:intensity = 1.4
+        # The only thing in the room that casts now. With the world light pulled back it carries the
+        # contrast: bright patches under the skylights, and shadows with somewhere to fall.
+        float inputs:intensity = 2.1
         bool inputs:shadow:enable = 1
         quatf xformOp:orient = (0.973249, -0.18380234, 0.13785174, 0)
         uniform token[] xformOpOrder = ["xformOp:orient"]
