@@ -145,9 +145,8 @@ class ConnectionSource:
     """One robot behind a connection module, as the coordinator's tick loop sees it.
 
     Each tick the robot gets a complete command: what tasks asked for, and
-    for every other joint velocity 0 if tasks drive only velocities this
-    tick, else a hold at its last commanded or reported position, kept
-    within its limit. Velocity-only joints receive zero when idle.
+    for every other joint a hold at its last commanded or reported position,
+    kept within its limit, or zero velocity if it cannot take a position.
     A robot whose newest
     reading is older than ``reading_timeout_s`` is not commanded, and is
     held where it is once readings return. Does no I/O.
@@ -230,7 +229,7 @@ class ConnectionSource:
             )
         #: Joints this robot's connection commands with zero stiffness.
         self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
-        # Convert the legacy Twist keys to velocity-only joint descriptors
+        # Convert Twist keys to velocity-only joint descriptors
         # once, at the port declaration boundary. No synthetic position state.
         if self._base_port is not None:
             for interface in TWIST_INTERFACES:
@@ -442,22 +441,17 @@ class ConnectionSource:
 
     def command(
         self,
-        winners: Mapping[str, float],
-        mode: ControlMode | None,
+        winners: Mapping[str, tuple[float, ControlMode]],
         *,
-        joint_modes: Mapping[str, ControlMode] | None = None,
         holding: bool = False,
         hold_token: object = None,
     ) -> Values:
         """The complete command to send the robot this tick, by key.
 
         Args:
-            winners: What tasks asked for, by joint name, e.g.
-                ``{"arm/joint1": 0.3}``. Only this robot's joints, including
-                any velocity-only aliases declared by its ports.
-            mode: How the winners drive their joints. ``None`` when no task
-                drives this robot's joints this tick.
-            joint_modes: Internal per-joint winning modes, overriding ``mode``.
+            winners: Each winning joint's value and control mode, e.g.
+                ``{"arm/joint1": (0.3, ControlMode.POSITION)}``. Includes
+                velocity-only aliases declared by the connection's ports.
             holding: Internal operator safety state. Freeze positional resources
                 at measured positions and zero velocity-only resources. The tick
                 loop supplies no task winners while this is set.
@@ -471,17 +465,12 @@ class ConnectionSource:
                 speed. The robot then gets no command this tick and its holds
                 are left as they were.
         """
-        interfaces: dict[str, str | None] = {}
-        for name in winners:
-            winning_mode = joint_modes.get(name) if joint_modes is not None else mode
-            interfaces[name] = (
-                _INTERFACE_BY_MODE.get(winning_mode) if winning_mode is not None else None
-            )
+        interfaces = {name: _INTERFACE_BY_MODE.get(mode) for name, (_, mode) in winners.items()}
         # Check every task value first: the connection module refuses the
         # whole message if one is out of range, so no hold may change unless
         # all of them are sendable.
         joints = {joint.name: joint for joint in self._joints}
-        for name, value in winners.items():
+        for name, (value, _) in winners.items():
             if name not in joints:
                 raise ValueError(f"Unknown joint {name}")
             joint = joints[name]
@@ -503,15 +492,12 @@ class ConnectionSource:
             self._resumed = False
         self._holding = holding
         self._hold_token = hold_token
-        # Preserve the explicit whole-source mode for older direct callers.
-        # Per-joint routing must not switch an unrelated idle resource's mode.
-        velocity_tick = joint_modes is None and mode is ControlMode.VELOCITY
         values: Values = {}
         for joint in self._joints:
             if not holding and joint.name in winners:
                 interface = interfaces[joint.name]
                 assert interface is not None
-                value = winners[joint.name]
+                value, _ = winners[joint.name]
                 values[joint.command_keys[interface]] = value
                 if interface == Interface.POSITION:
                     self._holds[joint.name] = value
@@ -519,10 +505,6 @@ class ConnectionSource:
                     self._holds.pop(joint.name, None)
                 continue
             velocity_key = joint.command_keys.get(Interface.VELOCITY)
-            if not holding and velocity_tick and velocity_key is not None:
-                values[velocity_key] = 0.0
-                self._holds.pop(joint.name, None)
-                continue
             hold = self._hold(joint, latest)
             if hold is not None:
                 values[joint.command_keys[Interface.POSITION]] = hold
