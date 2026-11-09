@@ -268,6 +268,7 @@ class TickLoop:
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
         per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
+        read_at: list[float] = []
 
         with self._hardware_lock:
             for hw in self._hardware.values():
@@ -290,12 +291,17 @@ class TickLoop:
                 joint_positions.update(joints.joint_positions)
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
+                if joints.timestamp:
+                    read_at.append(joints.timestamp)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
             joint_velocities=joint_velocities,
             joint_efforts=joint_efforts,
-            timestamp=time.time(),
+            # The newest reading's own stamp, falling back to the wall clock when nothing carries
+            # one. Taking the wall clock regardless threw away the sim time the readings arrived
+            # with, and put every joint on a different clock from the pose they hang off.
+            timestamp=max(read_at) if read_at else time.time(),
         )
         return snapshot, per_hardware
 
