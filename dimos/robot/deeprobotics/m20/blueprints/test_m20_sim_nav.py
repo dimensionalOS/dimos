@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulator runs the navigation the robot runs, with only the step limit lowered to its policy's."""
 
 from dataclasses import replace
 
@@ -34,7 +33,6 @@ from dimos.simulation.m20_sim.world import SIM_M20, STEP_LIMIT
 from dimos.spec.utils import Spec
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# The robot's connection gates nav velocity, the sim world takes it directly.
 _ROBOT_ONLY_REMAPPINGS = {("movementmanager", "cmd_vel"): "requested_cmd_vel"}
 
 

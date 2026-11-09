@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm trajectories and grippers through a connection module."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -27,7 +26,6 @@ from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.usd_manager import UsdManager
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
-# Each jaw's task name, its finger joint, its command stream and its open end.
 _GRIPPERS = [
     (f"arm_{gripper.name}", f"arm/{gripper.joint}", f"{gripper.name}_command", gripper.open_at)
     for gripper in OpenArmConnection.robot.grippers
@@ -35,7 +33,6 @@ _GRIPPERS = [
 
 
 def openarm_connection_control_blueprint() -> Blueprint:
-    """Trajectories and the grippers, with the robot model served to clients."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
