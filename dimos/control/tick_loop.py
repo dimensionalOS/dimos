@@ -236,7 +236,7 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
-        self._write_all_connections(hw_commands)
+        self._write_all_connections(joint_commands)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -445,11 +445,8 @@ class TickLoop:
     ) -> dict[str, tuple[dict[str, float], ControlMode]]:
         """Route joint-centric commands to hardware.
 
-        A base axis of a robot behind a connection module (``go2/base/vx``)
-        goes to its own ``<robot>/base`` entry, so a velocity task driving
-        the base never mode-conflicts with a task driving the robot's joints
-        in another mode; ``_write_all_connections`` merges the two entries
-        into one command per robot.
+        Connection commands retain their per-joint modes in
+        ``_write_all_connections``. Legacy adapters keep one mode per hardware.
 
         Returns:
             {hardware_id: ({joint: value}, mode)}
@@ -457,30 +454,28 @@ class TickLoop:
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]] = {}
 
         with self._hardware_lock:
-            base_axes = {
-                axis for source in self._connections.values() for axis in source.base_joint_names
-            }
             for joint_name, (value, mode, _) in joint_commands.items():
                 hw_id = self._joint_to_hardware.get(joint_name)
                 if hw_id is None:
                     logger.warning(f"Unknown joint {joint_name}, cannot route")
                     continue
 
-                route = f"{hw_id}/base" if joint_name in base_axes else hw_id
-                if route not in hw_commands:
-                    hw_commands[route] = ({}, mode)
+                if hw_id in self._connections:
+                    continue
+                if hw_id not in hw_commands:
+                    hw_commands[hw_id] = ({}, mode)
                 else:
                     # Check for mode conflict across joints on same hardware
-                    existing_mode = hw_commands[route][1]
+                    existing_mode = hw_commands[hw_id][1]
                     if mode != existing_mode:
                         logger.error(
-                            f"Mode conflict for hardware {route}: joint {joint_name} wants "
+                            f"Mode conflict for hardware {hw_id}: joint {joint_name} wants "
                             f"{mode.name} but hardware already has {existing_mode.name}. "
                             f"Dropping command for {joint_name}."
                         )
                         continue
 
-                hw_commands[route][0][joint_name] = value
+                hw_commands[hw_id][0][joint_name] = value
 
         return hw_commands
 
@@ -531,7 +526,7 @@ class TickLoop:
 
     def _write_all_connections(
         self,
-        hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        joint_commands: dict[str, tuple[float, ControlMode, str]],
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -542,24 +537,44 @@ class TickLoop:
         publish = self._connection_command_callback
         if publish is None:
             return
+        from dimos.control.tasks.operator_hold_task.operator_hold_task import OperatorHoldTask
+
         now = time.monotonic()
         with self._hardware_lock:
             for name, source in self._connections.items():
                 if not source.ready_for_control(now):
                     self._note_silence(name, source, now)
                     continue
+                # Check each publication, after readiness and while holding the
+                # same hardware lock as the write, not before waiting on it.
+                with self._task_lock:
+                    hold_tokens = tuple(
+                        token
+                        for task in self._tasks.values()
+                        if isinstance(task, OperatorHoldTask)
+                        if (token := task._hold_token()) is not None
+                    )
+                holding = bool(hold_tokens)
                 winners: dict[str, float] = {}
-                mode: ControlMode | None = None
-                if name in hw_commands:
-                    winners, mode = hw_commands[name]
-                # Base axes routed to their own entry (see _route_to_hardware)
-                # rejoin the robot's command here; they are speeds whatever
-                # the joints' mode is.
-                base = hw_commands.get(f"{name}/base")
-                if base is not None:
-                    winners = {**winners, **base[0]}
+                modes: dict[str, ControlMode] = {}
+                # An operator hold is a safety state, not a mixed-mode task:
+                # let the source stop each resource by its capabilities.
+                if not holding:
+                    for joint, (value, mode, _) in joint_commands.items():
+                        if self._joint_to_hardware.get(joint) == name:
+                            winners[joint] = value
+                            modes[joint] = mode
                 try:
-                    publish(name, source.command(winners, mode))
+                    publish(
+                        name,
+                        source.command(
+                            winners,
+                            None,
+                            joint_modes=modes,
+                            holding=holding,
+                            hold_token=hold_tokens,
+                        ),
+                    )
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 

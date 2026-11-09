@@ -52,7 +52,6 @@ from dimos.control.hardware_interface import (
 )
 from dimos.control.routing import Routing
 from dimos.control.task import ControlTask
-from dimos.control.tasks.operator_hold_task.operator_hold_task import OperatorHoldTask
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     TrajectoryCancellationResult,
@@ -471,11 +470,6 @@ class ControlCoordinator(Module):
                 f"zero-stiffness joints belong to no robot driven here: {sorted(unknown)}"
             )
 
-                # A robot with a base port gets its base axes (go2/base/vx,
-                # ...) routed to it too, so a velocity task can claim and
-                # drive them like an adapter base's virtual joints.
-                for axis in source.base_joint_names:
-                    self._joint_to_hardware[axis] = robot
         for robot, source in self._connections.items():
             for kind in source.reading_ports:
                 handler = functools.partial(source.on_message, kind)
@@ -488,18 +482,7 @@ class ControlCoordinator(Module):
         which holds ``_hardware_lock``."""
         if self._estopped:
             return
-        # A positional hold does not own virtual velocity joints. Gate the
-        # connection base at the final output boundary instead, regardless
-        # of the winning velocity task's priority or whether joints are read.
         source = self._connections[robot]
-        if source.base_joint_names:
-            with self._task_lock:
-                holding = any(
-                    isinstance(task, OperatorHoldTask) and task.is_active()
-                    for task in self._tasks.values()
-                )
-            if holding:
-                values = {**values, **dict.fromkeys(source.base_joint_names, 0.0)}
         ports = self._command_ports[robot]
         for out in source.command_messages(values, time.time()):
             ports[out.port].publish(out.message)

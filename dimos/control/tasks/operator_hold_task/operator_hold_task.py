@@ -144,6 +144,7 @@ class OperatorHoldTask(BaseControlTask):
 
         self._lock = threading.Lock()
         self._on = False
+        self._generation = 0
         self._route = ""
         self._reason = ""
         self._started_at = 0.0
@@ -164,6 +165,11 @@ class OperatorHoldTask(BaseControlTask):
                 priority=self._priority,
                 mode=ControlMode.SERVO_POSITION,
             )
+
+    def _hold_token(self) -> tuple[object, int] | None:
+        """Identify an active hold session even if release/re-request occurs between ticks."""
+        with self._lock:
+            return (self, self._generation) if self._on else None
 
     def is_active(self) -> bool:
         return self._on
@@ -230,6 +236,7 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             if not self._on:
                 self._on = True
+                self._generation += 1
                 self._held = {}
                 self._unheld = set()
                 # Wall clock, for people reading the status; never used for control.

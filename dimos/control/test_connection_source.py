@@ -28,6 +28,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
@@ -252,7 +253,7 @@ def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     assert values == {"go2/base/vx": 0.0, "go2/base/vy": 0.0, "go2/base/wz": 0.0}
     assert first.port == "cmd_vel" and rest == []
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-    assert source.joint_names == []
+    assert source.joint_names == source.base_joint_names
 
 
 def test_a_base_axis_is_a_speed_a_task_can_win() -> None:
@@ -276,6 +277,65 @@ def test_a_base_axis_is_a_speed_a_task_can_win() -> None:
         "go2/base/vy": 0.0,
         "go2/base/wz": 0.0,
     }
+
+
+def test_velocity_aliases_are_joint_descriptors_with_only_real_feedback() -> None:
+    source = base()
+    assert source.joint_names == source.base_joint_names
+    axis = "go2/base/vx"
+    joint = next(joint for joint in source._joints if joint.name == axis)
+    assert joint.command_keys == {"velocity": axis}
+    assert "position" not in joint.state_keys
+    assert not source.ready_for_control()
+    assert source.read_joints().joint_velocities == {}
+    source.on_message("odom", PoseStamped(frame_id="odom"))
+    assert source.read_joints().joint_positions == {}
+    assert source.read_joints().joint_velocities == {}
+    assert not source.ready_for_control()
+    source.on_message("base_velocity", TwistStamped(linear=Vector3(0.4, 0.0, 0.0), frame_id="base"))
+    assert source.ready_for_control()
+    assert source.read_joints().joint_velocities[axis] == 0.4
+    assert source.read_joints().joint_positions == {}
+
+
+def test_a_velocity_alias_rejects_position_instead_of_treating_it_as_speed() -> None:
+    with pytest.raises(ValueError, match="cannot be told its position"):
+        base().command({"go2/base/vx": 0.5}, ControlMode.POSITION)
+
+
+def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
+    source = arm(commands=("position_command", "velocity_command"))
+    source.on_message("joint_state", reading(0.2, -0.2))
+    source.command({}, None)
+    values = source.command({J1: 0.3}, None, joint_modes={J1: ControlMode.VELOCITY})
+    assert values[f"{J1}/velocity"] == 0.3
+    assert values[f"{J2}/position"] == -0.2
+    assert f"{J2}/velocity" not in values
+
+
+def test_mixed_commands_use_joint_keys_and_twist_aliases_without_fake_joint_state() -> None:
+    source = arm(
+        commands=("position_command", "velocity_command", "cmd_vel"),
+        readings=("joint_state", "odom"),
+    )
+    source.on_message("joint_state", reading(0.2, -0.2))
+    source.on_message("odom", PoseStamped(frame_id="odom"))
+    axis = "arm/base/vx"
+    assert source.ready_for_control()
+    assert source.read_joints().joint_positions == {J1: 0.2, J2: -0.2}
+    assert source.read_joints().joint_velocities == {}
+    values = source.command(
+        {J1: 0.5, axis: 0.4},
+        None,
+        joint_modes={J1: ControlMode.POSITION, axis: ControlMode.VELOCITY},
+    )
+    by_port = {msg.port: msg.message for msg in source.command_messages(values, ts=1.0)}
+    assert list(by_port["position_command"].name) == [J1, J2]
+    assert "velocity_command" not in by_port
+    assert by_port["cmd_vel"].linear.x == 0.4
+    with pytest.raises(ValueError, match="cannot be told its position"):
+        source.command({J1: 0.7, axis: 0.4}, ControlMode.POSITION)
+    assert source.command({}, None)[f"{J1}/position"] == 0.5
 
 
 def test_a_non_finite_base_speed_is_refused() -> None:
