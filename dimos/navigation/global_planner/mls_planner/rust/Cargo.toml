@@ -13,7 +13,7 @@ path = "src/lib.rs"
 name = "mls_planner"
 path = "src/main.rs"
 
-# Bake registry entry, cross-checked at compile time by the module macro.
+# Module registry entry, cross-checked at compile time by the module macro.
 # threads = 2 so the handle loop keeps dispatching while the planning worker
 # runs block_in_place.
 [package.metadata.dimos.module.mls_planner]
@@ -38,7 +38,7 @@ path = "nav_msgs.Path"
 nav_status = "actionlib_msgs.GoalStatus"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 serde = { version = "1", features = ["derive"] }

@@ -56,7 +56,6 @@ from dimos.cli.can import app as can_app
 from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami as cloud_whoami
 from dimos.cli.commands.agent import agent_app
 from dimos.cli.commands.apriltag import apriltag
-from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.docs import docs
@@ -126,14 +125,6 @@ main.add_typer(agent_app, name="agent")
 main.command("agent-send")(agent_send_cmd)
 main.command()(restart)
 main.command()(show_config)
-main.command(
-    context_settings={
-        "allow_extra_args": True,
-        "ignore_unknown_options": True,
-        # let --help through to the bake command itself
-        "help_option_names": [],
-    }
-)(bake)
 main.command(name="list")(list_blueprints)
 main.command()(graph)
 main.command()(docs)

@@ -15,7 +15,7 @@ path = "src/bin/depth2depth_cloud.rs"
 
 [workspace]
 
-# Bake registry entry, cross-checked at compile time by the module macro.
+# Module registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.depth2depth_cloud]
 path = "dimos_depth2depth_cloud::module::Depth2DepthCloud"
 python = "dimos.perception.depth2depth_cloud.module:Depth2DepthCloud"
@@ -30,7 +30,7 @@ tf = "tf2_msgs.TFMessage"
 depth_cloud = "sensor_msgs.PointCloud2"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
