@@ -460,30 +460,6 @@ class UsdManager(Module):
         # over render_file_request, not a path that resolves against a directory on any disk.
         return ["", published]
 
-    @rpc
-    async def get_asset(self, name: str) -> bytes:
-        """The bytes of one asset the scene this manager published names.
-
-        `get_scene` hands out names, not paths: a scene travels as a string and its meshes are
-        fetched, which is what lets a consumer anywhere read it. This is that fetch, as an rpc
-        rather than a round trip over `render_file_request`, because a consumer that has to open
-        the scene needs every mesh before it can start, synchronously, and wants an error rather
-        than a message that never comes. A viewer drawing lazily is better served by the topic,
-        and still is.
-
-        Only names this manager published, and only the files behind them. A request is never an
-        arbitrary path into the filesystem.
-        """
-        await self._ready.wait()
-        real = self._published_assets.get(name, name if name in self._file_paths else None)
-        if real is None:
-            raise KeyError(
-                f"{name!r} is neither a file this description names nor an asset the last scene "
-                f"published. Ask for a scene before its assets: the names only exist once one "
-                f"has been handed out."
-            )
-        return await asyncio.to_thread(self._resolved(real).read_bytes)
-
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:
             raise CircularMountError(
