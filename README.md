@@ -128,10 +128,10 @@ Dimensional is the open-source operating system for general robotics. We are a r
       🟧 <a href="dimos/robot/galaxea/r1pro/README.md">Galaxea R1 Pro</a><br>
     </td>
     <td align="center" width="20%">
-      🟨 <a href="docs/capabilities/manipulation/index.md">UFactory xArm 6/7, Lite6</a><br>
-      🟨 <a href="docs/capabilities/manipulation/piper_integration.md">AgileX Piper</a><br>
+      🟩 <a href="docs/capabilities/manipulation/index.md">UFactory xArm 6/7, Lite6</a><br>
+      🟩 <a href="docs/capabilities/manipulation/piper_integration.md">AgileX Piper</a><br>
       🟨 <a href="docs/capabilities/manipulation/openyam_integration.md">OpenYAM</a><br>
-      🟧 <a href="docs/capabilities/manipulation/openarm_integration.md">OpenArm</a><br>
+      🟨 <a href="docs/capabilities/manipulation/openarm_integration.md">OpenArm</a><br>
       🟧 <a href="docs/capabilities/manipulation/a1z.md">Galaxea A1Z</a><br>
       🟧 <a href="docs/capabilities/manipulation/makermods_metal_integration.md">MakerMods Metal</a><br>
       🟧 <a href="docs/capabilities/manipulation/seeed_b601_dm_integration.md">Seeed reBot B601-DM</a><br>
