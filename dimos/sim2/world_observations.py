@@ -13,15 +13,15 @@
 # limitations under the License.
 
 
-"""The world as sim2 sends it: a WorldObservations per frame, of only what changed (world_msgs, from dimos-lcm).
+"""The world as sim2 sends it: a WorldObservations per frame, of only what changed (world_msgs,
+from dimos-lcm).
 
-Three kinds of observation: a body's Position (its pose), a joint's JointState, and an entity's CborKeyValues
-(its "path" when it first appears, "act" when the world waits for a robot, anything else). A body's velocity is
-what a real sensor's is: a difference of its poses over time.
+Three kinds of observation: a body's Position (its pose), a joint's JointState, and an entity's
+CborKeyValues (its "path" when it first appears, "act" when the world waits for a robot). A
+body's velocity is a difference of its poses over time.
 
-A backend writes its frames with a WorldWriter; every other module keeps a WorldMirror, which applies each
-frame it gets. There is no catching up: a missed frame is missed, so a world steps only once every
-module has started.
+A backend writes its frames with a WorldWriter; every other module keeps a WorldMirror. There
+is no catching up: a missed frame is missed, so a world steps only once every module started.
 """
 
 import asyncio
