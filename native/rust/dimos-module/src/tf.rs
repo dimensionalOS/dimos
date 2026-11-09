@@ -29,8 +29,8 @@ use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use tokio::sync::{mpsc, Notify};
 use tracing::warn;
 
-use crate::module::Route;
 use crate::time::now_secs;
+use crate::transport::{BoxFuture, Deliver, Dispatch};
 
 /// How many seconds of history each edge keeps.
 pub(crate) const DEFAULT_TF_WINDOW_SECS: f64 = 10.0;
@@ -515,15 +515,15 @@ fn to_stamped(t: &Transform) -> lcm_msgs::geometry_msgs::TransformStamped {
     }
 }
 
-// Decodes /tf messages into the shared graph. Registered as a Route so the
-// module's existing recv loop dispatches tf traffic to it.
+// Decodes /tf messages into the shared graph. Subscribed on the tf topic like
+// any input. A graph update never stalls, so the async entry just runs it.
 struct TfRoute {
     topic: String,
     graph: Arc<Graph>,
 }
 
-impl Route for TfRoute {
-    fn dispatch(&self, data: &[u8]) {
+impl Deliver for TfRoute {
+    fn deliver(&self, data: &[u8]) {
         let msg = match lcm_msgs::tf2_msgs::TFMessage::decode(data) {
             Ok(msg) => msg,
             Err(e) => {
@@ -559,6 +559,10 @@ impl Route for TfRoute {
             }
         });
     }
+
+    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
+        Box::pin(async move { self.deliver(data) })
+    }
 }
 
 // Builds the shared graph plus the handle and the route that feeds it. The
@@ -567,13 +571,13 @@ pub(crate) fn tf_subscription(
     topic: String,
     window_secs: f64,
     sender: mpsc::Sender<Vec<u8>>,
-) -> (Tf, Box<dyn Route>) {
+) -> (Tf, Dispatch) {
     let graph = Arc::new(Graph::new(window_secs));
     let tf = Tf {
         graph: Arc::clone(&graph),
         sender,
     };
-    let route = Box::new(TfRoute { topic, graph });
+    let route = Arc::new(TfRoute { topic, graph });
     (tf, route)
 }
 
@@ -846,7 +850,7 @@ mod tests {
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(30)).await;
-            route.dispatch(&stamped_message("a", "b", 5.0, 1.0));
+            route.deliver(&stamped_message("a", "b", 5.0, 1.0));
         });
         let t = tf
             .lookup("a", "b")
@@ -903,10 +907,10 @@ mod tests {
     fn a_zero_rotation_on_the_wire_is_dropped_rather_than_stored_as_nan() {
         let (tx, _rx) = mpsc::channel(4);
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
-        route.dispatch(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
+        route.deliver(&rotated_message("a", "b", 5.0, 1.0, (0.0, 0.0, 0.0, 0.0)));
         assert!(tf.get_latest("a", "b").is_none());
 
-        route.dispatch(&stamped_message("a", "b", 6.0, 1.0));
+        route.deliver(&stamped_message("a", "b", 6.0, 1.0));
         let t = tf.get_latest("a", "b").expect("valid rotation is accepted");
         assert!(t.rotation().coords.iter().all(|c| c.is_finite()));
     }
@@ -1054,7 +1058,7 @@ mod tests {
                 },
             }],
         };
-        route.dispatch(&msg.encode());
+        route.deliver(&msg.encode());
 
         let t = tf.get_latest("base_link", "mid360_link").unwrap();
         assert!((t.translation().x - 0.1).abs() < 1e-9);
@@ -1096,7 +1100,7 @@ mod tests {
 
         let (tx, _rx2) = mpsc::channel(8);
         let (tf_in, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
-        route.dispatch(&bytes);
+        route.deliver(&bytes);
 
         let t = tf_in.get_latest("a", "b").unwrap();
         assert!((t.translation().x - 0.5).abs() < 1e-9);
@@ -1188,7 +1192,7 @@ mod tests {
     fn dispatch_of_undecodable_bytes_leaves_the_graph_empty() {
         let (tx, _rx) = mpsc::channel(8);
         let (tf, route) = tf_subscription("/tf".to_string(), DEFAULT_TF_WINDOW_SECS, tx);
-        route.dispatch(b"garbage");
+        route.deliver(b"garbage");
         assert!(tf.get_latest("a", "b").is_none());
     }
 

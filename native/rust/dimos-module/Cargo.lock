@@ -618,7 +618,6 @@ dependencies = [
  "async-trait",
  "dimos-lcm",
  "dimos-module-macros",
- "futures-util",
  "lcm-msgs",
  "nalgebra",
  "rayon",

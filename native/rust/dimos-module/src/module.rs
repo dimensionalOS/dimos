@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use futures_util::FutureExt;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::io;
@@ -71,16 +70,6 @@ const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
 // Each input() call produces a TypedRoute that decodes its message type
 // and forwards it to the right Input's channel.
-pub(crate) trait Route: Send + Sync {
-    /// Blocks the calling thread while the input's buffer is full.
-    fn dispatch(&self, data: &[u8]);
-
-    /// Suspends the calling task while the input's buffer is full.
-    fn dispatch_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
-        Box::pin(async move { self.dispatch(data) })
-    }
-}
-
 struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
@@ -100,14 +89,14 @@ impl<T: Send + 'static> TypedRoute<T> {
 }
 
 // A closed channel means the module is stopping.
-impl<T: Send + 'static> Route for TypedRoute<T> {
-    fn dispatch(&self, data: &[u8]) {
+impl<T: Send + 'static> Deliver for TypedRoute<T> {
+    fn deliver(&self, data: &[u8]) {
         if let Some(msg) = self.parse(data) {
             let _ = self.sender.send_blocking(msg);
         }
     }
 
-    fn dispatch_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
+    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             if let Some(msg) = self.parse(data) {
                 let _ = self.sender.send(msg).await;
@@ -315,7 +304,8 @@ pub struct Builder {
     topics: HashMap<String, String>,
     // Every port the module asked for a topic, matched against topics after build.
     requested: BTreeSet<String>,
-    routes: HashMap<String, Vec<Box<dyn Route>>>,
+    // One subscription per port, in the order the module asked for them.
+    routes: Vec<(String, Dispatch)>,
     // One publish queue per output channel, drained by its own worker.
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
     tf: Option<crate::tf::Tf>,
@@ -326,7 +316,7 @@ impl Builder {
         Self {
             topics,
             requested: BTreeSet::new(),
-            routes: HashMap::new(),
+            routes: Vec::new(),
             outputs: Vec::new(),
             tf: None,
         }
@@ -364,14 +354,12 @@ impl Builder {
         decode: fn(&[u8]) -> io::Result<T>,
     ) -> async_channel::Receiver<T> {
         let (tx, rx) = async_channel::bounded(INPUT_BUFFER_LEN);
-        self.routes
-            .entry(topic.to_string())
-            .or_default()
-            .push(Box::new(TypedRoute {
-                topic: topic.to_string(),
-                decode,
-                sender: tx,
-            }));
+        let route = TypedRoute {
+            topic: topic.to_string(),
+            decode,
+            sender: tx,
+        };
+        self.routes.push((topic.to_string(), Arc::new(route)));
         rx
     }
 
@@ -431,51 +419,22 @@ impl Builder {
         let sender = self.add_publisher(&topic);
         let (tf, route) =
             crate::tf::tf_subscription(topic.clone(), crate::tf::DEFAULT_TF_WINDOW_SECS, sender);
-        self.routes.entry(topic).or_default().push(route);
+        self.routes.push((topic, route));
         self.tf = Some(tf.clone());
         tf
     }
 }
 
-/// Subscribe each channel on the transport, dispatching its messages to that
-/// channel's routes.
+/// Subscribe each port's route on the transport. Two ports on one topic are
+/// two subscriptions, the transport fans the topic out.
 pub(crate) async fn subscribe_routes(
     transport: &dyn Transport,
-    routes: HashMap<String, Vec<Box<dyn Route>>>,
+    routes: Vec<(String, Dispatch)>,
 ) -> io::Result<()> {
-    for (channel, routes) in routes {
-        let dispatch: Dispatch = Arc::new(TopicRoutes(routes));
-        transport.subscribe(&channel, dispatch).await?;
+    for (channel, route) in routes {
+        transport.subscribe(&channel, route).await?;
     }
     Ok(())
-}
-
-/// Every route on one topic. A panicking route must not kill the delivery loop.
-struct TopicRoutes(Vec<Box<dyn Route>>);
-
-impl Deliver for TopicRoutes {
-    fn deliver(&self, data: &[u8]) {
-        for route in &self.0 {
-            let dispatched =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| route.dispatch(data)));
-            if dispatched.is_err() {
-                error!("dispatch handler panicked; message dropped");
-            }
-        }
-    }
-
-    fn deliver_async<'a>(&'a self, data: &'a [u8]) -> BoxFuture<'a, ()> {
-        Box::pin(async move {
-            for route in &self.0 {
-                let dispatched = std::panic::AssertUnwindSafe(route.dispatch_async(data))
-                    .catch_unwind()
-                    .await;
-                if dispatched.is_err() {
-                    error!("dispatch handler panicked; message dropped");
-                }
-            }
-        })
-    }
 }
 
 /// Spawn one worker per output channel so they don't block each other
@@ -981,7 +940,8 @@ mod tests {
     fn io_registers_one_route_and_one_publisher_on_the_same_topic() {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
         let _io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
-        assert_eq!(builder.routes.get("/robot/cmd").map(Vec::len), Some(1));
+        assert_eq!(builder.routes.len(), 1);
+        assert_eq!(builder.routes[0].0, "/robot/cmd");
         assert_eq!(builder.outputs.len(), 1);
         assert_eq!(builder.outputs[0].0, "/robot/cmd");
     }
@@ -991,7 +951,7 @@ mod tests {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
         let mut io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
 
-        builder.routes["/robot/cmd"][0].dispatch(b"inbound");
+        builder.routes[0].1.deliver(b"inbound");
         assert_eq!(io.recv().await.expect("inbound message"), b"inbound");
 
         io.publish(&b"outbound".to_vec()).await.expect("publish");
@@ -1015,7 +975,7 @@ mod tests {
     fn tf_uses_mapped_topic() {
         let mut builder = builder_with_topics(&[("tf", "/robot/tf")]);
         builder.tf();
-        assert!(builder.routes.contains_key("/robot/tf"));
+        assert_eq!(builder.routes[0].0, "/robot/tf");
         assert_eq!(builder.outputs[0].0, "/robot/tf");
     }
 
@@ -1025,7 +985,7 @@ mod tests {
         builder.tf();
         builder.tf();
         assert_eq!(builder.outputs.len(), 1);
-        assert_eq!(builder.routes.get("/tf").map(Vec::len), Some(1));
+        assert_eq!(builder.routes.len(), 1);
     }
 
     // recv/publish concurrency
@@ -1188,45 +1148,7 @@ mod tests {
         propagate_task_failure("recv", Ok(()));
     }
 
-    // subscribe_routes panic isolation
-
-    struct PanicRoute;
-    impl Route for PanicRoute {
-        fn dispatch(&self, _data: &[u8]) {
-            panic!("handler blew up");
-        }
-    }
-
-    struct CountingRoute(Arc<AtomicU64>);
-    impl Route for CountingRoute {
-        fn dispatch(&self, _data: &[u8]) {
-            self.0.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn panicking_route_does_not_starve_siblings_on_same_channel() {
-        let transport = ControllableMockTransport::new();
-        let inbound = transport.inbound.clone();
-
-        let delivered = Arc::new(AtomicU64::new(0));
-        let mut routes: HashMap<String, Vec<Box<dyn Route>>> = HashMap::new();
-        routes.insert(
-            "/data".to_string(),
-            vec![
-                Box::new(PanicRoute),
-                Box::new(CountingRoute(Arc::clone(&delivered))),
-            ],
-        );
-
-        subscribe_routes(&transport, routes).await.unwrap();
-        inject_inbound(&inbound, "/data", vec![7u8]);
-
-        wait_for("sibling route to receive despite the panic", || {
-            delivered.load(Ordering::SeqCst) == 1
-        })
-        .await;
-    }
+    // input backpressure
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn full_input_blocks_dispatch_instead_of_dropping() {
@@ -1272,14 +1194,14 @@ mod tests {
     async fn full_input_suspends_async_delivery() {
         let mut builder = Builder::new(topics(&[("data", "/data")]));
         let mut input = builder.input("data", |b| Ok(b.to_vec()));
-        let routes = Arc::new(TopicRoutes(builder.routes.remove("/data").unwrap()));
+        let (_, route) = builder.routes.pop().unwrap();
 
         for i in 0..INPUT_BUFFER_LEN {
-            routes.deliver_async(&[i as u8]).await;
+            route.deliver_async(&[i as u8]).await;
         }
         let blocked = tokio::spawn({
-            let routes = Arc::clone(&routes);
-            async move { routes.deliver_async(&[INPUT_BUFFER_LEN as u8]).await }
+            let route = Arc::clone(&route);
+            async move { route.deliver_async(&[INPUT_BUFFER_LEN as u8]).await }
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
@@ -1295,17 +1217,6 @@ mod tests {
         for i in 1..=INPUT_BUFFER_LEN {
             assert_eq!(input.recv().await.unwrap(), vec![i as u8]);
         }
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn panicking_route_does_not_starve_siblings_in_async_delivery() {
-        let delivered = Arc::new(AtomicU64::new(0));
-        let routes = TopicRoutes(vec![
-            Box::new(PanicRoute),
-            Box::new(CountingRoute(Arc::clone(&delivered))),
-        ]);
-        routes.deliver_async(&[7u8]).await;
-        assert_eq!(delivered.load(Ordering::SeqCst), 1);
     }
 
     // Exercises the code #[derive(Module)] generates for an #[io] field.
@@ -1345,7 +1256,7 @@ mod tests {
             let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
             let mut echo = Echo::build(&mut builder, NoConfig);
 
-            builder.routes["/robot/cmd"][0].dispatch(b"ping");
+            builder.routes[0].1.deliver(b"ping");
             // Dropping the routes closes the sender, so handle() drains and returns.
             builder.routes.clear();
             echo.handle().await;
