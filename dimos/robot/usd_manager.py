@@ -58,8 +58,7 @@ MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
 
 # The RPC every mounted module answers with its own subtree as a USD string.
 SUBTREE_RPC = "get_usd"
-# The RPC a mounted module answers with its *whole* tree, its own mounts included. A manager
-# has one; a plain sensor does not.
+# The RPC a mounted module answers with its *whole* tree. A manager has one; a sensor does not.
 SCENE_RPC = "get_scene"
 
 
@@ -81,19 +80,12 @@ def _as_usd(model: RobotModel | UsdModel) -> UsdModel:
     return model if isinstance(model, UsdModel) else model.to_usd()
 
 
-# What get_usd and get_scene answer with: [asset_root, usd].
-#
-# A USD layer names its meshes relative to something, and only the module that answered for it
-# knows what. Without the root travelling alongside, a subtree's mesh paths are unresolvable the
-# moment they leave the process that produced them -- the answering module's cwd is not the
-# asker's, and two subtrees need not share a root at all.
-#
-# asset_root is absolute, or relative to the answering process's cwd, or empty when the layer
-# names no files.
+# What get_usd and get_scene answer with: [asset_root, usd]. A layer names its meshes relative
+# to something only the answering module knows, so the root travels with it. asset_root is
+# absolute, or relative to the answering process's cwd, or empty when the layer names no files.
 ASSET_ROOT, USD = 0, 1
 
-# What a renderer asks for to get the scene itself. A description is this module's input, not its
-# output: what it serves is USD.
+# What a renderer asks for. A description is this module's input; what it serves is USD.
 USD_SUFFIXES = (".usd", ".usda")
 
 # get_scene waits forever, so say so periodically rather than hang silently.
@@ -104,34 +96,28 @@ _WAITING_LOG_EVERY = 20
 class Mount:
     """A module owning a subtree: the name it answers RPC under, and the one its frames take.
 
-    Both come apart from the class as soon as a robot has two of the same arm. The class is
+    Both come apart from the class as soon as a robot has two of the same arm: the class is
     shared, so only the deployed instance name reaches the right one, and the description is
-    shared, so only its namespace tells their frames apart. The mounts config builds these;
-    nothing constructs one by hand.
+    shared, so only its namespace tells their frames apart.
     """
 
-    # None when only the instance name was given: the class is not importable here, so the
-    # fail-fast get_usd check has to be skipped for it.
+    # None when only the instance name was given: no class here, so the get_usd check is skipped.
     module: type[Module] | None
     remote_name: str
-    # The namespaced module's own frame_id_prefix, read straight off it rather than derived from
-    # remote_name: namespace() sets the two together but keeps a frame_id_prefix the user set
-    # by hand, and that override is the answer to "what are this module's frames called".
+    # Read straight off the module rather than derived from remote_name: namespace() keeps a
+    # frame_id_prefix the user set by hand, and that override is what its frames are called.
     frame_prefix: str = ""
-    # The rpc that hands over this module's whole tree. A manager that has mounts of its own
-    # answers get_scene, and asking it that rather than get_usd is what makes mounting
-    # iterative: a lidar on a g1 arrives with the g1. Anything else only has get_usd.
-    # A bare instance name has no class to ask, so it gets get_usd and says so.
+    # The rpc that hands over this module's whole tree. A manager with mounts answers get_scene,
+    # which is what makes mounting iterative: a lidar on a g1 arrives with the g1.
     subtree_rpc: str = SUBTREE_RPC
 
     @classmethod
     def of(cls, value: object) -> Mount:
         """Normalize a mounts value.
 
-        A module class names the only instance of itself. A ``Blueprint`` (the useful form:
-        ``XArm.blueprint(...).namespace("left")``) names the exact instance it deploys and
-        carries its frame_id_prefix, so two copies of one class stay both addressable and
-        distinguishable. A plain string is the instance name of a module deployed elsewhere,
+        A module class names the only instance of itself. A ``Blueprint``
+        (``XArm.blueprint(...).namespace("left")``) names the exact instance it deploys and carries
+        its frame_id_prefix. A plain string is the instance name of a module deployed elsewhere,
         where the class is not importable here.
         """
         # Imported here, as Module.blueprint does, to keep this module out of the import cycle.
@@ -140,21 +126,14 @@ class Mount:
         if isinstance(value, Mount):
             return value
         if isinstance(value, Mapping) and "remote_name" in value:
-            # A Mount that has already been normalized once. The config is validated again in
-            # the worker the manager is deployed into, and what arrives there is the plain dict
-            # this one was dumped to -- so without this branch every mount a blueprint actually
-            # deploys is rejected, and mounts only ever work in-process.
+            # A Mount already normalized once: the config is validated again in the manager's worker, and
+            # what arrives there is the plain dict this was dumped to. Without this, mounts stay in-process.
             return cls(**value)
         if isinstance(value, Blueprint):
             return cls._from_blueprint(value)
         if isinstance(value, Mapping) and "blueprints" in value:
-            # A Blueprint that has been through the config parser. It is the useful form to
-            # write, and by the time the manager's worker validates its config again the
-            # blueprint is a plain dict -- so without this branch the documented spelling is
-            # rejected in the one place it matters ("mounts values are a Module subclass, a
-            # Blueprint or an instance name; got {'blueprints': ...}") and only an instance
-            # name written out by hand ever worked. The dict keeps what identifies the
-            # instance: each atom's own `instance_name`, which is what namespace() set.
+            # A Blueprint that has been through the config parser, which is what the worker revalidates.
+            # The dict keeps each atom's own `instance_name`, which is what namespace() set.
             return cls._from_flattened(value)
         if isinstance(value, str):
             # No object to read a frame_id_prefix off, so take the namespace out of the name:
@@ -192,12 +171,7 @@ class Mount:
 
     @classmethod
     def _from_flattened(cls, blueprint: Mapping[str, Any]) -> Mount:
-        """The same rule as `_from_blueprint`, over the plain dict a parsed blueprint becomes.
-
-        The atoms keep their `module` class and their `instance_name`, which is everything that
-        identifies the instance; what they lose is the attribute access, so this reads the same
-        three things out of subscripts.
-        """
+        """The same rule as `_from_blueprint`, over the plain dict a parsed blueprint becomes."""
         atoms = [
             atom for atom in blueprint.get("blueprints") or () if SUBTREE_RPC in atom["module"].rpcs
         ]
@@ -221,51 +195,27 @@ class Mount:
         return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
 
 
-def _positions_by_joint(state: JointState) -> dict[str, float]:
-    """A joint state's positions, under both the joint's name and the motor's.
-
-    A coordinator names a joint after the motor that drives it, which is the URDF joint name
-    without its "_joint" suffix: `make_humanoid_joints` gives "g1/left_knee" for what a URDF
-    calls "left_knee_joint". Nothing reconciles the two, and a description looking up the name
-    it knows finds nothing, so every joint stays at zero -- a robot drawn rigid, moving only
-    with its root. Accept either spelling here rather than make every caller know.
-    """
-    positions = dict(zip(state.name, state.position, strict=False))
-    for name, value in list(positions.items()):
-        if not name.endswith("_joint"):
-            positions.setdefault(f"{name}_joint", value)
-    return positions
-
-
 class UsdManagerConfig(ModuleConfig):
-    # The robot this manager answers for: a URDF to convert, or a USD layer to serve as it is
-    # (a simulated world, say, which is already USD). None gives a single link called "world"
-    # and nothing else, which is a scene with no robot of its own -- useful when all this
-    # manager does is hold mounts, so a tree of sensors and arms has somewhere to hang from.
+    # The robot this manager answers for: a URDF to convert, or a USD layer to serve as it is.
+    # None gives a single link called "world", useful when all this manager does is hold mounts.
     # A UsdModel has no joints, so nothing is posed on tf from one.
     model: RobotModel | UsdModel | None = None
-    # Keep the frames, drop the shapes: the links, joints and poses stay, the visuals and
-    # collision meshes go. The same description then serves a real robot and a simulated one,
-    # since only the sim needs the geometry, and the mount points stay identical either way.
-    # This robot's own layer only -- what a mounted module answers with is its own say.
+    # Keep the frames, drop the shapes, so one description serves a real robot and a simulated
+    # one. This robot's own layer only -- what a mounted module answers with is its own say.
     trivialize: bool = False
-    # Every single-DOF and fixed joint as a parent -> child tf edge; off where another module owns those frames.
+    # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
-    # What is bolted to this robot: a frame of its description -> the module owning the subtree there.
-    # Keys are the names as they end up in the scene, so a frame inside a mounted subtree
-    # carries that subtree's prefix.
+    # What is bolted to this robot: a frame of its URDF -> the module owning the subtree there.
+    # Keys are post-namespace names, so a frame inside a mounted subtree carries its prefix.
     mounts: dict[str, Mount] = Field(default_factory=dict)
-    # Frame renames, old -> new, reaching joints as well as links. They apply to this robot's
-    # own frames -- on tf and in its USD -- and to every subtree get_scene collects.
-    # tf_renames is in the names after the namespace prefix has gone on, which is the usual
-    # place to work; tf_renames_pre_namespace runs first, in each subtree's own names. This
-    # robot takes no prefix, so for its frames the two differ only in order. A key matching
-    # nothing at all is an error.
+    # Frame renames, old -> new, reaching joints as well as links: this robot's own frames and
+    # every subtree get_scene collects. tf_renames is in post-namespace names;
+    # tf_renames_pre_namespace runs first, in each subtree's own. A key matching nothing is an error.
     tf_renames: dict[str, str] = Field(default_factory=dict)
     tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
     # How often to re-ask a module that is not up yet. There is no deadline: a scene missing an
@@ -282,7 +232,7 @@ class UsdManagerConfig(ModuleConfig):
 
 
 class UsdManager(Module):
-    """Poses the description from the joint state onto tf, and serves the robot as USD plus the files it names."""
+    """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
     config: UsdManagerConfig
 
@@ -295,12 +245,8 @@ class UsdManager(Module):
     file_info: Out[File]
 
     def __init__(self, **kwargs: object) -> None:
-        # Set once this manager is wholly built. super().__init__ takes an RPC session, so from
-        # that line on a caller can ask for the scene -- and one does, the moment a simulation
-        # goes looking for the world it is about to run. That reached a half-built object:
-        # `AttributeError: 'UsdManager' object has no attribute '_subtree_clients'`. The rpcs
-        # that need this module assembled wait on it instead, which they can because they are
-        # async: the handler is entered, yields, and resumes once __init__ has returned.
+        # Set once this manager is wholly built. super().__init__ takes an RPC session, so from that
+        # line a caller can ask for the scene and reach a half-built object; the rpcs await this.
         self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
@@ -311,7 +257,6 @@ class UsdManager(Module):
         # tf_renames reach this robot's own frames too, so every name it emits goes through here.
         self._frames = self._renamed_own_frames()
         self._next_joint_tf_t = 0.0
-        self._warned_about_joint_names = False
         # Per edge: the last transform sent (translation + rotation) and when.
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._usd: str | None = None
@@ -319,27 +264,22 @@ class UsdManager(Module):
         self._usd_lock = RLock()
         # Serializes scene assembly across the file requests that arrive while it runs.
         self._scene_build = asyncio.Lock()
-        # The last scene get_scene assembled. A renderer wants the whole tree, not just this
-        # robot, and only get_scene knows what is mounted.
+        # The last scene get_scene assembled: a renderer wants the whole tree, not just this robot.
         self._scene: str | None = None
         # Keyed by remote name: two instances of one class are two different modules to ask.
         self._subtree_clients: dict[str, RPCClient] = {}
-        # What the last scene promised to answer for: public asset path -> the real file.
-        # render_file_request serves these as well as the description's own names, which is the whole
-        # point of handing out paths that are not paths on anyone's disk.
+        # What the last scene promised to answer for: public asset path -> the real file, served by
+        # render_file_request alongside the URDF's own names.
         self._published_assets: dict[str, str] = {}
         try:
             self._check_mounts()
             if not self.config.mounts:
-                # With no subtrees coming, this robot's frames are every name there will be, so
-                # a rename that matches none of them is a typo and can be caught here. With
-                # mounts it has to wait for get_scene, which is where the other names arrive.
+                # With no subtrees coming, this robot's frames are every name there will be, so a rename
+                # matching none of them is a typo and is caught here. With mounts it waits for get_scene.
                 self._check_renames_matched(self._matched_own_renames())
         except Exception:
-            # super().__init__ already took a loop thread and an RPC session; hand them back
-            # rather than leave a half-built module behind for the caller to notice. _ready
-            # stays clear: there is nothing to be ready, and a caller waiting on a manager that
-            # failed to build is waiting on a deployment that is going down anyway.
+            # super().__init__ already took a loop thread and an RPC session; hand them back rather than
+            # leave a half-built module behind. _ready stays clear: there is nothing to be ready.
             self.dispose()
             raise
         self._ready.set()
@@ -349,10 +289,8 @@ class UsdManager(Module):
         return self._description.frame_names()
 
     def _renamed_own_frames(self) -> dict[str, str]:
-        """This robot's renamed frames, old -> new; only the ones that actually change.
-
-        Pre-namespace then post: this robot takes no namespace prefix of its own, so the two
-        dicts are just applied in order, and one key can be written in either.
+        """This robot's renamed frames, old -> new; only the ones that actually change. Pre-namespace
+        then post: this robot takes no namespace of its own, so the two are just applied in order.
         """
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
@@ -374,14 +312,12 @@ class UsdManager(Module):
     def _check_mounts(self) -> None:
         """Fail here rather than at get_scene time, which is a blueprint's last step before start.
 
-        Only the module is checkable this early. The frame is not: a mount may legitimately name
-        a frame that belongs to another mounted subtree and so does not exist until the scene is
-        assembled ("g1/head_mount"). That one is caught by _graft_in_waves, which by then can
-        list every frame there actually is.
+        Only the module is checkable this early. A mount may legitimately name a frame belonging to
+        another mounted subtree ("g1/head_mount"), which does not exist until the scene is assembled;
+        _graft_in_waves catches those, by which point it can list every frame there is.
         """
         for frame_id, mount in self.config.mounts.items():
-            # An instance name on its own carries no class, so there is nothing to check; it fails
-            # at get_scene time instead, which is why a class or a blueprint is the better value.
+            # An instance name carries no class to check, so it fails at get_scene time instead.
             if mount.module is None:
                 continue
             if not {SUBTREE_RPC, SCENE_RPC} & set(mount.module.rpcs):
@@ -405,23 +341,18 @@ class UsdManager(Module):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: this robot's own description as a USD layer, nothing attached.
+        """``[asset_root, usd]``: this robot's own URDF as a USD layer, nothing attached.
 
-        Anything mountable answers this, UsdManager included, so a robot on a robot is no
-        special case. The root is the description's own directory: a mounted module whose asset paths
-        are relative needs one, and the asker cannot tell which kind it got.
+        Anything mountable answers this, UsdManager included. The root is the URDF's own directory:
+        a mounted module with relative asset paths needs one, and the asker cannot tell which it got.
         """
         with self._usd_lock:
             if self._usd is None:
                 usd = self._description.usd
                 if self.config.trivialize:
                     usd = trivialize_usd(usd)
-                # Renamed here as well as on tf, or the layer would name frames that no
-                # transform ever arrives for. Given the directory its assets are relative to,
-                # so that composing a stage off it does not warn once per mesh prim that it
-                # could not open the file -- which for a room is hundreds of lines saying
-                # nothing, since none of this needs the geometry.
-                self._usd = rename_usd_frames(usd, self._frames, root=self._asset_root() or None)
+                # Renamed here as well as on tf, or the layer names frames no transform arrives for.
+                self._usd = rename_usd_frames(usd, self._frames)
             return [self._asset_root(), self._usd]
 
     def _asset_root(self) -> str:
@@ -431,58 +362,45 @@ class UsdManager(Module):
 
     @rpc
     async def get_scene(self, visited: list[str] | None = None) -> list[str]:
-        """``[asset_root, usd]``: this description with every mounted subtree grafted on.
+        """``[asset_root, usd]``: this URDF with every mounted subtree grafted on.
 
-        Async and meant to be called before start(). It waits with no deadline: half a scene is
-        a robot with no arm, so a mount that never answers hangs the caller instead.
+        Async and meant to be called before start(). It waits with no deadline: half a scene is a
+        robot with no arm, so a mount that never answers hangs the caller instead. Each subtree is
+        rebased onto the root its own module reported, so the one root this answers with covers the
+        whole scene, and a mount naming a frame in another subtree is grafted once that subtree is in
+        place (see _graft_in_waves).
 
-        Each subtree is rebased onto the root its own module reported before it is grafted, so
-        the one root this answers with covers the whole scene.
-
-        A mount whose frame belongs to another subtree rather than to this one is grafted once
-        that subtree is in place, so a lidar can hang off a g1 that is itself mounted here. See
-        _graft_in_waves.
-
-        ``visited`` is the chain of managers already assembling a scene above this one, which is
-        how a mount cycle is caught instead of recursing until something falls over. Callers
-        leave it alone; a manager asking one of its own mounts passes it on.
+        ``visited`` is the chain of managers already assembling a scene above this one, which is how
+        a mount cycle is caught instead of recursing. Callers leave it alone.
         """
         await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
         root, scene = await self._compose(chain)
-        # Grafting works in absolute paths, which say nothing to whoever ends up asking for the
-        # file. So the scene leaves under names this manager answers for instead.
+        # Grafting works in absolute paths, which say nothing to whoever ends up asking for the file.
         published, assets = await asyncio.to_thread(publish_usd_assets, scene)
         self._published_assets = assets
         self._scene = published
-        # No asset root: every path in the published scene is a name this manager answers for
-        # over render_file_request, not a path that resolves against a directory on any disk.
+        # No asset root: every path in a published scene is a name this manager answers for.
         return ["", published]
 
     @rpc
-    async def get_asset(self, name: str) -> bytes:
-        """The bytes of one asset the scene this manager published names.
+    async def get_scene_on_disk(self, visited: list[str] | None = None) -> list[str]:
+        """``[asset_root, usd]``: the same scene, still naming the files it was composed from.
 
-        `get_scene` hands out names, not paths: a scene travels as a string and its meshes are
-        fetched, which is what lets a consumer anywhere read it. This is that fetch, as an rpc
-        rather than a round trip over `render_file_request`, because a consumer that has to open
-        the scene needs every mesh before it can start, synchronously, and wants an error rather
-        than a message that never comes. A viewer drawing lazily is better served by the topic,
-        and still is.
-
-        Only names this manager published, and only the files behind them. A request is never an
-        arbitrary path into the filesystem.
+        For a consumer that opens files rather than asking for them. A physics engine reads a layer
+        off disk; `get_scene` hands out content names it serves over `render_file_request`, which is
+        right for a viewer across a bus and unusable to MuJoCo -- "at least 4 vertices required" on
+        the first piece of furniture is what asking the wrong one looks like. Resolve it against the
+        root this answers with: the subtrees were each rebased as they arrived, so only this
+        manager's own layer is still relative. Same machine only -- a backend elsewhere has to be
+        handed the bytes, which is `get_scene` plus `render_file_request`.
         """
         await self._ready.wait()
-        real = self._published_assets.get(name, name if name in self._file_paths else None)
-        if real is None:
-            raise KeyError(
-                f"{name!r} is neither a file this description names nor an asset the last scene "
-                f"published. Ask for a scene before its assets: the names only exist once one "
-                f"has been handed out."
-            )
-        return await asyncio.to_thread(self._resolved(real).read_bytes)
+        chain = list(visited or [])
+        self._refuse_a_cycle(chain)
+        root, scene = await self._compose(chain)
+        return [root[ASSET_ROOT], scene]
 
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:
@@ -497,7 +415,7 @@ class UsdManager(Module):
         """This manager's own layer, and it with every mounted subtree grafted on."""
         subtrees = await self._subtrees([*chain, self._scene_identity])
         # Off the loop thread: building the layer imports usd-core and converts the whole
-        # description, which is a tenth of a second on a real robot and would stall tf meanwhile.
+        # URDF, which is a tenth of a second on a real robot and would stall tf meanwhile.
         root = await asyncio.to_thread(self.get_usd)
         scene = (
             await asyncio.to_thread(self._graft_in_waves, root[USD], subtrees)
@@ -514,15 +432,14 @@ class UsdManager(Module):
     def _graft_in_waves(self, root_usd: str, subtrees: dict[str, str]) -> str:
         """Graft each subtree once the frame it names exists, which may be another subtree's.
 
-        Mounts are not independent: "g1/head_mount" is a frame that only exists once the g1 is
-        in place. So this grafts whatever can be grafted, then looks again, until either
-        everything is in or nothing moved -- and nothing moving means the frames that are left
+        "g1/head_mount" only exists once the g1 is in place, so this grafts what it can, then looks
+        again, until everything is in or nothing moved -- and nothing moving means the frames left
         are never going to appear.
         """
         scene = root_usd
         remaining = dict(subtrees)
         while remaining:
-            present = usd_frame_names(scene, self._asset_root() or None)
+            present = usd_frame_names(scene)
             ready = {frame: usd for frame, usd in remaining.items() if frame in present}
             if not ready:
                 raise ValueError(
@@ -532,7 +449,7 @@ class UsdManager(Module):
                     f'mounted subtree carries that subtree\'s namespace prefix ("g1/head_mount", '
                     f'not "head_mount"). The scene has: {sorted(present)}'
                 )
-            scene = graft_usd(scene, ready, root=self._asset_root() or None)
+            scene = graft_usd(scene, ready)
             for frame in ready:
                 del remaining[frame]
         return scene
@@ -542,10 +459,8 @@ class UsdManager(Module):
         if not mounts:
             self._check_renames_matched(self._matched_own_renames())
             return {}
-        # Before the gather, not inside it: each subtree is read and hashed on its own thread,
-        # and the USD bindings finish loading themselves the first time a layer is read. Several
-        # threads reaching that together deadlock in the import machinery, and this manager then
-        # answers nothing, for ever, without raising.
+        # Before the gather, not inside it: the USD bindings finish loading themselves the first time
+        # a layer is read, and several threads reaching that together deadlock in the import machinery.
         await asyncio.to_thread(warm_usd)
         results = await asyncio.gather(
             *(self._subtree(frame_id, mount, chain) for frame_id, mount in mounts.items())
@@ -592,9 +507,8 @@ class UsdManager(Module):
             answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id, mount, chain)
             if answer is not None:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
-                # Refused rather than retried: a subtree whose assets are not identified by
-                # content will not become identified by asking again, and the error carries
-                # the hashes it should have had.
+                # Refused rather than retried: assets not identified by content will not become identified by
+                # asking again, and the error carries the hashes they should have had.
                 await asyncio.to_thread(
                     require_asset_hashes,
                     answer[USD],
@@ -609,18 +523,13 @@ class UsdManager(Module):
             await asyncio.sleep(self.config.scene_retry_s)
 
     def _adopt(self, answer: list[str], mount: Mount) -> tuple[str, set[str]]:
-        """One subtree, made fit to graft onto this robot.
+        """One subtree, made fit to graft onto this robot, with the rename keys it matched (so the
+        caller can tell a key meant for another subtree from one that matches nothing at all).
 
-        Returns it with the rename keys it matched, so the caller can tell a key that was meant
-        for another subtree from one that matches nothing at all.
-
-        Its asset paths are rebased onto the root it reported, because it is leaving the only
-        process that knew that root. Its frames are renamed here rather than at its end: a
-        module holds one description and does not know which copy of itself it is, while the
-        name it was deployed under says exactly that.
-
-        The order is rename, prefix, rename again, so a rename can be written in the subtree's
-        own names or in the prefixed ones, whichever is easier to express it in.
+        Its asset paths are rebased onto the root it reported, because it is leaving the only process
+        that knew that root. Its frames are renamed here rather than at its end: a module holds one
+        description and does not know which copy of itself it is. The order is rename, prefix, rename
+        again, so a rename can be written in either set of names.
         """
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
@@ -667,28 +576,22 @@ class UsdManager(Module):
             async with self._scene_build:
                 usd = self._scene
                 if usd is None and self.config.mounts:
-                    # A manager with mounts answers for the whole tree, and nothing else
-                    # assembles it: get_scene is an rpc for a manager above this one to call,
-                    # and a top-level manager has nobody above it. Falling through to get_usd
-                    # here answered with this robot's own layer alone -- for a manager that is
-                    # only a set of mount points, a stage of empty frames with no geometry in
-                    # it at all, and not an error anywhere to say so.
+                    # A manager with mounts answers for the whole tree and nothing else assembles it: get_scene is
+                    # an rpc for a manager above, and a top-level one has none. get_usd gave empty frames, silently.
                     usd = (await self.get_scene())[USD]
                 if usd is None:
-                    # Off the loop thread: the first request is the one that pays for the import
-                    # and the conversion, and it arrives while tf is flowing.
+                    # Off the loop thread: the first request pays for the import and the conversion.
                     usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
-        # Only files this manager has published: a request is never an arbitrary path into the
-        # filesystem. That is the description's own names, plus the public names the last scene handed
-        # out, which is how a mounted arm's mesh gets served at all.
+        # Only files this manager has published, never an arbitrary path: the URDF's own names plus
+        # the public names the last scene handed out.
         real = self._published_assets.get(name, name if name in self._file_paths else None)
         if real is None:
             # debug, not warning: another module on this topic (the sim's world) answers for
             # its own files, and every one of those would otherwise be logged here as a miss.
             logger.debug(
-                f"render_file_request for {name!r}, which is neither a file this description names nor "
+                f"render_file_request for {name!r}, which is neither a file this URDF names nor "
                 f"an asset the last scene published"
             )
             return
@@ -705,7 +608,6 @@ class UsdManager(Module):
         await asyncio.to_thread(self.add_joint_state, state)
 
     def add_joint_state(self, state: JointState) -> None:
-        """Publish the state's joints on tf."""
         if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
             return
         self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
@@ -733,28 +635,8 @@ class UsdManager(Module):
         return due
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
-        """One parent -> child transform per joint; joints the state leaves out stay at zero."""
-        # A joint state may key by the description's own name ("left_knee_joint"), or by the
-        # name this manager publishes that joint under, which is what a namespaced coordinator
-        # sends ("main/left_knee"). Resolve each joint through both.
-        by_name = _positions_by_joint(state)
-        positions = {
-            joint.name: value
-            for joint in self._joints.values()
-            for value in [by_name.get(joint.name, by_name.get(self.frame(joint.name)))]
-            if value is not None
-        }
-        if state.name and self._joints and not positions and not self._warned_about_joint_names:
-            # Every joint would silently sit at zero, which draws a robot that cannot bend: the
-            # body moves with its root and nothing else does. Say so, rather than leave it
-            # looking like a renderer fault -- there is nothing else to see it by.
-            self._warned_about_joint_names = True
-            logger.warning(
-                f"a joint state names none of this description's joints, so every joint is held "
-                f"at zero and the robot cannot articulate: it names {sorted(state.name)[:2]}..., "
-                f"the description wants {sorted(self._joints)[:2]}... "
-                f"(published as {sorted(self.frame(n) for n in self._joints)[:2]}...)"
-            )
+        """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
+        positions = dict(zip(state.name, state.position, strict=False))
         for joint in self._joints.values():
             if joint.mimic is not None and joint.mimic[0] in positions:
                 leader, multiplier, offset = joint.mimic
@@ -774,14 +656,10 @@ class UsdManager(Module):
     def frame(self, link_or_joint: str) -> str:
         """The name this manager publishes one of its own frames under, after tf_renames.
 
-        The description keeps its own names -- they are what the hardware speaks, and what a
-        JointState arrives keyed by. Only what goes out is renamed, so anything reading tf for
-        a frame of this robot has to ask through here.
-
-        A namespaced manager puts its namespace in front, the same prefix every other module
-        puts on its frames. Without it two robots in one world both publish "pelvis", and the
-        links hanging off them land in a tree of their own with no route to the world: tf then
-        has two roots and can draw neither robot where it stands.
+        The description keeps its own names -- what the hardware speaks, and what a JointState
+        arrives keyed by -- so only what goes out is renamed. A namespaced manager puts its namespace
+        in front; without it two robots in one world both publish "pelvis", tf ends up with two roots
+        and can draw neither robot where it stands.
         """
         renamed = self._frames.get(link_or_joint, link_or_joint)
         prefix = self.config.frame_id_prefix
