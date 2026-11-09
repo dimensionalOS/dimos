@@ -39,7 +39,7 @@ from dimos.visualization.vis_module import vis_module
 
 m20 = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=m20_rerun_config()),
-    M20Connection.blueprint(auto_stand=True).remappings([(M20Connection, "odometry", "slam_odom")]),
+    M20Connection.blueprint().remappings([(M20Connection, "odometry", "slam_odom")]),
     UrdfManager.blueprint(model=M20_MODEL),
     M20StandingJointState.blueprint(),
     m20_nav_stack(),
