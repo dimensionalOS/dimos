@@ -22,6 +22,8 @@ rewrites a pull request's merge ref, so a pin on it would rot.
 What counts as stale is the pinned *content*, not the revision. A pin may name an
 older commit quite legitimately -- what matters is that the shared tree at that
 commit is the tree in this one.
+An explicit exact Cargo version keeps its pinned revision, including transitive
+SDK crates. Updating that API is a caller migration rather than an automatic relock.
 
 Stdlib only, so it runs on a bare `python3` like the other bin/ scripts.
 """
@@ -296,10 +298,19 @@ def _hashes_file(manifest: Path) -> Path:
 def _stale_pin(manifest: Path, lock: Path) -> list[str]:
     """Why the pin on this repository's crates is not this commit's; empty when it is."""
     revs = {m.group("rev") for m in _GIT_DEP.finditer(manifest.read_text())}
+    dependencies = tomllib.loads(manifest.read_text()).get("dependencies", {})
+    packages = _pinned_crates(lock)
+    fixed_revs = set()
+    for name, version, rev in packages:
+        dependency = dependencies.get(name, {})
+        if isinstance(dependency, dict) and dependency.get("version") == f"={version}":
+            fixed_revs.add(rev)
     stale = []
-    for name, _, rev in _pinned_crates(lock):
+    for name, _, rev in packages:
         if rev not in revs:
             stale.append(f"{name}: Cargo.lock pins {rev[:10]}, Cargo.toml another revision")
+        if rev in fixed_revs:
+            continue
         subdir = _crate_dirs().get(name)
         pinned = tree_at(rev, subdir) if subdir else None
         if subdir is None or (pinned is not None and pinned != tree_at("HEAD", subdir)):
@@ -345,7 +356,9 @@ def relock_cargo(manifest: Path) -> tuple[Path, bool, list[str]]:
             return manifest, False, [_unpushed(manifest, " and ".join(subdirs))]
         manifest.write_text(
             _GIT_DEP.sub(
-                lambda m: f'{m.group("name")} = {{ git = "{GIT_URL}", rev = "{rev}"{m.group("rest")}}}',
+                lambda m: (
+                    f'{m.group("name")} = {{ git = "{GIT_URL}", rev = "{rev}"{m.group("rest")}}}'
+                ),
                 before[manifest],
             )
         )
