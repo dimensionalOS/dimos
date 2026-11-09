@@ -219,11 +219,14 @@ class NativeModuleConfig(ModuleConfig):
     def resolve_paths(self) -> tuple[str | None, str]:
         """Resolve source builds once; external binary paths do not fetch sources."""
         if self.source_dir is not None:
+            manifests = ("flake.nix", "Cargo.toml")
             build_cwd = DIMOS_PROJECT_ROOT / self.source_dir
-            if not any((build_cwd / name).is_file() for name in ("flake.nix", "Cargo.toml")):
+            if not any((build_cwd / name).is_file() for name in manifests):
                 build_cwd = get_project_root() / self.source_dir
             elif not (DIMOS_PROJECT_ROOT / ".git").exists():
                 build_cwd = _packaged_native_root() / self.source_dir
+                if not any((build_cwd / name).is_file() for name in manifests):
+                    build_cwd = get_project_root() / self.source_dir
             return str(build_cwd), str(Path(os.path.normpath(build_cwd / self.executable)))
         executable = Path(self.executable).absolute()
         return str(executable.parent), str(executable)

@@ -706,18 +706,31 @@ def test_packaged_build_cache_preserves_inputs_and_changes_with_sources(tmp_path
     assert config.resolve_paths() == (str(source), str(source / "result/bin/follower"))
 
 
-def test_source_build_falls_back_without_packaged_manifest(tmp_path, monkeypatch, mocker):
+@pytest.mark.parametrize(
+    "source_dir,manifest,executable",
+    [
+        ("dimos/mapping/ray_tracing/rust", None, "result/bin/voxel_ray_tracing"),
+        ("dimos/hardware/sensors/lidar/virtual_mid360", "flake.nix", "result/bin/virtual_mid360"),
+        ("dimos/simulation/habitat/nix", "flake.nix", "../../../../target/habitat/habitat-native"),
+    ],
+)
+def test_source_build_falls_back_without_staged_manifest(
+    tmp_path, monkeypatch, mocker, source_dir, manifest, executable
+):
     package_root = tmp_path / "site-packages"
-    source_dir = "dimos/mapping/ray_tracing/rust"
-    (package_root / source_dir).mkdir(parents=True)
+    source = package_root / source_dir
+    source.mkdir(parents=True)
+    if manifest is not None:
+        (source / manifest).touch()
     monkeypatch.setattr(native_module_mod, "DIMOS_PROJECT_ROOT", package_root)
+    monkeypatch.setattr(native_module_mod, "CACHE_DIR", tmp_path / "cache")
     checkout = tmp_path / "checkout"
     fetch = mocker.patch("dimos.core.native_module.get_project_root", return_value=checkout)
-    config = NativeModuleConfig(source_dir=source_dir, executable="result/bin/voxel_ray_tracing")
+    config = NativeModuleConfig(source_dir=source_dir, executable=executable)
 
     assert config.resolve_paths() == (
         str(checkout / source_dir),
-        str(checkout / source_dir / "result/bin/voxel_ray_tracing"),
+        str((checkout / source_dir / executable).resolve()),
     )
     fetch.assert_called_once_with()
 
