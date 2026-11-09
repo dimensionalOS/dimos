@@ -61,9 +61,9 @@ PASSTHROUGH_KEY = "urdf:unconverted"
 
 
 _NO_USD = (
-    "Reading or writing USD needs usd-core (pxr), which is in the 'scene-cooking' extra: "
-    "uv sync --extra scene-cooking. On linux-aarch64 a wheel exists only from usd-core 26.11 "
-    "and only for Python 3.11 and up, so a 3.10 arm robot cannot serve USD at all."
+    "Reading or writing USD needs usd-core (pxr), which is in the 'sim' and 'scene' extras: "
+    "uv sync --extra sim. On linux-aarch64 a wheel exists only from usd-core 26.11 and only for "
+    "Python 3.11 and up, so a 3.10 arm robot cannot serve USD at all."
 )
 
 
