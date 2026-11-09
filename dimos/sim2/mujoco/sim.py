@@ -14,9 +14,8 @@
 
 """MuJoCo as a module: it takes actions, it publishes what moved, and it owns its own loop.
 
-Reached through `sim_module("mujoco", ...)` rather than named directly, and described to as
-`@shared_config(SimulatedWorld)` rather than as this class, so nothing outside this package has
-to know which engine is running.
+Reached through `sim_module("mujoco", ...)` rather than named directly, so nothing outside this
+package has to know which engine is running.
 """
 
 import asyncio
@@ -81,7 +80,7 @@ class MujocoSim(SimulatedWorld):
                 "nothing says what this world is: pass scene= a USD layer or a file holding one,"
                 " or scene_manager= the UsdManager that composes it"
             )
-        return MujocoBackend(usd, simulated=self.simulated, speed=self.config.speed)
+        return MujocoBackend(usd, self.simulated, speed=self.config.speed)
 
     @rpc
     def on_system_modules(self, _modules: list[Any]) -> None:
@@ -156,11 +155,10 @@ class MujocoSim(SimulatedWorld):
         composed scene instead, so this is left as what it sounds like -- something to look at
         when a world is not doing what it was expected to.
         """
-        values = self.simulated.values()
         return {
             **(self._backend.describe() if self._backend is not None else {}),
-            "simulated": list(values),
-            "robots": sorted(d.robot_id for d in values),
+            "simulated": list(self.simulated),
+            "robots": sorted(d.robot_id for d in self.simulated),
         }
 
     @rpc

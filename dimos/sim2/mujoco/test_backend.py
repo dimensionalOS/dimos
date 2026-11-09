@@ -24,10 +24,7 @@ import numpy as np
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Module, ModuleConfig
-from dimos.core.shared_config import shared_config
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd import graft_usd, prefix_usd_frames
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
@@ -35,7 +32,7 @@ from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
 from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
-from dimos.sim2.sim import SimulatedWorld, sim_module
+from dimos.sim2.sim import sim_module
 from dimos.sim2.spec import Servo, SimulatedRobot
 from dimos.sim2.usd_layer import layer_file, usd_layer
 from dimos.sim2.world_observations import ACT, WorldMirror
@@ -145,26 +142,13 @@ def test_mounting_at_a_frame_the_world_does_not_have_is_rejected(scene):
         mount_sensor(spec, SensorMount("imu", "nowhere", "nowhere"))
 
 
-class _DogConfig(ModuleConfig):
-    model: UsdModel
+def test_the_engine_runs_the_robots_the_blueprint_put_in_the_world(scene, robot_model):
+    """Through `sim_module`, which names neither MuJoCo nor anything that reaches into it.
 
-
-class _Dog(Module):
-    config: _DogConfig
-
-    @shared_config(SimulatedWorld)
-    def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("dog", self.config.model)}
-
-
-def test_the_engine_builds_the_world_its_blueprint_describes(scene, robot_model):
-    """Through `sim_module`, and described to as `SimulatedWorld` -- neither names MuJoCo.
-
-    The robot's `@shared_config(SimulatedWorld)` reaches the engine because a receiver matches
-    subclasses, which is the whole mechanism that lets a robot be run by an engine it has never
-    heard of.
+    The robots are config, set where the blueprint already knows them, so a robot module needs
+    no way to find whatever engine is running and the engine needs no way to hear from anything.
     """
-    blueprint = autoconnect(_Dog.blueprint(model=robot_model), sim_module(scene=scene))
+    blueprint = sim_module(scene=scene, robots=[SimulatedRobot("dog", robot_model)])
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
@@ -182,8 +166,7 @@ def test_the_world_the_engine_runs_is_the_scene_it_was_given(scene, robot_model)
     constructed yet cannot be asked -- which it had not, while the modules were still being
     built.
     """
-    sim = MujocoSim(scene=scene)
-    sim.config_receive((("dog", {"simulated": SimulatedRobot("dog", robot_model)}),))
+    sim = MujocoSim(scene=scene, robots=[SimulatedRobot("dog", robot_model)])
     try:
         assert sim._engine().describe() == {"backend": "mujoco", "scene": str(usd_layer(scene))}
     finally:
@@ -229,7 +212,7 @@ async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
 
 
 def test_backend_steps_physics_and_takes_commands(scene, robot_model):
-    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model, xyz=(0, 0, 1))})
+    backend = MujocoBackend(scene, [SimulatedRobot("dog", robot_model, xyz=(0, 0, 1))])
     published = _Collect()
 
     async def run_briefly() -> None:
@@ -253,7 +236,7 @@ def test_backend_steps_physics_and_takes_commands(scene, robot_model):
 
 
 def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_model):
-    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model)})
+    backend = MujocoBackend(scene, [SimulatedRobot("dog", robot_model)])
     backend.apply([JointCommand("dog", ("neck",), effort=(0.5,))])
     backend._apply_pending()
     seen = _Collect()
@@ -267,7 +250,7 @@ def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_mo
 
 
 def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, robot_model):
-    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model)})
+    backend = MujocoBackend(scene, [SimulatedRobot("dog", robot_model)])
     seen = _Collect()
     seen.offer(backend.frame())
     actions = [
@@ -282,7 +265,7 @@ def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, rob
 
 
 def test_scene_data_describes_the_world_without_its_robots(scene, robot_model):
-    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model)})
+    backend = MujocoBackend(scene, [SimulatedRobot("dog", robot_model)])
     data = json.loads(backend.scene_data())
     assert data["format"] == "dimos.scene_data.v1" and data["frame"] == "world"
     bodies = {body["name"]: body for body in data["bodies"]}
@@ -297,7 +280,7 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model):
 
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
     robot = SimulatedRobot("dog", robot_model, servos=(Servo("neck", 0.01, 0.001),))
-    backend = MujocoBackend(scene, {"dog": robot})
+    backend = MujocoBackend(scene, [robot])
     published = _Collect()
 
     async def run_briefly() -> None:
@@ -317,7 +300,7 @@ def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
 
 def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model):
     robot = SimulatedRobot("dog", robot_model, control_period=0.02)
-    backend = MujocoBackend(scene, {"dog": robot})
+    backend = MujocoBackend(scene, [robot])
     tick_times: list[float] = []
 
     class _Controller(_Collect):
