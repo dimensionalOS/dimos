@@ -20,11 +20,13 @@ from typing import Any
 
 from dimos_lcm.world_msgs import WorldObservations
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
@@ -48,6 +50,11 @@ class SimCamera(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
         return {"simulated": SimulatedSensor("camera", self.frame_id, self.config.fovy)}
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: this camera's optical frame, which is all of it anyone measured."""
+        return frame_usd(self.frame_id, name="sim_camera")
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
