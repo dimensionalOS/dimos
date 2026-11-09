@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Portable robot models loaded from URDF or Xacro sources."""
 
 from __future__ import annotations
 
@@ -38,15 +37,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# An xyz or rpy triple. Not imported from assets/usd.py (needs usd-core): pydantic resolves
-# this annotation by name, and a name it cannot reach never finishes defining UsdModel.
 Vector = tuple[float, float, float]
 
 
 @dataclass(frozen=True)
 class JointDescription:
-    """A joint parsed from a materialized URDF description."""
-
     name: str
     type: str
     parent_link: str = ""
@@ -58,20 +53,16 @@ class JointDescription:
     velocity: float | None = None
     acceleration: float | None = None
     effort: float | None = None
-    # URDF's default axis is x.
     axis: tuple[float, float, float] = (1.0, 0.0, 0.0)
-    # (leader joint, multiplier, offset): this joint sits at multiplier * leader + offset.
     mimic: tuple[str, float, float] | None = None
 
     def origin(self) -> NDArray[np.float64]:
-        """The 4x4 parent -> child transform at the joint's zero (URDF rpy is extrinsic x, y, z)."""
         transform = np.eye(4)
         transform[:3, :3] = Rotation.from_euler("xyz", self.origin_rpy).as_matrix()
         transform[:3, 3] = self.origin_xyz
         return transform
 
     def parent_from_child(self, position: float = 0.0) -> NDArray[np.float64]:
-        """The 4x4 parent -> child transform of a fixed or single-DOF joint at `position`."""
         if self.type == "fixed":
             return self.origin()
         motion = np.eye(4)
@@ -87,8 +78,6 @@ class JointDescription:
 
 @dataclass(frozen=True)
 class LoadedRobotModel:
-    """Materialized model and resolved assets; in-memory roots have no source path."""
-
     xml: str
     source_path: Path | None
     package_paths: Mapping[str, Path]
@@ -99,16 +88,13 @@ class LoadedRobotModel:
 
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        """Return joints in source-document order."""
         return self._topology[0]
 
     @property
     def root_link(self) -> str:
-        """Return the unique URDF root link, or an empty string if none exists."""
         return self._topology[1]
 
     def get_joint(self, name: str) -> JointDescription | None:
-        """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
 
     def referenced_files(self) -> set[str]:
@@ -121,14 +107,6 @@ class LoadedRobotModel:
 
 @dataclass(frozen=True)
 class UsdModel:
-    """A robot or scene as USD: what a UsdManager works from, whatever it was described in.
-
-    One class, not two like RobotModel: a layer has nothing to expand, so ``load()`` returns
-    itself. A URDF-converted model keeps the URDF, because a layer alone cannot answer joints
-    (UsdPhysics prims, no forward kinematics), the root link (defaultPrim is the robot) or the
-    files a URDF names. Layers convert on demand: usd-core has no linux-aarch64 wheel.
-    """
-
     _source_path: Path | str | os.PathLike[str] | None = None
     _urdf: LoadedRobotModel | None = None
     _text: str | None = None
@@ -136,7 +114,6 @@ class UsdModel:
 
     @classmethod
     def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
-        """Read lazily: a blueprint is built wherever it is imported, not always where the file is."""
         if Path(source_path).suffix not in _USD_SUFFIXES:
             raise ValueError(
                 f"UsdModel.from_file wants a USD file, got {str(source_path)!r}; "
@@ -145,37 +122,27 @@ class UsdModel:
         return cls(source_path)
 
     def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
-        """Lazy: adding a frame needs usd-core, and a blueprint is built wherever it is imported."""
         added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in frames.items())
         return replace(self, _added_frames=self._added_frames + added)
 
     @classmethod
     def from_layer(cls, usd: str) -> UsdModel:
-        """A layer given outright, no file behind it. Its asset paths must already be absolute --
-        nothing is left for a relative one to be relative to; see `resolve_usd_assets`.
-        """
         return cls(_text=usd)
 
     @classmethod
     def from_robot_model(cls, model: RobotModel) -> UsdModel:
-        """A URDF description as USD, converted when its layer is first asked for."""
         loaded = model.load()
         return cls(loaded.source_path, loaded)
 
     @property
     def source_path(self) -> Path | None:
-        """The file this came from, which its relative asset paths are relative to."""
         return None if self._source_path is None else Path(self._source_path).expanduser()
 
     @cached_property
     def usd(self) -> str:
-        """Converted from the URDF, or read from the file, on first use."""
         return self._with_added_frames(self._layer())
 
     def _asset_root(self) -> Path | None:
-        """Only so composing a stage off this layer is quiet: USD warns once per mesh prim it
-        cannot open, and a room has hundreds.
-        """
         source = self.source_path
         return source.parent if source is not None else None
 
@@ -205,7 +172,6 @@ class UsdModel:
         try:
             return path.read_text()
         except UnicodeDecodeError as error:
-            # A scene is handed to renderers as one string, so a crate layer cannot travel.
             raise ValueError(
                 f"{path} is a binary (crate) USD layer; a scene travels as text, so export "
                 f"it as .usda"
@@ -213,12 +179,6 @@ class UsdModel:
 
     @cached_property
     def _poseable(self) -> LoadedRobotModel:
-        """The layer read back as a URDF, the only form a joint can be posed from.
-
-        A USD joint is a UsdPhysics prim -- an axis and two bodies, not a parent-to-child
-        transform at an angle -- and forward kinematics lives in RobotModel. Needs usd-core
-        even for tf, unlike the rest of this class; two tests hold the no-pxr URDF path.
-        """
         from dimos.robot.assets.usd_to_urdf import usd_to_urdf
 
         source = self.source_path
@@ -229,16 +189,10 @@ class UsdModel:
 
     @property
     def joints(self) -> tuple[JointDescription, ...]:
-        """Off the URDF where there was one, so a URDF-described robot never reads a layer to pose
-        itself; a disk layer is converted back (see _poseable).
-        """
         return self._urdf.joints if self._urdf is not None else self._poseable.joints
 
     @property
     def root_link(self) -> str:
-        """The URDF's own root where there was one; a disk layer's has to be found in the layer,
-        because its defaultPrim is the robot rather than a link.
-        """
         if self._urdf is not None:
             return self._urdf.root_link
         from dimos.robot.assets.usd_to_urdf import usd_root_link
@@ -249,11 +203,9 @@ class UsdModel:
         return next((joint for joint in self.joints if joint.name == name), None)
 
     def urdf(self) -> LoadedRobotModel | None:
-        """None for a layer read off disk; a caller needing a URDF has to convert (see usd_to_urdf)."""
         return self._urdf
 
     def frame_names(self) -> set[str]:
-        """Off the URDF where there is one, so a robot that never needs a layer never builds one."""
         if self._urdf is None:
             from dimos.robot.assets.usd import usd_frame_names
 
@@ -264,9 +216,6 @@ class UsdModel:
         return names
 
     def referenced_files(self) -> set[str]:
-        """Off the URDF where there is one: it names files, a texture among them, that the
-        conversion does not carry into the layer.
-        """
         if self._urdf is None:
             from dimos.robot.assets.usd_assets import referenced_asset_paths
 
@@ -274,11 +223,9 @@ class UsdModel:
         return self._urdf.referenced_files()
 
     def load(self) -> UsdModel:
-        """Itself: there is nothing to expand."""
         return self
 
 
-# Text layers only: see UsdModel.usd.
 _USD_SUFFIXES = frozenset({".usd", ".usda"})
 
 
@@ -309,13 +256,6 @@ _PositiveVector3 = tuple[_PositiveFiniteFloat, _PositiveFiniteFloat, _PositiveFi
 
 @pydantic_dataclass(frozen=True, config=_PLANAR_BASE_CONFIG)
 class PlanarBaseDefinition:
-    """Synthetic floor-constrained base coordinates.
-
-    The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
-    coordinates use meters and angular coordinates use radians. Translation is
-    unbounded and yaw is periodic.
-    """
-
     velocity_limits: _PositiveVector3
     acceleration_limits: _PositiveVector3
     root_link: _NonEmptyString = "planar_base_root"
@@ -350,11 +290,8 @@ class _RootModel:
 
 @dataclass(frozen=True)
 class RobotModel:
-    """Lazy, immutable robot model shared by planning backends."""
-
     _source_path: Path | str | os.PathLike[str] | None
     _root_model: _RootModel | None = None
-    # URDF content held in memory instead of a file; _asset_dir resolves its relative mesh paths
     _source_xml: str | None = None
     _asset_dir: Path | str | os.PathLike[str] | None = None
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
@@ -370,7 +307,6 @@ class RobotModel:
     _default_joint_acceleration_limit: float | None = None
     _base_model: RobotModel | None = None
     _added_joints: tuple[JointDescription, ...] = ()
-    # (follower, leader, multiplier, offset) per joint that copies another.
     _mimic_joints: tuple[tuple[str, str, float, float], ...] = ()
 
     @classmethod
@@ -381,7 +317,6 @@ class RobotModel:
         package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
         xacro_args: Mapping[str, str] | None = None,
     ) -> RobotModel:
-        """Create a lazy model from a URDF or Xacro source."""
         return cls(
             _source_path=source_path,
             _package_paths=tuple((package_paths or {}).items()),
@@ -396,7 +331,6 @@ class RobotModel:
         asset_dir: Path | str | os.PathLike[str] | None = None,
         package_paths: Mapping[str, Path | str | os.PathLike[str]] | None = None,
     ) -> RobotModel:
-        """Create a model from URDF content; relative mesh paths resolve against `asset_dir`."""
         return cls(
             _source_path=None,
             _source_xml=xml,
@@ -406,27 +340,19 @@ class RobotModel:
 
     @classmethod
     def from_root_link(cls, root_link: str, *, name: str = "robot") -> RobotModel:
-        """Create a lazy, single-link model in memory for attaching other trees.
-
-        No source file is required. Both this model and its loaded description
-        have ``source_path=None``; attached children resolve their own assets.
-        """
         if not root_link.strip() or not name.strip():
             raise ValueError("Robot name and root link must be nonempty")
         return cls(_source_path=None, _root_model=_RootModel(name, root_link))
 
     @property
     def source_path(self) -> Path | str | os.PathLike[str] | None:
-        """Return the source handle, or None for a model created from URDF content or a root link."""
         return self._source_path
 
     @property
     def planar_base(self) -> PlanarBaseDefinition | None:
-        """Return the configured synthetic planar base, if any."""
         return self._planar_base
 
     def with_planar_base(self, definition: PlanarBaseDefinition) -> RobotModel:
-        """Return a model whose original root moves through ``x``, ``y``, and ``yaw``."""
         if self._planar_base is not None:
             raise ValueError("Robot model already has a planar base")
         return replace(self, _planar_base=definition)
@@ -439,7 +365,6 @@ class RobotModel:
         xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> RobotModel:
-        """Return a model with an additional fixed frame."""
         return replace(
             self,
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
@@ -455,14 +380,6 @@ class RobotModel:
         xyz: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rpy: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> RobotModel:
-        """Weld another model's root onto a link through a named fixed joint.
-
-        Fixed frames and attachments apply in declaration order to the current
-        tree; host joint transforms apply afterward. The child uses its own
-        model loader. ``prefix`` namespaces child links, joints, and materials.
-        ``xyz`` is in meters and ``rpy`` uses extrinsic xyz rotations in radians.
-        Construction is lazy and returns a new immutable model.
-        """
         if any(not name or any(c.isspace() for c in name) for name in (parent_link, joint_name)):
             raise ValueError(
                 "Attachment parent link and joint name must be non-empty without whitespace"
@@ -489,11 +406,6 @@ class RobotModel:
         )
 
     def with_subtree_rooted_at(self, root_link: str) -> RobotModel:
-        """Return a view containing an existing link and its descendants.
-
-        This selects an existing structural subtree. It does not reverse joints
-        or recompute transforms as a kinematic rerooting operation would.
-        """
         if not root_link:
             raise ValueError("Subtree root link must not be empty")
         if self._subtree_root_link is not None:
@@ -501,7 +413,6 @@ class RobotModel:
         return replace(self, _subtree_root_link=root_link)
 
     def without_joint_subtrees(self, *joint_names: str) -> RobotModel:
-        """Return a view without the named joints and their descendant branches."""
         if not joint_names:
             raise ValueError("At least one joint subtree must be removed")
         if any(not name for name in joint_names):
@@ -513,13 +424,11 @@ class RobotModel:
         return replace(self, _removed_joint_subtrees=requested)
 
     def with_fixed_joints(self, *names: str) -> RobotModel:
-        """Return a model with movable joints fixed at their URDF zero pose."""
         if not names:
             raise ValueError("At least one joint must be fixed")
         return replace(self, _fixed_joints=(*self._fixed_joints, *names))
 
     def with_renamed_joints(self, names: Mapping[str, str]) -> RobotModel:
-        """Return a model view whose joints use the supplied canonical names."""
         if not names:
             raise ValueError("At least one joint rename is required")
         if any(not source or not target for source, target in names.items()):
@@ -529,7 +438,6 @@ class RobotModel:
         )
 
     def with_added_joints(self, *joints: JointDescription) -> RobotModel:
-        """Add joints and their child links after loading this model's existing view."""
         if not joints:
             raise ValueError("At least one joint must be added")
         return RobotModel(_source_path=self._source_path, _base_model=self, _added_joints=joints)
@@ -537,18 +445,6 @@ class RobotModel:
     def with_mimic_joint(
         self, follower: str, leader: str, multiplier: float = 1.0, offset: float = 0.0
     ) -> RobotModel:
-        """Make one joint copy another, e.g. a gripper's second finger following the first.
-
-        The follower then sits at ``multiplier * leader + offset`` and is no
-        longer driven on its own. Names are the joints as this model calls them.
-
-        Args:
-            follower: The joint that copies.
-            leader: The joint it copies.
-            multiplier: How far the follower moves per unit of the leader.
-            offset: The follower's position when the leader is at 0, in the
-                follower's unit (m or rad).
-        """
         if not follower or not leader or follower == leader:
             raise ValueError("A mimic joint needs two different joint names")
         if not math.isfinite(multiplier) or not math.isfinite(offset):
@@ -566,7 +462,6 @@ class RobotModel:
         lower: float,
         upper: float,
     ) -> RobotModel:
-        """Return a model with replacement position limits for one joint."""
         if not math.isfinite(lower) or not math.isfinite(upper):
             raise ValueError("Joint position limits must be finite")
         if lower > upper:
@@ -580,12 +475,9 @@ class RobotModel:
         )
 
     def with_joint_velocity_limits(self, limits: Mapping[str, float]) -> RobotModel:
-        """Replace named joint velocity limits in every planning backend."""
         if not limits or any(not math.isfinite(value) or value <= 0 for value in limits.values()):
             raise ValueError("Joint velocity limits must be positive and finite")
         if self._renamed_joints:
-            # Renamed joints only exist after the base view loads; carry the
-            # limits on a view of that loaded model so they apply to the new names.
             return RobotModel(
                 _source_path=self._source_path,
                 _base_model=self,
@@ -594,7 +486,6 @@ class RobotModel:
         return replace(self, _joint_velocity_limits=(*self._joint_velocity_limits, *limits.items()))
 
     def with_default_joint_acceleration_limit(self, value: float) -> RobotModel:
-        """Fill missing movable-joint acceleration limits during materialization."""
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError("Default joint acceleration limit must be positive and finite")
         return replace(self, _default_joint_acceleration_limit=float(value))
@@ -603,12 +494,6 @@ class RobotModel:
         return UsdModel.from_robot_model(self)
 
     def load(self) -> LoadedRobotModel:
-        """Materialize and memoize the model for a backend adapter.
-
-        Source subtree filters and the planar base run first. Fixed frames and
-        model attachments then run in declaration order on the current tree.
-        Joint fixes, limits, renames, and acceleration defaults run afterward.
-        """
         return self._loaded
 
     @cached_property
@@ -645,7 +530,6 @@ class RobotModel:
     def _materialize(
         self, xml: str, source_path: Path | None, package_paths: Mapping[str, Path]
     ) -> LoadedRobotModel:
-        """Apply this view's structural filters and edits to an already loaded XML."""
         if self._subtree_root_link is not None or self._removed_joint_subtrees:
             xml = _select_structural_subtree(
                 xml,
@@ -683,11 +567,6 @@ class RobotModel:
         return LoadedRobotModel(xml, source_path, package_paths)
 
     def __getstate__(self) -> dict[str, object]:
-        """Drop the memoized model when copy.deepcopy clones a blueprint config value.
-
-        Worker transfer goes through the CBOR codec, which sends dataclass fields only,
-        so the cache never crosses that way either.
-        """
         state = dict(self.__dict__)
         state.pop("_loaded", None)
         return state
@@ -1004,8 +883,6 @@ def _set_mimic_joints(xml: str, mimics: tuple[tuple[str, str, float, float], ...
         element = joints[follower]
         if element.find("mimic") is not None:
             raise ValueError(f"Joint already mimics another: {follower}")
-        # No chains: a leader that mimics, or a follower that leads, could close a loop
-        # where every joint is a follower and none is left to command.
         if joints[leader].find("mimic") is not None:
             raise ValueError(f"Joint mimics another and cannot be mimicked: {leader}")
         if any(mimic.get("joint") == follower for mimic in root.iter("mimic")):
@@ -1185,7 +1062,6 @@ def _resolve_relative_asset_paths(
     *,
     search_directories: tuple[Path, ...],
 ) -> str:
-    """Resolve URDF assets against the source directory and package roots."""
     root = ET.fromstring(xml)
     changed = False
     for element in (*root.findall(".//mesh"), *root.findall(".//texture")):
