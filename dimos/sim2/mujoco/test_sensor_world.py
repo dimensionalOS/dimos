@@ -112,6 +112,20 @@ def test_blind_to_lets_the_rays_through_further_frames(composed):
     assert through[0] < 0
 
 
+def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed):
+    view = _view(composed)
+    view.update(_World().at(0.0, 0.0, 0.0))
+    base, _ = view.pose("dog/base")
+    origin = base + np.array([0.0, -1.0, 0.0])
+    at_the_robot = np.array([[0.0, 1.0, 0.0]])
+
+    through, _ = view.raycaster((0,), blind_to=["dog/base"]).cast(origin, at_the_robot, 10.0)
+    again, _ = view.raycaster((0,)).cast(origin, at_the_robot, 10.0)
+
+    assert through[0] < 0, "the blind cast should have passed through"
+    assert again[0] == pytest.approx(0.9, abs=1e-3), "the next caster is still blind to the base"
+
+
 def test_an_imu_reads_gravity_at_rest_and_acceleration_from_pose_changes(composed):
     view, world = _view(composed, "imu", "dog/imu"), _World()
     view.update(world.at(1.0, 0.0, 0.0))
