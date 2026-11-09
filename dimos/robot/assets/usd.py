@@ -232,8 +232,12 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a scene")
     stage = pxr.Usd.Stage.Open(layer)
-    by_link = _link_prim_paths(stage)
     for name, (parent, xyz, rpy) in frames.items():
+        # Read afresh each time, because a frame may hang off one added a moment ago: the Go2's
+        # Mid-360 sits on its front camera, which is itself a frame the rig adds. Reading the
+        # layer's links once before the loop made that "the layer has no frame 'front_camera'",
+        # which is true of the file and not of the stage it is being built into.
+        by_link = _link_prim_paths(stage)
         parent_path = by_link.get(parent)
         if parent_path is None:
             raise ValueError(
@@ -250,7 +254,39 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
         transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
         transform[:3, 3] = xyz
         prim.AddTransformOp().Set(_matrix(pxr, transform))
+        _weld_frame(pxr, stage, parent_path, str(path), name)
     return str(layer.ExportToString())
+
+
+def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) -> None:
+    """Say the frame is fixed to the link it hangs off, where that link is one that moves.
+
+    Nesting places a frame but says nothing about how it is held, and a physics engine has to
+    decide. MuJoCo's guess is the most permissive one -- a body free in all six degrees -- and a
+    frame carries no mass, so the G1's lidar mount came back as "mass and inertia of moving
+    bodies must be larger than mjMINVAL" and the robot would not compile at all. A weld is the
+    honest statement (a mount bolted to the torso is not free to move) and it costs no degree of
+    freedom: MuJoCo folds a welded massless body into its parent.
+
+    Only where the parent is a link. A converted room hangs its visitors' frames off its own
+    root, which is an Xform and not a rigid body, and welding to something that is not a body is
+    not a statement USD can make. Nothing there needs it: a frame nested under static geometry is
+    static too, which is why a scene's stand frames always loaded.
+    """
+    parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
+    if not parent or not parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+        return
+    joint = pxr.UsdPhysics.FixedJoint.Define(
+        stage, pxr.Sdf.Path(path).AppendChild(_identifier(pxr, f"{name}_joint"))
+    )
+    joint.CreateBody0Rel().SetTargets([parent.GetPath()])
+    joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
+    # The nesting already placed the frame, so the joint adds no offset of its own.
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.GetPrim().SetDisplayName(f"{name}_joint")
 
 
 def prefix_usd_frames(usd: str, prefix: str) -> str:
