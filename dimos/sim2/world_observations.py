@@ -13,17 +13,6 @@
 # limitations under the License.
 
 
-"""The world as sim2 sends it: a WorldObservations per frame, of only what changed (world_msgs,
-from dimos-lcm).
-
-Three kinds of observation: a body's Position (its pose), a joint's JointState, and an entity's
-CborKeyValues (its "path" when it first appears, "act" when the world waits for a robot). A
-body's velocity is a difference of its poses over time.
-
-A backend writes its frames with a WorldWriter; every other module keeps a WorldMirror. There
-is no catching up: a missed frame is missed, so a world steps only once every module started.
-"""
-
 import asyncio
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
@@ -37,11 +26,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 WORLD = 0
-# An entity's path ("go2", "go2/FL_calf_joint"), sent when it first appears; a "<robot>/<joint>" is a joint.
 PATH = "path"
-# On a robot: the world holds until it acts (a lockstep control tick).
 ACT = "act"
-# On an action's target: the sim could not carry it out, {"reason": text}.
 REFUSED = "refused"
 
 
@@ -61,8 +47,6 @@ def joint_state(entity: int, position: float, velocity: float, effort: float) ->
 
 
 class WorldWriter:
-    """What a backend writes each frame with: it names what changed, this assigns ids and encodes it."""
-
     def __init__(self) -> None:
         self.ids: dict[str, int] = {"world": WORLD}
         self.paths: dict[int, str] = {WORLD: "world"}
@@ -71,7 +55,6 @@ class WorldWriter:
         self._positions: list[Position] = []
         self._joint_states: list[JointState] = []
         self.frame = 0
-        # Wall time at sim time zero, set by the first frame: every ts is it plus sim time.
         self.start_ns: int | None = None
 
     def add(self, path: str, **cbor: Any) -> int:
@@ -117,13 +100,9 @@ class WorldWriter:
 class Entity:
     path: str
     cbor: dict[str, Any] = field(default_factory=dict)
-    # A body's x, y, z, qx, qy, qz, qw in the world frame.
     pose: NDArray[np.float64] | None = None
-    # Its pose's change over the last frame it moved in, zero once it stops: linear then angular, world axes.
     velocity: NDArray[np.float64] | None = None
-    # The ts of pose, nanoseconds.
     ts: int = 0
-    # A joint's position, velocity, effort.
     joint: NDArray[np.float64] | None = None
 
     def _move(self, pose: NDArray[np.float64], ts: int) -> None:
@@ -137,9 +116,7 @@ class Entity:
 def _difference(
     before: NDArray[np.float64], after: NDArray[np.float64], dt: float
 ) -> NDArray[np.float64]:
-    """Linear velocity, then the world-axes rotation from before to after as an angular velocity."""
     (x0, y0, z0, w0), (x1, y1, z1, w1) = before[3:], after[3:]
-    # after * conjugate(before), as (x, y, z, w).
     w = w1 * w0 + x1 * x0 + y1 * y0 + z1 * z0
     v = np.array(
         [
@@ -157,21 +134,13 @@ def _difference(
 
 
 class WorldMirror:
-    """The world as the WorldObservations this module got say it is.
-
-    subscribe applies every frame on the thread that receives it, never dropping one for being busy;
-    read under lock. Work paced by sim time awaits reached().
-    """
-
     def __init__(self) -> None:
         self.lock = RLock()
         self.frame = 0
-        # The latest frame's ts, in seconds: sim time plus the wall time the sim started at.
         self.time = 0.0
         self.ts = 0
         self.entities: dict[int, Entity] = {}
         self.ids: dict[str, int] = {}
-        # This frame's CBOR: (entity id, key, value).
         self.received: list[tuple[int, str, Any]] = []
         self._waiters: list[tuple[float, asyncio.AbstractEventLoop, asyncio.Future[None]]] = []
         self._listeners: list[Callable[[WorldMirror], None]] = []
@@ -180,7 +149,6 @@ class WorldMirror:
         stream.subscribe(self.apply)
 
     def on_frame(self, listener: Callable[["WorldMirror"], None]) -> None:
-        """Called on the receiving thread after each frame is applied."""
         self._listeners.append(listener)
 
     def apply(self, message: WorldObservations) -> None:
@@ -205,7 +173,6 @@ class WorldMirror:
                 entity = self.entities.get(item.entity_id)
                 if entity is not None:
                     entity.joint = np.array([item.position, item.velocity, item.effort])
-            # Only what moved is sent, so what was not, while sim time passed, is still.
             for entity_id, entity in self.entities.items():
                 if (
                     entity_id not in moved
@@ -222,32 +189,31 @@ class WorldMirror:
             listener(self)
 
     def entity(self, path: str) -> Entity | None:
-        entity_id = self.ids.get(path)
-        return None if entity_id is None else self.entities.get(entity_id)
+        with self.lock:
+            entity_id = self.ids.get(path)
+            return None if entity_id is None else self.entities.get(entity_id)
 
     def stamp(self) -> float:
-        """The current frame's timestamp, what sim-timed messages are stamped with."""
         return self.time
 
     def joint_ids(self, robot: str) -> list[int]:
-        """The robot's joints' ids, in the order the world added them."""
         prefix = f"{robot}/"
-        return sorted(i for path, i in self.ids.items() if path.startswith(prefix))
+        with self.lock:
+            return sorted(i for path, i in self.ids.items() if path.startswith(prefix))
 
     def joints(self, robot: str) -> tuple[list[str], NDArray[np.float64]]:
-        """The robot's joint names (without its "<robot>/") and a row of position, velocity, effort each."""
-        members = [self.entities[i] for i in self.joint_ids(robot) if i in self.entities]
-        names = [m.path.removeprefix(f"{robot}/") for m in members]
-        rows = [m.joint if m.joint is not None else np.zeros(3) for m in members]
+        with self.lock:
+            members = [self.entities[i] for i in self.joint_ids(robot) if i in self.entities]
+            names = [m.path.removeprefix(f"{robot}/") for m in members]
+            rows = [m.joint if m.joint is not None else np.zeros(3) for m in members]
         return names, np.array(rows, dtype=np.float64).reshape(-1, 3)
 
     def got(self, path: str, key: str) -> bool:
-        """Whether this frame set key on the entity at path."""
-        entity_id = self.ids.get(path)
-        return any(e == entity_id and k == key for e, k, _ in self.received)
+        with self.lock:
+            entity_id = self.ids.get(path)
+            return any(e == entity_id and k == key for e, k, _ in self.received)
 
     async def reached(self, ts: float) -> None:
-        """Returns once a frame has come with a ts of at least ts seconds."""
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         with self.lock:
@@ -257,13 +223,11 @@ class WorldMirror:
         await future
 
     async def ticks(self, rate_hz: float) -> AsyncIterator[float]:
-        """Every 1 / rate_hz of sim time, however fast the world runs; as often as the caller keeps up, if it can't."""
         period, due = 1.0 / rate_hz, 0.0
         while True:
             await self.reached(due)
             yield self.time
             now = self.time
             due += period
-            # A whole period behind, it goes again at once rather than in a burst.
             if now >= due + period:
                 due = now
