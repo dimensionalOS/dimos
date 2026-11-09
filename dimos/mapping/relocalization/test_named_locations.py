@@ -18,12 +18,13 @@ from typing import Any, cast
 
 import pytest
 
-from dimos.mapping.relocalization.module import PremapModule
+from dimos.mapping.relocalization.module import LOCATIONS_REQUEST, PremapModule
 from dimos.mapping.relocalization.named_locations import load_locations
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
     named_pose,
@@ -160,6 +161,23 @@ def test_a_list_from_another_run_is_applied_too(make):
     assert names(module.locations_snapshot()) == ["dock", "desk"]
     assert names(published[-1]) == ["dock", "desk"]
     assert published[-1].server_id == module.locations_snapshot().server_id
+
+
+def test_a_request_on_the_shared_topic_resends_the_list(make):
+    """A recording that starts later asks for the list, so its snapshot ends up in the recording."""
+    module, published = make()
+    begin(module)
+    publish(module, {"dock": at(1, 2, "map")})
+
+    published.clear()
+    asyncio.run(module.handle_render_file_request(String(LOCATIONS_REQUEST)))
+    assert len(published) == 1
+    assert positions(published[-1]) == {"dock": (1, 2)}
+    assert all(p.header.frame_id == "map" for p in published[-1].poses)
+
+    # another module's file: this one stays silent
+    asyncio.run(module.handle_render_file_request(String("/some/robot.urdf")))
+    assert len(published) == 1
 
 
 def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):

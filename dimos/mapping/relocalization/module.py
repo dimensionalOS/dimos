@@ -23,6 +23,9 @@ fix is good enough, and hands it to :meth:`PremapModule.submit`. See ``lidar/mod
 Named locations live here too, in the ``map`` frame, so every new fix moves them with the old
 map. They are not tf frames: the list on ``named_locations`` is where they are read from.
 
+Asking for ``"named_locations"`` on the shared ``render_file_request`` topic resends the list,
+which is how a recording that starts later gets a snapshot of it.
+
 ``named_locations`` is in and out: the whole list, as an ``InteractiveMarkerUpdate`` whose
 ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
 publish it and everyone who does also listens, so adding, moving, renaming and deleting are
@@ -54,7 +57,7 @@ from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import IO, Out
+from dimos.core.stream import IO, In, Out
 from dimos.mapping.relocalization.named_locations import (
     load_locations,
     same_locations,
@@ -62,6 +65,7 @@ from dimos.mapping.relocalization.named_locations import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
     InteractiveMarkerUpdate,
@@ -74,6 +78,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 RECORDING_SUFFIXES = (".db", ".mcap")
+
+# What to ask for on `render_file_request` to be sent the named locations
+LOCATIONS_REQUEST = "named_locations"
 
 
 def find_stream(streams: list[str], wanted: str) -> str | None:
@@ -144,6 +151,7 @@ class PremapModule(Module):
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
+    render_file_request: In[String]
 
     _placed: bool = False
 
@@ -260,6 +268,16 @@ class PremapModule(Module):
             self._revision += 1
         logger.info(f"named locations: {list(locations)}")
         self.named_locations.publish(self.locations_snapshot())
+
+    async def handle_render_file_request(self, request: String) -> None:
+        """``named_locations`` on the shared request topic: resend the list.
+
+        A recording that starts after this module did would otherwise hold no snapshot of the
+        locations, and the next run reads them back out of the recording. Other names belong to
+        other modules (urdf_manager serves the URDF and the files it names), so this stays silent.
+        """
+        if request.data == LOCATIONS_REQUEST:
+            self.named_locations.publish(self.locations_snapshot())
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``: from this module's own fix for world/map, else from tf."""
