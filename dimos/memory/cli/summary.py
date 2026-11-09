@@ -66,10 +66,10 @@ def main(
     from dimos.memory.cli.dataset import open_store, resolve_dataset
 
     db_path = resolve_dataset(dataset)
+    store = open_store(db_path)
     if db_path.suffix == ".mcap":
         # mcap stores don't speak the sqlite _streams table; print the store's own
         # summary. Codecless channels appear as Stream[bytes], flagged [raw bytes: …].
-        store = open_store(db_path)
         with store:
             typer.echo(store.summary())
         return
@@ -78,10 +78,7 @@ def main(
     from rich.progress import Progress
     from rich.table import Table
 
-    from dimos.memory.store.sqlite import SqliteStore
-
     rows: list[tuple[str, int, float | None, float | None, int, str]] = []
-    store = SqliteStore(path=str(db_path), must_exist=True)
     with store, Progress(transient=True) as prog:
         names = store.list_streams()
         task = prog.add_task("scanning", total=len(names))
