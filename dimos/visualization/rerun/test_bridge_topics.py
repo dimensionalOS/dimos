@@ -32,8 +32,11 @@ import rerun as rr
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,
     RerunEntry,
@@ -62,12 +65,15 @@ class FakeZenoh(Zenoh):
 
 
 @pytest.fixture
-def make_bridge() -> Iterator[Callable[..., RerunBridgeModule]]:
-    """Build real bridge modules. Constructing one opens a transport, so each is stopped again."""
+def make_bridge(mocker: MockerFixture) -> Iterator[Callable[..., RerunBridgeModule]]:
+    """Build real bridges without opening RPC sessions or starting loop threads."""
+    mocker.patch("dimos.core.module.get_loop", return_value=(None, None))
+    mocker.patch.object(ZenohRPC, "start")
+    mocker.patch.object(ZenohRPC, "serve_module_rpc")
     bridges: list[RerunBridgeModule] = []
 
     def make(**config: Any) -> RerunBridgeModule:
-        bridge = RerunBridgeModule(pubsubs=[], **config)
+        bridge = RerunBridgeModule(pubsubs=[], rpc_transport=ZenohRPC, **config)
         bridges.append(bridge)
         return bridge
 
@@ -156,17 +162,55 @@ def test_multi_entries_log_their_static_flag_and_pin_the_frame_once(
     ]
     assert is_rerun_multi(cells)
     log = mocker.patch("rerun.log")
+    clock = mocker.patch("dimos.visualization.rerun.bridge.time.monotonic", return_value=10.0)
     topic = ZenohTopic(topic="dimos/surface_map", lcm_type=PointCloud2)
     bridge = make_bridge(visual_override={"world/surface_map": lambda m: cells})
     entity = bridge._get_entity_path(topic)
+    bridge._min_intervals = {entity: 1.0}
     msg = PointCloud2(frame_id="odom")
     bridge._on_message(msg, topic)
+    bridge._on_message(msg, topic)
+    assert log.call_count == 3  # Two cells and the frame pin; the repeat is throttled.
+    clock.return_value = 11.0
     bridge._on_message(msg, topic)
     calls = [(c.args[0], c.kwargs.get("static", False)) for c in log.call_args_list]
     assert calls.count(("world/surface_map/0_0", True)) == 2
     assert calls.count(("world/surface_map/1_0", False)) == 2
     pins = [c for c in log.call_args_list if c.args[0] == entity]
     assert len(pins) == 1 and isinstance(pins[0].args[1], rr.Transform3D)
+
+
+@pytest.mark.parametrize("tf_axes", [0.0, 0.5])
+def test_tf_rate_limit_preserves_distinct_edges(
+    mocker: MockerFixture, make_bridge: Callable[..., RerunBridgeModule], tf_axes: float
+) -> None:
+    log = mocker.patch("rerun.log")
+    clock = mocker.patch("dimos.visualization.rerun.bridge.time.monotonic", return_value=10.0)
+    bridge = make_bridge(tf_axes=tf_axes)
+    # Set the cap without start(), which would launch viewer and pubsub services.
+    bridge._min_intervals = {"world/tf": 1.0}
+    topic = ZenohTopic(topic="dimos/tf", lcm_type=TFMessage)
+    base = Transform(frame_id="map", child_frame_id="base", ts=42.25)
+    camera = Transform(frame_id="base", child_frame_id="camera", ts=42.25)
+    optical = Transform(frame_id="camera", child_frame_id="optical", ts=42.25)
+
+    bridge._on_message(TFMessage(base), topic)
+    bridge._on_message(TFMessage(camera), topic)
+    # A batch can mix throttled edges with a previously unseen edge.
+    batch = TFMessage(base, camera, optical)
+    bridge._on_message(batch, topic)
+    clock.return_value = 10.5
+    bridge._on_message(TFMessage(base), topic)
+    clock.return_value = 11.0
+    bridge._on_message(TFMessage(base), topic)
+
+    assert [c.args[0] for c in log.call_args_list if isinstance(c.args[1], rr.Transform3D)] == [
+        "tf_links/base",
+        "tf_links/camera",
+        "tf_links/optical",
+        "tf_links/base",
+    ]
+    assert batch.transforms == [base, camera, optical]
 
 
 def test_region_cells_unpack_from_the_seq_the_planner_packs() -> None:
