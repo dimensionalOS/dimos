@@ -401,6 +401,18 @@ def test_teleop_module_returns_none_when_bus_read_raises_runtime_error(
     assert command is None
 
 
+def test_gripper_travel_falls_back_to_the_shared_value() -> None:
+    config = OpenArmMiniTeleopModuleConfig(
+        port_left="l",
+        gripper_travel_radians=1.2,
+        gripper_travel_radians_by_side={"right": 0.8},
+    )
+    assert config.gripper_travel("left") == 1.2
+    assert config.gripper_travel("right") == 0.8
+    with pytest.raises(ValueError):
+        OpenArmMiniTeleopModuleConfig(port_left="l", gripper_travel_radians_by_side={"left": 0.0})
+
+
 def test_tick_publishes_gripper_openings_only_for_sides_with_a_trigger(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

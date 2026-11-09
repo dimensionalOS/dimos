@@ -76,7 +76,11 @@ class OpenArmMiniTeleopModuleConfig(ModuleConfig):
     baudrate: int = Field(default=OPENARM_MINI_DEFAULT_BAUDRATE, gt=0)
     max_joint_jump_radians: float = 0.75
     # Trigger angle from released to fully squeezed; read it off the calibrate live readout.
+    # The per-side values override the shared one for leaders whose triggers differ.
     gripper_travel_radians: float = Field(default=1.0, gt=0.0)
+    gripper_travel_radians_by_side: Mapping[OpenArmMiniSide, Annotated[float, Field(gt=0.0)]] = (
+        Field(default_factory=dict)
+    )
     authority_active: bool = True
     # Unset: the sides whose serial port is configured drive the follower.
     enabled_sides: Annotated[tuple[OpenArmMiniSide, ...], Field(min_length=1)] | None = None
@@ -105,6 +109,10 @@ class OpenArmMiniTeleopModuleConfig(ModuleConfig):
         if not port:
             raise ValueError(f"port_{side} must be configured for OpenArm Mini teleop")
         return port
+
+    def gripper_travel(self, side: OpenArmMiniSide) -> float:
+        """Return the trigger travel for a side, the shared value unless overridden."""
+        return self.gripper_travel_radians_by_side.get(side, self.gripper_travel_radians)
 
     def connection_baudrate(self) -> int:
         """Return the configured Feetech serial baudrate."""
@@ -239,7 +247,7 @@ class OpenArmMiniTeleopModule(Module):
                     target_joint_names=openarm_mini.target_joint_names(side),
                     previous_positions_by_joint=self._previous_positions_by_side.get(side),
                     max_joint_jump_radians=openarm_mini.max_joint_jump_radians,
-                    gripper_travel_radians=openarm_mini.gripper_travel_radians,
+                    gripper_travel_radians=openarm_mini.gripper_travel(side),
                 )
                 side_commands.append(side_command)
                 next_previous_positions_by_side[side] = side_command.positions_by_joint

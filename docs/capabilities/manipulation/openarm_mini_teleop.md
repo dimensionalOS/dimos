@@ -194,6 +194,9 @@ dimos --simulation run teleop-openarm-mini --port-left <feetech-port> \
   --openarmminiteleopmodule.gripper-travel-radians 0.9
 ```
 
+When the two leaders' triggers travel differently, give each its own value:
+`--openarmminiteleopmodule.gripper-travel-radians-by-side '{"left": 0.88, "right": 1.33}'`.
+
 The module publishes `left_gripper_command` and `right_gripper_command`
 (normalized opening, 1 = open) for the sides with a calibrated trigger; the
 follower blueprints bind them to one gripper task per jaw, open at the jaw's
