@@ -12,17 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Simulated xArm7 pick and place that an operator can hold and e-stop.
-
-The same modules as xarm-perception-sim, plus the operator hold task, an
-end-effector jog on ``ee_twist_command``, on/off streams for the hold and the
-e-stop, a point cloud of the scene on ``scene_pointcloud`` and the arm's URDF,
-so a Desktop page can show the arm and the scene, stop or hold it, and drive it
-by hand after taking over.
-"""
 
 from __future__ import annotations
 
+from dimos.agents.skills.teleop_skills import TeleopSkills
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import ControlTask
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
@@ -51,7 +44,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -60,20 +53,6 @@ logger = setup_logger()
 
 
 class OperatorHoldCoordinator(ControlCoordinator):
-    """A ControlCoordinator that only adds on/off streams for the hold and the e-stop.
-
-    The e-stop is ControlCoordinator's own ``set_estop``. The hold is the "operator_hold" task, reached over ``task_invoke``
-    ("request", "acknowledge", "get_status"); an e-stop turns it on and it
-    stays on until acknowledged.
-
-    ``operator_hold_status`` is True while the hold is on, sent each time the
-    hold task sends its status. ``operator_estop_status`` is True while the
-    e-stop is latched, sent at start and on every ``set_estop``.
-
-    Combine it with another coordinator subclass by inheriting from both, e.g.
-    ``class MyCoordinator(OperatorHoldCoordinator, TeleopControlCoordinator)``.
-    """
-
     operator_hold_status: Out[Bool]
     operator_estop_status: Out[Bool]
 
@@ -84,7 +63,6 @@ class OperatorHoldCoordinator(ControlCoordinator):
         task_type: str | None = None,
         stream_bind: dict[str, str] | None = None,
     ) -> bool:
-        """Register a task; a hold task also sends its on/off on operator_hold_status."""
         added = super().add_task(task, task_type=task_type, stream_bind=stream_bind)
         if added and isinstance(task, OperatorHoldTask):
             task.set_status_publisher(
@@ -94,17 +72,11 @@ class OperatorHoldCoordinator(ControlCoordinator):
 
     @rpc
     def start(self) -> None:
-        """Start the coordinator and send the current e-stop state."""
         super().start()
         self._publish_estop_status()
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
-        """Stop (True) or clear (False) like ControlCoordinator, then send the state.
-
-        Args:
-            estopped: True to stop, False to clear.
-        """
         try:
             return super().set_estop(estopped)
         finally:
@@ -118,15 +90,9 @@ class OperatorHoldCoordinator(ControlCoordinator):
 
 
 class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
-    """OperatorHoldCoordinator plus the ``ee_twist_command`` input the jog task reads.
-
-    A TwistStamped on ``ee_twist_command`` moves the gripper tip at that
-    velocity (m/s, rad/s, world frame); a zero twist, or none for 0.3 s, stops it.
-    """
+    pass
 
 
-# The planner publishes these links on tf at the arm's real mount; the Desktop
-# draws each URDF link at its tf frame.
 _ARM_LINKS = ["link_base", *(f"link{i}" for i in range(1, 8))]
 _xarm7_sim_model = make_xarm7_sim_robot_config(tf_extra_links=_ARM_LINKS)
 _xarm7_sim_hw = make_xarm7_sim_hardware()
@@ -138,11 +104,9 @@ hybrid_teleop_sim = autoconnect(
         visualization={"backend": "viser"},
     ),
     ManipulationSkills.blueprint(),
+    TeleopSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world", robot=_xarm7_sim_model),
     HeuristicGraspModule.blueprint(**XARM_HEURISTIC_AIM),
-    # Rays from the wrist camera (80 x 60, about 1 cm apart on the table) give
-    # world-frame points at 5 Hz. Renamed so they do not mix with the object
-    # clouds ObjectSceneRegistrationModule sends on "pointcloud".
     MujocoSimModule.blueprint(
         **make_xarm7_sim_module_kwargs(XARM7_SIM_PATH),
         enable_pointcloud=True,
@@ -156,8 +120,6 @@ hybrid_teleop_sim = autoconnect(
         detector_backend="moondream",
         segmentation_backend="edgetam",
         detect_on_request=True,
-        # Detections closer than this (metres) count as one object. The objects
-        # on the table are 10 to 17 cm apart; the 0.2 m default merges them.
         distance_threshold=0.05,
     ),
     coordinator(
@@ -181,7 +143,6 @@ hybrid_teleop_sim = autoconnect(
         cls=HybridTeleopCoordinator,
         instance_name="ControlCoordinator",
     ),
-    # Serves the URDF and its meshes; the planner already puts the links on tf.
-    UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
+    UsdManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
 )

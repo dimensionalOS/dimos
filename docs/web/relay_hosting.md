@@ -109,7 +109,7 @@ The same relay under systemd: the pinned Deno, a checkout owned by a service use
 
 ```bash
 sudo apt install -y git unzip
-curl -fsSLo /tmp/deno.zip https://github.com/denoland/deno/releases/download/v2.6.10/deno-x86_64-unknown-linux-gnu.zip
+curl -fsSLo /tmp/deno.zip https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip
 sudo unzip -o -d /usr/local/bin /tmp/deno.zip
 sudo useradd --system --create-home --home /srv/relay relay
 sudo -u relay git clone https://github.com/dimensionalOS/dimos /srv/relay/dimos

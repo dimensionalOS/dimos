@@ -12,21 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python NativeModule wrapper for the Rust Livox Mid-360 driver.
-
-Usage::
-    from dimos.hardware.sensors.lidar.livox.module import Mid360
-    from dimos.core.coordination.blueprints import autoconnect
-
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
-    ModuleCoordinator.build(autoconnect(
-        Mid360.blueprint(lidar_ip="192.168.1.155"),  # host_ip auto-detected
-        SomeConsumer.blueprint(),
-    )).loop()
-"""
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -58,33 +47,20 @@ class Mid360Config(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
-    # None derives host_ip from a NIC on the lidar's subnet; a box with two links
-    # into that subnet sets it explicitly.
     host_ip: str | None = None
-    # Required for a live sensor.
     lidar_ip: str | None = None
     frequency: float = 10.0
     enable_imu: bool = True
-    # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
     pcap: str | None = None
-    # Replay speed relative to capture time. None runs flat-out.
     replay_rate: float | None = Field(default=1.0, gt=0)
-    # Seconds a replay holds its first packet, so consumers can subscribe first.
     replay_delay: float = Field(default=0.0, ge=0)
-    # Multicast group the device streams to. None receives unicast only, which
-    # loopback replay needs and macOS requires (see virtual_mid360).
     multicast_ip: str | None = Field(
         default_factory=lambda: None if sys.platform == "darwin" else SDK_MULTICAST_GROUP
     )
-    # Wire layout per point:
-    #   "minimal" x,y,z,offset_time                    - 16 B (default)
-    #   "full"    x,y,z,intensity,offset_time,tag,line - 22 B
-    #   "legacy"  x,y,z,intensity                      - 16 B
     point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
 
-    # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
     push_msg_port: int = SDK_PUSH_MSG_PORT
     point_data_port: int = SDK_POINT_DATA_PORT
@@ -103,14 +79,117 @@ class Mid360Config(NativeModuleConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
-        # The rust struct has every key. None crosses as an explicit null.
         for key in ("host_ip", "lidar_ip", "pcap", "replay_rate", "multicast_ip"):
             config[key] = getattr(self, key)
         return config
 
 
+_LIDAR_TOKEN = "@LIDAR@"
+_IMU_TOKEN = "@IMU@"
+_IMU_OFFSET_TOKEN = "@IMU_OFFSET@"
+
+_MID360_USD = """\
+#usda 1.0
+(
+    defaultPrim = "mid360"
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "mid360"
+{
+    def Xform "lidar_link" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        displayName = "@LIDAR@"
+    )
+    {
+        def Xform "lidar_link_body" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            displayName = "@LIDAR@_body"
+        )
+        {
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, -0.02, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Cube "visual_0"
+            {
+                color3f[] primvars:displayColor = [(0.25, 0.25, 0.27)]
+                double size = 1
+                float3 xformOp:scale = (0.065, 0.065, 0.06)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
+            }
+
+            def Cube "collision_1" (
+                prepend apiSchemas = ["PhysicsCollisionAPI"]
+            )
+            {
+                double size = 1
+                token visibility = "invisible"
+                float3 xformOp:scale = (0.065, 0.065, 0.06)
+                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
+                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
+            }
+        }
+
+        def Xform "imu_link" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+            displayName = "@IMU@"
+        )
+        {
+            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (@IMU_OFFSET@, 1) )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+        }
+    }
+
+    def Scope "joints"
+    {
+        def PhysicsFixedJoint "lidar_link_to_body" (
+            displayName = "@LIDAR@_to_body"
+        )
+        {
+            rel physics:body0 = </mid360/lidar_link>
+            rel physics:body1 = </mid360/lidar_link/lidar_link_body>
+            point3f physics:localPos0 = (0, 0, -0.02)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+
+        def PhysicsFixedJoint "lidar_link_to_imu_link" (
+            displayName = "@LIDAR@_to_@IMU@"
+        )
+        {
+            rel physics:body0 = </mid360/lidar_link>
+            rel physics:body1 = </mid360/lidar_link/imu_link>
+            point3f physics:localPos0 = (@IMU_OFFSET@)
+            point3f physics:localPos1 = (0, 0, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+        }
+    }
+}
+
+"""
+
+
+def _imu_offset() -> str:
+    from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
+
+    factory = PointLioConfig.model_fields["extrinsic_t"].default_factory
+    assert factory is not None, "extrinsic_t lost its default"
+    return ", ".join(repr(-value) for value in factory())
+
+
+def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
+    return (
+        _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame)
+        .replace(_IMU_TOKEN, imu_frame)
+        .replace(_IMU_OFFSET_TOKEN, _imu_offset())
+    )
+
+
 def _resolved_host_ip(config: Mid360Config) -> str | None:
-    """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
         return config.host_ip
     if not config.lidar_ip:
@@ -136,7 +215,13 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     def stop(self) -> None:
         super().stop()
 
+    @rpc
+    def get_usd(self) -> list[str]:
+        return [
+            str(Path(__file__).parent),
+            mid360_usd(self.config.frame_id, self.config.imu_frame_id),
+        ]
 
-# Verify protocol port compliance (mypy will flag missing ports)
+
 if TYPE_CHECKING:
     Mid360()

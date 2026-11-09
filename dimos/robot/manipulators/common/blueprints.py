@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Small blueprint helpers shared by manipulator stacks."""
 
 from __future__ import annotations
 
@@ -35,12 +34,10 @@ from dimos.robot.manipulators.common.topics import (
     COORDINATOR_FRAME_ID,
     EEF_TWIST_TASK_NAME,
 )
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
 
 class TeleopBinding(TypedDict):
-    """Declarative mapping from an operator hand to one model target."""
-
     hand: str
     target_frame: str
 
@@ -159,8 +156,6 @@ def coordinator(
     publish_robot_joint_states: bool = False,
     publish_frame_poses: bool = False,
 ) -> Blueprint:
-    """*cls* is the subclass declaring the `{hardware_id}_joints` outputs; pass
-    instance_name="ControlCoordinator" with it so RPC clients still find it."""
     return cls.blueprint(
         tick_rate=tick_rate,
         publish_joint_state=publish_joint_state,
@@ -196,36 +191,14 @@ def manipulation_mapping(
     voxel_size: float,
     world_frame: str = "world",
 ) -> Blueprint:
-    """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
-
-    Three modules in a row: a self filter drops the robot's own returns, a
-    voxel mapper collects the rest, and a box filter lets pick-and-place leave
-    the object it is picking out of the map. The box filter's output is named
-    ``voxel_map``, so ManipulationModule's input of that name connects by
-    itself. The camera's ``pointcloud`` output must be switched on.
-
-    Args:
-        self_filter_model: The robot whose returns are dropped. Parts left out of
-            this model, such as a gripper, stay in the map.
-        voxel_size: Edge of one map cell, metres. Give ManipulationModule the
-            same ``voxel_map_resolution``, or its octree will not line up with
-            the map.
-        world_frame: Fixed frame the map is built and published in.
-    """
     return autoconnect(
-        UrdfManagerPointClearing.blueprint(
-            # ManipulationModule already publishes the arm's frames.
+        UsdManagerPointClearing.blueprint(
             publish_joint_tf=False,
             model=self_filter_model,
             state_tolerance_s=0.1,
-            # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
-            # tolerance cannot bracket a ~92ms publish period and drops most
-            # clouds. One full period admits them all, and the arm holds still
-            # while scanning, so a transform a period old describes the same pose.
             tf_tolerance_s=0.1,
             tf_forward_tolerance_s=0.1,
         ),
-        # Tabletop reach, not a room-scale lidar sweep.
         RayTracingVoxelMap.blueprint(
             voxel_size=voxel_size,
             world_frame=world_frame,

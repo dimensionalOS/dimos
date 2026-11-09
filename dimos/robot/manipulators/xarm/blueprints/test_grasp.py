@@ -17,7 +17,6 @@ import sys
 
 import pytest
 
-# The tests extra excludes yourdfpy on Linux ARM because embreex has no wheel.
 if sys.platform == "linux" and platform.machine() == "aarch64":
     pytest.importorskip(
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
@@ -29,12 +28,11 @@ from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.robot.manipulators.xarm.blueprints.grasp import xarm_grasp, xarm_grasp_graspgenx
-from dimos.robot.urdf_manager_point_clearing import UrdfManagerPointClearing
+from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 from dimos.spec.utils import spec_structural_compliance
 
 
 def _topics(blueprint: Blueprint) -> dict[tuple[type, str], str]:
-    """The name each module's stream connects on, keyed by (module, stream)."""
     return {
         (atom.module, stream.name): blueprint.remapping_map.get(
             (atom.name, stream.name), stream.name
@@ -50,12 +48,11 @@ def test_the_planner_map_passes_through_the_box_filter(blueprint: Blueprint) -> 
     planner_map = topics[ManipulationModule, "voxel_map"]
 
     assert (
-        topics[UrdfManagerPointClearing, "filtered_pointcloud"]
+        topics[UsdManagerPointClearing, "filtered_pointcloud"]
         == topics[RayTracingVoxelMap, "lidar"]
     )
     assert topics[RayTracingVoxelMap, "global_map"] == topics[PointCloudBoxFilter, "cloud"]
     assert topics[PointCloudBoxFilter, "filtered_cloud"] == planner_map
-    # Nothing else feeds the planner's map.
     assert {key for key, topic in topics.items() if topic == planner_map} == {
         (ManipulationModule, "voxel_map"),
         (PointCloudBoxFilter, "filtered_cloud"),

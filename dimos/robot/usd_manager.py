@@ -1,0 +1,503 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from threading import RLock
+import time
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+from pydantic import Field, field_validator
+
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleBase, ModuleConfig
+from dimos.core.rpc_client import RPCClient
+from dimos.core.stream import IO, In, Out
+from dimos.msgs.files.File import File
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.String import String
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.usd import (
+    graft_usd,
+    prefix_usd_frames,
+    rename_usd_frames,
+    usd_frame_names,
+    warm_usd,
+)
+from dimos.robot.assets.usd_assets import (
+    publish_usd_assets,
+    require_asset_hashes,
+    resolve_usd_assets,
+)
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.coordination.blueprints import Blueprint
+
+logger = setup_logger()
+
+
+MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
+
+SUBTREE_RPC = "get_usd"
+SCENE_RPC = "get_scene"
+ASSET_RPC = "get_asset"
+
+
+WORLD_LINK = "world"
+
+
+class CircularMountError(ValueError):
+    pass
+
+
+def _world_model() -> RobotModel:
+    return RobotModel.from_root_link(WORLD_LINK, name=WORLD_LINK)
+
+
+def _as_usd(model: RobotModel | UsdModel) -> UsdModel:
+    return model if isinstance(model, UsdModel) else model.to_usd()
+
+
+ASSET_ROOT, USD = 0, 1
+
+USD_SUFFIXES = (".usd", ".usda")
+
+_WAITING_LOG_EVERY = 20
+
+
+@dataclass(frozen=True)
+class Mount:
+    module: type[ModuleBase] | None
+    remote_name: str
+    frame_prefix: str = ""
+    subtree_rpc: str = SUBTREE_RPC
+
+    @classmethod
+    def of(cls, value: object) -> Mount:
+        from dimos.core.coordination.blueprints import Blueprint
+
+        if isinstance(value, Mount):
+            return value
+        if isinstance(value, Mapping) and "remote_name" in value:
+            return cls(**value)
+        if isinstance(value, Blueprint):
+            return cls._from_blueprint(value)
+        if isinstance(value, Mapping) and "blueprints" in value:
+            return cls._from_flattened(value)
+        if isinstance(value, str):
+            return cls(None, value, value.rsplit("/", 1)[0] if "/" in value else "")
+        if isinstance(value, type) and issubclass(value, Module):
+            return cls(value, value.__name__, subtree_rpc=cls._tree_rpc(value))
+        raise TypeError(
+            f"mounts values are a Module subclass, a Blueprint or an instance name; got {value!r}"
+        )
+
+    @classmethod
+    def _from_blueprint(cls, blueprint: Blueprint) -> Mount:
+        atoms = [atom for atom in blueprint.blueprints if SUBTREE_RPC in atom.module.rpcs]
+        if not atoms:
+            raise ValueError(
+                f"mounts was given a blueprint of "
+                f"{sorted(atom.module.__name__ for atom in blueprint.blueprints)}, none of which "
+                f"has an @rpc {SUBTREE_RPC}() to ask for its subtree"
+            )
+        if len(atoms) > 1:
+            raise ValueError(
+                f"mounts was given a blueprint with more than one module answering "
+                f"{SUBTREE_RPC}() ({sorted(atom.name for atom in atoms)}); name the one that owns "
+                f"the subtree instead of the whole blueprint"
+            )
+        return cls(
+            atoms[0].module,
+            atoms[0].name,
+            atoms[0].kwargs.get("frame_id_prefix") or "",
+            subtree_rpc=cls._tree_rpc(atoms[0].module),
+        )
+
+    @classmethod
+    def _from_flattened(cls, blueprint: Mapping[str, Any]) -> Mount:
+        atoms = [
+            atom for atom in blueprint.get("blueprints") or () if SUBTREE_RPC in atom["module"].rpcs
+        ]
+        if len(atoms) != 1:
+            named = sorted(atom["module"].__name__ for atom in blueprint.get("blueprints") or ())
+            raise ValueError(
+                f"mounts was given a blueprint of {named}, of which "
+                f"{len(atoms)} answer an @rpc {SUBTREE_RPC}(); it has to be exactly one. Name "
+                f"the module that owns the subtree instead of the whole blueprint."
+            )
+        return cls(
+            atoms[0]["module"],
+            atoms[0]["instance_name"],
+            (atoms[0].get("kwargs") or {}).get("frame_id_prefix") or "",
+            subtree_rpc=cls._tree_rpc(atoms[0]["module"]),
+        )
+
+    @staticmethod
+    def _tree_rpc(module: type[ModuleBase]) -> str:
+        return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
+
+
+class UsdManagerConfig(ModuleConfig):
+    model: RobotModel | UsdModel | None = None
+    publish_joint_tf: bool = True
+    joint_tf_hz: float = Field(default=30.0, gt=0.0)
+    unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
+    mounts: dict[str, Mount] = Field(default_factory=dict)
+    tf_renames: dict[str, str] = Field(default_factory=dict)
+    tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
+    scene_retry_s: float = Field(default=0.5, gt=0.0)
+
+    @field_validator("mounts", mode="before")
+    @classmethod
+    def _normalize_mounts(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        return {frame: Mount.of(v) for frame, v in value.items()}
+
+
+class UsdManager(Module):
+    config: UsdManagerConfig
+
+    tf: IO[TFMessage]
+    coordinator_joint_state: In[JointState]
+    render_file_request: In[String]
+    file_info: Out[File]
+
+    def __init__(self, **kwargs: object) -> None:
+        self._ready = asyncio.Event()
+        super().__init__(**kwargs)
+        self._lock = RLock()
+        self._description = _as_usd(self.config.model or _world_model())
+        self._file_paths = self._description.referenced_files()
+        self._joints = {joint.name: joint for joint in self._description.joints}
+        self._frames = self._renamed_own_frames()
+        self._next_joint_tf_t = 0.0
+        self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
+        self._usd: str | None = None
+        self._usd_lock = RLock()
+        self._scene_build = asyncio.Lock()
+        self._scene: str | None = None
+        self._subtree_clients: dict[str, RPCClient] = {}
+        self._published_assets: dict[str, str] = {}
+        try:
+            self._check_mounts()
+            if not self.config.mounts:
+                self._check_renames_matched(self._matched_own_renames())
+        except Exception:
+            self.dispose()
+            raise
+        self._ready.set()
+
+    def _own_frame_names(self) -> set[str]:
+        return self._description.frame_names()
+
+    def _renamed_own_frames(self) -> dict[str, str]:
+        pre = self.config.tf_renames_pre_namespace
+        post = self.config.tf_renames
+        renamed = {}
+        for name in self._own_frame_names():
+            once = pre.get(name, name)
+            new = post.get(once, once)
+            if new != name:
+                renamed[name] = new
+        return renamed
+
+    def _matched_own_renames(self) -> set[str]:
+        names = self._own_frame_names()
+        pre = self.config.tf_renames_pre_namespace
+        after_pre = {pre.get(name, name) for name in names}
+        return (names & set(pre)) | (after_pre & set(self.config.tf_renames))
+
+    def _check_mounts(self) -> None:
+        for frame_id, mount in self.config.mounts.items():
+            if mount.module is None:
+                continue
+            if not {SUBTREE_RPC, SCENE_RPC} & set(mount.module.rpcs):
+                raise ValueError(
+                    f"mounts attaches {mount.module.__name__} at {frame_id!r}, but it has "
+                    f"neither an @rpc {SUBTREE_RPC}() nor an @rpc {SCENE_RPC}() to ask for its "
+                    f"subtree"
+                )
+
+    @rpc
+    def start(self) -> None:
+        self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        for client in self._subtree_clients.values():
+            client.stop_rpc_client()
+        self._subtree_clients.clear()
+        super().stop()
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        with self._usd_lock:
+            if self._usd is None:
+                usd = self._description.usd
+                self._usd = rename_usd_frames(usd, self._frames)
+            return [self._asset_root(), self._usd]
+
+    def _asset_root(self) -> str:
+        source = self._description.source_path
+        return str(source.parent) if source is not None else ""
+
+    @rpc
+    async def get_scene(self, visited: list[str] | None = None) -> list[str]:
+        await self._ready.wait()
+        chain = list(visited or [])
+        self._refuse_a_cycle(chain)
+        root, scene = await self._compose(chain)
+        published, assets = await asyncio.to_thread(publish_usd_assets, scene)
+        self._published_assets = assets
+        self._scene = published
+        return ["", published]
+
+    @rpc
+    async def get_asset(self, name: str) -> bytes:
+        await self._ready.wait()
+        real = self._published_assets.get(name, name if name in self._file_paths else None)
+        if real is None:
+            raise KeyError(
+                f"{name!r} is neither a file this description names nor an asset the last scene "
+                f"published. Ask for a scene before its assets: the names only exist once one "
+                f"has been handed out."
+            )
+        return await asyncio.to_thread(self._resolved(real).read_bytes)
+
+    def _refuse_a_cycle(self, chain: list[str]) -> None:
+        if self._scene_identity in chain:
+            raise CircularMountError(
+                f"circular mount: {' -> '.join([*chain, self._scene_identity])}. One of these "
+                f"modules is mounted on a module that is mounted on it, directly or through the "
+                f"others, so neither scene can be built before the other. Break the cycle by "
+                f"removing one of those mounts."
+            )
+
+    async def _compose(self, chain: list[str]) -> tuple[list[str], str]:
+        subtrees = await self._subtrees([*chain, self._scene_identity])
+        root = await asyncio.to_thread(self.get_usd)
+        scene = (
+            await asyncio.to_thread(self._graft_in_waves, root[USD], subtrees)
+            if subtrees
+            else root[USD]
+        )
+        return root, scene
+
+    @property
+    def _scene_identity(self) -> str:
+        return self.config.rpc_name or self.config.instance_name or type(self).__name__
+
+    def _graft_in_waves(self, root_usd: str, subtrees: dict[str, str]) -> str:
+        scene = root_usd
+        remaining = dict(subtrees)
+        while remaining:
+            present = usd_frame_names(scene)
+            ready = {frame: usd for frame, usd in remaining.items() if frame in present}
+            if not ready:
+                raise ValueError(
+                    f"cannot mount at {sorted(remaining)}: no link or joint by those names "
+                    f"exists in this scene, and nothing left to graft would add one. Mount "
+                    f"frames are the names as they end up in the scene, so a frame inside a "
+                    f'mounted subtree carries that subtree\'s namespace prefix ("g1/head_mount", '
+                    f'not "head_mount"). The scene has: {sorted(present)}'
+                )
+            scene = graft_usd(scene, ready)
+            for frame in ready:
+                del remaining[frame]
+        return scene
+
+    async def _subtrees(self, chain: list[str]) -> dict[str, str]:
+        mounts = self.config.mounts
+        if not mounts:
+            self._check_renames_matched(self._matched_own_renames())
+            return {}
+        await asyncio.to_thread(warm_usd)
+        results = await asyncio.gather(
+            *(self._subtree(frame_id, mount, chain) for frame_id, mount in mounts.items())
+        )
+        matched = self._matched_own_renames()
+        matched |= {name for _, subtree_matched in results for name in subtree_matched}
+        self._check_renames_matched(matched)
+        return {frame_id: usd for frame_id, (usd, _) in zip(mounts, results, strict=True)}
+
+    def _check_renames_matched(self, matched: set[str]) -> None:
+        wanted = set(self.config.tf_renames_pre_namespace) | set(self.config.tf_renames)
+        missing = sorted(wanted - matched)
+        if missing:
+            raise ValueError(
+                f"tf_renames named {missing}, which is neither a link or joint of this robot "
+                f"nor of any mounted subtree (pre-namespace names are the subtree's own; "
+                f"post-namespace names carry the namespace prefix)"
+            )
+
+    def _subtree_client(self, mount: Mount) -> RPCClient:
+        client = self._subtree_clients.get(mount.remote_name)
+        if client is None:
+            if mount.module is None:
+                client = RPCClient(None, None, mount.remote_name, {mount.subtree_rpc}, rpc=self.rpc)
+            else:
+                client = RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
+            self._subtree_clients[mount.remote_name] = client
+        return client
+
+    async def _subtree(self, frame_id: str, mount: Mount, chain: list[str]) -> tuple[str, set[str]]:
+        client = self._subtree_client(mount)
+        name = mount.remote_name
+        attempts = 0
+        while True:
+            attempts += 1
+            answer = await asyncio.to_thread(self._ask_for_usd, client, frame_id, mount, chain)
+            if answer is not None:
+                logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
+                await asyncio.to_thread(
+                    require_asset_hashes,
+                    answer[USD],
+                    what=f"the subtree {name} answered for frame {frame_id!r}",
+                )
+                return await asyncio.to_thread(self._adopt, answer, mount)
+            if attempts % _WAITING_LOG_EVERY == 0:
+                logger.warning(
+                    f"still waiting on {name} for {mount.subtree_rpc}() at frame {frame_id!r} "
+                    f"after {attempts} asks"
+                )
+            await asyncio.sleep(self.config.scene_retry_s)
+
+    def _adopt(self, answer: list[str], mount: Mount) -> tuple[str, set[str]]:
+        pre = self.config.tf_renames_pre_namespace
+        post = self.config.tf_renames
+        usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
+        matched = usd_frame_names(usd) & set(pre) if pre else set()
+        usd = prefix_usd_frames(rename_usd_frames(usd, pre), mount.frame_prefix)
+        if post:
+            matched |= usd_frame_names(usd) & set(post)
+        return rename_usd_frames(usd, post), matched
+
+    def _ask_for_usd(
+        self, client: RPCClient, frame_id: str, mount: Mount, chain: list[str]
+    ) -> list[str] | None:
+        try:
+            if mount.subtree_rpc == SCENE_RPC:
+                answer = getattr(client, SCENE_RPC)(chain)
+            else:
+                answer = getattr(client, SUBTREE_RPC)()
+        except Exception as exc:
+            if _is_circular_mount(exc):
+                raise
+            logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} did not answer yet: {exc}")
+            return None
+        if (
+            not isinstance(answer, (list, tuple))
+            or len(answer) != 2
+            or not all(isinstance(part, str) for part in answer)
+            or not answer[USD]
+        ):
+            logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} answered {answer!r}, retrying")
+            return None
+        return list(answer)
+
+    async def handle_render_file_request(self, request: String) -> None:
+        name = request.data
+        if name.endswith(USD_SUFFIXES):
+            async with self._scene_build:
+                usd = self._scene
+                if usd is None and self.config.mounts:
+                    usd = (await self.get_scene())[USD]
+                if usd is None:
+                    usd = (await asyncio.to_thread(self.get_usd))[USD]
+            self.file_info.publish(File(name, usd.encode()))
+            return
+        real = self._published_assets.get(name, name if name in self._file_paths else None)
+        if real is None:
+            logger.debug(
+                f"render_file_request for {name!r}, which is neither a file this URDF names nor "
+                f"an asset the last scene published"
+            )
+            return
+        data = await asyncio.to_thread(self._resolved(real).read_bytes)
+        self.file_info.publish(File(name, data))
+
+    def _resolved(self, path: str) -> Path:
+        found = Path(path)
+        root = self._asset_root()
+        return found if found.is_absolute() or not root else Path(root) / found
+
+    async def handle_coordinator_joint_state(self, state: JointState) -> None:
+        await asyncio.to_thread(self.add_joint_state, state)
+
+    def add_joint_state(self, state: JointState) -> None:
+        if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
+            return
+        self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
+        with self._lock:
+            transforms = self._edges_to_send(self.joint_transforms(state))
+        if transforms:
+            self.tfbuffer.publish(*transforms)
+
+    def _edges_to_send(self, transforms: list[Transform]) -> list[Transform]:
+        now = time.monotonic()
+        keepalive_s = 1.0 / self.config.unchanged_tf_hz
+        due = []
+        for transform in transforms:
+            key = (transform.frame_id, transform.child_frame_id)
+            value = (*transform.translation.to_tuple(), *transform.rotation.to_tuple())
+            sent = self._sent_edges.get(key)
+            if (
+                sent is None
+                or now - sent[1] >= keepalive_s
+                or not np.allclose(value, sent[0], atol=1e-6)
+            ):
+                due.append(transform)
+                self._sent_edges[key] = (value, now)
+        return due
+
+    def joint_transforms(self, state: JointState) -> list[Transform]:
+        positions = dict(zip(state.name, state.position, strict=False))
+        for joint in self._joints.values():
+            if joint.mimic is not None and joint.mimic[0] in positions:
+                leader, multiplier, offset = joint.mimic
+                positions[joint.name] = multiplier * positions[leader] + offset
+        return [
+            Transform.from_matrix(
+                joint.parent_from_child(positions.get(joint.name, 0.0)),
+                frame_id=self.frame(joint.parent_link),
+                child_frame_id=self.frame(joint.child_link),
+                ts=state.ts,
+            )
+            for joint in self._joints.values()
+            if joint.type not in MULTI_DOF_JOINT_TYPES
+        ]
+
+    def frame(self, link_or_joint: str) -> str:
+        renamed = self._frames.get(link_or_joint, link_or_joint)
+        prefix = self.config.frame_id_prefix
+        return f"{prefix}/{renamed}" if prefix else renamed
+
+
+def _is_circular_mount(exc: BaseException) -> bool:
+    if isinstance(exc, CircularMountError):
+        return True
+    wanted = f"{CircularMountError.__module__}.{CircularMountError.__name__}"
+    return getattr(exc, "remote_type", None) == wanted
