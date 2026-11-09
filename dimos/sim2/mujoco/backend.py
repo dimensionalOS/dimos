@@ -44,10 +44,6 @@ from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
 
-# Physics catches up to the wall clock in bursts, publishing after each, since macOS oversleeps short
-# waits. Lag past one burst is dropped: a controller's command must not land a whole control period late.
-_MAX_BURST_SECONDS = 0.01
-
 # As ints, not as the enums themselves. A model array yields numpy scalars, and since MuJoCo 4
 # these enums are pybind11 objects rather than IntEnum: np.int32(3) == mjJNT_HINGE is True while
 # np.int32(3) in (mjJNT_HINGE, ...) is False, because `in` asks the comparison that does not
@@ -93,15 +89,18 @@ class MujocoBackend:
         usd: "UsdModel",
         simulated: Iterable[Simulated] = (),
         speed: float = 1.0,
+        max_burst_seconds: float = 0.01,
     ) -> None:
         """A USD layer, what is in it, and how fast to run it. Nothing else.
 
-        `simulated` is what the robots and sensors said about themselves; `speed` is sim seconds
-        per wall second. Both are config in the sense that matters: an engine is handed the world
+        `simulated` is what the robots said about themselves, `speed` is sim seconds per wall
+        second, and `max_burst_seconds` is how much physics it will catch up on at once. All of
+        them are config in the sense that matters: an engine is handed the world
         and the knobs for running it, and works out everything else from the layer.
         """
         simulated = list(simulated)
         self._speed = speed
+        self._max_burst_seconds = max_burst_seconds
         # The world as a file, which is what MuJoCo opens and what a renderer asks for by name.
         self._scene_layer = usd_layer(usd)
         self._robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
@@ -223,7 +222,7 @@ class MujocoBackend:
             # Time spent waiting on a controller is not time the world owes the clock.
             self._started = time.monotonic() - data.time / self._speed
             self._rebase = False
-        max_steps = max(1, int(_MAX_BURST_SECONDS / model.opt.timestep))
+        max_steps = max(1, int(self._max_burst_seconds / model.opt.timestep))
         steps = int(
             ((time.monotonic() - self._started) * self._speed - data.time) / model.opt.timestep
         )
