@@ -320,7 +320,9 @@ def test_trusted_metadata_decodes_without_a_caller_codec(tmp_path, encoding):
     path = tmp_path / "native.mcap"
     expected = _imu(2.5, "native")
     payload = (
-        lz4.frame.compress(expected.lcm_encode()) if encoding == "lz4+lcm" else expected.lcm_encode()
+        lz4.frame.compress(expected.lcm_encode())
+        if encoding == "lz4+lcm"
+        else expected.lcm_encode()
     )
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
