@@ -108,38 +108,38 @@ def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) 
 @pytest.mark.flaky(reruns=1)
 def test_server_url_is_configured_else_the_blueprints_server_else_none() -> None:
     server = SimpleNamespace(mcp_url=lambda: "http://127.0.0.1:9992/mcp")
-    agent = Agent()
+    client = Agent()
     try:
-        assert agent._server_url() is None
-        agent._mcp_server = server
-        assert agent._server_url() == "http://127.0.0.1:9992/mcp"
+        assert client._server_url() is None
+        client._mcp_server = server
+        assert client._server_url() == "http://127.0.0.1:9992/mcp"
     finally:
-        agent.stop()
-    agent = Agent(mcp_server_url="http://configured/mcp")
+        client.stop()
+    client = Agent(mcp_server_url="http://configured/mcp")
     try:
-        agent._mcp_server = server
-        assert agent._server_url() == "http://configured/mcp"
+        client._mcp_server = server
+        assert client._server_url() == "http://configured/mcp"
     finally:
-        agent.stop()
+        client.stop()
 
 
 def test_agent_without_an_mcp_server_runs_with_no_tools() -> None:
-    agent = Agent(model="gpt-4o")
-    agent._thread = MagicMock()
-    agent._thread.is_alive.return_value = True
+    client = Agent(model="gpt-4o")
+    client._thread = MagicMock()
+    client._thread.is_alive.return_value = True
     try:
         with (
             patch("langchain.agents.create_agent") as create,
             patch("dimos.agents.agent.init_model"),
         ):
-            agent.on_system_modules([])
+            client.on_system_modules([])
         assert create.call_args.kwargs["tools"] == []
     finally:
-        agent.stop()
+        client.stop()
 
 
 @pytest.fixture
-def agent() -> Agent:
+def mcp_client() -> Agent:
     """Build an Agent wired to a mock requests session."""
     client = Agent(mcp_server_url="http://localhost:9990/mcp")
     client._http_client = _mock_session(_mock_payload)
@@ -149,16 +149,16 @@ def agent() -> Agent:
         client.stop()
 
 
-def test_fetch_tools_from_mcp_server(agent: Agent) -> None:
-    tools = agent._fetch_tools()
+def test_fetch_tools_from_mcp_server(mcp_client: Agent) -> None:
+    tools = mcp_client._fetch_tools()
 
     assert len(tools) == 2
     assert tools[0].name == "add"
     assert tools[1].name == "greet"
 
 
-def test_tool_invocation_via_mcp(agent: Agent) -> None:
-    tools = agent._fetch_tools()
+def test_tool_invocation_via_mcp(mcp_client: Agent) -> None:
+    tools = mcp_client._fetch_tools()
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
 
@@ -166,7 +166,7 @@ def test_tool_invocation_via_mcp(agent: Agent) -> None:
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
 
 
-def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent) -> None:
+def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> None:
     """An image cannot ride the tool response, so it follows as a HumanMessage
     naming its tool, or chat UIs would show it as typed input."""
     image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
@@ -176,11 +176,11 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent) -> None:
             return _mock_payload(body)
         return {"jsonrpc": "2.0", "id": body["id"], "result": {"content": [image]}}
 
-    agent._http_client = _mock_session(image_payload)
-    greet_tool = next(t for t in agent._fetch_tools() if t.name == "greet")
+    mcp_client._http_client = _mock_session(image_payload)
+    greet_tool = next(t for t in mcp_client._fetch_tools() if t.name == "greet")
 
     reply = greet_tool.func(name="Alice")
-    msg: BaseMessage = agent._message_queue.get_nowait()
+    msg: BaseMessage = mcp_client._message_queue.get_nowait()
 
     assert reply.startswith("Tool call started with UUID: ")
     uuid_ = reply.removeprefix("Tool call started with UUID: ").split(".")[0]
@@ -192,7 +192,7 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(agent: Agent) -> None:
     ]
 
 
-def test_mcp_request_error_propagation(agent: Agent) -> None:
+def test_mcp_request_error_propagation(mcp_client: Agent) -> None:
     def error_payload(body: dict[str, object]) -> dict[str, object]:
         return {
             "jsonrpc": "2.0",
@@ -200,16 +200,16 @@ def test_mcp_request_error_propagation(agent: Agent) -> None:
             "error": {"code": -32601, "message": "Unknown: bad/method"},
         }
 
-    agent._http_client = _mock_session(error_payload)
+    mcp_client._http_client = _mock_session(error_payload)
 
     try:
-        agent._mcp_request("bad/method")
+        mcp_client._mcp_request("bad/method")
         raise AssertionError("Expected RuntimeError")
     except RuntimeError as e:
         assert "Unknown: bad/method" in str(e)
 
 
-def test_tool_stream_notification_becomes_human_message(agent: Agent) -> None:
+def test_tool_stream_notification_becomes_human_message(mcp_client: Agent) -> None:
     """A `notifications/message` delivered over LCM becomes a HumanMessage."""
     notification = {
         "jsonrpc": "2.0",
@@ -220,30 +220,30 @@ def test_tool_stream_notification_becomes_human_message(agent: Agent) -> None:
             "data": "Person follow stopped: lost track.",
         },
     }
-    agent._on_tool_stream_message(notification)
+    mcp_client._on_tool_stream_message(notification)
 
-    msg: BaseMessage = agent._message_queue.get_nowait()
+    msg: BaseMessage = mcp_client._message_queue.get_nowait()
     assert isinstance(msg, HumanMessage)
     assert "[tool:follow_person]" in str(msg.content)
     assert "Person follow stopped: lost track." in str(msg.content)
 
 
-def test_tool_stream_ignores_unrelated_frames(agent: Agent) -> None:
+def test_tool_stream_ignores_unrelated_frames(mcp_client: Agent) -> None:
     """Unknown methods and empty bodies are dropped on the floor."""
 
-    agent._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
-    agent._on_tool_stream_message(
+    mcp_client._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
+    mcp_client._on_tool_stream_message(
         {"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": ""}}
     )
-    agent._on_tool_stream_message(
+    mcp_client._on_tool_stream_message(
         {"jsonrpc": "2.0", "method": "notifications/progress", "params": {"message": ""}}
     )
 
     with pytest.raises(Empty):
-        agent._message_queue.get_nowait()
+        mcp_client._message_queue.get_nowait()
 
 
-def test_tool_stream_progress_frame_becomes_human_message(agent: Agent) -> None:
+def test_tool_stream_progress_frame_becomes_human_message(mcp_client: Agent) -> None:
     """A `notifications/progress` frame is routed as a HumanMessage."""
 
     progress_frame = {
@@ -256,14 +256,14 @@ def test_tool_stream_progress_frame_becomes_human_message(agent: Agent) -> None:
             "_meta": {"tool_name": "follow_person"},
         },
     }
-    agent._on_tool_stream_message(progress_frame)
+    mcp_client._on_tool_stream_message(progress_frame)
 
-    msg: BaseMessage = agent._message_queue.get_nowait()
+    msg: BaseMessage = mcp_client._message_queue.get_nowait()
     assert isinstance(msg, HumanMessage)
     assert str(msg.content) == "[tool:follow_person] Found a person"
 
 
-def test_mcp_tool_call_sends_progress_token(agent: Agent) -> None:
+def test_mcp_tool_call_sends_progress_token(mcp_client: Agent) -> None:
     """Every `tools/call` request carries a `_meta.progressToken`."""
     captured: dict[str, object] = {}
 
@@ -272,8 +272,8 @@ def test_mcp_tool_call_sends_progress_token(agent: Agent) -> None:
         captured["params"] = params
         return {"content": [{"type": "text", "text": "ok"}]}
 
-    with patch.object(agent, "_mcp_request", side_effect=fake_request):
-        agent._mcp_tool_call("add", {"x": 1, "y": 2})
+    with patch.object(mcp_client, "_mcp_request", side_effect=fake_request):
+        mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
 
     assert captured["method"] == "tools/call"
     params = captured["params"]
@@ -287,28 +287,28 @@ def test_mcp_tool_call_sends_progress_token(agent: Agent) -> None:
 
 
 @pytest.fixture
-def configured_agent(agent: Agent, monkeypatch: pytest.MonkeyPatch) -> Agent:
+def configured_mcp_client(mcp_client: Agent, monkeypatch: pytest.MonkeyPatch) -> Agent:
     """Prepare a client for testing agent model initialization."""
-    agent.config.model_fixture = None
-    agent.config.system_prompt = "System prompt"
-    monkeypatch.setattr(agent, "_fetch_tools", MagicMock(return_value=[]))
-    agent._lock = RLock()
-    agent._thread = MagicMock()
-    agent._thread.is_alive.return_value = True
-    return agent
+    mcp_client.config.model_fixture = None
+    mcp_client.config.system_prompt = "System prompt"
+    monkeypatch.setattr(mcp_client, "_fetch_tools", MagicMock(return_value=[]))
+    mcp_client._lock = RLock()
+    mcp_client._thread = MagicMock()
+    mcp_client._thread.is_alive.return_value = True
+    return mcp_client
 
 
 def test_on_system_modules_uses_responses_api_model(
-    configured_agent: Agent, monkeypatch: pytest.MonkeyPatch
+    configured_mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Production agents use the Responses API required for Luna tool calls."""
     from langchain_openai import ChatOpenAI
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-    configured_agent.config.model = "gpt-5.6-luna"
+    configured_mcp_client.config.model = "gpt-5.6-luna"
 
     with patch("langchain.agents.create_agent") as create_agent:
-        configured_agent.on_system_modules([])
+        configured_mcp_client.on_system_modules([])
 
     model = create_agent.call_args.kwargs["model"]
     assert isinstance(model, ChatOpenAI)
@@ -319,41 +319,41 @@ def test_on_system_modules_uses_responses_api_model(
 
 @pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
 def test_on_system_modules_resolves_non_reasoning_models(
-    configured_agent: Agent, model_name: str
+    configured_mcp_client: Agent, model_name: str
 ) -> None:
     """Models without Responses reasoning support use provider resolution."""
-    configured_agent.config.model = model_name
+    configured_mcp_client.config.model = model_name
     resolved_model = MagicMock()
 
     with (
         patch("langchain.agents.create_agent"),
         patch("langchain.chat_models.init_chat_model", return_value=resolved_model) as init,
     ):
-        configured_agent.on_system_modules([])
+        configured_mcp_client.on_system_modules([])
 
     init.assert_called_once_with(model=model_name)
 
 
 def test_set_trace_dir_rebuilds_the_model_with_capture(
-    configured_agent: Agent,
+    configured_mcp_client: Agent,
 ) -> None:
     """Evals repoint raw LLM capture per case; the model must be rebuilt so
     the HTTP hook writes under the new directory. Before the agent exists
     the path is only stored for the first build."""
-    configured_agent.config.model = "gpt-4o"
+    configured_mcp_client.config.model = "gpt-4o"
     resolved = MagicMock()
 
     with (
         patch("langchain.agents.create_agent") as create_agent,
         patch("dimos.agents.agent.init_model", return_value=resolved) as init,
     ):
-        configured_agent.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
+        configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
         assert init.call_count == 0
 
-        configured_agent.on_system_modules([])
+        configured_mcp_client.on_system_modules([])
         assert init.call_args.kwargs["trace_dir"] == Path("/eval/case/raw")
 
-        configured_agent.set_trace_dir(None)
+        configured_mcp_client.set_trace_dir(None)
         assert init.call_args.kwargs["trace_dir"] is None
         assert create_agent.call_count == 2
 
@@ -384,27 +384,27 @@ class _FailsOnceGraph:
 
 
 @pytest.fixture
-def agent_thread(agent: Agent) -> Iterator[Thread]:
-    """Run Agent's message loop, which the `agent` fixture doesn't start."""
-    thread = Thread(target=agent._thread_loop, daemon=True)
+def agent_thread(mcp_client: Agent) -> Iterator[Thread]:
+    """Run Agent's message loop, which the `mcp_client` fixture doesn't start."""
+    thread = Thread(target=mcp_client._thread_loop, daemon=True)
     thread.start()
     try:
         yield thread
     finally:
-        agent._stop_event.set()
+        mcp_client._stop_event.set()
         thread.join(timeout=2)
 
 
 def _send_first_and_second(
-    agent: Agent, agent_thread: Thread, graph: Any, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, graph: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Run `graph` on the messages "first" and "second", and wait for "done"."""
-    monkeypatch.setattr(agent, "_state_graph", graph)
-    agent._message_queue.put(HumanMessage("first"))
-    agent._message_queue.put(HumanMessage("second"))
+    monkeypatch.setattr(mcp_client, "_state_graph", graph)
+    mcp_client._message_queue.put(HumanMessage("first"))
+    mcp_client._message_queue.put(HumanMessage("second"))
 
     def done_or_thread_dead() -> bool:
-        done = bool(agent._history) and agent._history[-1].content == "done"
+        done = bool(mcp_client._history) and mcp_client._history[-1].content == "done"
         return done or not agent_thread.is_alive()
 
     wait_until(
@@ -417,15 +417,15 @@ def _send_first_and_second(
 
 
 def test_a_failed_turn_does_not_stop_the_agent_thread(
-    agent: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     call = AIMessage(content="", tool_calls=[_call("add", "c1")])
     graph = _FailsOnceGraph([call])
 
-    _send_first_and_second(agent, agent_thread, graph, monkeypatch)
+    _send_first_and_second(mcp_client, agent_thread, graph, monkeypatch)
 
     second_turn = graph.seen[1]
-    first, kept_call, result, note, second, done = agent._history
+    first, kept_call, result, note, second, done = mcp_client._history
     assert (first.content, kept_call) == ("first", call)
     assert isinstance(result, ToolMessage)
     assert (result.tool_call_id, result.status) == ("c1", "error")
@@ -436,19 +436,19 @@ def test_a_failed_turn_does_not_stop_the_agent_thread(
     assert note.content == "This turn failed with TimeoutError: LLM API timed out"
     assert note.additional_kwargs == {TURN_FAILED_KEY: True}
     # Append-only: the next turn sees everything.
-    assert second_turn == agent._history[:5]
+    assert second_turn == mcp_client._history[:5]
     assert (second.content, done.content) == ("second", "done")
 
 
 def test_only_unanswered_tool_calls_get_a_failure_result(
-    agent: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A call that returned keeps its real result, so the model knows it ran."""
     both = AIMessage(content="", tool_calls=[_call("add", "c1"), _call("greet", "c2")])
     real_result = ToolMessage(content="3", tool_call_id="c1")
     graph = _FailsOnceGraph([both, real_result])
 
-    _send_first_and_second(agent, agent_thread, graph, monkeypatch)
+    _send_first_and_second(mcp_client, agent_thread, graph, monkeypatch)
 
     first, kept_both, kept_result, failure_result, note = graph.seen[1][:5]
     assert (kept_both, kept_result) == (both, real_result)
@@ -458,27 +458,27 @@ def test_only_unanswered_tool_calls_get_a_failure_result(
 
 
 def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
-    agent: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failed MCP request escapes the real agent graph; a skill error would be a result."""
-    tools = agent._fetch_tools()
+    tools = mcp_client._fetch_tools()
 
     def unreachable(body: dict[str, object]) -> dict[str, object]:
         raise requests.ConnectionError("MCP server unreachable")
 
-    agent._http_client = _mock_session(unreachable)
+    mcp_client._http_client = _mock_session(unreachable)
     call = _call("add", "c1", x=1, y=2)
     model = MockModel(
         responses=[AIMessage(content="", tool_calls=[call]), AIMessage(content="done")]
     )
     _send_first_and_second(
-        agent,
+        mcp_client,
         agent_thread,
         create_agent(model=model, tools=tools, system_prompt=""),
         monkeypatch,
     )
 
-    first, kept_call, result, note, second, done = agent._history
+    first, kept_call, result, note, second, done = mcp_client._history
     assert (first.content, second.content, done.content) == ("first", "second", "done")
     assert isinstance(kept_call, AIMessage)
     assert [c["id"] for c in kept_call.tool_calls] == ["c1"]
