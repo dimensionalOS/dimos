@@ -417,8 +417,11 @@ class UsdManager(Module):
                 if self.config.trivialize:
                     usd = trivialize_usd(usd)
                 # Renamed here as well as on tf, or the layer would name frames that no
-                # transform ever arrives for.
-                self._usd = rename_usd_frames(usd, self._frames)
+                # transform ever arrives for. Given the directory its assets are relative to,
+                # so that composing a stage off it does not warn once per mesh prim that it
+                # could not open the file -- which for a room is hundreds of lines saying
+                # nothing, since none of this needs the geometry.
+                self._usd = rename_usd_frames(usd, self._frames, root=self._asset_root() or None)
             return [self._asset_root(), self._usd]
 
     def _asset_root(self) -> str:
@@ -519,7 +522,7 @@ class UsdManager(Module):
         scene = root_usd
         remaining = dict(subtrees)
         while remaining:
-            present = usd_frame_names(scene)
+            present = usd_frame_names(scene, self._asset_root() or None)
             ready = {frame: usd for frame, usd in remaining.items() if frame in present}
             if not ready:
                 raise ValueError(
@@ -529,7 +532,7 @@ class UsdManager(Module):
                     f'mounted subtree carries that subtree\'s namespace prefix ("g1/head_mount", '
                     f'not "head_mount"). The scene has: {sorted(present)}'
                 )
-            scene = graft_usd(scene, ready)
+            scene = graft_usd(scene, ready, root=self._asset_root() or None)
             for frame in ready:
                 del remaining[frame]
         return scene
