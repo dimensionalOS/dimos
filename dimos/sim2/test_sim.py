@@ -39,62 +39,30 @@ def model() -> UsdModel:
     )
 
 
-def _world(**simulated: object) -> SimulatedWorld:
-    world = SimulatedWorld()
-    world.config_receive(tuple((name, {"simulated": d}) for name, d in simulated.items()))
-    return world
+def _world(*robots: SimulatedRobot) -> SimulatedWorld:
+    return SimulatedWorld(robots=robots)
 
 
-def test_a_world_is_the_robots_it_was_told_about_and_nothing_more(model):
-    """All core does with a description: keep each robot under the name of whoever sent it.
+def test_a_world_is_the_robots_it_was_configured_with_and_nothing_more(model):
+    """All core does with a description: hold the robots the blueprint put in this world.
 
     Not "which of these is a camera", not "what should be drawn", and not which robot a sensor
     is bolted to. A sensor describes itself to nobody: it reads the composed scene, builds its
     own world from it, and renders from the observations -- so core never learns that anything
     is watching, and an engine is handed robots and a room.
     """
-    world = _world(dog=SimulatedRobot("dog", model), other=SimulatedRobot("spot", model))
+    world = _world(SimulatedRobot("dog", model), SimulatedRobot("spot", model))
     try:
-        assert {name: d.robot_id for name, d in world.simulated.items()} == {
-            "dog": "dog",
-            "other": "spot",
-        }
-    finally:
-        world.stop()
-
-
-@pytest.mark.parametrize(
-    "config",
-    [
-        {"simulatd": SimulatedRobot("dog", toy_robot())},
-        {"simulated": 1},
-        # A sensor is not something a world is told about any more.
-        {"simulated": "camera_optical"},
-    ],
-)
-def test_a_malformed_description_is_rejected(config):
-    world = SimulatedWorld()
-    try:
-        with pytest.raises(TypeError, match="must return"):
-            world.config_receive((("dog", config),))
+        assert [d.robot_id for d in world.simulated] == ["dog", "spot"]
     finally:
         world.stop()
 
 
 def test_duplicate_robots_are_rejected(model):
-    # As the description arrives, rather than once an engine is compiling it: two robots called
+    # As the world is configured, rather than once an engine is compiling it: two robots called
     # one name is one set of topics and one tf tree, whatever is going to run them.
-    world = SimulatedWorld()
-    try:
-        with pytest.raises(ValueError, match="duplicate"):
-            world.config_receive(
-                (
-                    ("a", {"simulated": SimulatedRobot("dog", model)}),
-                    ("b", {"simulated": SimulatedRobot("dog", model)}),
-                )
-            )
-    finally:
-        world.stop()
+    with pytest.raises(ValueError, match="duplicate"):
+        _world(SimulatedRobot("dog", model), SimulatedRobot("dog", model))
 
 
 def test_the_world_is_usd_even_when_it_was_configured_as_a_file():

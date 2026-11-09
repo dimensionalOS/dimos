@@ -24,17 +24,17 @@ drawing the world is a subscriber like any other, reached through no API of core
     sim_module(scene_manager="scene/usdmanager")        # the default engine
     sim_module("mujoco", scene=Path("room.usda"))       # or one by name, configured as it likes
 
-A robot says what it is to `SimulatedWorld`, never to an engine. A sensor says nothing: it reads
-the scene the manager composed, builds its own world out of it, and renders from the
-observations the engine publishes -- so core never learns that anything is watching::
+The blueprint says who is in the world, because the blueprint is the one place that already
+knows::
 
-    class Go2Sim(Module):
-        @shared_config(SimulatedWorld)
-        def simulated(self) -> dict[str, Any]:
-            return {"simulated": SimulatedRobot("go2", self.usd)}
+    sim_module(scene_manager="scene/usdmanager", robots=[SimulatedRobot("go2", GO2_USD)])
 
-That reaches whichever engine is deployed, because a `shared_config` receiver matches
-subclasses and every engine is a subclass of the one below.
+Said there rather than by each robot module to a receiver. A robot describing itself to the
+simulation meant every robot had to be able to find it and the simulation had to be able to
+hear from anything, which is a lot of mechanism for a fact that is written down in the blueprint
+either way. A sensor says nothing at all: it reads the scene the manager composed, builds its
+own world out of it, and renders from the observations -- so core never learns that anything is
+watching.
 """
 
 from importlib import import_module
@@ -42,17 +42,16 @@ from pathlib import Path
 from typing import Any, cast
 
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
-from pydantic import Field, field_validator
+from pydantic import field_validator
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd import resolve_usd_assets
 from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
-from dimos.sim2.spec import Simulated, validate
+from dimos.sim2.spec import SimulatedRobot, validate
 from dimos.sim2.usd_layer import scene_as_files
 from dimos.utils.logging_config import setup_logger
 
@@ -74,7 +73,7 @@ class SceneConfig(ModuleConfig):
     # The world, as USD: a layer, or a file holding one. A path is read into a `UsdModel` rather
     # than handed over as a path, because an engine here is only ever given USD -- the one kind
     # of description a robot, a scene and a sensor all agree on.
-    scene: Path | UsdModel | None = Field(default_factory=lambda m: m["g"].scene_package)
+    scene: Path | UsdModel | None = None
     # The UsdManager that composes this world, which is the one place that says what is in it:
     # the room, and everything mounted on it. Asked `get_scene` while the world is being built,
     # and what it answers with *is* the world; `scene=` is the fallback for a world nobody
@@ -94,6 +93,9 @@ class SceneConfig(ModuleConfig):
 
 
 class SimulatedWorldConfig(SceneConfig):
+    # The robots in this world: what each one is called, and what the engine has to set up for
+    # it (its servos' gains, how often its controller acts, whether it floats).
+    robots: tuple[SimulatedRobot, ...] = ()
     # Sim seconds per wall second.
     speed: float = 1.0
     # Wall seconds the world waits on a stalled controller (one that has acted before) before
@@ -101,17 +103,17 @@ class SimulatedWorldConfig(SceneConfig):
     controller_timeout: float = 0.5
 
 
-class SimulatedWorld(SharedConfigModule):
+class SimulatedWorld(Module):
     """A simulated world as a module: actions in, observations out. An engine subclasses this.
 
     This is the whole of what sim2's core says a simulation is. Core does not own the loop, know
-    which engine is running, hold a list of renderers, or make a view for one: it takes the
-    descriptions robots and sensors send, finds the world they are in, and leaves the rest to
-    whichever subclass is deployed.
+    which engine is running, hold a list of renderers, or make a view for one: it is told what
+    is in the world, finds the world itself, and leaves the rest to whichever subclass is
+    deployed.
 
-    Described to, not configured with: a robot sends what it is with
-    `@shared_config(SimulatedWorld)` and reaches the engine that is actually running, because a
-    `shared_config` receiver matches subclasses. That is what keeps a robot from naming an engine.
+    Configured, not described to. The robots are a config value that the blueprint sets, so a
+    robot module needs no way to reach whatever engine is running and the engine needs no way to
+    hear from anything.
     """
 
     config: SimulatedWorldConfig
@@ -120,21 +122,14 @@ class SimulatedWorld(SharedConfigModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        # Each sender's "simulated" value, keyed by its instance name.
-        self.simulated: dict[str, Simulated] = {}
-
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        simulated: dict[str, Simulated] = {}
-        for name, config in config_senders:
-            description = config.get("simulated")
-            if set(config) != {"simulated"} or not isinstance(description, Simulated):
-                raise TypeError(
-                    f"{name}'s @shared_config(SimulatedWorld) must return"
-                    f" {{'simulated': SimulatedRobot}}, not {config!r}"
-                )
-            simulated[name] = description
-        validate(simulated.values())
-        self.simulated = simulated
+        try:
+            validate(self.config.robots)
+        except Exception:
+            # Nothing else will stop a module that threw in its own constructor, and it has
+            # already started the threads `Module.__init__` starts.
+            self.stop()
+            raise
+        self.simulated = self.config.robots
 
     def world(self) -> UsdModel | None:
         """The world to simulate: what the scene manager composed, or `scene=` without one."""
