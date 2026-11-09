@@ -38,7 +38,7 @@ from functools import partial
 from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import codec_for, codec_from_id, legacy_payload_type
+from dimos.memory.codecs.base import codec_for, codec_from_id, recorded_payload_type
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
@@ -300,18 +300,18 @@ class McapStore(Store):
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
                     # Artifact metadata may select only a built-in generated message
-                    # class, never an arbitrary Python module or pickle decoder. The
-                    # mapping is shared with `codec_from_id`, which knows the retired
-                    # `dimos.msgs.<pkg>.<Msg>.<Msg>` spelling.
-                    kind = legacy_payload_type(ch.metadata.get("dimos.payload_type", ""))
+                    # class, never an arbitrary Python module or pickle decoder. All
+                    # three recorded spellings (canonical, generated qualname,
+                    # historical) resolve through the registry.
+                    kind = recorded_payload_type(ch.metadata.get("dimos.payload_type", ""))
                     if kind is not None:
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (
                             Lz4Codec(codec) if ch.message_encoding == "lz4+lcm" else codec
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
-                    kind = JsonCodec.payload_type
-                    if legacy_payload_type(ch.metadata.get("dimos.payload_type", "")) is kind:
+                    kind = recorded_payload_type(ch.metadata.get("dimos.payload_type", ""))
+                    if kind is JsonCodec.payload_type:
                         self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = self._available.get(name, 0) + count

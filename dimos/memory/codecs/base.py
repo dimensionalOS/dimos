@@ -105,6 +105,40 @@ def legacy_payload_type(payload_module: str) -> type[Any] | None:
     return resolve_message_type(name)
 
 
+def recorded_payload_type(payload_module: str) -> type[Any] | None:
+    """Resolve a recorded ``dimos.payload_type`` spelling to its generated type.
+
+    Recordings name a native channel in one of three ways: the canonical
+    registered name (``std_msgs/msg/String``), the generated module qualname
+    (``dimos.messages.std_msgs.msg.String``), or the retired historical form
+    (``dimos.msgs.std_msgs.String.String``). All three resolve here, through the
+    message registry only — an arbitrary Python module is never imported — and
+    anything unrecognised returns ``None`` so the channel stays raw bytes.
+    """
+    if "/msg/" in payload_module:
+        from dimos.protocol.pubsub.message_types import resolve_message_type
+
+        return resolve_message_type(payload_module)
+    parts = payload_module.split(".")
+    if len(parts) == 5 and parts[:2] == ["dimos", "messages"] and parts[3] == "msg":
+        from dimos.protocol.pubsub.message_types import resolve_message_type
+
+        return resolve_message_type(f"{parts[2]}/msg/{parts[4]}")
+    if len(parts) > 1 and "__msg__" in parts[-1]:
+        # Generated classes may be usertype-backed, so their recorded qualname is
+        # e.g. ``rosbags.usertypes.std_msgs__msg__String``. Accept it only when it
+        # is exactly the qualname of the class the registry resolves to.
+        package, _, message = parts[-1].partition("__msg__")
+        if package and message:
+            from dimos.protocol.pubsub.message_types import resolve_message_type
+
+            kind = resolve_message_type(f"{package}/msg/{message}")
+            if kind is not None and f"{kind.__module__}.{kind.__qualname__}" == payload_module:
+                return kind
+        return None
+    return legacy_payload_type(payload_module)
+
+
 def resolve_payload_type(payload_module: str) -> type[Any]:
     if "/msg/" in payload_module:
         from dimos.protocol.pubsub.message_types import resolve_message_type
