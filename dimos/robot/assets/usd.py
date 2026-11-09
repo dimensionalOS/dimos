@@ -555,7 +555,9 @@ def _holds_a_frame(pxr: Any, prim: Any) -> bool:
     return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
 
 
-def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
+def rename_usd_frames(
+    usd: str, renames: Mapping[str, str], root: Path | str | None = None
+) -> str:
     """``usd`` with the named links and joints renamed; names it does not carry are ignored.
 
     A vendor description names its frames whatever it names them, which is rarely what the robot
@@ -570,7 +572,7 @@ def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
     if not renames:
         return usd
     pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a subtree")
+    layer = _layer_from(pxr, usd, "a subtree", root)
     stage = pxr.Usd.Stage.Open(layer)
     frames = [
         prim
