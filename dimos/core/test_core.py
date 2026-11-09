@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time
+from unittest.mock import Mock
 
 import pytest
 from reactivex.disposable import Disposable
@@ -22,6 +23,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
+from dimos.core.transport_factory import rpc_backend
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
@@ -127,3 +129,38 @@ def test_basic_deployment(dimos) -> None:
     assert robot.mov_msg_count >= 8
     assert nav.odom_msg_count >= 8
     assert nav.lidar_msg_count >= 8
+
+
+class NativeBacked(Module):
+    @rpc(native=True)
+    def plan(self, x: float) -> str:
+        """Served by the native process."""
+
+    @rpc
+    def local(self) -> str:
+        return "local"
+
+
+def test_native_rpc_is_listed_and_forwarded_but_not_served(monkeypatch) -> None:
+    served = Mock(return_value=lambda: None)
+    monkeypatch.setattr(rpc_backend(), "serve_rpc", served)
+    module = NativeBacked()
+    try:
+        assert {"plan", "local"} <= set(module.rpcs)
+        names = {call.args[1] for call in served.call_args_list}
+        assert "NativeBacked/local" in names
+        assert "NativeBacked/plan" not in names
+
+        module.rpc.call_sync = Mock(return_value=("planned", lambda: None))
+        assert module.plan(1.0) == "planned"
+        module.rpc.call_sync.assert_called_once_with("NativeBacked/plan", ((1.0,), {}))
+    finally:
+        module.stop()
+
+
+def test_native_rpc_stub_cannot_be_async() -> None:
+    with pytest.raises(TypeError, match="cannot be async"):
+
+        @rpc(native=True)
+        async def plan(self) -> str:
+            """Served by the native process."""

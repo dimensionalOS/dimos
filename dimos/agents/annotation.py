@@ -70,7 +70,9 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
     return result
 
 
-def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle) -> F:
+def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle, native: bool) -> F:
+    if native:
+        return cast("F", _mark_skill(rpc(native=True)(func), uses, lifecycle))
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
@@ -110,17 +112,24 @@ def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle) -> F:
 
         context_wrapper = sync_context_wrapper
 
-    wrapped = rpc(context_wrapper)
+    return cast("F", _mark_skill(rpc(context_wrapper), uses, lifecycle))
+
+
+def _mark_skill(
+    wrapped: Callable[..., Any], uses: list[str], lifecycle: SkillLifecycle
+) -> Callable[..., Any]:
     wrapped.__skill__ = True  # type: ignore[attr-defined]
     wrapped.__skill_uses__ = list(uses)  # type: ignore[attr-defined]
     wrapped.__skill_lifecycle__ = lifecycle  # type: ignore[attr-defined]
-    return cast("F", wrapped)
+    return wrapped
 
 
 @overload
 def skill(func: F) -> F: ...
 @overload
-def skill(*, uses: list[str] | None = ..., lifecycle: SkillLifecycle = ...) -> Callable[[F], F]: ...
+def skill(
+    *, uses: list[str] | None = ..., lifecycle: SkillLifecycle = ..., native: bool = ...
+) -> Callable[[F], F]: ...
 
 
 def skill(
@@ -128,6 +137,7 @@ def skill(
     *,
     uses: list[str] | None = None,
     lifecycle: SkillLifecycle = "instant",
+    native: bool = False,
 ) -> F | Callable[[F], F]:
     """Mark a method as an agent-callable skill.
 
@@ -141,13 +151,15 @@ def skill(
     returning, or `"background"` for skills that kick off background work and
     return early -- those must use `start_tool`/`stop_tool` so the matching
     stop-tool frame can release their capabilities.
+
+    `native` marks a skill the module's native process serves, see `rpc(native=True)`.
     """
     if lifecycle not in _VALID_LIFECYCLES:
         raise ValueError(f"lifecycle must be one of {_VALID_LIFECYCLES}, got {lifecycle!r}")
     if func is not None:
-        return _make_skill(func, uses=[], lifecycle="instant")
+        return _make_skill(func, uses=[], lifecycle="instant", native=False)
 
     def decorator(f: F) -> F:
-        return _make_skill(f, uses=list(uses or []), lifecycle=lifecycle)
+        return _make_skill(f, uses=list(uses or []), lifecycle=lifecycle, native=native)
 
     return decorator

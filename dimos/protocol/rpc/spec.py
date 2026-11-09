@@ -108,9 +108,10 @@ class RPCServer(Protocol):
     def serve_rpc(self, f: Callable, name: str) -> Callable[[], None]: ...  # type: ignore[type-arg]
 
     def serve_module_rpc(self, module: RPCInspectable, name: str | None = None) -> None:
-        for fname in module.rpcs.keys():
-            if not name:
-                name = module.__class__.__name__
+        name = name or module.__class__.__name__
+        for fname, f in module.rpcs.items():
+            if getattr(f, "__rpc_native__", False):
+                continue
 
             def override_f(*args, fname=fname, **kwargs):  # type: ignore[no-untyped-def]
                 return getattr(module, fname)(*args, **kwargs)

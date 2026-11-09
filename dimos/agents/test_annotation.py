@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 from dimos.agents.annotation import skill
 
 
@@ -42,3 +45,20 @@ def test_skill_parametrized_with_no_uses_defaults_to_empty():
 
     assert list(s.__skill_uses__) == []
     assert s.__skill_lifecycle__ == "background"
+
+
+def test_skill_native_is_a_skill_that_forwards_to_the_native_server() -> None:
+    @skill(native=True, uses=["movement"])
+    def go(self, x: float) -> str:
+        """Served by the native process."""
+
+    assert go.__skill__ is True
+    assert go.__rpc__ is True
+    assert go.__rpc_native__ is True
+    assert list(go.__skill_uses__) == ["movement"]
+
+    module = SimpleNamespace(
+        rpc_name="Nav", rpc=Mock(call_sync=Mock(return_value=("done", lambda: None)))
+    )
+    assert go(module, 2.0) == "done"
+    module.rpc.call_sync.assert_called_once_with("Nav/go", ((2.0,), {}))

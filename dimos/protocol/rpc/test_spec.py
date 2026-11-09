@@ -28,11 +28,12 @@ from typing import Any
 import numpy as np
 import pytest
 
+from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, RPC_WIRE_VERSION
 from dimos.protocol.rpc.rpc_utils import RemoteError, deserialize_exception
-from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCServer, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -554,3 +555,34 @@ def test_lcm_request_from_another_wire_version_is_ignored() -> None:
             assert calls == [1]
         finally:
             unsub()
+
+
+class RecordingServer(RPCServer):
+    def __init__(self) -> None:
+        self.served: list[str] = []
+
+    def serve_rpc(self, f: Callable[..., Any], name: str) -> Callable[[], None]:
+        self.served.append(name)
+        return lambda: None
+
+
+class HalfNative:
+    @rpc
+    def local(self) -> None: ...
+
+    @rpc(native=True)
+    def native(self) -> None: ...
+
+    @property
+    def rpcs(self) -> dict[str, Callable[..., Any]]:
+        return {"local": self.local, "native": self.native}
+
+
+def test_serve_module_rpc_leaves_natively_served_methods_to_the_native_process() -> None:
+    server = RecordingServer()
+    server.serve_module_rpc(HalfNative())
+    assert server.served == ["HalfNative/local"]
+
+    server = RecordingServer()
+    server.serve_module_rpc(HalfNative(), name="planner")
+    assert server.served == ["planner/local"]

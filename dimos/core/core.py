@@ -24,6 +24,7 @@ from typing import (
     ParamSpec,
     TypeVar,
     cast,
+    overload,
 )
 
 if TYPE_CHECKING:
@@ -34,7 +35,15 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def rpc(fn: Callable[P, R]) -> Callable[P, R]:
+@overload
+def rpc(fn: Callable[P, R]) -> Callable[P, R]: ...
+@overload
+def rpc(*, native: bool) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+
+def rpc(
+    fn: Callable[P, R] | None = None, *, native: bool = False
+) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """Mark a method as an RPC body callable across modules.
 
     Sync methods are tagged in place. Async methods get a sync dispatcher that
@@ -46,7 +55,16 @@ def rpc(fn: Callable[P, R]) -> Callable[P, R]:
       * Caller is on any other thread (RPC dispatcher, sync test, sync @rpc on
         the same module): schedules the coroutine onto self._loop and blocks
         until done.
+
+    ``native=True`` marks a method the module's native process serves. It is
+    listed like any other RPC, the Python module does not serve it, and calling
+    it on the module forwards the call over RPC to the native server.
     """
+    mark = _forward_to_native if native else _dispatch_locally
+    return mark if fn is None else mark(fn)
+
+
+def _dispatch_locally(fn: Callable[P, R]) -> Callable[P, R]:
     if not inspect.iscoroutinefunction(fn):
         fn.__rpc__ = True  # type: ignore[attr-defined]
         return fn
@@ -67,4 +85,18 @@ def rpc(fn: Callable[P, R]) -> Callable[P, R]:
 
     wrapper.__rpc__ = True  # type: ignore[attr-defined]
     wrapper.aio = fn  # type: ignore[attr-defined]
+    return cast("Callable[P, R]", wrapper)
+
+
+def _forward_to_native(fn: Callable[P, R]) -> Callable[P, R]:
+    if inspect.iscoroutinefunction(fn):
+        raise TypeError(f"{fn.__qualname__} is served natively, so its stub cannot be async")
+
+    @functools.wraps(fn)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        result, _ = self.rpc.call_sync(f"{self.rpc_name}/{fn.__name__}", (args, kwargs))
+        return result
+
+    wrapper.__rpc__ = True  # type: ignore[attr-defined]
+    wrapper.__rpc_native__ = True  # type: ignore[attr-defined]
     return cast("Callable[P, R]", wrapper)
