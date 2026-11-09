@@ -871,7 +871,9 @@ ignore = [
     "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     # A USD layer is the thing a robot or a scene travels as, and it is text on purpose: it stays
-    # out of LFS so a change to a scene shows up in a diff rather than as an opaque pointer.
+    # out of LFS so a change to a scene shows up in a diff rather than as an opaque pointer. A
+    # clone that has not run `git lfs pull` still has to be able to read one, because a scene is
+    # handed over as a string and there is nothing to fetch it from.
     "dimos/robot/*/*/assets/*.usda",
     "dimos/simulation/scenes/*/*.usda",
     "misc/DimSim/src/engine.js",
