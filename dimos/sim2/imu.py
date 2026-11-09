@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An IMU at its frame, read from a world of its own as the observations move it.
-
-It describes itself to nobody: a manager mounts its `get_usd` -- the frame it reads at, which
-is all an IMU is -- onto whatever it is bolted to, and this then asks the manager for that
-scene and differences the pose it is given.
-"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -39,7 +33,6 @@ from dimos.sim2.world_observations import WorldMirror
 
 
 class SimImuConfig(SceneConfig):
-    # The IMU's frame, as a robot's description or the scene names it: where it sits.
     frame_id: str = "imu_link"
     rate_hz: float = 200.0
 
@@ -51,7 +44,6 @@ class SimImu(Module):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: the frame this IMU reads at. An IMU is a pose, not a shape."""
         return frame_usd(self.frame_id, name="sim_imu")
 
     async def main(self) -> AsyncIterator[None]:
@@ -62,10 +54,6 @@ class SimImu(Module):
         self._reading.cancel()
 
     def _open(self) -> WorldView:
-        """This IMU's own world: the composed scene, with a site at its own frame. Opened on the first
-        frame rather than at start, because the robots in the world are the ones the observations
-        announce, and the view has to name its bodies the way they do.
-        """
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:
             raise ValueError(
@@ -79,7 +67,6 @@ class SimImu(Module):
         )
 
     async def _read(self) -> None:
-        # rate_hz of sim time: its readings difference velocities over sim time, so they hold at any speed.
         view: WorldView | None = None
         async for _ in self._world.ticks(self.config.rate_hz):
             if view is None:

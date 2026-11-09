@@ -12,21 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Write a robot's gains and home pose into its committed layer. Run once by hand.
-
-A robot's gains are a fact about the robot, so they belong in the layer that describes it rather
-than in whatever happens to be running it. For a robot whose controller ships as a blob -- the
-Go2's walking policy carries its own kp, kd and default pose -- that means reading them out of
-the blob once and committing the result::
-
-    python scripts/usd_drives.py \\
-        --layer dimos/robot/unitree/go2/assets/go2.usda \\
-        --from dimos.robot.unitree.go2.sim2:go2_drives
-
-``--from`` names a callable returning ``{joint: (kp, kd, target)}``. It lives with the robot,
-because which gains a robot runs on is the robot's business; all this does is the USD
-authoring, and the test beside the robot keeps the layer honest if the blob ever changes.
-"""
 
 from __future__ import annotations
 
