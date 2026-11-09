@@ -123,21 +123,26 @@ def write_sidecar(source: Path, pxr: Any) -> Path:
 def mesh_files(mjcf: Path) -> dict[str, str]:
     """Every name a baked prim might carry -> the mesh file behind it.
 
-    Two spellings, because the converter names a mesh prim after whichever the MJCF gave it:
+    Three spellings, because the converter names a mesh prim after whichever the MJCF gave it:
 
     * the **mesh asset's** own name, which is what a robot MJCF uses -- its geoms are unnamed
       and the prim inherits `<mesh name=...>`;
+    * the **file's stem**, for a `<mesh file=...>` with no name at all. MuJoCo's own rule is
+      that such a mesh is called after its file, and the Go2 declares all sixteen of its meshes
+      that way (`<mesh file="base_0.obj"/>`, referenced as `mesh="base_0"`). Reading only the
+      explicit spelling found one named mesh in the whole robot;
     * the **geom's** name, which is what a scene MJCF uses -- office_555 names every geom
       (`drawer_cabinet_5_g29`) and has them reference meshes called `asset_0`, `asset_1`, ...
 
-    Indexing both means one lookup covers both, and a robot and a room go through the same
-    script. Without the geom spelling the office scene re-points nothing: 3547 meshes stay
-    baked and the layer comes out 35 MB.
+    Indexing all three means one lookup covers every model, and a robot and a room go through
+    the same script. Without the geom spelling the office scene re-points nothing: 3547 meshes
+    stay baked and the layer comes out 35 MB.
     """
     root = ET.fromstring(mjcf.read_text())
     files = {}
     for mesh in root.iter("mesh"):
-        name, file = mesh.get("name"), mesh.get("file")
+        file = mesh.get("file")
+        name = mesh.get("name") or (Path(file).stem if file else None)
         if name and file:
             files[name] = file
     for geom in root.iter("geom"):
@@ -273,14 +278,22 @@ def main() -> int:
             return 1
 
     files = mesh_files(args.mjcf)
-    if not files:
-        print(f"ERROR: {args.mjcf} names no meshes", file=sys.stderr)
-        return 1
 
     # Flattened, because the converter writes a root that payloads several binary layers and a
     # scene has to leave here as one text layer.
     stage = Usd.Stage.Open(str(args.converted))
     flat = Usd.Stage.Open(stage.Flatten())
+    # A model of boxes and spheres names no meshes and has none to re-point, which is fine. A
+    # model whose stage is full of them and whose MJCF names none is the --mjcf being the wrong
+    # file, and re-pointing nothing would quietly write a layer of baked geometry.
+    baked = any(prim.IsA(UsdGeom.Mesh) for prim in flat.Traverse())
+    if baked and not files:
+        print(
+            f"ERROR: {args.converted} has meshes and {args.mjcf} names none; "
+            f"is --mjcf the file it was converted from?",
+            file=sys.stderr,
+        )
+        return 1
     args.out.parent.mkdir(parents=True, exist_ok=True)
     named = name_joints(flat, pxr)
     done, skipped = rereference(flat, files, args.meshes, args.out.parent.resolve(), pxr)
