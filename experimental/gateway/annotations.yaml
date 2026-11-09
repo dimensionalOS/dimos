@@ -573,6 +573,10 @@ robots:
           title: xArm7 demonstration recording
           description: Teleoperate an xArm7 in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm7 IP}]
+        learning-collect-webxr-xarm6:
+          title: xArm6 demonstration recording
+          description: Teleoperate an xArm6 in VR and record episodes for imitation learning.
+          recommended_config: [{module: controlcoordinator, field: addresses.arm, label: xArm6 IP}]
         xarm-feed:
           title: xArm camera feed (recording)
           description: A depth-camera recording published at wall-clock pace, as if live.
