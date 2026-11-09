@@ -28,11 +28,13 @@ from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
@@ -67,6 +69,15 @@ class SimL1(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
         return {"simulated": SimulatedSensor("lidar", self.frame_id)}
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: the frame this L1 scans from.
+
+        A frame rather than a case: the Go2's utlidar sits under a cover that is part of the
+        robot's own shell, and nobody has measured the unit inside it.
+        """
+        return frame_usd(self.frame_id, name="sim_l1")
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()

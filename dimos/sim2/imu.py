@@ -20,6 +20,7 @@ from typing import Any
 
 from dimos_lcm.world_msgs import WorldObservations
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
@@ -27,6 +28,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.view import WorldView, open_view, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
@@ -47,6 +49,11 @@ class SimImu(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
         return {"simulated": SimulatedSensor("imu", self.frame_id)}
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: the frame this IMU reads at. An IMU is a pose, not a shape."""
+        return frame_usd(self.frame_id, name="sim_imu")
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
