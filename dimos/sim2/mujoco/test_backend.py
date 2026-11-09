@@ -29,6 +29,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.usd import graft_usd, prefix_usd_frames
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
@@ -36,7 +37,7 @@ from dimos.sim2.mujoco.sim import MujocoSim
 from dimos.sim2.mujoco.world import SensorMount, compile_world, mount_sensor
 from dimos.sim2.sim import SimulatedWorld, sim_module
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.usd_layer import usd_layer
+from dimos.sim2.usd_layer import layer_file, usd_layer
 from dimos.sim2.world_observations import ACT, WorldMirror
 
 SCENE = Path(__file__).parent / "assets" / "scene.usda"
@@ -112,6 +113,32 @@ def test_a_sensor_mounts_itself_in_a_world_of_its_own(scene, robot_model):
     }
 
 
+def test_a_robot_grafted_into_a_scene_is_still_free_to_move(scene, robot_model):
+    """A composed world is how a robot really arrives: grafted onto a frame the room holds.
+
+    USD says "this subtree floats on its mount" with a generic six-degree joint, and MuJoCo's USD
+    reader does not read that one. A nested body with no joint is welded, so every robot in a
+    composed world was bolted to the room: it stood, it never fell over, and it never walked,
+    with nothing in the log but one "Unsupported joint type" warning.
+    """
+    composed = graft_usd(
+        scene.with_frames({"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}).usd,
+        {"dog": prefix_usd_frames(robot_model.usd, "dog")},
+    )
+    model = compile_world(layer_file(composed, called="composed"), ids=["dog"]).compile()
+
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    started = data.body("dog/base").xpos[2]
+    for _ in range(300):
+        mujoco.mj_step(model, data)
+
+    assert data.body("dog/base").xpos[2] < started - 0.5, "the dog is welded to the room"
+    # The frame holds the joint, since MuJoCo takes a free joint only on a top-level body, and
+    # a mount frame with nothing grafted onto it is still a stand that does not move.
+    assert data.body("/scene/overhead").xpos.tolist() == pytest.approx([0, 0, 3])
+
+
 def test_mounting_at_a_frame_the_world_does_not_have_is_rejected(scene):
     spec = compile_world(usd_layer(scene))
     with pytest.raises(ValueError, match="no site or body 'nowhere'"):
@@ -141,13 +168,26 @@ def test_the_engine_builds_the_world_its_blueprint_describes(scene, robot_model)
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
-        description = coordinator.get_instance(MujocoSim).describe()
-        assert description["robots"] == ["dog"]
-        assert description["backend"] == "mujoco"
-        assert description["scene"] == str(usd_layer(scene))
-        assert [d.robot_id for d in description["simulated"]] == ["dog"]
+        sim = coordinator.get_instance(MujocoSim)
+        assert sim.describe()["robots"] == ["dog"]
+        assert [d.robot_id for d in sim.describe()["simulated"]] == ["dog"]
     finally:
         coordinator.stop()
+
+
+def test_the_world_the_engine_runs_is_the_scene_it_was_given(scene, robot_model):
+    """And it is built when the module runs, not when it is built.
+
+    Building it means asking a manager for the scene, and a manager that has not been
+    constructed yet cannot be asked -- which it had not, while the modules were still being
+    built.
+    """
+    sim = MujocoSim(scene=scene)
+    sim.config_receive((("dog", {"simulated": SimulatedRobot("dog", robot_model)}),))
+    try:
+        assert sim._engine().describe() == {"backend": "mujoco", "scene": str(usd_layer(scene))}
+    finally:
+        sim.stop()
 
 
 class _Collect:
@@ -174,7 +214,10 @@ async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
     something that keeps what it was given.
     """
     sim = MujocoSim()
-    sim._backend, sim._publisher = backend, published
+    # The engine the module would have built for itself: these tests are about what the loop
+    # does with one, and each wants a world of its own making.
+    sim._engine = lambda: backend  # type: ignore[method-assign]
+    sim._publisher = published
     sim._all_started.set()
     running = asyncio.create_task(sim._run())
     try:

@@ -136,7 +136,55 @@ def compile_world(
                 name = getattr(pair, side).removeprefix(prefix)
                 if getattr(pair, side) != name and name not in robot_geoms:
                     setattr(pair, side, name)
+    # A floating robot that arrived grafted into a scene has nothing holding it *and* nothing
+    # letting it move, so it needs a free joint here. See _free_if_unjointed.
+    fixed = {robot.robot_id for robot in robots if not robot.floating}
+    for robot_id in owners:
+        if robot_id not in fixed:
+            _free_if_unjointed(world, robot_id)
     return world
+
+
+def _free_if_unjointed(spec: mujoco.MjSpec, robot_id: str) -> None:
+    """Give this robot a free joint if nothing in the layer gave it one.
+
+    A graft says "this subtree floats on its mount" with a generic six-degree `PhysicsJoint`,
+    which is how USD says it. MuJoCo's USD reader does not read that one -- "Unsupported joint
+    type for /scene/dog/toy/dog_mount" on the way past -- and a nested rigid body with no joint
+    is welded to its parent. So a composed world came out with every robot bolted to the room:
+    it started, it stood, it never fell over, and it never walked either, with nothing in the
+    log but that one warning.
+
+    The joint goes on the *mount frame*, not on the robot's own root: MuJoCo allows a free joint
+    only on a top-level body ("free joint can only be used on top level"), and in a composed
+    scene the robot hangs off a frame that the room holds. The frame carries no mass and is
+    welded to the root, so MuJoCo folds the two together and the robot floats as one body --
+    which is what the graft was saying all along.
+
+    A robot attached from its own layer already has the free joint its layer declares, which is
+    why this only ever fires for the composed case. A robot that is not floating is left alone,
+    and so is a mount frame with nothing grafted onto it: a stand for a camera does not move.
+    """
+    prefix = f"{robot_id}/"
+    for body in list(spec.bodies):
+        name = body.name or ""
+        parent = body.parent
+        if not name.startswith(prefix) or (parent.name or "").startswith(prefix):
+            continue
+        # Up to the body MuJoCo will let hold a free joint, which is the one under the world.
+        holder = body
+        while holder.parent is not None and (holder.parent.name or "") != "world":
+            holder = holder.parent
+        if not any(part.joints for part in _chain(body, holder)):
+            holder.add_freejoint()
+
+
+def _chain(body: Any, holder: Any) -> list[Any]:
+    """``body`` up to and including ``holder``: the bodies a joint anywhere on which would move it."""
+    parts = [body]
+    while parts[-1] is not holder and parts[-1].parent is not None:
+        parts.append(parts[-1].parent)
+    return parts
 
 
 def _configure(
