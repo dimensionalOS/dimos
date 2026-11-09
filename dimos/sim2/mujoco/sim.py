@@ -40,6 +40,14 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+class MujocoSimConfig(SimulatedWorldConfig):
+    # How much physics this world will catch up on in one go. It steps in bursts rather than one
+    # step at a time because macOS oversleeps a short wait, and lag past one burst is dropped: a
+    # controller's command must not land a whole control period late. Smaller means a world that
+    # falls behind sooner but never runs ahead of what is watching it.
+    max_burst_seconds: float = 0.01
+
+
 class MujocoSim(Module):
     """One compiled MuJoCo world, stepped in real time, publishing a frame of what moved.
 
@@ -51,7 +59,7 @@ class MujocoSim(Module):
     exists at all.
     """
 
-    config: SimulatedWorldConfig
+    config: MujocoSimConfig
     # The contract core states, and all of it.
     actions: In[WorldAction]
     world_observations: Out[WorldObservations]
@@ -97,7 +105,12 @@ class MujocoSim(Module):
                 "nothing says what this world is: pass scene= a USD layer or a file holding one,"
                 " or scene_manager= the UsdManager that composes it"
             )
-        return MujocoBackend(usd, self.simulated, speed=self.config.speed)
+        return MujocoBackend(
+            usd,
+            self.simulated,
+            speed=self.config.speed,
+            max_burst_seconds=self.config.max_burst_seconds,
+        )
 
     @rpc
     def on_system_modules(self, _modules: list[Any]) -> None:
