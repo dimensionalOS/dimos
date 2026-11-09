@@ -14,9 +14,9 @@
 
 """An IMU at its frame, read from a world of its own as the observations move it.
 
-It describes itself to nobody: a manager mounts its `get_usd` -- the frame it reads at, which is
-all an IMU is -- onto whatever it is bolted to, so the composed scene has it. This then asks the
-manager for that scene, builds its own world out of it, and differences the pose it is given.
+It describes itself to nobody: a manager mounts its `get_usd` -- the frame it reads at, which
+is all an IMU is -- onto whatever it is bolted to, and this then asks the manager for that
+scene and differences the pose it is given.
 """
 
 import asyncio
@@ -62,11 +62,9 @@ class SimImu(Module):
         self._reading.cancel()
 
     def _open(self) -> WorldView:
-        """This IMU's own world: the composed scene, with a site at its own frame.
-
-        Opened on the first frame rather than at start, because the robots in the world are what
-        the world says they are -- the observations announce them -- and the view has to name its
-        bodies the way the observations do.
+        """This IMU's own world: the composed scene, with a site at its own frame. Opened on the first
+        frame rather than at start, because the robots in the world are the ones the observations
+        announce, and the view has to name its bodies the way they do.
         """
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:

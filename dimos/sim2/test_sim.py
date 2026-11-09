@@ -54,10 +54,8 @@ def _config(*robots: SimulatedRobot) -> SimulatedWorldConfig:
 def test_a_world_is_the_robots_it_was_configured_with_and_nothing_more(model):
     """All core says about a description: the robots the blueprint put in this world.
 
-    Not "which of these is a camera", not "what should be drawn", not which robot a sensor is
-    bolted to, and not what any robot's gains are -- those are in its layer. A sensor describes
-    itself to nobody at all: it reads the composed scene, builds its own world from it, and
-    renders from the observations.
+    Not which of these is a camera, not what should be drawn, not which robot a sensor is bolted
+    to, and not any robot's gains -- those are in its layer.
     """
     config = _config(SimulatedRobot("dog", model), SimulatedRobot("spot", model))
 
@@ -79,11 +77,9 @@ def test_a_simulated_world_is_a_shape_rather_than_a_base_class():
 
 
 def test_the_world_is_usd_even_when_it_was_configured_as_a_file():
-    """A backend here is only ever handed USD. A path is read, not passed on.
-
-    This is the whole of criterion one, in core: there is no route through which a backend
-    receives something that is not a USD layer, so "accepts only a USD" is not a convention the
-    backends have to keep to.
+    """A backend here is only ever handed USD. A path is read, not passed on: there is no route
+    through which a backend receives something that is not a USD layer, so "accepts only a USD" is
+    not a convention the backends have to keep to.
     """
     model = scene_from(None, None, TOY)
 
@@ -103,21 +99,16 @@ def test_an_unknown_engine_is_refused_by_name():
 
 
 def test_there_is_more_than_one_engine_to_switch_between():
-    """Which is the only way to know this is a contract rather than a description of MuJoCo.
-
-    A switch with one thing in it is not a switch, and a backend protocol with one implementation
-    is whatever that implementation happens to do.
+    """A switch with one thing in it is not a switch, and a backend protocol with one
+    implementation is whatever that implementation happens to do.
     """
     assert set(BACKENDS) >= {"mujoco", "dimsim"}
 
 
 def test_core_names_its_engines_and_imports_none_of_them():
-    """The only thing core knows about any engine is a string, and that is deliberate.
-
-    Importing sim2's core must not import an engine: a sensor, a blueprint catalog or anything
-    that only wants to know what a world is should not pay for MuJoCo, and core holding a module
-    object rather than a name would mean it did. In its own process, because by the time this
-    suite is running something else has long since imported one.
+    """Importing sim2's core must not import an engine: a sensor, a blueprint catalog or anything
+    that only wants to know what a world is should not pay for MuJoCo. In its own process, because
+    by the time this suite is running something else has long since imported one.
     """
     assert all(isinstance(path, str) for path in BACKENDS.values())
     code = (
