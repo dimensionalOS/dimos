@@ -50,6 +50,7 @@ Family = Literal[
     "pole",
     "bar",
     "hidden_pole",
+    "stairs",
 ]
 
 SLAB_THICKNESS = 0.15
@@ -78,6 +79,15 @@ WINDING_SEGMENT = (1.5, 3.0)
 WINDING_TURN = (math.pi / 6, math.pi / 2)
 WINDING_SPAN = 12.0
 WINDING_WIDTH_MAX = 1.2
+# A flight of steps. The Go2's stair gait clears about 0.2 m risers, and the sim keeps
+# the treads deep enough that the climb is a gait question, not a geometry question.
+STAIR_RISE = (0.15, 0.2)
+STAIR_TREAD = (0.26, 0.34)
+STAIR_WIDTH = (0.9, 1.3)
+STAIR_HEIGHT = (1.1, 1.5)
+STAIR_LANDING = 1.2
+STAIR_POST = 0.1
+RAIL_HEIGHT = 0.5
 SCATTER_AREA = 64.0
 SCATTER_SIDE = (0.15, 0.6)
 SCATTER_HEIGHT = (0.05, 1.2)
@@ -919,6 +929,88 @@ def bar(seed: int, bar_width: float | None = None) -> Scene:
     return scene
 
 
+def stairs(
+    seed: int,
+    rise: float | None = None,
+    tread: float | None = None,
+    step_width: float | None = None,
+) -> Scene:
+    """One room with a flight of steps up to a mezzanine; the steps are the only way up.
+
+    Two things make this the scene the navigation stack needs: the space on the
+    mezzanine is genuinely unknown from below, so exploring a building means climbing,
+    and the ground floor runs on under the slab, so a flat costmap reads the slab as a
+    ceiling-height obstacle even though there is drivable floor beneath it.
+
+    Args:
+        seed: The generator seed.
+        rise: Riser height per step; drawn from STAIR_RISE when None.
+        tread: Tread depth; drawn from STAIR_TREAD when None.
+        step_width: Clear width of the flight; drawn from STAIR_WIDTH when None.
+    """
+    rng = np.random.default_rng(seed)
+    length = _uniform(rng, 6, 8)
+    z0 = _uniform(rng, 0.0, 0.08)
+    step_rise = _given(_uniform(rng, *STAIR_RISE), rise)
+    step_tread = _given(_uniform(rng, *STAIR_TREAD), tread)
+    width_of_steps = _given(_uniform(rng, *STAIR_WIDTH), step_width)
+    height = _uniform(rng, *STAIR_HEIGHT)
+    count = max(4, round(height / step_rise))
+    total_rise = count * step_rise
+    flight_x = _uniform(rng, 1.5, 2.5)
+    flight_y = _uniform(rng, 0.6, max(0.7, length - width_of_steps - 0.6))
+    upper_x = flight_x + count * step_tread + STAIR_LANDING
+    width = upper_x + _uniform(rng, 1.5, 3.0)
+
+    scene = Scene(
+        f"stairs_{seed}",
+        {
+            "width": width,
+            "length": length,
+            "z0": z0,
+            "rise": step_rise,
+            "tread": step_tread,
+            "step_width": width_of_steps,
+            "steps": float(count),
+            "total_rise": total_rise,
+            "flight_x": flight_x,
+            "flight_y": flight_y,
+        },
+    )
+    _shell(scene, width, length, z0)
+
+    # A solid run of treads: each step is a box up to its own tread height, so the
+    # flight is one connected climbable surface rather than floating planks.
+    for index in range(count):
+        x0 = flight_x + index * step_tread
+        scene.add(
+            (x0, flight_y, z0),
+            (x0 + step_tread, flight_y + width_of_steps, z0 + (index + 1) * step_rise),
+            "stair",
+        )
+
+    y_lo = max(0.0, flight_y - (STAIR_LANDING - width_of_steps) / 2)
+    y_hi = min(length, flight_y + width_of_steps + (STAIR_LANDING - width_of_steps) / 2)
+    top = z0 + total_rise
+    scene.add((upper_x - STAIR_LANDING, y_lo, top - SLAB_THICKNESS), (width, y_hi, top), "floor")
+
+    # Guard the two open edges of the mezzanine, and hold the slab up at the far end.
+    for edge in (y_lo, y_hi):
+        scene.add(
+            (upper_x - STAIR_LANDING, edge, top),
+            (upper_x - STAIR_LANDING + WALL_THICKNESS, edge + WALL_THICKNESS, top + RAIL_HEIGHT),
+            "wall",
+        )
+    for px in (upper_x - STAIR_LANDING + STAIR_POST, width - STAIR_POST * 2):
+        for py in (y_lo, y_hi - STAIR_POST):
+            scene.add(
+                (px, py, z0), (px + STAIR_POST, py + STAIR_POST, top - SLAB_THICKNESS), "clutter"
+            )
+
+    scene.start = (flight_x - START_CLEARANCE, flight_y + width_of_steps / 2, z0)
+    return scene
+
+
 Params = dict[str, bool | int | float]
 FAMILIES: dict[Family, Callable[..., Scene]] = {
     "office": office,
@@ -937,6 +1029,7 @@ FAMILIES: dict[Family, Callable[..., Scene]] = {
     "pole": pole,
     "bar": bar,
     "hidden_pole": hidden_pole,
+    "stairs": stairs,
 }
 
 

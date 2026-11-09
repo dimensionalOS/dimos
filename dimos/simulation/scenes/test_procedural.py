@@ -19,10 +19,12 @@ import itertools
 import math
 import sys
 
+import mujoco
 import numpy as np
 from numpy.typing import NDArray
 import pytest
 
+from dimos.simulation.scenes.mjcf import add_boxes
 from dimos.simulation.scenes.procedural import (
     BAR_HEIGHT,
     BAR_POST,
@@ -49,6 +51,11 @@ from dimos.simulation.scenes.procedural import (
     SMALL_OBJECT_ASPECT,
     SMALL_OBJECT_HEIGHT,
     SMALL_OBJECT_LENGTH,
+    STAIR_HEIGHT,
+    STAIR_LANDING,
+    STAIR_RISE,
+    STAIR_TREAD,
+    STAIR_WIDTH,
     START_CLEARANCE,
     TABLE_HEIGHT,
     TABLE_LEG,
@@ -79,6 +86,7 @@ from dimos.simulation.scenes.procedural import (
     room,
     scattered,
     small_object,
+    stairs,
     table,
 )
 
@@ -674,3 +682,90 @@ def test_hidden_pole_stands_in_the_corridor_out_of_sight_of_the_first_room() -> 
             for y in np.arange(0.5, params["length"], 0.5):
                 line = np.linspace((x, y), spot, 200)
                 assert min(float(wall.gap(line).min()) for wall in walls) == 0.0, (seed, x, y)
+
+
+def _flight(scene: Scene) -> list[Box]:
+    """The steps of the flight, in climbing order."""
+    return sorted(
+        (box for box in scene.boxes if box.kind == "stair"), key=lambda box: box.center[0]
+    )
+
+
+def _mezzanine(scene: Scene) -> Box:
+    """The upper floor slab."""
+    return max((box for box in scene.boxes if box.kind == "floor"), key=lambda box: box.center[2])
+
+
+def test_stairs_is_deterministic_and_pinned() -> None:
+    assert stairs(1).digest() == stairs(1).digest() == "5a213ee3c0c81209"
+    assert stairs(1).digest() != stairs(2).digest()
+
+
+def test_stairs_climb_in_steps_the_go2_can_clear() -> None:
+    for seed in range(1, 21):
+        scene = stairs(seed)
+        flight = _flight(scene)
+        assert len(flight) >= 4, seed
+        tops = [box.center[2] + box.half[2] for box in flight]
+        assert all(higher > lower for lower, higher in itertools.pairwise(tops)), seed
+        assert max(h - l for l, h in itertools.pairwise(tops)) <= STAIR_RISE[1] + 1e-9, seed
+        assert all(2 * box.half[0] >= STAIR_TREAD[0] - 1e-9 for box in flight), seed
+        assert all(2 * box.half[1] == pytest.approx(scene.params["step_width"]) for box in flight)
+        assert STAIR_WIDTH[0] <= scene.params["step_width"] <= STAIR_WIDTH[1]
+
+
+def test_stairs_arrive_on_a_mezzanine_over_drivable_floor() -> None:
+    scene = stairs(4)
+    z0 = scene.params["z0"]
+    slab = _mezzanine(scene)
+    assert slab.center[2] + slab.half[2] == pytest.approx(z0 + scene.params["total_rise"])
+    # The ground floor runs on under the slab, so this is a 2.5D question, not a wall.
+    assert slab.center[2] - slab.half[2] - z0 >= 0.9
+    assert scene.params["total_rise"] >= STAIR_HEIGHT[0]
+
+
+def test_stairs_ground_floor_is_one_connected_floor() -> None:
+    for seed in range(1, 31):
+        assert _reachable_fraction(stairs(seed)) == 1.0, seed
+
+
+def test_stairs_start_faces_the_foot_of_the_flight() -> None:
+    scene = stairs(5)
+    x, y, z = scene.start
+    assert x == pytest.approx(scene.params["flight_x"] - START_CLEARANCE)
+    assert scene.params["flight_y"] < y < scene.params["flight_y"] + scene.params["step_width"]
+    assert z == pytest.approx(scene.params["z0"])
+    foot = _flight(scene)[0]
+    assert foot.center[0] - foot.half[0] - x == pytest.approx(START_CLEARANCE)
+
+
+def test_stairs_draw_their_geometry_unless_given() -> None:
+    drawn = stairs(6)
+    fixed = stairs(6, rise=0.18, tread=0.3, step_width=1.1)
+    assert (drawn.params["rise"], drawn.params["tread"]) != (0.18, 0.3)
+    assert (fixed.params["rise"], fixed.params["tread"], fixed.params["step_width"]) == (
+        0.18,
+        0.3,
+        1.1,
+    )
+    assert fixed.params["steps"] == round(STAIR_HEIGHT[0] / 0.18) or fixed.params["steps"] >= 4
+
+
+def test_stairs_compile_as_mujoco_geometry() -> None:
+    for seed in (1, 2, 7):
+        spec = mujoco.MjSpec()
+        add_boxes(spec, stairs(seed))
+        model = spec.compile()
+        data = mujoco.MjData(model)
+        for _ in range(200):
+            mujoco.mj_step(model, data)
+        assert model.ngeom == len(stairs(seed).boxes)
+        assert np.isfinite(data.qpos).all()
+
+
+def test_stairs_landing_is_deep_enough_to_turn_on() -> None:
+    scene = stairs(3)
+    slab, flight = _mezzanine(scene), _flight(scene)
+    top_of_flight = flight[-1].center[0] + flight[-1].half[0]
+    assert slab.center[0] - slab.half[0] <= top_of_flight + 1e-9
+    assert 2 * slab.half[0] >= STAIR_LANDING

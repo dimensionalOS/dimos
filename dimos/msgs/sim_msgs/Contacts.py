@@ -26,7 +26,9 @@ from dimos_lcm.std_msgs import String as LCMString
 from dimos.types.timestamped import Timestamped
 
 Part = str
-Kind = Literal["floor", "wall", "clutter"]
+# "stair" is one step of a flight: something the robot can drive on, and something
+# a leg can knock, so it is reported separately from clutter.
+Kind = Literal["floor", "wall", "clutter", "stair"]
 
 
 @dataclass(frozen=True, order=True)

@@ -259,6 +259,7 @@ def test_a_contact_is_named_by_the_part_and_what_it_collided_with() -> None:
         "lidar collided with floor",
         "lidar collided with wall",
         "lidar collided with object",
+        "lidar collided with stair",
     ]
 
 
