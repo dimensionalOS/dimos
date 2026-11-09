@@ -41,7 +41,10 @@ calibrates the grippers. See [connection testing and CAN selection](/docs/capabi
 for mock checks, explicit selectors, planner/teleop entries, and hardware acceptance.
 
 [MakerMods Metal](/docs/capabilities/manipulation/makermods_metal_integration.md) covers the single- and dual-arm
-connections, CAN selectors, and configurable mounting geometry.
+connections, CAN selectors, and configurable mounting geometry. The opt-in
+[Metal dual-arm PPO policy](/docs/capabilities/manipulation/metal_arm_ppo_policy.md)
+adds the accepted learned station controller as a coordinator task over a
+fake/no-CAN blueprint.
 
 Open the Meshcat URL printed in the terminal (default `http://localhost:7000`) to see the robot.
 
