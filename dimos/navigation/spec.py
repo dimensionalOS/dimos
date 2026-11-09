@@ -16,26 +16,49 @@
 
 A local planner is blind or map-aware; both hand the follower the same ``path``.
 
-A ``path`` with one pose means "hold, no safe route"; with none, "stop".
+A ``path`` with one pose means "hold, no safe route"; with none, "stop". A ``path``
+whose ``header.seq`` is 1 ends on a pose whose yaw is the goal heading, and the
+follower arrives only once it faces it.
 
 tf is ``IO`` where the implementers are dimos-module natives (``#[tf]`` both
 subscribes and publishes) and their python twins; ``In`` on the global planner,
 whose native only reads it.
+
+A ``goal`` is a ``PoseStamped`` with three meanings. A non-finite position cancels
+the goal under way. An all-zero quaternion is a position with no heading. Any other
+quaternion is a position and the heading to face there. The default orientation is
+the identity, which here means "face +x", so a position-only goal is built with
+``position_goal``.
 """
 
+import math
 from typing import Protocol
 
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
+NO_HEADING = (0.0, 0.0, 0.0, 0.0)
+
+
+def position_goal(
+    x: float, y: float, z: float, frame_id: str, ts: float | None = None
+) -> PoseStamped:
+    """A goal with no heading."""
+    return PoseStamped(ts=ts, frame_id=frame_id, position=[x, y, z], orientation=NO_HEADING)
+
+
+def cancel_goal(frame_id: str) -> PoseStamped:
+    """The goal that cancels the one under way."""
+    return position_goal(math.nan, math.nan, math.nan, frame_id)
+
 
 class GlobalPlanner(Protocol):
     tf: In[TFMessage]
-    goal: In[PointStamped]
+    goal: In[PoseStamped]
 
     path: Out[Path]
 

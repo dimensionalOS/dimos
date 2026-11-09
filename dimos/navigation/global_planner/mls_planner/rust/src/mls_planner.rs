@@ -86,6 +86,9 @@ pub struct Config {
     /// Vertical distance from goal within which the planner counts arrival.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_z_tolerance: f32,
+    /// Heading error under which a goal with a heading counts as reached.
+    #[validate(range(exclusive_min = 0.0))]
+    pub goal_yaw_tolerance: f32,
     /// Seconds a goal may go without a safe path before it is aborted.
     #[validate(range(min = 0.0))]
     pub blocked_timeout_s: f32,
@@ -883,6 +886,7 @@ pub(crate) fn test_config() -> Config {
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
         goal_z_tolerance: 0.5,
+        goal_yaw_tolerance: 0.25,
         blocked_timeout_s: 2.0,
         progress_timeout_s: 10.0,
         progress_min_m: 0.2,

@@ -116,8 +116,11 @@ class PoseStamped(Pose, Timestamped):
         )
 
     def __str__(self) -> str:
+        pos = f"pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}]"
+        if self.orientation.is_zero():
+            return f"PoseStamped({pos}, no heading)"
         return (
-            f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
+            f"PoseStamped({pos}, "
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
 

@@ -150,7 +150,10 @@ class Recording:
                 default=0.0,
             )
             pose = stamped("ground_truth", PoseStamped)
-            goals = stamped("goal", PointStamped)
+            # Opened without a type so a recording from before goals were poses still reads.
+            goals: list[Observation[PointStamped | PoseStamped]] | None = (
+                store.stream("goal").to_list() if "goal" in names else None
+            )
             paths = stamped("planner_path", PathMsg)
             local = stamped("path", PathMsg)
             commands = stamped("cmd_vel", Twist)

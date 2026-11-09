@@ -278,7 +278,9 @@ For every declared `x: In[T]`, if the module defines `async def handle_x(self, m
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.navigation.spec import position_goal
 
 class MovementManager(Module):
     clicked_point: In[PointStamped]
@@ -286,7 +288,7 @@ class MovementManager(Module):
     tele_cmd_vel: In[Twist]
 
     cmd_vel: Out[Twist]
-    goal: Out[PointStamped]
+    goal: Out[PoseStamped]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -294,7 +296,7 @@ class MovementManager(Module):
         self._teleop_active = False
 
     async def handle_clicked_point(self, msg: PointStamped) -> None:
-        self.goal.publish(msg)
+        self.goal.publish(position_goal(msg.x, msg.y, msg.z, msg.frame_id, msg.ts))
 
     async def handle_nav_cmd_vel(self, msg: Twist) -> None:
         if not self._teleop_active:

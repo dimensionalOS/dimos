@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
-    from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.nav_msgs.Path import Path
     from dimos.visualization.rerun.bridge import VisualOverride
 
@@ -75,7 +75,7 @@ def goal_point(xyz: tuple[float, float, float]) -> Archetype:
     return rr.Points3D([xyz], colors=[GOAL_COLOR], radii=GOAL_RADIUS)
 
 
-def render_goal(msg: PointStamped) -> Archetype | None:
+def render_goal(msg: PoseStamped) -> Archetype | None:
     """The active goal. NaN is the movement manager's placeholder for none."""
     if any(math.isnan(v) for v in (msg.x, msg.y, msg.z)):
         return None
