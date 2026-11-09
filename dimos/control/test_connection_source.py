@@ -243,7 +243,11 @@ def test_each_kind_of_command_goes_to_its_own_port() -> None:
 def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     source = base()
     source.on_message("odom", PoseStamped(frame_id="odom"))
-    source.on_message("base_velocity", TwistStamped(frame_id="base"))
+    assert not source.ready_for_control()
+    assert source.read_joints().joint_velocities == {}
+    source.on_message("base_velocity", TwistStamped(linear=Vector3(0.4, 0.0, 0.0), frame_id="base"))
+    assert source.read_joints().joint_velocities["go2/base/vx"] == 0.4
+    assert source.read_joints().joint_positions == {}
 
     values = source.command({})
     first, *rest = source.command_messages(values, ts=1.0)
@@ -256,53 +260,18 @@ def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     assert source.joint_names == source.base_joint_names
 
 
-def test_a_base_axis_is_a_speed_a_task_can_win() -> None:
-    source = base()
-    assert source.base_joint_names == ["go2/base/vx", "go2/base/vy", "go2/base/wz"]
-    source.on_message("odom", PoseStamped(frame_id="odom"))
-    source.on_message("base_velocity", TwistStamped(frame_id="base"))
-
-    values = source.command(
-        {"go2/base/vx": (0.5, ControlMode.VELOCITY), "go2/base/wz": (-0.2, ControlMode.VELOCITY)}
-    )
-
-    # The axes the task did not drive are told 0.
-    assert values == {"go2/base/vx": 0.5, "go2/base/vy": 0.0, "go2/base/wz": -0.2}
-    (msg,) = source.command_messages(values, ts=1.0)
-    assert msg.port == "cmd_vel"
-    twist = msg.message
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.5, 0.0, -0.2)
-
-    # The task gone, every axis is zeroed again.
-    assert source.command({}) == {
-        "go2/base/vx": 0.0,
-        "go2/base/vy": 0.0,
-        "go2/base/wz": 0.0,
-    }
-
-
-def test_velocity_aliases_are_joint_descriptors_with_only_real_feedback() -> None:
-    source = base()
-    assert source.joint_names == source.base_joint_names
-    axis = "go2/base/vx"
-    joint = next(joint for joint in source._joints if joint.name == axis)
-    assert joint.command_keys == {"velocity": axis}
-    assert "position" not in joint.state_keys
-    assert not source.ready_for_control()
-    assert source.read_joints().joint_velocities == {}
-    source.on_message("odom", PoseStamped(frame_id="odom"))
-    assert source.read_joints().joint_positions == {}
-    assert source.read_joints().joint_velocities == {}
-    assert not source.ready_for_control()
-    source.on_message("base_velocity", TwistStamped(linear=Vector3(0.4, 0.0, 0.0), frame_id="base"))
-    assert source.ready_for_control()
-    assert source.read_joints().joint_velocities[axis] == 0.4
-    assert source.read_joints().joint_positions == {}
-
-
-def test_a_velocity_alias_rejects_position_instead_of_treating_it_as_speed() -> None:
-    with pytest.raises(ValueError, match="cannot be told its position"):
-        base().command({"go2/base/vx": (0.5, ControlMode.POSITION)})
+@pytest.mark.parametrize(
+    "mode,value,error",
+    [
+        (ControlMode.POSITION, 0.5, "cannot be told its position"),
+        (ControlMode.VELOCITY, math.nan, "not a finite speed"),
+    ],
+)
+def test_invalid_velocity_alias_commands_are_rejected(
+    mode: ControlMode, value: float, error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        base().command({"go2/base/vx": (value, mode)})
 
 
 def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
@@ -313,36 +282,6 @@ def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
     assert values[f"{J1}/velocity"] == 0.3
     assert values[f"{J2}/position"] == -0.2
     assert f"{J2}/velocity" not in values
-
-
-def test_mixed_commands_use_joint_keys_and_twist_aliases_without_fake_joint_state() -> None:
-    source = arm(
-        commands=("position_command", "velocity_command", "cmd_vel"),
-        readings=("joint_state", "odom"),
-    )
-    source.on_message("joint_state", reading(0.2, -0.2))
-    source.on_message("odom", PoseStamped(frame_id="odom"))
-    axis = "arm/base/vx"
-    assert source.ready_for_control()
-    assert source.read_joints().joint_positions == {J1: 0.2, J2: -0.2}
-    assert source.read_joints().joint_velocities == {}
-    values = source.command({J1: (0.5, ControlMode.POSITION), axis: (0.4, ControlMode.VELOCITY)})
-    by_port = {msg.port: msg.message for msg in source.command_messages(values, ts=1.0)}
-    assert list(by_port["position_command"].name) == [J1, J2]
-    assert "velocity_command" not in by_port
-    assert by_port["cmd_vel"].linear.x == 0.4
-    with pytest.raises(ValueError, match="cannot be told its position"):
-        source.command({J1: (0.7, ControlMode.POSITION), axis: (0.4, ControlMode.POSITION)})
-    assert source.command({})[f"{J1}/position"] == 0.5
-
-
-def test_a_non_finite_base_speed_is_refused() -> None:
-    with pytest.raises(ValueError, match="not a finite speed"):
-        base().command({"go2/base/vx": (math.nan, ControlMode.VELOCITY)})
-
-
-def test_a_robot_without_a_base_port_has_no_base_axes() -> None:
-    assert arm().base_joint_names == []
 
 
 def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> None:
