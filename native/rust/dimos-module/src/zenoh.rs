@@ -21,6 +21,7 @@ use ::zenoh::pubsub::Publisher;
 use ::zenoh::qos::{CongestionControl, Reliability};
 use ::zenoh::sample::Locality;
 use ::zenoh::Session;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -296,6 +297,7 @@ impl ZenohTransport {
     }
 }
 
+#[async_trait]
 impl Transport for ZenohTransport {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
         // Release the lock before `put` so a stalled channel can't block others.

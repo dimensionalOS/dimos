@@ -438,8 +438,8 @@ impl Builder {
 
 /// Subscribe each channel on the transport, dispatching its messages to that
 /// channel's routes.
-pub(crate) async fn subscribe_routes<T: Transport>(
-    transport: &T,
+pub(crate) async fn subscribe_routes(
+    transport: &dyn Transport,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
 ) -> io::Result<()> {
     for (channel, routes) in routes {
@@ -478,8 +478,8 @@ impl Deliver for TopicRoutes {
 }
 
 /// Spawn one worker per output channel so they don't block each other
-pub(crate) fn spawn_publish_tasks<T: Transport>(
-    transport: Arc<T>,
+pub(crate) fn spawn_publish_tasks(
+    transport: Arc<dyn Transport>,
     outputs: Vec<(String, mpsc::Receiver<Vec<u8>>)>,
 ) -> tokio::task::JoinSet<()> {
     let mut tasks = tokio::task::JoinSet::new();
@@ -533,16 +533,12 @@ where
 /// Build, wire and run one module over an already-open transport until it
 /// finishes or `shutdown` flips. Shared by the one-module-per-process `run`
 /// and by the baked host, which drives several of these on one transport.
-pub(crate) async fn run_module_core<M, T>(
-    transport: Arc<T>,
+pub(crate) async fn run_module_core<M: Module>(
+    transport: Arc<dyn Transport>,
     topics: HashMap<String, String>,
     config: M::Config,
     mut shutdown: watch::Receiver<bool>,
-) -> io::Result<()>
-where
-    M: Module,
-    T: Transport,
-{
+) -> io::Result<()> {
     let mut builder = Builder::new(topics);
     let mut module = M::build(&mut builder, config);
     builder.enforce_topics_match_ports()?;
@@ -604,7 +600,7 @@ where
         }
     });
 
-    run_module_core::<M, T>(Arc::new(transport), topics, config, rx).await
+    run_module_core::<M>(Arc::new(transport), topics, config, rx).await
 }
 
 #[cfg(unix)]
@@ -705,6 +701,7 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
     impl crate::transport::Transport for ControllableMockTransport {
         async fn publish(&self, _channel: &str, _data: Vec<u8>) -> io::Result<()> {
             self.publish_entered.notify_one();
@@ -1080,7 +1077,7 @@ mod tests {
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
 
         subscribe_routes(&transport, builder.routes).await.unwrap();
-        let transport = Arc::new(transport);
+        let transport: Arc<dyn Transport> = Arc::new(transport);
         let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // start the 200ms publish
@@ -1129,7 +1126,7 @@ mod tests {
         let output = builder.output("out", |b: &Vec<u8>| b.clone());
 
         subscribe_routes(&transport, builder.routes).await.unwrap();
-        let transport = Arc::new(transport);
+        let transport: Arc<dyn Transport> = Arc::new(transport);
         let _pub_tasks = spawn_publish_tasks(Arc::clone(&transport), builder.outputs);
 
         // send a message to the receiver
@@ -1158,6 +1155,7 @@ mod tests {
         struct HeadOfLineMock {
             delivered: Arc<Mutex<Vec<String>>>,
         }
+        #[async_trait::async_trait]
         impl crate::transport::Transport for HeadOfLineMock {
             async fn publish(&self, channel: &str, _data: Vec<u8>) -> io::Result<()> {
                 if channel == "/block" {
@@ -1172,7 +1170,7 @@ mod tests {
         }
 
         let delivered = Arc::new(Mutex::new(Vec::new()));
-        let transport = Arc::new(HeadOfLineMock {
+        let transport: Arc<dyn Transport> = Arc::new(HeadOfLineMock {
             delivered: Arc::clone(&delivered),
         });
 

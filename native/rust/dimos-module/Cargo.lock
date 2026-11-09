@@ -615,6 +615,7 @@ name = "dimos-module"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "async-trait",
  "dimos-lcm",
  "dimos-module-macros",
  "futures-util",

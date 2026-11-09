@@ -35,7 +35,7 @@ use crate::module::{
     init_tracing, log_wiring, parse_config_value, read_launch_config, run_module_core,
     validate_config, Module,
 };
-use crate::transport::{SharedTransport, Transport};
+use crate::transport::Transport;
 use crate::zenoh::{ZenohTransport, SESSION_KEY};
 
 /// How long the host waits for the remaining modules to unwind once one has
@@ -46,7 +46,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const MAX_THREAD_NAME: usize = 15;
 
 type ModuleFuture = Pin<Box<dyn Future<Output = io::Result<()>> + Send>>;
-type RunFn = Box<dyn FnOnce(Arc<SharedTransport>, watch::Receiver<bool>) -> ModuleFuture + Send>;
+type RunFn = Box<dyn FnOnce(Arc<dyn Transport>, watch::Receiver<bool>) -> ModuleFuture + Send>;
 
 /// One module's config, deserialized and validated, with a closure that runs it
 /// once the transport is open. Produced before anything is spawned so a bad
@@ -98,7 +98,7 @@ fn prepare_module<M: Module>(section: &Value) -> io::Result<Prepared> {
     Ok(Prepared {
         topics,
         run: Box::new(move |transport, shutdown| {
-            Box::pin(run_module_core::<M, SharedTransport>(
+            Box::pin(run_module_core::<M>(
                 transport,
                 module_topics,
                 config,
@@ -395,14 +395,12 @@ fn note_default_session(launch: &Value) {
     }
 }
 
-async fn open_transport(launch: &Value) -> io::Result<SharedTransport> {
+async fn open_transport(launch: &Value) -> io::Result<Arc<dyn Transport>> {
     match std::env::var("DIMOS_TRANSPORT").as_deref() {
-        Ok("lcm") => Ok(SharedTransport::new(LcmTransport::new().await?)),
+        Ok("lcm") => Ok(Arc::new(LcmTransport::new().await?)),
         Ok("zenoh") => {
             note_default_session(launch);
-            Ok(SharedTransport::new(
-                ZenohTransport::from_launch(launch).await?,
-            ))
+            Ok(Arc::new(ZenohTransport::from_launch(launch).await?))
         }
         other => Err(invalid(format!(
             "DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"
@@ -457,7 +455,7 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
         check_topics_match_transport(&transport, &known)?;
     }
 
-    let transport = Arc::new(main_rt.block_on(open_transport(&stdin))?);
+    let transport = main_rt.block_on(open_transport(&stdin))?;
     let qos = merge_qos(
         &parse_baked("default_qos", spec.default_qos)?,
         stdin.get("qos"),
@@ -479,7 +477,7 @@ type DoneReceiver = mpsc::UnboundedReceiver<(&'static str, Outcome)>;
 fn spawn_modules(
     spec: &HostSpec,
     prepared: Vec<Prepared>,
-    transport: &Arc<SharedTransport>,
+    transport: &Arc<dyn Transport>,
     main_rt: &tokio::runtime::Runtime,
     shutdown_rx: &watch::Receiver<bool>,
     done_tx: &DoneSender,
@@ -553,7 +551,7 @@ fn drain_modules(spec: &HostSpec, main_rt: &tokio::runtime::Runtime, done_rx: &m
 fn supervise(
     spec: &HostSpec,
     prepared: Vec<Prepared>,
-    transport: Arc<SharedTransport>,
+    transport: Arc<dyn Transport>,
     main_rt: &tokio::runtime::Runtime,
 ) -> io::Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -830,6 +828,7 @@ mod tests {
         routes: Mutex<HashMap<String, Vec<Dispatch>>>,
     }
 
+    #[async_trait::async_trait]
     impl Transport for LoopbackTransport {
         async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
             let routes = self.routes.lock().unwrap().get(channel).cloned();
@@ -991,7 +990,7 @@ mod tests {
             .worker_threads(1)
             .enable_all()
             .build()?;
-        let transport = Arc::new(SharedTransport::new(LoopbackTransport::default()));
+        let transport: Arc<dyn Transport> = Arc::new(LoopbackTransport::default());
         supervise(spec, prepared, transport, &rt)
     }
 

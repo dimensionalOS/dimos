@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use dimos_lcm::{Lcm, LcmOptions};
 use url::Url;
 
@@ -128,6 +129,7 @@ impl LcmTransport {
     }
 }
 
+#[async_trait]
 impl Transport for LcmTransport {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()> {
         self.inner.publish(channel, &data).await
