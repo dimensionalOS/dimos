@@ -87,7 +87,7 @@ class Pxr:
 
 def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | None = None) -> str:
     pxr = load_pxr()
-    root_layer = layer_from(pxr, root_usd, "root")
+    root_layer = layer_from(pxr, root_usd, "root", root)
     root_stage = pxr.Usd.Stage.Open(root_layer)
     by_link = link_prim_paths(root_stage)
 
