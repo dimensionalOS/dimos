@@ -20,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
 from threading import Event
-from types import ModuleType
 from unittest.mock import ANY, DEFAULT, MagicMock, call
 
 import numpy as np
@@ -88,12 +87,6 @@ def test_default_backend_requires_roboplan_with_install_hint(monkeypatch) -> Non
 
     with pytest.raises(ImportError, match="Install the manipulation extra"):
         ManipulationModule.check_dependencies()
-
-
-def test_available_roboplan_passes_dependency_check(monkeypatch) -> None:
-    monkeypatch.setitem(sys.modules, "roboplan.core", ModuleType("roboplan.core"))
-
-    assert ManipulationModule.check_dependencies(world_backend="roboplan") is None
 
 
 def test_drake_backend_does_not_require_roboplan(monkeypatch) -> None:

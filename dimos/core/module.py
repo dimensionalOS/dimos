@@ -211,8 +211,9 @@ class ModuleBase(Configurable, CompositeResource):
     def check_dependencies(cls, **kwargs: Any) -> None:
         """Raise ImportError with an install hint before starting any workers.
 
-        Receives resolved module arguments without constructing the module.
-        Overrides must not create runtime resources.
+        Receives pinned module config kwargs merged with resolved overrides,
+        without constructing the module. These kwargs are sparse; overrides
+        must resolve any missing config defaults and must not create runtime resources.
         """
 
     @rpc
