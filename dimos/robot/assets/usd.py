@@ -555,9 +555,7 @@ def _holds_a_frame(pxr: Any, prim: Any) -> bool:
     return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
 
 
-def rename_usd_frames(
-    usd: str, renames: Mapping[str, str], root: Path | str | None = None
-) -> str:
+def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | None = None) -> str:
     """``usd`` with the named links and joints renamed; names it does not carry are ignored.
 
     A vendor description names its frames whatever it names them, which is rarely what the robot
@@ -603,12 +601,14 @@ def resolve_usd_assets(usd: str, root: str) -> str:
     it is the only thing that knows what. So a subtree is rebased as it arrives, before it joins
     a scene whose other subtrees were rooted somewhere else entirely.
 
-    An absolute path is left alone, and so is everything when ``root`` is empty.
+    An absolute path is left alone, and so is everything when ``root`` is empty. The layer is
+    read *under* that root as well, so USD can resolve the paths while it composes and does
+    not warn once per mesh prim that it could not open the file.
     """
     if not root:
         return usd
     pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a subtree")
+    layer = _layer_from(pxr, usd, "a subtree", root)
     base = Path(root)
     changed = False
     stack = [layer.pseudoRoot]
