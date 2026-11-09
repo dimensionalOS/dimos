@@ -24,7 +24,9 @@ drawing the world is a subscriber like any other, reached through no API of core
     sim_module(scene_manager="scene/usdmanager")        # the default engine
     sim_module("mujoco", scene=Path("room.usda"))       # or one by name, configured as it likes
 
-A robot says what it is to `SimulatedWorld`, never to an engine::
+A robot says what it is to `SimulatedWorld`, never to an engine. A sensor says nothing: it reads
+the scene the manager composed, builds its own world out of it, and renders from the
+observations the engine publishes -- so core never learns that anything is watching::
 
     class Go2Sim(Module):
         @shared_config(SimulatedWorld)
@@ -51,7 +53,7 @@ from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd import resolve_usd_assets
 from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
-from dimos.sim2.spec import Simulated, resolve, validate
+from dimos.sim2.spec import Simulated, validate
 from dimos.sim2.usd_layer import scene_as_files
 from dimos.utils.logging_config import setup_logger
 
@@ -122,12 +124,11 @@ class SimulatedWorld(SharedConfigModule):
             if set(config) != {"simulated"} or not isinstance(description, Simulated):
                 raise TypeError(
                     f"{name}'s @shared_config(SimulatedWorld) must return"
-                    f" {{'simulated': SimulatedRobot | SimulatedSensor}}, not {config!r}"
+                    f" {{'simulated': SimulatedRobot}}, not {config!r}"
                 )
             simulated[name] = description
-        resolved = resolve(simulated.values())
-        validate(resolved)
-        self.simulated = dict(zip(simulated, resolved, strict=True))
+        validate(simulated.values())
+        self.simulated = simulated
 
     def world(self) -> UsdModel | None:
         """The world to simulate: what the scene manager composed, or `scene=` without one.

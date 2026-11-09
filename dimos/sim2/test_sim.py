@@ -23,7 +23,7 @@ import pytest
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.sim import BACKENDS, SimulatedWorld, sim_module
-from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
+from dimos.sim2.spec import SimulatedRobot
 
 TOY = Path(__file__).parent / "assets" / "toy.usda"
 
@@ -45,34 +45,32 @@ def _world(**simulated: object) -> SimulatedWorld:
     return world
 
 
-def test_a_sensors_robot_is_the_one_whose_model_names_its_frame(model):
-    """All core does with a description: say which robot each sensor is bolted to, or none.
+def test_a_world_is_the_robots_it_was_told_about_and_nothing_more(model):
+    """All core does with a description: keep each robot under the name of whoever sent it.
 
-    Not "which of these is a camera" and not "what should be drawn" -- a sensor is something
-    mounted at a frame, and what it then becomes is the engine's business and the sensor's.
+    Not "which of these is a camera", not "what should be drawn", and not which robot a sensor
+    is bolted to. A sensor describes itself to nobody: it reads the composed scene, builds its
+    own world from it, and renders from the observations -- so core never learns that anything
+    is watching, and an engine is handed robots and a room.
     """
-    world = _world(
-        dog=SimulatedRobot("dog", model),
-        cam=SimulatedSensor("camera", "camera_optical"),
-        imu=SimulatedSensor("imu", "imu"),
-        head=SimulatedSensor("lidar", "head"),
-        overhead=SimulatedSensor("camera", "overhead"),
-    )
+    world = _world(dog=SimulatedRobot("dog", model), other=SimulatedRobot("spot", model))
     try:
-        mounted = {
-            name: d.robot_id
-            for name, d in world.simulated.items()
-            if isinstance(d, SimulatedSensor)
+        assert {name: d.robot_id for name, d in world.simulated.items()} == {
+            "dog": "dog",
+            "other": "spot",
         }
-        # A frame is the robot's whose model names it, as a site or a body; any other is the
-        # scene's, and the scene is nobody's robot.
-        assert mounted == {"cam": "dog", "imu": "dog", "head": "dog", "overhead": None}
     finally:
         world.stop()
 
 
 @pytest.mark.parametrize(
-    "config", [{"simulatd": SimulatedRobot("dog", toy_robot())}, {"simulated": 1}]
+    "config",
+    [
+        {"simulatd": SimulatedRobot("dog", toy_robot())},
+        {"simulated": 1},
+        # A sensor is not something a world is told about any more.
+        {"simulated": "camera_optical"},
+    ],
 )
 def test_a_malformed_description_is_rejected(config):
     world = SimulatedWorld()
