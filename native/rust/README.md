@@ -57,7 +57,9 @@ async fn main() {
 
 Handlers run one at a time on the module's task. `handle()` is one `select!` loop over every input, so while a handler is awaiting, none of the module's other inputs is served.
 
-Each input holds a buffer of eight messages. What happens when it is full is the transport's decision. On zenoh the receive path stalls in delivery until the handler takes one out. That stalls every topic it carries and pushes the congestion back to the publisher, whose declared QoS resolves it: `block` holds the publisher's `publish()`, `drop` discards at the publisher. On LCM there is no publisher QoS and one socket serves every channel, so stalling it would make the kernel drop datagrams on every channel. LCM instead drops the message for the full input and logs a throttled warning.
+Each input holds a small bounded buffer (`INPUT_BUFFER_LEN` in `dimos-module/src/module.rs`). What happens when it is full is the transport's decision. On zenoh the receive path stalls in delivery until the handler takes one out. That stalls every topic it carries and pushes the congestion back to the publisher, whose declared QoS resolves it: `block` holds the publisher's `publish()`, `drop` discards at the publisher. On LCM there is no publisher QoS and one socket serves every channel, so stalling it would make the kernel drop datagrams on every channel. LCM instead drops the message for the full input and logs a throttled warning.
+
+In a baked host every module shares one zenoh session, and zenoh runs same-session subscriber callbacks inline inside the publisher's `put()`. A full input in one module then blocks the publishing module's worker, whatever QoS the publisher declared. Known limitation, not addressed.
 
 Keep handlers short: decode, update state, publish. Long work belongs on a worker task fed from the handler through its own channel, as the ray tracer, the MLS planner and the local planner do. A handler that never returns holds the transport until the module stops.
 

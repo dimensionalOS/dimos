@@ -673,6 +673,7 @@ mod tests {
         publish_log: Arc<Mutex<Vec<Instant>>>,
         dispatch_entered: Arc<Notify>,
         dispatch_log: Arc<Mutex<Vec<Instant>>>,
+        deliveries_started: Arc<AtomicU64>,
     }
 
     impl ControllableMockTransport {
@@ -688,6 +689,7 @@ mod tests {
                 publish_log: Arc::new(Mutex::new(Vec::new())),
                 dispatch_entered: Arc::new(Notify::new()),
                 dispatch_log: Arc::new(Mutex::new(Vec::new())),
+                deliveries_started: Arc::new(AtomicU64::new(0)),
             }
         }
 
@@ -696,8 +698,10 @@ mod tests {
             let subscriptions = Arc::clone(&self.subscriptions);
             let dispatch_entered = Arc::clone(&self.dispatch_entered);
             let dispatch_log = Arc::clone(&self.dispatch_log);
+            let deliveries_started = Arc::clone(&self.deliveries_started);
             std::thread::spawn(move || {
                 for (channel, data) in inbound_rx {
+                    deliveries_started.fetch_add(1, Ordering::SeqCst);
                     dispatch_entered.notify_one();
                     let callbacks = subscriptions.lock().unwrap().get(&channel).cloned();
                     if let Some(callbacks) = callbacks {
@@ -1271,6 +1275,7 @@ mod tests {
         let transport = ControllableMockTransport::new();
         let inbound = transport.inbound.clone();
         let dispatch_log = transport.dispatch_log.clone();
+        let deliveries_started = transport.deliveries_started.clone();
 
         let mut builder = Builder::new(topics(&[("data", "/data")]));
         let mut input = builder.input("data", |b| Ok(b.to_vec()));
@@ -1282,11 +1287,11 @@ mod tests {
             inject_inbound(&inbound, "/data", vec![i as u8]);
         }
 
-        wait_for("the input buffer to fill", || {
-            dispatch_log.lock().unwrap().len() == INPUT_BUFFER_LEN
-        })
+        wait_for(
+            "delivery to enter the first message past the buffer",
+            || deliveries_started.load(Ordering::SeqCst) == INPUT_BUFFER_LEN as u64 + 1,
+        )
         .await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(
             dispatch_log.lock().unwrap().len(),
             INPUT_BUFFER_LEN,
@@ -1301,6 +1306,32 @@ mod tests {
             assert_eq!(msg, vec![i as u8]);
         }
         wait_for("delivery to finish", || {
+            dispatch_log.lock().unwrap().len() == total
+        })
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_a_full_input_releases_blocked_delivery() {
+        let transport = ControllableMockTransport::new();
+        let inbound = transport.inbound.clone();
+        let dispatch_log = transport.dispatch_log.clone();
+
+        let mut builder = Builder::new(topics(&[("data", "/data")]));
+        let input = builder.input("data", |b| Ok(b.to_vec()));
+        subscribe_routes(&transport, builder.routes).await.unwrap();
+
+        let total = INPUT_BUFFER_LEN + 4;
+        for i in 0..total {
+            inject_inbound(&inbound, "/data", vec![i as u8]);
+        }
+        wait_for("the input buffer to fill", || {
+            dispatch_log.lock().unwrap().len() == INPUT_BUFFER_LEN
+        })
+        .await;
+
+        drop(input);
+        wait_for("the closed input to release the transport", || {
             dispatch_log.lock().unwrap().len() == total
         })
         .await;

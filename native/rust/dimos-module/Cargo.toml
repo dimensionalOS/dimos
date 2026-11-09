@@ -8,6 +8,7 @@ license = "Apache-2.0"
 [workspace]
 
 [dependencies]
+async-channel = "2"
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -24,7 +25,6 @@ url = "2"
 validator = { version = "0.21", features = ["derive"] }
 # Default features pull in ring via QUIC/TLS, which breaks static musl cross-linking.
 zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
-async-channel = "2"
 
 [dev-dependencies]
 tracing-test = "0.2"
