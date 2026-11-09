@@ -850,9 +850,9 @@ def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
     """usd-core is not installable on a 3.10 arm robot, so a layer is built only when asked for."""
-    import dimos.robot.assets.usd as usd_module
+    import dimos.robot.assets.urdf_to_usd as conversion
 
-    convert = mocker.patch.object(usd_module, "urdf_to_usd", return_value="#usda 1.0\n")
+    convert = mocker.patch.object(conversion, "urdf_to_usd", return_value="#usda 1.0\n")
 
     model = _urdf(tmp_path).to_usd()
     assert model.joints
