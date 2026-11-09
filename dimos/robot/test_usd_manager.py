@@ -745,6 +745,44 @@ def test_two_namespaced_copies_of_one_class_are_two_different_mounts() -> None:
     assert left.remote_name != right.remote_name
 
 
+def test_a_blueprint_the_config_parser_flattened_still_names_its_instance() -> None:
+    """The form a mount really arrives in, which is not the form it was written in.
+
+    A manager's config is validated again in the worker it is deployed into, and by then the
+    blueprint somebody wrote has been through the config parser and is a plain dict. Without
+    this the documented spelling was rejected in the one place it matters -- "mounts values are
+    a Module subclass, a Blueprint or an instance name; got {'blueprints': ...}" -- and every
+    blueprint had to name its mounts by a string written out by hand.
+    """
+    from dimos.core.coordination.blueprint_config.values import plain
+
+    flattened = plain(_FakeArm.blueprint(frame_id_prefix="left").namespace("left"))
+    assert isinstance(flattened, dict), "the parser turns a pinned blueprint into a dict"
+
+    mount = Mount.of(flattened)
+
+    assert mount.module is _FakeArm
+    assert mount.remote_name == "left/_fakearm"
+    # And the frame prefix, which is the other thing a bare instance name cannot carry.
+    assert mount.frame_prefix == "left"
+
+
+def test_two_flattened_copies_of_one_class_are_still_two_mounts() -> None:
+    from dimos.core.coordination.blueprint_config.values import plain
+
+    left = Mount.of(plain(_FakeArm.blueprint().namespace("left")))
+    right = Mount.of(plain(_FakeArm.blueprint().namespace("right")))
+
+    assert left.remote_name != right.remote_name
+
+
+def test_a_flattened_blueprint_with_nothing_to_ask_is_rejected() -> None:
+    from dimos.core.coordination.blueprint_config.values import plain
+
+    with pytest.raises(ValueError, match="0 answer an @rpc get_usd"):
+        Mount.of(plain(_NoUsd.blueprint()))
+
+
 def test_an_instance_name_on_its_own_is_accepted_with_no_class_to_check() -> None:
     mount = Mount.of("left/_fakearm")
 

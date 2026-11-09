@@ -147,6 +147,15 @@ class Mount:
             return cls(**value)
         if isinstance(value, Blueprint):
             return cls._from_blueprint(value)
+        if isinstance(value, Mapping) and "blueprints" in value:
+            # A Blueprint that has been through the config parser. It is the useful form to
+            # write, and by the time the manager's worker validates its config again the
+            # blueprint is a plain dict -- so without this branch the documented spelling is
+            # rejected in the one place it matters ("mounts values are a Module subclass, a
+            # Blueprint or an instance name; got {'blueprints': ...}") and only an instance
+            # name written out by hand ever worked. The dict keeps what identifies the
+            # instance: each atom's own `instance_name`, which is what namespace() set.
+            return cls._from_flattened(value)
         if isinstance(value, str):
             # No object to read a frame_id_prefix off, so take the namespace out of the name:
             # everything before the last "/", the rule the coordinator's _atom_namespace uses.
@@ -179,6 +188,31 @@ class Mount:
             atoms[0].name,
             atoms[0].kwargs.get("frame_id_prefix") or "",
             subtree_rpc=cls._tree_rpc(atoms[0].module),
+        )
+
+    @classmethod
+    def _from_flattened(cls, blueprint: Mapping[str, Any]) -> Mount:
+        """The same rule as `_from_blueprint`, over the plain dict a parsed blueprint becomes.
+
+        The atoms keep their `module` class and their `instance_name`, which is everything that
+        identifies the instance; what they lose is the attribute access, so this reads the same
+        three things out of subscripts.
+        """
+        atoms = [
+            atom for atom in blueprint.get("blueprints") or () if SUBTREE_RPC in atom["module"].rpcs
+        ]
+        if len(atoms) != 1:
+            named = sorted(atom["module"].__name__ for atom in blueprint.get("blueprints") or ())
+            raise ValueError(
+                f"mounts was given a blueprint of {named}, of which "
+                f"{len(atoms)} answer an @rpc {SUBTREE_RPC}(); it has to be exactly one. Name "
+                f"the module that owns the subtree instead of the whole blueprint."
+            )
+        return cls(
+            atoms[0]["module"],
+            atoms[0]["instance_name"],
+            (atoms[0].get("kwargs") or {}).get("frame_id_prefix") or "",
+            subtree_rpc=cls._tree_rpc(atoms[0]["module"]),
         )
 
     @staticmethod
