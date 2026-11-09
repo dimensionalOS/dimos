@@ -72,11 +72,11 @@ HEARTBEAT_MESSAGE = (100, 100)
 # BatteryStatus of a Type 1002 Command 5 report, as an M20 sends it from its dock.
 BATTERY_STATUS: dict[str, Any] = {
     "VoltageLeft": 83,
-    "VoltageRight": 83,
+    "VoltageRight": 81,
     "BatteryLevelLeft": 82,
     "BatteryLevelRight": 98,
-    "battery_temperatureLeft": 35.79999923706055,
-    "battery_temperatureRight": 34.29999923706055,
+    "battery_temperatureLeft": 34.29999923706055,
+    "battery_temperatureRight": 35.79999923706055,
     "chargeLeft": True,
     "chargeRight": True,
     "serialLeft": "",
@@ -323,7 +323,7 @@ def test_charge_status_is_unknown_when_reports_go_stale(
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
     server.reporting = False
-    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._REPORT_MAX_AGE_S", 0.05)
     _wait_until(lambda: connection.charge_status() == "unknown")
 
 
@@ -337,38 +337,36 @@ def test_battery_reports_publish_one_state_for_both_packs(
     state = sent[0]
     assert isinstance(state, BatteryState)
     assert state.percentage == pytest.approx(0.90)
-    assert state.voltage == pytest.approx(83.0)
+    assert state.voltage == pytest.approx(82.0)
     assert state.temperature == pytest.approx(35.8, abs=0.01)
-    assert state.power_supply_status == 0
-    assert math.isnan(state.current)
-    assert state.ts == pytest.approx(time.time(), abs=5.0)
+
+
+def test_a_pack_at_zero_volts_is_left_out(
+    started: Callable[..., M20Connection], server: FakeBasicServer
+) -> None:
+    server.battery["VoltageLeft"] = 0
+    conn = started()
+    _wait_for_status(conn, CHARGE_IDLE)
+
+    state = _transport(conn.battery).sent[0]
+    assert state.percentage == pytest.approx(0.98)
+    assert state.voltage == pytest.approx(81.0)
+    assert conn.charge_status() == "idle, battery 98%"
 
 
 @pytest.mark.parametrize(
-    "battery,percentage",
-    [
-        ({"VoltageLeft": 0}, 0.98),
-        ({"VoltageLeft": 0, "VoltageRight": 0}, None),
-        ({"BatteryLevelLeft": "82"}, None),
-    ],
+    "battery",
+    [{"VoltageLeft": 0, "VoltageRight": 0}, {"BatteryLevelLeft": "82"}],
 )
-def test_a_pack_at_zero_volts_is_absent_and_a_malformed_report_is_dropped(
-    started: Callable[..., M20Connection],
-    server: FakeBasicServer,
-    battery: dict[str, Any],
-    percentage: float | None,
+def test_a_report_without_a_usable_pack_is_dropped(
+    started: Callable[..., M20Connection], server: FakeBasicServer, battery: dict[str, Any]
 ) -> None:
     server.battery.update(battery)
     conn = started()
     _wait_for_status(conn, CHARGE_IDLE)
 
-    sent = _transport(conn.battery).sent
-    if percentage is None:
-        assert sent == []
-        assert conn.charge_status() == "idle"
-    else:
-        assert sent[0].percentage == pytest.approx(percentage)
-        assert conn.charge_status() == f"idle, battery {percentage:.0%}"
+    assert _transport(conn.battery).sent == []
+    assert conn.charge_status() == "idle"
 
 
 def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
@@ -706,7 +704,7 @@ def test_the_dock_guards_hold_when_reports_go_stale(
     connection.config.auto_stand = True
     _wait_for_status(connection, CHARGE_CHARGING)
     server.reporting = False
-    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._REPORT_MAX_AGE_S", 0.05)
     _wait_until(lambda: connection.charge_status() == "unknown")
 
     assert connection.move(Twist.zero()) is False

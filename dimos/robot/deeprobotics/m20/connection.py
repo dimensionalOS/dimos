@@ -85,7 +85,7 @@ _CHARGE_LABELS = {
     CHARGE_ON_DOCK: "on the dock, not charging",
 }
 _CHARGE_BUSY_STATES = frozenset({CHARGE_ENTERING, CHARGE_CHARGING, CHARGE_EXITING, CHARGE_ON_DOCK})
-_CHARGE_STATUS_MAX_AGE_S = 3.0
+_REPORT_MAX_AGE_S = 3.0
 _CHARGE_STATUS_WAIT_S = 5.0
 _CHARGE_POLL_S = 0.25
 # Reports arrive at 2 Hz, so a status read this soon after a command can predate it.
@@ -154,7 +154,7 @@ def dock_failure(
     return None
 
 
-def battery_state(report: BatteryReport) -> BatteryState | None:
+def _battery_state(report: BatteryReport) -> BatteryState | None:
     """Combine the two packs into one BatteryState. A pack at 0 V is absent, not empty."""
     packs = [pack for pack in (report.left, report.right) if pack.voltage > 0.0]
     if not packs:
@@ -647,15 +647,15 @@ class M20Connection(Module):
 
     def _fresh_charge_status(self) -> int | None:
         report = self._basic_server.charge
-        if report is None or time.monotonic() - report.received_at > _CHARGE_STATUS_MAX_AGE_S:
+        if report is None or time.monotonic() - report.received_at > _REPORT_MAX_AGE_S:
             return None
         return report.status
 
     def _fresh_battery_state(self) -> BatteryState | None:
         report = self._basic_server.battery
-        if report is None or time.monotonic() - report.received_at > _CHARGE_STATUS_MAX_AGE_S:
+        if report is None or time.monotonic() - report.received_at > _REPORT_MAX_AGE_S:
             return None
-        return battery_state(report)
+        return _battery_state(report)
 
     def _wait_for_charge_status(self, timeout_s: float) -> bool:
         with self._state_condition:
@@ -673,7 +673,7 @@ class M20Connection(Module):
             self._state_condition.notify_all()
 
     def _on_battery_report(self, report: BatteryReport) -> None:
-        state = battery_state(report)
+        state = _battery_state(report)
         if state is not None:
             self.battery.publish(state)
 
