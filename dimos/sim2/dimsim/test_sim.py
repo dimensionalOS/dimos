@@ -21,8 +21,9 @@ import pytest
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import JointCommand
 from dimos.sim2.assets.toy import toy_robot
-from dimos.sim2.dimsim.backend import BASE_JOINTS, DimSimBackend
+from dimos.sim2.dimsim.backend import BASE_JOINTS, TIMESTEP, DimSimBackend
 from dimos.sim2.dimsim.sim import DimSimSim
+from dimos.sim2.mujoco.sensor_world import robot_ids
 from dimos.sim2.sim import BACKENDS, sim_module
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import REFUSED, WorldMirror
@@ -78,12 +79,16 @@ class _Stepped:
     def __init__(self, backend: DimSimBackend) -> None:
         self.backend, self.world = backend, WorldMirror()
         self.received: list[Any] = []
+        # The sim time the engine said it had reached, which is the engine's own clock and not the
+        # wall time a frame is stamped with.
+        self.at = 0.0
 
     def apply(self, *actions: Any) -> None:
         self.backend.apply(actions)
 
     def step(self, steps: int = 1) -> WorldMirror:
-        self.world.apply(self.backend.advance(steps)[1])
+        self.at, frame = self.backend.advance(steps)
+        self.world.apply(frame)
         self.received += self.world.received
         return self.world
 
@@ -100,10 +105,11 @@ def backend(scene):
 
 def test_the_world_steps_and_says_what_is_in_it(backend):
     world = backend.step(5)
-    assert world.time > 0.0
+    assert backend.at == pytest.approx(5 * TIMESTEP)
     assert world.entity("world").cbor["backend"] == "dimsim"
-    # The robot is the one its description named, and the crate the one the scene did.
-    assert world.entity("bot") is not None
+    # The robot is the one its description named, and the crate the one the scene did. The robot
+    # carries its layer, which is what tells a sensor it is a robot and not scenery.
+    assert robot_ids(world) == ["bot"]
     assert world.entity("crate").pose[:3] == pytest.approx([1.0, 0.0, 0.2], abs=0.02)
 
 

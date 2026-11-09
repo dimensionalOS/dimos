@@ -36,7 +36,7 @@ from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 
 from dimos.sim2.actions import Action, JointCommand
-from dimos.sim2.dimsim.scene import dimsim_bodies
+from dimos.sim2.dimsim.scene import PURPOSES, dimsim_bodies
 from dimos.sim2.mujoco.names import resolve
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
@@ -52,8 +52,6 @@ TIMESTEP = 0.02
 # A dimsim robot's whole control surface: vx, vy and wz in its own heading frame, each held until
 # another command replaces it.
 BASE_JOINTS = ("base_vx", "base_vy", "base_wz")
-# Every purpose, so a robot modelled as a proxy still has a shape to be the size of.
-_PURPOSES = ["default", "proxy", "render", "guide"]
 # What a robot weighs where its layer never said. The character controller uses it to decide how
 # hard walking into a crate pushes it, so a number that is wrong is better than no world.
 _DEFAULT_ROBOT_MASS = 10.0
@@ -87,7 +85,6 @@ class DimSimBackend:
         self._bodies, self._meshes = dimsim_bodies(
             usd, exclude=[robot.robot_id for robot in self._robots]
         )
-        self._latest: dict[str, Any] = {}
         self._time = 0.0
         self._pending: list[Action] = []
         self._lock = Lock()
@@ -98,9 +95,13 @@ class DimSimBackend:
         # Each robot's base joints' held velocities (vx, vy, wz), and whether the world has been
         # told them since.
         self._base = {robot.robot_id: [0.0, 0.0, 0.0] for robot in self._robots}
+        # Each robot's own layer as a file. Announced on the robot's entity, which is what tells a
+        # sensor reading the observations that this entity is a robot rather than a crate
+        # (`sensor_world.robot_ids`) -- and so what gets the whole robot posed in its view instead
+        # of left standing where its layer had it.
+        self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
         self._base_sent: set[str] = set()
         self._refusals: list[tuple[str, str]] = []
-        self._started = time.monotonic()
         self._world = subprocess.Popen(
             [
                 ensure_deno(),
@@ -117,6 +118,9 @@ class DimSimBackend:
             text=True,
         )
         self._reset()
+        # After the world exists, not before: starting Deno and loading a room into it is time the
+        # world does not owe the clock, and counting it is a first step of nothing but catch-up.
+        self._started = time.monotonic()
 
     def describe(self) -> dict[str, Any]:
         return {"backend": "dimsim", "scene": str(self._scene_layer)}
@@ -220,7 +224,6 @@ class DimSimBackend:
                 )
 
     def _publish(self, state: dict[str, Any]) -> None:
-        self._latest = state
         self._time = float(state.get("time", self._time))
         with self._lock:
             self._moved.update(state["entities"])
@@ -232,7 +235,7 @@ class DimSimBackend:
             world.add("world", backend="dimsim")
             self._added.add("world")
             for robot_id in self._base:
-                world.add(robot_id)
+                world.add(robot_id, model=str(self._layers[robot_id]))
                 for name in BASE_JOINTS:
                     world.add(f"{robot_id}/{name}")
                 self._added.add(robot_id)
@@ -272,7 +275,7 @@ class DimSimBackend:
             .ComputeLocalToWorldTransform(pxr.Usd.TimeCode.Default())
             .GetInverse()
         )
-        cache = pxr.UsdGeom.BBoxCache(pxr.Usd.TimeCode.Default(), _PURPOSES)
+        cache = pxr.UsdGeom.BBoxCache(pxr.Usd.TimeCode.Default(), PURPOSES)
         corners = []
         for prim in stage.Traverse():
             if not prim.IsA(pxr.UsdGeom.Gprim):

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # light enough that walking into the thing moves it, which is the point of a prop.
 _DEFAULT_MASS = 1.0
 # Every purpose, so a prim modelled as a proxy still has a bound to fall back on.
-_PURPOSES = ["default", "proxy", "render", "guide"]
+PURPOSES = ["default", "proxy", "render", "guide"]
 
 
 def dimsim_bodies(
@@ -54,7 +54,7 @@ def dimsim_bodies(
 
     pxr = _pxr()
     stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd.usd, "a scene", usd._asset_root()))
-    cache = pxr.UsdGeom.BBoxCache(pxr.Usd.TimeCode.Default(), _PURPOSES)
+    cache = pxr.UsdGeom.BBoxCache(pxr.Usd.TimeCode.Default(), PURPOSES)
     owners = tuple(exclude)
     bodies: dict[str, dict[str, Any]] = {}
     frames: dict[str, Any] = {}
