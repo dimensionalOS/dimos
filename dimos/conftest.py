@@ -194,10 +194,6 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "bake_e2e: dimos bake e2e (builds rust); runs in the CI rust job",
-    )
-    config.addinivalue_line(
-        "markers",
         "native_e2e: native module e2e (builds rust); "
         "runs in the CI rust job and the macOS self-hosted-tests job",
     )

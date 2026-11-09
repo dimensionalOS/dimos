@@ -29,7 +29,7 @@ ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install rust so dimos bake can compile module hosts
+# Install rust so bin/build-test-natives can build the PyO3 extensions
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
 ENV PATH="/usr/local/cargo/bin:$PATH"

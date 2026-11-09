@@ -448,9 +448,8 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
             FieldKind::Input { .. } => want_input,
             FieldKind::Output { .. } => !want_input,
             // A `#[tf]` field is a port like any other as far as the registry
-            // goes: bake has to put the topic in the host's map or the module
-            // refuses to start. It lists under `inputs` because the graph has
-            // no io kind and a host mostly consumes tf.
+            // goes. It lists under `inputs` because the registry has no io kind
+            // and a module mostly consumes tf.
             FieldKind::Tf => want_input,
             _ => false,
         })
@@ -473,15 +472,14 @@ fn port_decls(classified: &[ClassifiedField], want_input: bool) -> Vec<PortDecl>
 }
 
 /// Compare the struct's ports against `[package.metadata.dimos.module.<name>]`
-/// in the crate's own Cargo.toml, which `dimos bake` reads to draw the graph
-/// before anything is compiled. The two must not drift.
+/// in the crate's own Cargo.toml. The two must not drift.
 fn check_registry_ports(name: &syn::LitStr, classified: &[ClassifiedField]) -> Result<(), String> {
     if let Some(io) = classified
         .iter()
         .find(|f| matches!(f.kind, FieldKind::Io { .. }))
     {
         return Err(format!(
-            "port `{}` is #[io], which the bake registry does not support yet; \
+            "port `{}` is #[io], which the module registry does not support yet; \
              split it into an #[input] and an #[output] field",
             io.name
         ));
@@ -831,8 +829,6 @@ mod tests {
         );
     }
 
-    /// The package half is checked against the python wrapper by bake, in
-    /// `test_every_baked_port_lands_on_the_key_its_python_wrapper_subscribes_to`.
     #[test]
     fn compares_only_the_last_msg_type_segment() {
         // The manifest spells the package. The struct spells the imported name.

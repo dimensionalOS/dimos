@@ -13,7 +13,7 @@ path = "src/lib.rs"
 name = "mls_planner"
 path = "src/main.rs"
 
-# Bake registry entry, cross-checked at compile time by the module macro.
+# Module registry entry, cross-checked at compile time by the module macro.
 # threads = 2 so the handle loop keeps dispatching while the planning worker
 # runs block_in_place.
 [package.metadata.dimos.module.mls_planner]

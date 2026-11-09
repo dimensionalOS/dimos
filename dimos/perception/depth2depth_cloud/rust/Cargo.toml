@@ -15,7 +15,7 @@ path = "src/bin/depth2depth_cloud.rs"
 
 [workspace]
 
-# Bake registry entry, cross-checked at compile time by the module macro.
+# Module registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.depth2depth_cloud]
 path = "dimos_depth2depth_cloud::module::Depth2DepthCloud"
 python = "dimos.perception.depth2depth_cloud.module:Depth2DepthCloud"

@@ -355,8 +355,6 @@ jobs:
   rust:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    env:
-      CARGO_INCREMENTAL: "0"
     permissions:
       contents: read  # For checkout
 
@@ -366,7 +364,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - name: cargo fmt
         run: |
           git ls-files "*Cargo.toml" | while read -r m; do
@@ -374,44 +372,6 @@ jobs:
           done | sort -u | while read -r root; do
             cargo fmt --manifest-path "$root" --all -- --check
           done
-      - name: Restore cargo build cache
-        uses: actions/cache/restore@v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-            !target/debug/incremental
-          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            cargo-test-${{ runner.os }}-${{ runner.arch }}-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.2.0
-        with:
-          enable-cache: true
-          save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install dependency for pyaudio
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
-      - name: Install dependencies
-        run: uv sync --group tests --frozen
-      # Needs Python and Rust: `dimos bake` is Python that writes a Rust program and compiles it, and the tests jobs have no Rust.
-      - name: Bake e2e tests
-        run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
-
-      - name: Save cargo build cache
-        if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-            !target/debug/incremental
-          key: cargo-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
   isolated-python-tests:
     # Keep each published check name stable as more isolated projects are added.
@@ -786,7 +746,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or self_hosted_large or web_browser or native_e2e)'
       # Serial and after the parallel run: it binds the livox SDK's fixed ports.
       - name: Native module e2e tests
         if: steps.native-marker.outcome == 'success'
@@ -796,7 +756,7 @@ jobs:
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or self_hosted_large or web_browser or native_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()

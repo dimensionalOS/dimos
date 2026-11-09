@@ -13,7 +13,7 @@ path = "src/lib.rs"
 name = "voxel_ray_tracing"
 path = "src/main.rs"
 
-# Bake registry entry, cross-checked at compile time by the module macro.
+# Module registry entry, cross-checked at compile time by the module macro.
 # threads = 2 keeps per-scan map compute from serializing with publish work.
 [package.metadata.dimos.module.ray_tracing]
 path = "dimos_voxel_ray_tracing::module::RayTracingVoxelMap"

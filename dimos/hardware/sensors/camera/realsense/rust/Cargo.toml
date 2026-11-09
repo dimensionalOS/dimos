@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [workspace]
 
-# Bake registry entry, cross-checked at compile time by the module macro.
+# Module registry entry, cross-checked at compile time by the module macro.
 [package.metadata.dimos.module.realsense]
 path = "dimos_realsense::RealSense"
 python = "dimos.hardware.sensors.camera.realsense.camera:RealSenseCamera"
