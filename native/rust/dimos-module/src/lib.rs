@@ -42,20 +42,10 @@ pub use nalgebra;
 // Re-export LcmOptions so callers don't need to depend on dimos-lcm directly.
 pub use dimos_lcm::LcmOptions;
 
-/// Run module `M` over the transport named by the `DIMOS_TRANSPORT` env var.
-///
-/// Every transport is compiled in, so one binary follows whichever transport the
-/// coordinator picks at runtime. The coordinator always sets the variable, so an
-/// unset or unknown value is an error.
+/// Run module `M` over the transport named by the `DIMOS_TRANSPORT` env var,
+/// configured by the launch line on stdin.
 pub async fn run_with_transport<M: Module>() {
     crate::module::init_tracing();
-    // Check the transport first so a missing variable fails loudly instead of
-    // blocking on stdin.
-    let use_zenoh = match std::env::var("DIMOS_TRANSPORT").as_deref() {
-        Ok("lcm") => false,
-        Ok("zenoh") => true,
-        other => panic!("DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"),
-    };
     let launch = match crate::module::read_launch_config().await {
         Ok(launch) => launch,
         Err(e) => {
@@ -63,15 +53,12 @@ pub async fn run_with_transport<M: Module>() {
             std::process::exit(1);
         }
     };
-    if use_zenoh {
-        let transport = ZenohTransport::from_launch(&launch)
-            .await
-            .expect("failed to create zenoh transport");
-        run::<M, _>(transport, launch).await
-    } else {
-        let transport = LcmTransport::new()
-            .await
-            .expect("failed to create lcm transport");
-        run::<M, _>(transport, launch).await
-    }
+    let transport = match crate::transport::open_transport(&launch).await {
+        Ok(transport) => transport,
+        Err(e) => {
+            tracing::error!("failed to open the transport: {e}");
+            std::process::exit(1);
+        }
+    };
+    run::<M>(transport, launch).await
 }

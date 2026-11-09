@@ -30,13 +30,12 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 
-use crate::lcm::LcmTransport;
 use crate::module::{
     init_tracing, log_wiring, parse_config_value, read_launch_config, run_module_core,
     validate_config, Module,
 };
-use crate::transport::Transport;
-use crate::zenoh::{ZenohTransport, SESSION_KEY};
+use crate::transport::{open_transport, Transport};
+use crate::zenoh::SESSION_KEY;
 
 /// How long the host waits for the remaining modules to unwind once one has
 /// exited or ctrl_c arrived.
@@ -384,30 +383,6 @@ fn check_topics_match_transport(transport: &str, known: &[String]) -> io::Result
     Ok(())
 }
 
-/// The launch line owns the session. Bake cannot know the deployment's network,
-/// so it emits no `session` block and zenoh's defaults stand until one is added.
-fn note_default_session(launch: &Value) {
-    if matches!(launch.get(SESSION_KEY), None | Some(Value::Null)) {
-        warn!(
-            "no `{SESSION_KEY}` block on the launch line, opening zenoh's defaults; \
-             add one to pin the mode, interface and endpoints"
-        );
-    }
-}
-
-async fn open_transport(launch: &Value) -> io::Result<Arc<dyn Transport>> {
-    match std::env::var("DIMOS_TRANSPORT").as_deref() {
-        Ok("lcm") => Ok(Arc::new(LcmTransport::new().await?)),
-        Ok("zenoh") => {
-            note_default_session(launch);
-            Ok(Arc::new(ZenohTransport::from_launch(launch).await?))
-        }
-        other => Err(invalid(format!(
-            "DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"
-        ))),
-    }
-}
-
 fn thread_name(module: &str) -> String {
     let mut name = format!("dm-{module}");
     name.truncate(MAX_THREAD_NAME);
@@ -455,13 +430,19 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
         check_topics_match_transport(&transport, &known)?;
     }
 
-    let transport = main_rt.block_on(open_transport(&stdin))?;
     let qos = merge_qos(
         &parse_baked("default_qos", spec.default_qos)?,
         stdin.get("qos"),
         &suppress,
     );
-    transport.set_publisher_qos(&qos);
+    // The launch line owns the session. Bake cannot know the deployment's
+    // network, so it emits no session block and zenoh's defaults stand until
+    // one is added.
+    let launch = json!({
+        SESSION_KEY: stdin.get(SESSION_KEY).cloned().unwrap_or(Value::Null),
+        "qos": qos,
+    });
+    let transport = main_rt.block_on(open_transport(&launch))?;
     if !suppress.is_empty() {
         info!(host = spec.name, topics = ?suppress, "topics suppressed to this process");
     }
@@ -638,20 +619,6 @@ mod tests {
     fn render_graph_falls_back_to_the_raw_string() {
         let spec = graph_spec("not json");
         assert_eq!(render_graph(&spec, false), "not json");
-    }
-
-    #[test]
-    #[tracing_test::traced_test]
-    fn a_launch_line_with_no_session_says_so() {
-        note_default_session(&json!({}));
-        assert!(logs_contain("opening zenoh's defaults"));
-    }
-
-    #[test]
-    #[tracing_test::traced_test]
-    fn a_launch_line_with_a_session_is_quiet() {
-        note_default_session(&json!({"session": {"mode": "peer"}}));
-        assert!(!logs_contain("opening zenoh's defaults"));
     }
 
     #[test]

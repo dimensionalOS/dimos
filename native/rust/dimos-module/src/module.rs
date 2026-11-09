@@ -519,12 +519,8 @@ fn parse_launch_config(line: &str) -> io::Result<serde_json::Value> {
     serde_json::from_str(line.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-pub async fn run<M, T>(transport: T, launch: serde_json::Value)
-where
-    M: Module,
-    T: Transport,
-{
-    if let Err(e) = run_fallible::<M, T>(transport, launch).await {
+pub async fn run<M: Module>(transport: Arc<dyn Transport>, launch: serde_json::Value) {
+    if let Err(e) = run_fallible::<M>(transport, launch).await {
         error!("{e}");
         std::process::exit(1);
     }
@@ -582,14 +578,12 @@ pub(crate) fn exe_name() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-async fn run_fallible<M, T>(transport: T, json: serde_json::Value) -> io::Result<()>
-where
-    M: Module,
-    T: Transport,
-{
+async fn run_fallible<M: Module>(
+    transport: Arc<dyn Transport>,
+    json: serde_json::Value,
+) -> io::Result<()> {
     let (topics, config) = parse_config_value::<M::Config>(&json)?;
     validate_config(&config)?;
-    transport.set_publisher_qos(json.get("qos").unwrap_or(&serde_json::Value::Null));
 
     log_wiring(&exe_name(), &topics, &config);
 
@@ -600,7 +594,7 @@ where
         }
     });
 
-    run_module_core::<M>(Arc::new(transport), topics, config, rx).await
+    run_module_core::<M>(transport, topics, config, rx).await
 }
 
 #[cfg(unix)]

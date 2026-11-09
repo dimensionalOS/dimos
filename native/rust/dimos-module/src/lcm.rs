@@ -85,6 +85,29 @@ fn options_from_url(url: &str) -> LcmOptions {
 }
 
 impl LcmTransport {
+    /// Open the bus for a launch config. LCM has no per-topic publisher
+    /// settings and no session-local publisher, so a `qos` entry asking for a
+    /// locality is reported and ignored.
+    pub async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
+        let suppressed: Vec<&String> = launch
+            .get("qos")
+            .and_then(|qos| qos.as_object())
+            .map(|map| {
+                map.iter()
+                    .filter(|(_, entry)| entry.get("locality").is_some())
+                    .map(|(channel, _)| channel)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !suppressed.is_empty() {
+            tracing::warn!(
+                channels = ?suppressed,
+                "LCM cannot suppress a topic; these stay visible on the multicast bus",
+            );
+        }
+        Self::new().await
+    }
+
     pub async fn new() -> io::Result<Self> {
         Self::with_options(options_from_env()).await
     }
@@ -146,26 +169,6 @@ impl Transport for LcmTransport {
             self.spawn_recv_loop();
         }
         Ok(())
-    }
-
-    /// LCM has no per-topic publisher settings and no notion of a session-local
-    /// publisher, so a baked host cannot hide an internal hop on this transport.
-    fn set_publisher_qos(&self, qos: &serde_json::Value) {
-        let suppressed: Vec<&String> = qos
-            .as_object()
-            .map(|map| {
-                map.iter()
-                    .filter(|(_, entry)| entry.get("locality").is_some())
-                    .map(|(channel, _)| channel)
-                    .collect()
-            })
-            .unwrap_or_default();
-        if !suppressed.is_empty() {
-            tracing::warn!(
-                channels = ?suppressed,
-                "LCM cannot suppress a topic; these stay visible on the multicast bus",
-            );
-        }
     }
 }
 

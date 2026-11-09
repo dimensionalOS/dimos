@@ -19,6 +19,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::lcm::LcmTransport;
+use crate::zenoh::ZenohTransport;
+
 /// Per-channel delivery handed to a transport on `subscribe`. The transport
 /// calls it with each message's raw payload. Decode and routing happen inside.
 pub trait Deliver: Send + Sync {
@@ -53,11 +56,23 @@ pub trait Transport: Send + Sync + 'static {
     async fn publish(&self, channel: &str, data: Vec<u8>) -> io::Result<()>;
     /// Deliver each message on `channel` to `on_msg`.
     async fn subscribe(&self, channel: &str, on_msg: Dispatch) -> io::Result<()>;
+}
 
-    /// Apply the per-channel publisher QoS the coordinator sends. The value is
-    /// the `qos` object from the stdin config, or null when absent. Transports
-    /// without per-topic QoS ignore it.
-    fn set_publisher_qos(&self, _qos: &serde_json::Value) {}
+/// Open the transport `DIMOS_TRANSPORT` names from the launch line, which
+/// carries the transport's `session` and `qos` blocks.
+///
+/// Every transport is compiled in, so one binary follows whichever transport
+/// the coordinator picks at runtime. The coordinator always sets the variable,
+/// so an unset or unknown value is an error.
+pub async fn open_transport(launch: &serde_json::Value) -> io::Result<Arc<dyn Transport>> {
+    match std::env::var("DIMOS_TRANSPORT").as_deref() {
+        Ok("lcm") => Ok(Arc::new(LcmTransport::from_launch(launch).await?)),
+        Ok("zenoh") => Ok(Arc::new(ZenohTransport::from_launch(launch).await?)),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"),
+        )),
+    }
 }
 
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

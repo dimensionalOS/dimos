@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ::zenoh::pubsub::Publisher;
@@ -161,7 +161,7 @@ fn parse_channel_qos(value: &serde_json::Value) -> HashMap<String, ChannelQos> {
 /// Zenoh transport for a native module.
 pub struct ZenohTransport {
     session: Session,
-    qos: OnceLock<HashMap<String, ChannelQos>>,
+    qos: HashMap<String, ChannelQos>,
     publishers: Mutex<HashMap<String, Arc<Publisher<'static>>>>,
 }
 
@@ -222,23 +222,35 @@ async fn await_connect(session: &Session, endpoints: &[String], mode: Mode, time
 }
 
 impl ZenohTransport {
-    /// Open the session the launch config describes.
-    pub(crate) async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
-        match SessionSettings::from_launch(launch)? {
-            Some(settings) => Self::open(&settings).await,
-            None => Self::new().await,
-        }
+    /// Open the session the launch config describes, with the publisher QoS
+    /// its `qos` block names per channel.
+    pub async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
+        let qos = parse_channel_qos(launch.get("qos").unwrap_or(&serde_json::Value::Null));
+        let session = match SessionSettings::from_launch(launch)? {
+            Some(settings) => Self::open(&settings).await?,
+            None => {
+                tracing::warn!(
+                    "no `{SESSION_KEY}` block on the launch line, opening zenoh's defaults; \
+                     add one to pin the mode, interface and endpoints"
+                );
+                Self::open_default().await?
+            }
+        };
+        Ok(Self::wrap(session, qos))
     }
 
-    /// Open a session on zenoh's own defaults.
+    /// Open a session on zenoh's own defaults, with no per-channel QoS.
     pub async fn new() -> io::Result<Self> {
-        let session = ::zenoh::open(::zenoh::Config::default())
-            .await
-            .map_err(to_io)?;
-        Ok(Self::wrap(session))
+        Ok(Self::wrap(Self::open_default().await?, HashMap::new()))
     }
 
-    async fn open(settings: &SessionSettings) -> io::Result<Self> {
+    async fn open_default() -> io::Result<Session> {
+        ::zenoh::open(::zenoh::Config::default())
+            .await
+            .map_err(to_io)
+    }
+
+    async fn open(settings: &SessionSettings) -> io::Result<Session> {
         if settings.mode == Mode::Client && settings.connect.len() > 1 {
             tracing::warn!(
                 connect = ?settings.connect,
@@ -263,24 +275,19 @@ impl ZenohTransport {
             settings.connect_timeout(),
         )
         .await;
-        Ok(Self::wrap(session))
+        Ok(session)
     }
 
-    fn wrap(session: Session) -> Self {
+    fn wrap(session: Session, qos: HashMap<String, ChannelQos>) -> Self {
         Self {
             session,
-            qos: OnceLock::new(),
+            qos,
             publishers: Mutex::new(HashMap::new()),
         }
     }
 
     async fn declare_publisher(&self, channel: &str) -> io::Result<Publisher<'static>> {
-        let qos = self
-            .qos
-            .get()
-            .and_then(|map| map.get(channel))
-            .cloned()
-            .unwrap_or_default();
+        let qos = self.qos.get(channel).cloned().unwrap_or_default();
         let mut builder = self
             .session
             .declare_publisher(zenoh_key(channel).to_string());
@@ -322,10 +329,6 @@ impl Transport for ZenohTransport {
             .background()
             .await
             .map_err(to_io)
-    }
-
-    fn set_publisher_qos(&self, qos: &serde_json::Value) {
-        let _ = self.qos.set(parse_channel_qos(qos));
     }
 }
 
@@ -542,6 +545,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tracing_test::traced_test]
     async fn from_launch_opens_the_session_the_launch_describes() {
         let endpoint = free_endpoint();
         let transport = ZenohTransport::from_launch(&launch(topology("router", &[], &[&endpoint])))
@@ -559,12 +563,15 @@ mod tests {
         .await;
         assert!(peer.info().links().await.next().is_some());
         drop(transport);
+        assert!(!logs_contain("opening zenoh's defaults"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn from_launch_without_a_session_still_opens() {
+    #[tracing_test::traced_test]
+    async fn from_launch_without_a_session_opens_the_defaults_and_says_so() {
         let launch = serde_json::json!({"topics": {}, "config": null});
         assert!(ZenohTransport::from_launch(&launch).await.is_ok());
+        assert!(logs_contain("opening zenoh's defaults"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -725,10 +732,11 @@ mod tests {
     async fn a_session_local_publisher_still_reaches_its_own_session() {
         // Siblings share the session, so a session-local publisher must still
         // deliver in-process.
-        let transport = ZenohTransport::new().await.expect("open session");
-        transport.set_publisher_qos(&serde_json::json!({
+        let transport = ZenohTransport::from_launch(&serde_json::json!({"qos": {
             "dimos_test/suppressed": {"locality": "session_local"},
-        }));
+        }}))
+        .await
+        .expect("open session");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
         let sink: Dispatch = Arc::new(move |bytes: &[u8]| {
@@ -779,11 +787,12 @@ mod tests {
     async fn declared_publisher_carries_configured_qos() {
         // Verifies our plumbing: the QoS the coordinator sends lands on the
         // zenoh publisher. Zenoh owns whether it then drops/blocks on the wire.
-        let transport = ZenohTransport::new().await.expect("open session");
-        transport.set_publisher_qos(&serde_json::json!({
+        let transport = ZenohTransport::from_launch(&serde_json::json!({"qos": {
             "dimos_test/drop_chan": {"reliability": "best_effort", "congestion_control": "drop"},
             "dimos_test/block_chan": {"reliability": "reliable", "congestion_control": "block"},
-        }));
+        }}))
+        .await
+        .expect("open session");
 
         let dropper = transport
             .declare_publisher("dimos_test/drop_chan")
@@ -802,10 +811,11 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn qos_channel_declares_publisher_and_delivers() {
-        let transport = ZenohTransport::new().await.expect("open session");
-        transport.set_publisher_qos(&serde_json::json!({
+        let transport = ZenohTransport::from_launch(&serde_json::json!({"qos": {
             "dimos_test/qos_channel": {"reliability": "best_effort", "congestion_control": "drop"},
-        }));
+        }}))
+        .await
+        .expect("open session");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(8);
         let sink: Dispatch = Arc::new(move |bytes: &[u8]| {
