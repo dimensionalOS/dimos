@@ -83,9 +83,9 @@ from yourarm_sdk import YourArmSDK
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 
 # Unit conversion constants (if your SDK doesn't use SI units)
 MM_TO_M = 0.001

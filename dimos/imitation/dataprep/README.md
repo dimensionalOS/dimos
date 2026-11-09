@@ -14,7 +14,7 @@ recording, adapt the feature shapes and names to your robot, and set
 make that data an accepted command.
 
 `inspect_recording` accepts a `DataPrepConfig` to report saved-episode quality
-before export. The CLI command `dimos dataprep inspect data/recordings/session.db`
+before export. The CLI command `dimos imitation inspect data/recordings/session.db`
 reports stream counts, saved/discarded episodes, and unfinished episodes. Use
 your actual path; `.mcap` recordings are supported too. The CLI's recording
 inspection does not accept a feature config, so use the Python API for quality
@@ -171,7 +171,7 @@ feature schemas, synchronization and quality settings, quality reports,
 exported episode boundaries/task labels, output format and metadata.
 `fps` defaults to `sync.rate_hz` unless explicitly supplied in output metadata.
 
-`dimos dataprep inspect data/datasets/session.hdf5` inspects the built dataset.
+`dimos imitation inspect data/datasets/session.hdf5` inspects the built dataset.
 LeRobot output remains supported through the format-specific writer; choosing
 a writer does not change the source feature or alignment contract.
 

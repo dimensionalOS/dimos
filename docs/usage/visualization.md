@@ -103,11 +103,11 @@ This happens on lower-end hardware (NUC, older laptops) with large maps.
 Edit [`dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py):
 
 ```python skip
-# Before (high detail, slower on large maps)
-voxel_mapper(voxel_size=0.05),  # 5cm voxels
+# Before (high detail, slower on large maps): voxel_size defaults to 0.05, 5cm voxels
+PGOVoxelMapper.blueprint(emit_every=5),
 
 # After (lower detail, 8x faster)
-voxel_mapper(voxel_size=0.1),   # 10cm voxels
+PGOVoxelMapper.blueprint(emit_every=5, voxel_size=0.1),  # 10cm voxels
 ```
 
 **Trade-off:**
@@ -144,6 +144,6 @@ When a `RerunBridgeModule` is already part of your blueprint, you typically don'
 
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 
-Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
+Rerun on `dev` is **module-driven**: modules decide what to log, and the blueprint's `RerunBridgeModule` spawns the shared viewer and sends the default layout.
 
 To use a custom websocket port, set `--rerunwebsocketserver.port`; the bridge in the same blueprint takes the viewer URL from that server. `--rerunbridgemodule.websocket-url` points a bridge at a websocket server elsewhere. Set `host` on each module to override its bind address; both default to the shared `listen_host`.

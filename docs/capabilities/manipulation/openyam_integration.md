@@ -4,7 +4,7 @@ OpenYAM and Dual OpenYAM use `ConnectionModule` implementations that own the
 native `can-motor-control` robot. The coordinator receives `JointState` feedback
 and sends position commands through streams. It does not construct hardware
 adapters. `openyam-teach-collection` uses the same path with
-`OpenYamTeachConnection`: zero stiffness, teaching damping, gravity compensation
+`OpenYamConnection` in teach mode (`teach=True`): zero stiffness, teaching damping, gravity compensation
 and passive grippers, declared as zero-stiffness joints. Seeed B601-DM also uses
 its own direct connection.
 

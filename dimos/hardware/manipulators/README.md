@@ -137,15 +137,16 @@ All adapters must implement these core methods:
 | Connection | `connect()`, `disconnect()`, `is_connected()` |
 | Lifecycle | `activate()`, `deactivate()` |
 | Info | `get_info()`, `get_dof()`, `get_limits()` |
-| State | `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
+| State | `read_state()`, `read_error()`, `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
 | Motion | `write_joint_positions()`, `write_joint_velocities()`, `write_stop()` |
 | Servo | `write_enable()`, `read_enabled()`, `write_clear_errors()` |
 | Mode | `set_control_mode()`, `get_control_mode()` |
 
 Optional methods (return `None`/`False` if unsupported):
 - `read_cartesian_position()`, `write_cartesian_position()`
-- `read_gripper_position()`, `write_gripper_position()`
 - `read_force_torque()`
+
+A gripper has no methods of its own: it is the last entry of the joint arrays (`read_joint_positions()`, `write_joint_positions()`, ...), in the adapter's own gripper unit, the one `get_limits()` declares.
 
 ## Unit Conventions
 

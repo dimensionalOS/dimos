@@ -246,11 +246,12 @@ See below a simple robot connection module that sends streams of continuous `cmd
 ```py skip
 import threading, time, numpy as np
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Twist
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 class RobotConnection(Module):
     cmd_vel: In[Twist]
@@ -278,10 +279,11 @@ class Listener(Module):
         self.color_image.subscribe(lambda img: print(f"image {img.width}x{img.height}"))
 
 if __name__ == "__main__":
-    autoconnect(
+    blueprint = autoconnect(
         RobotConnection.blueprint(),
         Listener.blueprint(),
-    ).build().loop()
+    )
+    ModuleCoordinator.build(blueprint).loop()
 ```
 
 ## Blueprints
@@ -294,21 +296,22 @@ Blueprints can be composed, remapped, and have transports overridden if `autocon
 A blueprint example that connects the image stream from a robot to an MCP-backed LLM agent for reasoning and action execution.
 ```py skip
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
-from dimos.robot.unitree.go2.connection import go2_connection
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
 blueprint = autoconnect(
-    go2_connection(),
+    GO2Connection.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(),
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})
 
 # Run the blueprint
 if __name__ == "__main__":
-    blueprint.build().loop()
+    ModuleCoordinator.build(blueprint).loop()
 ```
 
 ## Library API

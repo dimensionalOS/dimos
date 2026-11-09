@@ -117,7 +117,7 @@ print("Target reached!")
 ### Using Quaternions
 
 ```python
-from dimos.msgs.geometry_msgs import Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 # Create quaternion (identity rotation)
 quat = Quaternion(x=0, y=0, z=0, w=1)
@@ -131,7 +131,7 @@ controller.set_target_pose(
 ### Using PoseStamped Messages
 
 ```python
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 # Create target pose
 target = PoseStamped(
@@ -395,9 +395,7 @@ dimos/manipulation/control/
 
 ## Related Modules
 
-- [xarm_driver.py](../../hardware/manipulators/xarm/xarm_driver.py) - Hardware driver for xArm
-- [spec.py](../../hardware/manipulators/xarm/spec.py) - Protocol specification
-- [simple_controller.py](../../utils/simple_controller.py) - PID implementation
+- [simple_controller.py](../../../utils/simple_controller.py) - PID implementation
 
 ## License
 

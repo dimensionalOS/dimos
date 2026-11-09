@@ -69,7 +69,7 @@ Every one of these unpins the listener back to zenoh's all-interfaces default.
 run (`Blueprint.hosted()`, placed on `dimos host` daemons) gets its run id as its domain. A
 rerun bridge listens to every domain and drops the domain from entity paths, so a viewer that
 dials the robot's router on its own still shows such a run. With `topics` set it only listens to
-its own domain. `dimos topic` and `dimos record` show the domain's keys.
+its own domain. `dimos topic` shows the domain's keys.
 
 **Two ways to override for one run or for your shell:**
 
@@ -158,12 +158,14 @@ Example: rebind a few streams from the default backend to `ROSTransport` (define
 
 ```python skip
 nav = autoconnect(
-    basic,
-    voxel_mapper(voxel_size=0.1),
-    cost_mapper(),
-    replanning_a_star_planner(),
-    wavefront_frontier_explorer(),
-).global_config(n_workers=6, robot_model="unitree_go2")
+    unitree_go2_basic,
+    PGOVoxelMapper.blueprint(emit_every=5),
+    CostMapper.blueprint(),
+    ReplanningAStarPlanner.blueprint(),
+    WavefrontFrontierExplorer.blueprint(),
+    PatrollingModule.blueprint(),
+    MovementManager.blueprint(),
+).global_config(n_workers=10, robot_model="unitree_go2")
 
 ros = nav.transports(
     {
