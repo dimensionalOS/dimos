@@ -378,18 +378,29 @@ def _is_joint(pxr: Any, prim: Any) -> bool:
 
 
 def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
-    """MuJoCo's longhand for a position servo, on an actuator prim it will read back."""
+    """MuJoCo's longhand for a position servo, on an actuator prim it will read back.
+
+    What happens to the control range depends on what the actuator *was*. A plain motor's
+    control signal is a torque, so its range is a torque limit and moves to the force range: a
+    servo is commanded a position, and a torque range left in place would clamp the position
+    instead. An actuator that already biases is already a servo -- the G1's layer arrives with
+    kp=500 and the joint's own travel as its control range -- and moving that to the force range
+    would limit each joint to a couple of newton-metres, which is not enough to hold a leg up.
+
+    The control limit comes off either way: a servo is commanded where to go, and whatever it
+    is allowed to reach is the joint's own range to enforce.
+    """
+    bias = actuator.GetAttribute("mjc:biasType")
+    was_a_motor = not (bias and bias.HasAuthoredValue() and str(bias.Get()) != "none")
     doubles = pxr.Sdf.ValueTypeNames.DoubleArray
     actuator.CreateAttribute("mjc:gainPrm", doubles).Set([float(kp), *[0.0] * 9])
     actuator.CreateAttribute("mjc:biasPrm", doubles).Set([0.0, -float(kp), -float(kd), *[0.0] * 7])
     actuator.CreateAttribute("mjc:biasType", pxr.Sdf.ValueTypeNames.Token).Set("affine")
     limits = actuator.GetAttribute("mjc:ctrlRange:min"), actuator.GetAttribute("mjc:ctrlRange:max")
-    if all(limit and limit.HasAuthoredValue() for limit in limits):
+    if was_a_motor and all(limit and limit.HasAuthoredValue() for limit in limits):
         low, high = (float(limit.Get()) for limit in limits)
         if low < high:
-            # It was a motor and that range was its torque limit; a servo is commanded a
-            # position, so the range moves to the force and the control limit comes off.
-            # These are MuJoCo's tri-state tokens ("auto"/"true"/"false"), not booleans.
+            # MuJoCo's tri-state tokens ("auto"/"true"/"false"), not booleans.
             token = pxr.Sdf.ValueTypeNames.Token
             double = pxr.Sdf.ValueTypeNames.Double
             actuator.CreateAttribute("mjc:forceLimited", token).Set("true")
