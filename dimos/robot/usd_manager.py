@@ -431,6 +431,40 @@ class UsdManager(SharedConfigModule):
         leave it alone; a manager asking one of its own mounts passes it on.
         """
         chain = list(visited or [])
+        self._refuse_a_cycle(chain)
+        root, scene = await self._compose(chain)
+        # Grafting works in absolute paths, which say nothing to whoever ends up asking for the
+        # file. So the scene leaves under names this manager answers for instead.
+        published, assets = await asyncio.to_thread(publish_usd_assets, scene)
+        self._published_assets = assets
+        self._scene = published
+        # No asset root: every path in the published scene is a name this manager answers for
+        # over render_file_request, not a path that resolves against a directory on any disk.
+        return ["", published]
+
+    @rpc
+    async def get_scene_on_disk(self, visited: list[str] | None = None) -> list[str]:
+        """``[asset_root, usd]``: the same scene, still naming the files it was composed from.
+
+        For a consumer that opens files rather than asking for them: a physics engine reads a
+        layer off the disk, and `get_scene` hands out content names it serves over
+        `render_file_request` instead, which is right for a viewer across a bus and unusable to
+        MuJoCo. "at least 4 vertices required" on the first piece of furniture is what asking the
+        wrong one of these looks like.
+
+        Resolve it against the root this answers with before reading it: the mounted subtrees
+        already carry absolute paths, having each been rebased as it arrived, and what is left
+        relative is this manager's own layer -- relative to its own directory, which is the root.
+
+        Same machine only, and deliberately so. A backend somewhere else has to be handed the
+        bytes, not a path, and that is `get_scene` plus `render_file_request`.
+        """
+        chain = list(visited or [])
+        self._refuse_a_cycle(chain)
+        root, scene = await self._compose(chain)
+        return [root[ASSET_ROOT], scene]
+
+    def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:
             raise CircularMountError(
                 f"circular mount: {' -> '.join([*chain, self._scene_identity])}. One of these "
@@ -438,6 +472,9 @@ class UsdManager(SharedConfigModule):
                 f"others, so neither scene can be built before the other. Break the cycle by "
                 f"removing one of those mounts."
             )
+
+    async def _compose(self, chain: list[str]) -> tuple[list[str], str]:
+        """This manager's own layer, and it with every mounted subtree grafted on."""
         subtrees = await self._subtrees([*chain, self._scene_identity])
         # Off the loop thread: building the layer imports usd-core and converts the whole
         # URDF, which is a tenth of a second on a real robot and would stall tf meanwhile.
@@ -447,14 +484,7 @@ class UsdManager(SharedConfigModule):
             if subtrees
             else root[USD]
         )
-        # Grafting works in absolute paths, which say nothing to whoever ends up asking for the
-        # file. So the scene leaves under names this manager answers for instead.
-        published, assets = await asyncio.to_thread(publish_usd_assets, scene)
-        self._published_assets = assets
-        self._scene = published
-        # No asset root: every path in the published scene is a name this manager answers for
-        # over render_file_request, not a path that resolves against a directory on any disk.
-        return ["", published]
+        return root, scene
 
     @property
     def _scene_identity(self) -> str:

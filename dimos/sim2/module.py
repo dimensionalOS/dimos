@@ -42,7 +42,7 @@ from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.assets.model import UsdModel
 from dimos.robot.assets.usd import resolve_usd_assets
-from dimos.robot.usd_manager import ASSET_ROOT, SCENE_RPC, USD, Mount
+from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
 from dimos.sim2.actions import read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
@@ -50,6 +50,11 @@ from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# A manager composes the same scene two ways and this is the one for an engine: it names the files
+# it was composed from, where `get_scene` names content a viewer fetches over a bus. See
+# UsdManager.get_scene_on_disk.
+_SCENE_RPC = "get_scene_on_disk"
 
 
 class SimulationSpec(Spec, Protocol):
@@ -65,16 +70,6 @@ class SimulationConfig(ModuleConfig):
     # the room, and everything mounted on it. Asked `get_scene` while the world is being built,
     # and what it answers with is the world -- scene= is then the fallback for a world nobody
     # manages, which is what the tests and `logistics.xml` are.
-    #
-    # **Not yet usable for a scene with meshes**, which is why no blueprint sets it. `get_scene`
-    # answers with an asset root of "" on purpose: every path in what it returns is a name the
-    # manager serves over render_file_request, not a path on any disk, because a scene travels
-    # over a bus as one string and each mesh is fetched by content. MuJoCo opens files. So the
-    # missing step is resolving those names to files -- either a manager rpc handing over its
-    # public-name -> real-path map, or the Simulation fetching the bytes onto disk itself. The
-    # first is a few lines and same-host only; the second is how a scene would reach a backend
-    # on another machine. Until then office_555 still passes `scene=`, and the symptom of
-    # skipping this is "at least 4 vertices required" on the first piece of furniture.
     scene_manager: Mount | None = None
 
     @field_validator("scene_manager", mode="before")
@@ -162,7 +157,7 @@ class Simulation(SharedConfigModule):
         if mount is None:
             return self.config.scene
         client = (
-            RPCClient(None, None, mount.remote_name, {SCENE_RPC}, rpc=self.rpc)
+            RPCClient(None, None, mount.remote_name, {_SCENE_RPC}, rpc=self.rpc)
             if mount.module is None
             else RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
         )
@@ -170,13 +165,13 @@ class Simulation(SharedConfigModule):
         while True:
             attempts += 1
             try:
-                answer = getattr(client, SCENE_RPC)([])
+                answer = getattr(client, _SCENE_RPC)([])
             except Exception as error:
                 answer = None
-                logger.debug(f"sim2: {mount.remote_name}.{SCENE_RPC}() has not answered: {error}")
+                logger.debug(f"sim2: {mount.remote_name}.{_SCENE_RPC}() has not answered: {error}")
             if answer:
                 logger.info(
-                    f"sim2: the world came from {mount.remote_name}.{SCENE_RPC}() "
+                    f"sim2: the world came from {mount.remote_name}.{_SCENE_RPC}() "
                     f"after {attempts} ask(s)"
                 )
                 # Rebased as it arrives, onto the root the manager reported: the layer says where
@@ -184,7 +179,7 @@ class Simulation(SharedConfigModule):
                 return UsdModel.from_layer(resolve_usd_assets(answer[USD], answer[ASSET_ROOT]))
             if attempts % 20 == 0:
                 logger.warning(
-                    f"sim2: still waiting on {mount.remote_name} for {SCENE_RPC}() "
+                    f"sim2: still waiting on {mount.remote_name} for {_SCENE_RPC}() "
                     f"after {attempts} asks"
                 )
             time.sleep(0.5)

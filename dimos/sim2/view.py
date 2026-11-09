@@ -65,12 +65,26 @@ def rotation_matrix(wxyz: Vector) -> Vector:
 
 
 def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
-    """The view's name for the sensor at frame_id in the world Simulation.describe() returned."""
+    """The view's name for the sensor at frame_id in the world Simulation.describe() returned.
+
+    Raises naming what the world does hold. This used to be a bare `next()`, so a sensor the
+    world had never heard of came out of a module's `main` as `RuntimeError: coroutine raised
+    StopIteration` -- six of them, one per sensor, with nothing to say which frame was missing
+    or what the alternatives were.
+    """
     sensor = next(
-        d
-        for d in description["simulated"]
-        if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
+        (
+            d
+            for d in description["simulated"]
+            if isinstance(d, SimulatedSensor) and d.frame_id == frame_id
+        ),
+        None,
     )
+    if sensor is None:
+        known = sorted(
+            d.frame_id for d in description["simulated"] if isinstance(d, SimulatedSensor)
+        )
+        raise KeyError(f"no sensor at frame {frame_id!r} in this world; it has sensors at {known}")
     return f"{sensor.robot_id or 'world'}/{frame_id}"
 
 
