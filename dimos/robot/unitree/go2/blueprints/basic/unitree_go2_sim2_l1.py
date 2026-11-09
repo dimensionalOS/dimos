@@ -67,13 +67,17 @@ _camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame, scene_manager=
 # One manager holding the whole robot: the Go2's own layer, with each sensor grafted onto the
 # frame it is bolted to. Without the mounts it answers for the robot alone, so the lidar and the
 # camera are nowhere in the stage a viewer draws.
+# Mounted by the instance name each one deploys, not by the blueprint object: a mounts value is
+# read again in the worker the manager lands in, by which point a blueprint has been flattened to
+# a plain dict and is no longer recognised.
 _robot = UsdManager.blueprint(
-    model=Go2Sim.usd, mounts={Go2Sim.l1_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera}
+    model=Go2Sim.usd,
+    mounts={Go2Sim.l1_mount_frame: SimL1.name, Go2Sim.camera_mount_frame: SimCamera.name},
 ).remappings([(UsdManager, "coordinator_joint_state", "joint_state")])
 
 _scene = UsdManager.blueprint(
     model=_room,
-    mounts={ROBOT: _robot},
+    mounts={ROBOT: UsdManager.name},
     # It is a scene, not a robot: its frames are the world's and take no prefix.
     frame_id_prefix="",
     # The room's root link is "logistics" and tf has never heard of it: the robot publishes

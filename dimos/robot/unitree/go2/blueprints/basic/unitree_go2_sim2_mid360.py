@@ -52,14 +52,17 @@ _camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame, scene_manager=
 # frame it is bolted to. Without the mounts it answers for the robot alone, so the lidar and the
 # camera are nowhere in the stage a viewer draws -- the sensors publish, and nothing on screen
 # shows what is doing the sensing.
+# Mounted by the instance name each one deploys, not by the blueprint object: a mounts value is
+# read again in the worker the manager lands in, by which point a blueprint has been flattened to
+# a plain dict and is no longer recognised.
 _robot = UsdManager.blueprint(
     model=Go2Sim.usd,
-    mounts={Go2Sim.lidar_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera},
+    mounts={Go2Sim.lidar_mount_frame: LivoxSim.name, Go2Sim.camera_mount_frame: SimCamera.name},
 ).remappings([(UsdManager, "coordinator_joint_state", "joint_state")])
 
 _scene = UsdManager.blueprint(
     model=_room,
-    mounts={ROBOT: _robot},
+    mounts={ROBOT: UsdManager.name},
     frame_id_prefix="",
     tf_renames={"logistics": "world"},
 ).namespace(SCENE, expose={"render_file_request", "file_info", "tf"})

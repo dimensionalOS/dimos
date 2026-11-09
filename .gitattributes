@@ -37,6 +37,7 @@ misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
 # robot's first body with "at least 4 vertices required". The layer beside them stays text and
 # out of LFS on purpose (see pyproject): a scene travels as a string, so it has to be readable.
 dimos/robot/*/*/assets/meshes/** filter=lfs diff=lfs merge=lfs -text binary
+dimos/simulation/scenes/*/meshes/** filter=lfs diff=lfs merge=lfs -text binary
 misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text
 # Machine-generated, and reviewed as artifacts rather than as source: a lock file
 # is cargo's output, and motion's planner crate is what an autoresearch lab

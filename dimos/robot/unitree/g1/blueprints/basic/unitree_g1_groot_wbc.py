@@ -332,7 +332,7 @@ else:
         _robot_usd = UsdManager.blueprint(
             model=G1Sim.usd,
             publish_joint_tf=False,
-            mounts={G1Sim.lidar_mount_frame: _mid360},
+            mounts={G1Sim.lidar_mount_frame: LivoxSim.name},
         )
         _backend = autoconnect(
             sim_module(
@@ -345,7 +345,7 @@ else:
                 model=UsdModel.from_file(LOGISTICS).with_frames(
                     {_robot_id: ("logistics", (0.0, 0.0, HOME_HEIGHT), (0.0, 0.0, 0.0))}
                 ),
-                mounts={_robot_id: _robot_usd},
+                mounts={_robot_id: UsdManager.name},
                 frame_id_prefix="",
                 tf_renames={"logistics": "world"},
             ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),

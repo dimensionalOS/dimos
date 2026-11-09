@@ -163,22 +163,6 @@ SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
 )
 
 
-def _lidar(name: str):
-    """This robot's Mid-360, built once per robot so the manager can mount the same instance.
-
-    Memoised because a blueprint object is the thing a manager addresses: constructing it twice
-    would deploy two lidars and mount one of them.
-    """
-    if name not in _LIDARS:
-        _LIDARS[name] = LivoxSim.blueprint(
-            frame_id=G1Sim.lidar_mount_frame, scene_manager=SCENE_MANAGER
-        )
-    return _LIDARS[name]
-
-
-_LIDARS: dict[str, object] = {}
-
-
 def _robot(name: str):
     """One G1 in the room: its sim module, the manager that answers for it, and its Mid-360."""
     return (
@@ -200,8 +184,16 @@ def _robot(name: str):
                 # long before the three seconds are up.
                 soft_start_seconds=0.0,
             ),
-            UsdManager.blueprint(model=G1Sim.usd, mounts={G1Sim.lidar_mount_frame: _lidar(name)}),
-            _lidar(name),
+            # The lidar is mounted by the instance name its namespace gives it, not by the
+            # blueprint object: a mounts value is read again in the worker the manager lands in,
+            # by which point a blueprint has been flattened to a plain dict and is no longer
+            # recognised ("mounts values are a Module subclass, a Blueprint or an instance
+            # name; got {'blueprints': ...}").
+            UsdManager.blueprint(
+                model=G1Sim.usd,
+                mounts={G1Sim.lidar_mount_frame: f"{name}/{LivoxSim.name}"},
+            ),
+            LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame, scene_manager=SCENE_MANAGER),
             _walker(name),
         )
         .remappings(
