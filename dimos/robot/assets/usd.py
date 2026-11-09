@@ -27,6 +27,7 @@ import itertools
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any
+import uuid
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -200,7 +201,7 @@ def urdf_to_usd(
     return str(stage.GetRootLayer().ExportToString())
 
 
-def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
+def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | None = None) -> str:
     """``root_usd`` with each subtree copied in under the prim standing for its frame.
 
     Each key is a frame_id in ``root_usd`` (a URDF link, matched on its ``displayName``) and each value is a USD layer whose default prim is that subtree's root. The
@@ -242,7 +243,9 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
     return str(root_layer.ExportToString())
 
 
-def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) -> str:
+def usd_with_frames(
+    usd: str, frames: Mapping[str, tuple[str, Vector, Vector]], root: Path | str | None = None
+) -> str:
     """``usd`` with each named frame added as a link on the frame it hangs off.
 
     The USD counterpart of ``mjcf_with_frames``. A scene needs somewhere to mount things that
@@ -257,7 +260,7 @@ def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) 
     if not frames:
         return usd
     pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a scene")
+    layer = _layer_from(pxr, usd, "a scene", root)
     stage = pxr.Usd.Stage.Open(layer)
     for name, (parent, xyz, rpy) in frames.items():
         # Read afresh each time, because a frame may hang off one added a moment ago: the Go2's
@@ -318,7 +321,9 @@ def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) ->
     joint.GetPrim().SetDisplayName(f"{name}_joint")
 
 
-def usd_with_drives(usd: str, drives: Mapping[str, tuple[float, float, float]]) -> str:
+def usd_with_drives(
+    usd: str, drives: Mapping[str, tuple[float, float, float]], root: Path | str | None = None
+) -> str:
     """``usd`` with each named joint driven as a position servo, by ``(kp, kd, target)``.
 
     Where a robot's gains belong. They are a fact about the robot -- what holds its leg up is
@@ -343,7 +348,7 @@ def usd_with_drives(usd: str, drives: Mapping[str, tuple[float, float, float]]) 
     if not drives:
         return usd
     pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a robot")
+    layer = _layer_from(pxr, usd, "a robot", root)
     stage = pxr.Usd.Stage.Open(layer)
     joints = {_frame_name(prim): prim for prim in stage.Traverse() if _is_joint(pxr, prim)}
     actuators = {
@@ -409,7 +414,7 @@ def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
     actuator.CreateAttribute("mjc:ctrlLimited", pxr.Sdf.ValueTypeNames.Token).Set("false")
 
 
-def usd_drives(usd: str) -> dict[str, tuple[float, float, float]]:
+def usd_drives(usd: str, root: Path | str | None = None) -> dict[str, tuple[float, float, float]]:
     """Every driven joint in ``usd``, as ``{joint: (kp, kd, target)}``. The other half of usd_with_drives.
 
     Read from `UsdPhysics.DriveAPI` rather than from MuJoCo's spelling of the same thing,
@@ -424,7 +429,7 @@ def usd_drives(usd: str) -> dict[str, tuple[float, float, float]]:
     composes.
     """
     pxr = _pxr()
-    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a robot"))
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a robot", root))
     drives = {}
     for prim in stage.Traverse():
         if not prim.IsA(pxr.UsdPhysics.Joint):
@@ -474,7 +479,7 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
     return str(layer.ExportToString())
 
 
-def usd_frame_names(usd: str) -> set[str]:
+def usd_frame_names(usd: str, root: Path | str | None = None) -> set[str]:
     """Every link and joint name ``usd`` carries, under the names they travel as.
 
     The defaultPrim counts, the same way it does in ``_link_prim_paths`` and for the same
@@ -486,7 +491,7 @@ def usd_frame_names(usd: str) -> set[str]:
     Last, and only under a name no link has taken, so a real link still wins any clash.
     """
     pxr = _pxr()
-    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer", root))
     names = {
         prim.GetDisplayName() or prim.GetName()
         for prim in stage.Traverse()
@@ -812,8 +817,26 @@ def warm_usd() -> None:
     list(stage.Traverse())
 
 
-def _layer_from(pxr: Any, usd: str, what: str) -> Any:
-    layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
+def _layer_from(pxr: Any, usd: str, what: str, root: Path | str | None = None) -> Any:
+    """``usd`` as a layer. ``root`` is the directory its relative asset paths are relative to.
+
+    Given a root, the layer takes an identifier *in* that directory -- a name nothing is ever
+    written to -- so that USD can resolve the references it carries. Without one, every mesh a
+    committed robot layer names comes out as a warning per prim while the stage composes:
+    "Could not open asset @meshes/base_0.usdc@ ... (instantiating stage on stage @anon:0x...@)".
+    Nothing here needs the geometry, so the result is the same either way, but one start of the
+    three-G1 office printed 139k lines of it and real errors went down in the noise.
+
+    The name is unique per call because `Sdf.Layer.New` refuses an identifier another live layer
+    already holds, and two frames being added to one robot is two layers off the same file.
+    """
+    if root is None:
+        layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
+    else:
+        name = f".dimos-in-memory-{uuid.uuid4().hex}.usda"
+        layer = pxr.Sdf.Layer.New(
+            pxr.Sdf.FileFormat.FindByExtension(".usda"), str(Path(root) / name)
+        )
     if not layer.ImportFromString(usd):
         raise ValueError(f"the USD for {what!r} is not a layer this build of USD can read")
     return layer
@@ -1265,10 +1288,10 @@ def _set_asset_info(pxr: Any, prim: Any, filename: str, base_dir: Path | None) -
     prim.SetAssetInfoByKey("version", digest)
 
 
-def referenced_asset_paths(usd: str) -> set[str]:
+def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
     """Every asset path ``usd`` names, as authored. What a renderer may ask to be served."""
     pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a layer")
+    layer = _layer_from(pxr, usd, "a layer", root)
     found: set[str] = set()
     stack = [layer.pseudoRoot]
     while stack:
