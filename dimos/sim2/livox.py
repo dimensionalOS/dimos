@@ -104,7 +104,12 @@ class LivoxSim(Module):
         cast_cost: list[float] = []
         # Scans and IMU readings pace on sim time, so both keep their rates per sim second at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
-            view.update(self._world)
+            # Snapshot and stamp together, under the world's lock, so the time belongs to the
+            # state the view just took: `update` poses the view "as the world is now" and every
+            # read answers from that, while the world itself keeps moving in another thread.
+            with self._world.lock:
+                view.update(self._world)
+                taken_at = self._world.stamp()
             position, orientation = view.pose(site)
             # The pose the points are cast from fixes the moment this scan describes, so the stamp
             # is taken with it. Reading the clock after the cast instead dated the scan by when the
@@ -113,7 +118,6 @@ class LivoxSim(Module):
             # and anything placing it by that stamp rotated it off the walls by exactly the turn
             # that happened in between. Standing still the two are identical, which is why this
             # only ever showed up on a turn.
-            taken_at = self._world.stamp()
             # Off the loop, so the IMU beside it keeps its rate while a scan is cast.
             points = await asyncio.to_thread(
                 sensor.cast, position, rotation_matrix(orientation), points_per_scan
