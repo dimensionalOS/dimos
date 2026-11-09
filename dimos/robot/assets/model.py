@@ -223,7 +223,8 @@ class UsdModel:
 
         source = self.source_path
         return RobotModel.from_urdf_string(
-            usd_to_urdf(self.usd), asset_dir=None if source is None else source.parent
+            usd_to_urdf(self.usd, root=self._asset_root()),
+            asset_dir=None if source is None else source.parent,
         ).load()
 
     @property
@@ -242,7 +243,7 @@ class UsdModel:
             return self._urdf.root_link
         from dimos.robot.assets.usd_to_urdf import usd_root_link
 
-        return usd_root_link(self.usd)
+        return usd_root_link(self.usd, self._asset_root())
 
     def get_joint(self, name: str) -> JointDescription | None:
         return next((joint for joint in self.joints if joint.name == name), None)

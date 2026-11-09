@@ -27,6 +27,7 @@ arbitrary USD: another tool's layer states its physics differently.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import warnings
 import xml.etree.ElementTree as ET
@@ -58,12 +59,17 @@ _JOINT_TYPES = {
 }
 
 
-def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
+def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = None) -> str:
     """``usd`` as URDF XML. ``name`` overrides the robot name, which otherwise comes from the
     layer's default prim.
+
+    ``root`` is the directory the layer's relative paths resolve against, references to other
+    layers included. Without it a composed scene converts to a URDF of whatever it holds
+    directly and silently loses what it referenced -- which looks like a room that has no walls
+    and a robot with several candidate roots.
     """
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a layer")
+    layer = layer_from(pxr, usd, "a layer", root)
     stage = pxr.Usd.Stage.Open(layer)
 
     links = _usd_links_of(pxr, stage)
@@ -75,30 +81,30 @@ def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
 
     default_prim = stage.GetDefaultPrim()
     robot_name = name or (default_prim.GetName() if default_prim else "robot")
-    root = ET.Element("robot", name=robot_name)
+    robot = ET.Element("robot", name=robot_name)
     # Decided once for the whole layer: a model that marks collision properly is never
     # second-guessed, and one that marks none at all falls back to MuJoCo's grouping.
     by_group = not _marks_collision(pxr, stage)
 
     for link_name, prim in links.items():
-        _write_link(pxr, root, link_name, prim, by_group=by_group)
+        _write_link(pxr, robot, link_name, prim, by_group=by_group)
     # USD conveys parent and child by nesting; a UsdPhysics joint only adds how it moves. URDF has
     # to be told outright that a nested link with no joint is welded, or the tree comes out
     # disconnected and will not load.
     joints = joints + _welds_of(pxr, links, joints)
     for joint in joints:
-        _write_joint(root, joint)
+        _write_joint(robot, joint)
 
     _warn_about_orphans(links, joints)
-    return ET.tostring(root, encoding="unicode")
+    return ET.tostring(robot, encoding="unicode")
 
 
-def usd_root_link(usd: str) -> str:
+def usd_root_link(usd: str, root: Path | str | None = None) -> str:
     """The link everything else hangs under. The layer's defaultPrim is the robot, not a link, so
     the root is found the way a URDF defines it: the one link no joint claims and nothing contains.
     """
     pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer"))
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
     links = _usd_links_of(pxr, stage)
     joints = list(_joint_prims(pxr, stage))
     children = {_body_name(prim, "physics:body1") for prim in joints} | _nested_link_names(
