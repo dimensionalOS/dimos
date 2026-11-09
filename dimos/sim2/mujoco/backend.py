@@ -21,7 +21,7 @@ other end of the actions it is given. `MujocoSim` in `sim.py` is the module arou
 """
 
 import base64
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 import json
 from pathlib import Path
 import re
@@ -91,7 +91,7 @@ class MujocoBackend:
     def __init__(
         self,
         usd: "UsdModel",
-        simulated: Mapping[str, Simulated] | None = None,
+        simulated: Iterable[Simulated] = (),
         speed: float = 1.0,
     ) -> None:
         """A USD layer, what is in it, and how fast to run it. Nothing else.
@@ -100,12 +100,12 @@ class MujocoBackend:
         per wall second. Both are config in the sense that matters: an engine is handed the world
         and the knobs for running it, and works out everything else from the layer.
         """
-        simulated = simulated or {}
+        simulated = list(simulated)
         self._speed = speed
         # The world as a file, which is what MuJoCo opens and what a renderer asks for by name.
         self._scene_layer = usd_layer(usd)
-        self._robots = {d.robot_id: d for d in simulated.values() if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(self._scene_layer, simulated.values()).compile()
+        self._robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
+        self.model = compile_world(self._scene_layer, simulated).compile()
         # Robots whose controllers the world steps in lockstep with, and the actions each sent since its last tick.
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)
