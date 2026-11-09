@@ -133,6 +133,15 @@ class SimMujocoG1WholeBodyAdapter:
         # first state msg arrives.
         return self._live_shm() is not None
 
+    def motor_states_ts(self) -> float | None:
+        """No stamp: shared memory carries the state, not the time it was taken.
+
+        Saying so is the point -- the caller then falls back to the wall clock, which is what it
+        did before any of this. An adapter that does know its reading's time should say that
+        instead, as the transport one does.
+        """
+        return None
+
     def read_imu(self) -> IMUState:
         if not self.has_motor_states():
             return IMUState()

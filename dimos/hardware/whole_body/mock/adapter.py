@@ -60,6 +60,10 @@ class MockWholeBodyAdapter:
     def has_motor_states(self) -> bool:
         return self._connected
 
+    def motor_states_ts(self) -> float | None:
+        """Nothing here was taken at a time; the caller falls back to the wall clock."""
+        return None
+
     def read_imu(self) -> IMUState:
         return IMUState()
 
