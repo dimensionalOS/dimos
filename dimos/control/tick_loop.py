@@ -555,22 +555,18 @@ class TickLoop:
                         if (token := task._hold_token()) is not None
                     )
                 holding = bool(hold_tokens)
-                winners: dict[str, float] = {}
-                modes: dict[str, ControlMode] = {}
+                winners: dict[str, tuple[float, ControlMode]] = {}
                 # An operator hold is a safety state, not a mixed-mode task:
                 # let the source stop each resource by its capabilities.
                 if not holding:
                     for joint, (value, mode, _) in joint_commands.items():
                         if self._joint_to_hardware.get(joint) == name:
-                            winners[joint] = value
-                            modes[joint] = mode
+                            winners[joint] = (value, mode)
                 try:
                     publish(
                         name,
                         source.command(
                             winners,
-                            None,
-                            joint_modes=modes,
                             holding=holding,
                             hold_token=hold_tokens,
                         ),

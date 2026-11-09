@@ -158,13 +158,13 @@ def test_not_ready_until_everything_has_reported() -> None:
 def test_with_no_task_every_joint_is_held_where_it_is() -> None:
     source = arm_at(0.3, -0.2)
 
-    assert source.command({}, None) == {f"{J1}/position": 0.3, f"{J2}/position": -0.2}
+    assert source.command({}) == {f"{J1}/position": 0.3, f"{J2}/position": -0.2}
 
 
 def test_task_values_are_sent_and_the_other_joints_held() -> None:
     source = arm_at(0.3, -0.2)
 
-    assert source.command({J1: 0.5}, ControlMode.POSITION) == {
+    assert source.command({J1: (0.5, ControlMode.POSITION)}) == {
         f"{J1}/position": 0.5,
         f"{J2}/position": -0.2,
     }
@@ -172,67 +172,67 @@ def test_task_values_are_sent_and_the_other_joints_held() -> None:
     # Once the task stops, the joint stays at what it was last told, not
     # wherever it has got to.
     source.on_message("joint_state", reading(0.45, -0.2))
-    assert source.command({}, None)[f"{J1}/position"] == 0.5
+    assert source.command({})[f"{J1}/position"] == 0.5
 
 
 def test_a_position_outside_its_limit_is_refused_and_the_holds_kept() -> None:
     """A refused tick leaves the holds alone, so stopping the task afterwards
     does not move the robot to what was refused."""
     source = arm_at(0.2, -0.2)
-    assert source.command({J1: 0.4, J2: 0.1}, ControlMode.POSITION) == {
+    assert source.command({J1: (0.4, ControlMode.POSITION), J2: (0.1, ControlMode.POSITION)}) == {
         f"{J1}/position": 0.4,
         f"{J2}/position": 0.1,
     }
 
     with pytest.raises(ValueError, match="outside"):
-        source.command({J1: 1.5, J2: 0.7}, ControlMode.POSITION)
+        source.command({J1: (1.5, ControlMode.POSITION), J2: (0.7, ControlMode.POSITION)})
 
-    assert source.command({}, None) == {f"{J1}/position": 0.4, f"{J2}/position": 0.1}
+    assert source.command({}) == {f"{J1}/position": 0.4, f"{J2}/position": 0.1}
 
 
-def test_a_velocity_tick_zeroes_the_other_joints_then_holds_where_they_stopped() -> None:
+def test_velocity_winners_then_hold_where_each_joint_stopped() -> None:
     source = arm_at(0.3, -0.2)
-    source.command({J1: 0.1}, ControlMode.POSITION)
+    source.command({J1: (0.1, ControlMode.POSITION)})
 
-    assert source.command({J1: 0.2}, ControlMode.VELOCITY) == {
+    assert source.command({J1: (0.2, ControlMode.VELOCITY), J2: (0.0, ControlMode.VELOCITY)}) == {
         f"{J1}/velocity": 0.2,
         f"{J2}/velocity": 0.0,
     }
 
     source.on_message("joint_state", reading(0.6, -0.1))
-    assert source.command({}, None) == {f"{J1}/position": 0.6, f"{J2}/position": -0.1}
+    assert source.command({}) == {f"{J1}/position": 0.6, f"{J2}/position": -0.1}
 
 
 def test_a_held_position_stays_inside_the_models_limit() -> None:
     source = arm_at(1.0001, 0.0)
 
-    assert source.command({}, None)[f"{J1}/position"] == 1.0
+    assert source.command({})[f"{J1}/position"] == 1.0
 
 
 def test_a_joint_that_cannot_take_a_position_gets_zero_velocity() -> None:
     source = arm_at(0.3, 0.0, commands=("velocity_command",))
 
-    assert source.command({}, None) == {f"{J1}/velocity": 0.0, f"{J2}/velocity": 0.0}
+    assert source.command({}) == {f"{J1}/velocity": 0.0, f"{J2}/velocity": 0.0}
 
 
 def test_a_task_driving_a_joint_in_a_way_it_does_not_accept_raises() -> None:
     source = arm_at(0.3, 0.0, commands=("position_command",))
 
     with pytest.raises(ValueError, match="velocity"):
-        source.command({J1: 0.2}, ControlMode.VELOCITY)
+        source.command({J1: (0.2, ControlMode.VELOCITY)})
 
 
 def test_each_kind_of_command_goes_to_its_own_port() -> None:
     source = arm_at(0.3, 0.0)
 
-    held = source.command({J1: 0.5}, ControlMode.POSITION)
+    held = source.command({J1: (0.5, ControlMode.POSITION)})
     (positions,) = source.command_messages(held, ts=1.0)
     assert positions.port == "position_command"
     assert list(positions.message.name) == [J1, J2]
     assert list(positions.message.position) == [0.5, 0.0]
     assert list(positions.message.velocity) == []
 
-    moving = source.command({J1: 0.2}, ControlMode.VELOCITY)
+    moving = source.command({J1: (0.2, ControlMode.VELOCITY), J2: (0.0, ControlMode.VELOCITY)})
     (velocities,) = source.command_messages(moving, ts=1.0)
     assert velocities.port == "velocity_command"
     assert list(velocities.message.name) == [J1, J2]
@@ -245,7 +245,7 @@ def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     source.on_message("odom", PoseStamped(frame_id="odom"))
     source.on_message("base_velocity", TwistStamped(frame_id="base"))
 
-    values = source.command({}, None)
+    values = source.command({})
     first, *rest = source.command_messages(values, ts=1.0)
     twist = first.message
 
@@ -262,7 +262,9 @@ def test_a_base_axis_is_a_speed_a_task_can_win() -> None:
     source.on_message("odom", PoseStamped(frame_id="odom"))
     source.on_message("base_velocity", TwistStamped(frame_id="base"))
 
-    values = source.command({"go2/base/vx": 0.5, "go2/base/wz": -0.2}, ControlMode.VELOCITY)
+    values = source.command(
+        {"go2/base/vx": (0.5, ControlMode.VELOCITY), "go2/base/wz": (-0.2, ControlMode.VELOCITY)}
+    )
 
     # The axes the task did not drive are told 0.
     assert values == {"go2/base/vx": 0.5, "go2/base/vy": 0.0, "go2/base/wz": -0.2}
@@ -272,7 +274,7 @@ def test_a_base_axis_is_a_speed_a_task_can_win() -> None:
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.5, 0.0, -0.2)
 
     # The task gone, every axis is zeroed again.
-    assert source.command({}, None) == {
+    assert source.command({}) == {
         "go2/base/vx": 0.0,
         "go2/base/vy": 0.0,
         "go2/base/wz": 0.0,
@@ -300,14 +302,14 @@ def test_velocity_aliases_are_joint_descriptors_with_only_real_feedback() -> Non
 
 def test_a_velocity_alias_rejects_position_instead_of_treating_it_as_speed() -> None:
     with pytest.raises(ValueError, match="cannot be told its position"):
-        base().command({"go2/base/vx": 0.5}, ControlMode.POSITION)
+        base().command({"go2/base/vx": (0.5, ControlMode.POSITION)})
 
 
 def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
     source = arm(commands=("position_command", "velocity_command"))
     source.on_message("joint_state", reading(0.2, -0.2))
-    source.command({}, None)
-    values = source.command({J1: 0.3}, None, joint_modes={J1: ControlMode.VELOCITY})
+    source.command({})
+    values = source.command({J1: (0.3, ControlMode.VELOCITY)})
     assert values[f"{J1}/velocity"] == 0.3
     assert values[f"{J2}/position"] == -0.2
     assert f"{J2}/velocity" not in values
@@ -324,23 +326,19 @@ def test_mixed_commands_use_joint_keys_and_twist_aliases_without_fake_joint_stat
     assert source.ready_for_control()
     assert source.read_joints().joint_positions == {J1: 0.2, J2: -0.2}
     assert source.read_joints().joint_velocities == {}
-    values = source.command(
-        {J1: 0.5, axis: 0.4},
-        None,
-        joint_modes={J1: ControlMode.POSITION, axis: ControlMode.VELOCITY},
-    )
+    values = source.command({J1: (0.5, ControlMode.POSITION), axis: (0.4, ControlMode.VELOCITY)})
     by_port = {msg.port: msg.message for msg in source.command_messages(values, ts=1.0)}
     assert list(by_port["position_command"].name) == [J1, J2]
     assert "velocity_command" not in by_port
     assert by_port["cmd_vel"].linear.x == 0.4
     with pytest.raises(ValueError, match="cannot be told its position"):
-        source.command({J1: 0.7, axis: 0.4}, ControlMode.POSITION)
-    assert source.command({}, None)[f"{J1}/position"] == 0.5
+        source.command({J1: (0.7, ControlMode.POSITION), axis: (0.4, ControlMode.POSITION)})
+    assert source.command({})[f"{J1}/position"] == 0.5
 
 
 def test_a_non_finite_base_speed_is_refused() -> None:
     with pytest.raises(ValueError, match="not a finite speed"):
-        base().command({"go2/base/vx": math.nan}, ControlMode.VELOCITY)
+        base().command({"go2/base/vx": (math.nan, ControlMode.VELOCITY)})
 
 
 def test_a_robot_without_a_base_port_has_no_base_axes() -> None:
@@ -349,7 +347,7 @@ def test_a_robot_without_a_base_port_has_no_base_axes() -> None:
 
 def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> None:
     source = arm_at(0.3, 0.0, timeout=0.05)
-    source.command({J1: 0.5}, ControlMode.POSITION)
+    source.command({J1: (0.5, ControlMode.POSITION)})
 
     wait_until(lambda: not source.ready_for_control(), timeout=2.0)
     # Its joints stay in what tasks see.
@@ -360,12 +358,12 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
     assert not source.ready_for_control()
     source.on_message("joint_state", reading(0.8, 0.0))
     assert source.ready_for_control()
-    assert source.command({}, None)[f"{J1}/position"] == 0.8
+    assert source.command({})[f"{J1}/position"] == 0.8
 
 
 def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
     source = arm_at(0.3, 0.0)
-    source.command({J1: 0.5}, ControlMode.POSITION)
+    source.command({J1: (0.5, ControlMode.POSITION)})
     # Halted short of where it was told to go.
     source.on_message("joint_state", reading(0.4, 0.0))
 
@@ -378,7 +376,7 @@ def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
     assert not source.ready_for_control()
     source.on_message("joint_state", reading(0.42, 0.0))
     assert source.ready_for_control()
-    assert source.command({}, None)[f"{J1}/position"] == 0.42
+    assert source.command({})[f"{J1}/position"] == 0.42
 
 
 def test_a_robot_it_cannot_drive_is_refused() -> None:
