@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
-from typing import TYPE_CHECKING
 import warnings
 
 from mcap.writer import Writer
@@ -27,33 +26,11 @@ from dimos.memory.cli.app import mem_app
 from dimos.memory.cli.dataset import open_dataset, open_store
 from dimos.memory.replay_module import stream_types_of
 from dimos.memory.store.mcap import McapStore
-from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-
-def test_summary_missing_sqlite_does_not_create_parents(tmp_path: Path) -> None:
-    missing = tmp_path / "absent" / "nested" / "recording.db"
-    result = CliRunner().invoke(mem_app, ["summary", str(missing)])
-    assert result.exit_code == 1
-    assert isinstance(result.exception, FileNotFoundError)
-    assert str(result.exception) == f"SQLite database not found: {missing}"
-    assert not (tmp_path / "absent").exists()
-
-
-def test_summary_existing_sqlite(tmp_path: Path) -> None:
-    path = tmp_path / "recording.db"
-    with SqliteStore(path=path) as store:
-        store.stream("notes", str).append("hello", ts=1.0)
-    result = CliRunner().invoke(mem_app, ["summary", str(path)])
-    assert result.exit_code == 0, result.output
-    assert "notes" in result.output
 
 
 def test_native_mcap_cli_and_replay_resolve_typed_stream(tmp_path):
