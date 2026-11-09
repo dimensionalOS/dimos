@@ -40,13 +40,15 @@ from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
-    publish_usd_assets,
     rename_usd_frames,
-    require_asset_hashes,
-    resolve_usd_assets,
     trivialize_usd,
     usd_frame_names,
     warm_usd,
+)
+from dimos.robot.assets.usd_assets import (
+    publish_usd_assets,
+    require_asset_hashes,
+    resolve_usd_assets,
 )
 from dimos.utils.logging_config import setup_logger
 

@@ -40,7 +40,8 @@ from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd import unhashed_assets, usd_frame_names
+from dimos.robot.assets.usd import usd_frame_names
+from dimos.robot.assets.usd_assets import unhashed_assets
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
