@@ -19,14 +19,18 @@ The lidar casts the fitted Mid-360 scan pattern and return model; the IMU is the
 
 import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from dimos_lcm.world_msgs import WorldObservations
 import numpy as np
 
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
+from dimos.hardware.sensors.lidar.livox import module as mid360_driver
+from dimos.hardware.sensors.lidar.livox.module import mid360_usd
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -85,6 +89,20 @@ class LivoxSim(Module):
     @shared_config(Simulation)
     def simulated(self) -> dict[str, Any]:
         return {"simulated": SimulatedSensor("lidar", self.frame_id)}
+
+    @rpc
+    def get_usd(self) -> list[str]:
+        """``[asset_root, usd]``: the MID-360, in the frames this instance stamps.
+
+        The same layer the real Mid360 driver answers with, not a copy of it: a sim twin that
+        described itself differently from the sensor it stands in for would put a different box
+        on the screen depending on which one was running. The root is that driver's directory,
+        for the same reason it gives: it is the one path that is right wherever it is installed.
+        """
+        return [
+            str(Path(mid360_driver.__file__ or "").parent),
+            mid360_usd(self.frame_id, self.config.imu_frame_id),
+        ]
 
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
