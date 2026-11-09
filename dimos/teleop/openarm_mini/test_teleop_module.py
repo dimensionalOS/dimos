@@ -654,6 +654,7 @@ def test_tick_streams_each_target_as_a_trajectory_from_the_last_one(
         {"left": _FakeBus(_readings()), "right": right},
         call,
         command_filter_cutoff_hz=None,
+        trajectory_horizon_s=0.04,
     )
     try:
         module.tick()
@@ -687,6 +688,7 @@ def test_rejected_trajectory_restarts_from_the_measured_pose(
         {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())},
         call,
         command_filter_cutoff_hz=None,
+        trajectory_horizon_s=0.04,
     )
     try:
         for _ in range(4):
@@ -709,6 +711,7 @@ def test_unserved_trajectory_stream_falls_back_to_joint_command(
         {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())},
         call,
         command_filter_cutoff_hz=None,
+        trajectory_horizon_s=0.04,
     )
     try:
         for _ in range(30):

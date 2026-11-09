@@ -202,25 +202,23 @@ The module publishes `left_gripper_command` and `right_gripper_command`
 follower blueprints bind them to one gripper task per jaw, open at the jaw's
 own end of travel as the connection declares it.
 
-## Smooth streaming
+## Smoothing
 
 By default the module low-passes the mapped arm targets at 6 Hz
-(`command_filter_cutoff_hz`) and sends each 50 Hz target as a two-point
-trajectory from the previous target over 40 ms (`trajectory_horizon_s`) through
-the coordinator's `execute_trajectory` RPC, non-blocking, so the follower
-interpolates between targets instead of re-anchoring every target on a measured
-angle that lags the leader by the loop delay. Measured on Alfred, that lag is
-40 to 100 ms and the re-anchor step is what feels like a ratchet. The
-coordinator is the one in the blueprint, or `coordinator_name`
-(`ControlCoordinator`) over the bus for the split deployment. A rejected
-trajectory restarts from the measured pose; the follower blueprints allow a
-0.3 rad start gap for that. If the RPC goes unserved 25 times in a row the
-module falls back to streaming `joint_command`.
+(`command_filter_cutoff_hz`); on Alfred that took a quarter off the torque
+step on the shoulder joints at no measurable lag. Pass `null` to send raw
+readings.
 
-```bash
-# the one-target-per-tick behavior of earlier runs
-dimos run teleop-openarm-mini-leader --trajectory-horizon-s null --command-filter-cutoff-hz null
-```
+`trajectory_horizon_s` (off by default) sends each 50 Hz target as a two-point
+trajectory from the previous target over that horizon through the
+coordinator's `execute_trajectory` RPC, non-blocking, instead of streaming
+`joint_command`. The trajectory task restarts a trajectory's clock each time
+one replaces it, so at 50 Hz the arm advances on alternate ticks only; on
+Alfred both 40 ms and 25 ms horizons felt worse than the stream. It stays as
+a knob for a follower whose trajectory task keeps its clock across
+replacements. A rejected trajectory restarts from the measured pose, the
+follower blueprints allow a 0.3 rad start gap for that, and an RPC unserved
+25 times in a row falls back to `joint_command`.
 
 ## Driving the real OpenArm follower
 

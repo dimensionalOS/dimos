@@ -106,8 +106,9 @@ class OpenArmMiniTeleopModuleConfig(ModuleConfig):
     command_filter_cutoff_hz: float | None = 6.0
     # Each target goes out as a two-point trajectory from the last one over this
     # horizon, through the coordinator's execute_trajectory RPC; None streams
-    # joint_command one target at a time.
-    trajectory_horizon_s: float | None = 0.04
+    # joint_command one target at a time. Off: the trajectory task restarts its
+    # clock on every replacement, which on Alfred felt worse than the stream.
+    trajectory_horizon_s: float | None = None
     # The coordinator to stream into when no module in the blueprint provides it.
     coordinator_name: str = "ControlCoordinator"
     # Unset: the sides whose serial port is configured drive the follower.
