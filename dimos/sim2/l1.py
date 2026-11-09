@@ -34,9 +34,9 @@ from dimos.core.shared_config import shared_config
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 

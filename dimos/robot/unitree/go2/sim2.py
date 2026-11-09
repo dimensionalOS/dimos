@@ -49,8 +49,8 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation
+from dimos.sim2.mujoco.sensor_world import rotation_matrix
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.view import rotation_matrix
 from dimos.sim2.world_observations import ACT, WorldMirror
 from dimos.simulation.go2_legged.policy import Proprioception, load_policy
 from dimos.simulation.go2_legged.robot import COMMAND_SLEW, CONTROL_DT, projected_gravity, yaw_of

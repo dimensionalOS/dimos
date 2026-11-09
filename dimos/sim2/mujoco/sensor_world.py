@@ -86,13 +86,13 @@ def sensor_frame(description: Mapping[str, Any], frame_id: str) -> str:
 
 
 def open_view(description: Mapping[str, Any]) -> WorldView:
-    """A view of the world that Simulation.describe() returned, drawn by whatever is running it.
+    """A sensor's own world, built from the same description the simulation was built from.
 
-    Asked of the backend rather than looked up here. A world knows which engine is simulating it
-    -- `describe()` says so -- and that engine is the only thing that can draw it, so a registry
-    of renderers in this module would be a second, separable answer to a question that already
-    has one.
+    A sensor does not read the simulation's world: it instantiates one, applies the observations
+    it is sent, and reports what its own copy says. So this belongs to the sensors and to the
+    engine they build with -- not to sim2's core, which only instantiates a backend, publishes
+    observations and takes actions, and has no business knowing that anything is watching.
     """
-    from dimos.sim2.backend import load_backend
+    from dimos.sim2.mujoco.view import MujocoView
 
-    return load_backend(description["backend"]).view(description)
+    return MujocoView(description)

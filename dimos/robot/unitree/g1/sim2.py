@@ -44,8 +44,8 @@ from dimos.robot.unitree.g1.wholebody_connection import G1_JOINT_NAMES
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view
 from dimos.sim2.spec import Servo, SimulatedRobot
-from dimos.sim2.view import WorldView, open_view
 from dimos.sim2.world_observations import WorldMirror
 from dimos.utils.logging_config import setup_logger
 

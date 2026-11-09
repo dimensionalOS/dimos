@@ -28,9 +28,9 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, sensor_frame
 from dimos.sim2.sensor_usd import frame_usd
 from dimos.sim2.spec import SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
 
 

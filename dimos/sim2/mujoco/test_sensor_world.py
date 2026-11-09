@@ -18,8 +18,8 @@ import numpy as np
 import pytest
 
 from dimos.sim2.assets.toy import toy_robot
+from dimos.sim2.mujoco.sensor_world import open_view, sensor_frame
 from dimos.sim2.spec import SimulatedRobot, SimulatedSensor
-from dimos.sim2.view import open_view, sensor_frame
 from dimos.sim2.world_observations import WorldMirror, WorldWriter
 
 

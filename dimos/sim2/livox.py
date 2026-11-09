@@ -36,8 +36,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.module import Simulation, SimulationSpec
+from dimos.sim2.mujoco.sensor_world import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.spec import SimulatedSensor
-from dimos.sim2.view import WorldView, open_view, rotation_matrix, sensor_frame
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
 from dimos.simulation.sensors.mid360.lidar import sim_mid360
