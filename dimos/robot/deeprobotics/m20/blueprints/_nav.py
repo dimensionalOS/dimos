@@ -38,6 +38,7 @@ def m20_nav_stack(embodiment: Embodiment = M20) -> Blueprint:
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_M,
             max_range=25.0,
+            pre_trace_subsample=5,
             ray_subsample=5,
             emit_every=1,
             global_emit_every=50,
