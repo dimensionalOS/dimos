@@ -14,9 +14,9 @@
 
 """Every sensor describes itself in USD, and describes the frame it was configured with.
 
-A sensor that answers with a hardcoded frame name looks right in a one-robot world and silently
+A sensor answering with a hardcoded frame name looks right in a one-robot world and silently
 collides in a three-robot one, so the point of each of these is the *configured* frame coming
-back, not merely that a layer came back.
+back.
 """
 
 import math
@@ -65,9 +65,7 @@ def test_a_sensor_describes_itself_at_the_frames_it_was_given(
 
 def test_a_camera_says_what_it_can_see_from_its_frame() -> None:
     """A frame is a pose; a camera is a pose and some optics, and USD has somewhere to put both.
-
-    Stated in the layer rather than only in this module's config, so anything that wants to draw
-    what this camera can see has it from the scene the manager composed.
+    Stated in the layer rather than only in this module's config.
     """
     from pxr import Usd, UsdGeom
 

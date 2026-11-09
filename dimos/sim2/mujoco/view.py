@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A WorldView drawn by MuJoCo: its own model of the composed scene, posed from world_observations.
+"""A WorldView drawn by MuJoCo: its own model of the composed scene, posed from
+world_observations.
 
 Never the engine's model. This compiles the same layer the engine did -- the one the manager
-composed, which `get_scene` answers with -- adds whatever the sensor needs at its own mount, and
-poses it from the observations. So a camera draws the furniture that is really there, a lidar
-ranges against it, and neither reads a physics engine or needs the simulation to tell it
-anything.
+composed -- adds whatever the sensor needs at its own mount, and poses it from the
+observations. So neither a camera nor a lidar reads a physics engine.
 """
 
 from collections.abc import Iterable, Sequence
@@ -138,21 +137,14 @@ class MujocoView:
     ) -> MujocoRaycaster:
         """Rays against ``groups``; ``mounted_at`` names a frame whose own body they pass through.
 
-        A ranging sensor is bolted to something, and in a model it sits inside that something's
-        collision hull rather than proud of its surface -- a hull is a few convex shapes around
-        a shape that is neither. Cast against collision geometry without saying so and every
-        ray, in every direction, returns the mount a couple of centimetres away; a sensor that
-        drops returns inside its blind range then reports nothing at all.
+        A ranging sensor sits inside its mount's collision hull rather than proud of its surface, so
+        casting without saying so returns the mount a couple of centimetres away in every direction --
+        which a sensor that drops returns inside its blind range reports as an empty scan. Excluding
+        the one body it is mounted on needs no distance picked by hand.
 
-        Excluding the one body the sensor is mounted on says only "a sensor does not see its own
-        housing", which is true of every sensor on every robot and needs no distance picked by
-        hand. Everything else stays visible, the arms and legs hanging off that mount included.
-
-        ``blind_to`` names any further frames to ignore, for the cases that rule does not cover:
-        a radome, a mast the sensor looks past, a wall a test wants out of the way. MuJoCo can
-        exclude one body from a cast, so these are moved instead to a geom group the cast does
-        not read -- in this view's own model, and a geom's group is a label it selects and draws
-        by, never one it simulates by.
+        ``blind_to`` names further frames to ignore. MuJoCo can exclude only one body from a cast, so
+        these are moved to a geom group the cast does not read -- a label, never something it
+        simulates by.
         """
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
         for frame in blind_to or ():
@@ -174,15 +166,10 @@ class MujocoView:
     def _mount(self, frame: str) -> int:
         """The body ``frame`` is attached to: the nearest one at or above it that has any geometry.
 
-        A mount frame used to be a site, whose body is whatever it was placed on. Described in
-        USD it is a link of its own, welded to the thing it is bolted to -- the G1's mid360_link
-        hangs off torso_link rather than marking a spot on it -- and a frame carries no geometry,
-        so taking it at face value excluded a body with nothing in it. The housing stayed visible,
-        every ray came back 22 mm away inside the sensor's blind range, and the scan came out
-        empty: the exact failure this exclusion exists to prevent.
-
-        Walking up stops short of the world, whose geometry is the floor and the last thing a
-        ranging sensor should be blind to.
+        In USD a mount frame is a link of its own, welded to the thing it is bolted to, and carries no
+        geometry -- so taking it at face value excluded a body with nothing in it, every ray came back
+        22 mm away inside the blind range, and the scan came out empty. Walking up stops short of the
+        world, whose geometry is the floor.
         """
         kind, index = self._frame(frame)
         if kind == mujoco.mjtObj.mjOBJ_SITE:
@@ -220,12 +207,8 @@ class MujocoView:
         return angular, world_from_sensor.T @ (acceleration - _GRAVITY), quat
 
     def _frame(self, frame: str) -> tuple[int, int]:
-        """A body, site or camera, by the name the world calls it.
-
-        Resolved rather than looked up, because off a USD layer MuJoCo names everything by its
-        prim path: the crate the observations call "crate" is "/scene/Geometry/crate" in here,
-        and the entities are published under the short name on purpose -- nobody can address a
-        prim path. `resolve` is the same rule the rest of this engine uses for the same reason.
+        """A body, site or camera, by the name the world calls it. Resolved rather than looked up,
+        because off a USD layer MuJoCo names everything by its prim path.
         """
         if frame not in self._frames:
             for kind in (
@@ -242,11 +225,9 @@ class MujocoView:
         return self._frames[frame]
 
     def owner(self, frame: str) -> str | None:
-        """The robot whose subtree this frame is in, by the id the world announced; None for the room's.
-
-        A sensor bolted to a robot sometimes needs to know which one -- the L1 publishes a map
-        centred on the robot it rides -- and a frame's own name says so, because a robot's parts
-        are all called "<id>/<something>".
+        """The robot whose subtree this frame is in, by the id the world announced; None for the
+        room's. A sensor bolted to a robot sometimes needs to know which one (the L1 publishes a map
+        centred on the robot it rides), and a robot's parts are all called "<id>/<something>".
         """
         kind, index = self._frame(frame)
         name = mujoco.mj_id2name(self.model, kind, index) or ""
@@ -282,13 +263,9 @@ class MujocoView:
     ) -> tuple[int, NDArray[np.float64], NDArray[np.float64]]:
         """The body whose joint moves ``body``, and where that body has to go to put it here.
 
-        A robot grafted into a scene hangs off a mount frame, and the free joint is on the frame
-        rather than on the robot's own root: MuJoCo takes a free joint only on a top-level body.
-        So a view told "this robot is at x" has to move the frame, not the root, and the two sit
-        a fixed distance apart -- the offset the graft put between them.
-
-        Rigid, so the offset is read once off the model's reference pose and never changes. Where
-        the posed body is itself the one with the joint, this is the identity and says so.
+        A grafted robot hangs off a mount frame and the free joint is on the frame, not the robot's
+        root (MuJoCo takes one only on a top-level body), so a view told "this robot is at x" moves the
+        frame. The fixed offset is read once off the model's reference pose.
         """
         model = self.model
         holder = body
@@ -320,16 +297,10 @@ class MujocoView:
     def _root(self, robot_id: str) -> int:
         """The body everything else on this robot hangs off, found in the model rather than named.
 
-        The robot's bodies are all called "<id>/<something>"; its root is the one whose *parent*
-        is not. That holds whether the robot was attached to the worldbody or arrived composed
-        into a room -- where nothing is top-level but the room itself, which is what broke the
-        older rule of "the top-level body whose name starts with the id".
-
-        It also means a view needs no description of the robot at all: which body is the root is
-        a fact about the world it is looking at, and reading it there cannot disagree with it.
-
-        Cached like _joint and _frame: the model is fixed once compiled, and an IMU reading this
-        200 times a second would otherwise rescan every body in the scene each time.
+        The robot's bodies are all "<id>/<something>"; its root is the one whose *parent* is not. That
+        holds whether it was attached to the worldbody or arrived composed into a room, where nothing
+        is top-level but the room -- which broke the older rule. Cached, because an IMU reading this
+        200 times a second would otherwise rescan every body in the scene.
         """
         if robot_id not in self._robot_roots:
             model, prefix = self.model, f"{robot_id}/"

@@ -14,16 +14,10 @@
 
 """What the blueprint tells a world about each robot in it, as `sim_module(robots=[...])`.
 
-A robot and nothing else, and very little of that. A *sensor* used to be in here too, saying
-what kind of thing it was and how wide its field of view -- which made core's business
-include the difference between a camera and a lidar, and left an engine deciding what to build
-for each. A sensor now builds its own world out of the scene and renders from it, so what it is
-stays between the sensor and whatever it renders with.
-
-A robot's *gains* used to be here too, as a servo per joint. They are a fact about the robot and
-they live in its layer now (`usd_with_drives`), where whatever runs it reads them from the same
-place a real one would. What is left is what a layer cannot say: the name the world calls this
-robot, and how often its controller acts.
+A robot and very little of that: a sensor builds its own world out of the scene, and a robot's
+gains live in its layer (`usd_with_drives`), where whatever runs it reads them from the same
+place a real one would. What is left is what a layer cannot say -- the name the world calls
+this robot, and how often its controller acts.
 """
 
 from collections.abc import Iterable
@@ -50,10 +44,9 @@ class SimulatedRobot:
     def root_body(self) -> str:
         """The body everything else on this robot hangs off, as its own layer names it.
 
-        Read from the description rather than stated beside it. A layer already says which of its
-        links is the root -- it is the one no joint has as a child -- so a description that said
-        so again could disagree with the robot it is describing, and the only way to find out
-        would be a world that compiled with the wrong body as its base.
+        Read from the description rather than stated beside it: a layer already says which of its
+        links is the root, so a description that said so again could disagree with the robot it is
+        describing.
         """
         return self.model.root_link
 

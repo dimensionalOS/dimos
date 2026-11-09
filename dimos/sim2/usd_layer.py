@@ -14,15 +14,13 @@
 
 """A described model as a USD file a physics engine can open.
 
-A description carries a ``UsdModel``, which may be a layer that exists nowhere: a robot's
-committed layer with its sensor mounts added is new text, and so is a scene composed out of
-several subtrees. An engine opens a *file*, and a layer's references are relative to wherever it
-was written, so handing it one means writing the text out with its asset paths resolved first.
+A ``UsdModel`` may be a layer that exists nowhere: a robot's committed layer with its sensor
+mounts added is new text, and so is a composed scene. An engine opens a *file*, and a layer's
+references are relative to wherever it was written, so handing it one means writing the text
+out with its asset paths resolved.
 
-Written under a content hash and reused. That matters for more than speed: the world is compiled
-in more than one process -- the world steps it while a sensor's own copy draws it -- and each
-would otherwise write its own copy and name it something different, which is exactly
-what a renderer asking for a model by name cannot cope with.
+Written under a content hash and reused, because the world is compiled in more than one
+process and each would otherwise name its own copy something different.
 """
 
 from collections.abc import Callable
@@ -43,10 +41,9 @@ _ASSETS = Path(tempfile.gettempdir()) / "dimos-usd-assets"
 
 
 def usd_layer(model: UsdModel) -> Path:
-    """``model``'s layer as a file, with every asset path it names resolved; reused while it does not change.
-
-    The same layer always lands at the same path, so two processes compiling one world agree on
-    what to call the robot they are drawing.
+    """``model``'s layer as a file, with every asset path it names resolved; reused while it does
+    not change. The same layer always lands at the same path, so two processes compiling one world
+    agree on what to call the robot they are drawing.
     """
     from dimos.robot.assets.usd import resolve_usd_assets
 
@@ -58,10 +55,8 @@ def usd_layer(model: UsdModel) -> Path:
 
 
 def layer_file(layer: str, called: str = "layer") -> Path:
-    """A layer's text as a file, under a hash of itself; written once and reused.
-
-    The same layer always lands at the same path, so two processes that compiled one world agree
-    on what to call the thing they are each holding.
+    """A layer's text as a file, under a hash of itself; written once and reused, so two processes
+    that compiled one world agree on what to call the thing they are each holding.
     """
     out = _CACHE / f"{called}-{hashlib.sha256(layer.encode()).hexdigest()[:16]}.usda"
     if not out.exists():
@@ -84,24 +79,16 @@ def _name_of(model: UsdModel) -> str:
 def scene_as_files(usd: str, fetch: Callable[[str], bytes]) -> Path:
     """``usd`` written out as a file, with every asset it names fetched to disk beside it.
 
-    A scene arrives as one string naming its meshes rather than pointing at them -- which is what
-    lets it reach a consumer that shares no filesystem with whoever composed it. An engine opens
-    files, so somebody has to turn those names back into files, and this is that somebody for
-    anything that is going to open the scene rather than draw it lazily.
+    A scene arrives as one string naming its meshes, which is what lets it reach a consumer that
+    shares no filesystem with whoever composed it; an engine opens files, so this turns those names
+    back into files.
 
-    Every way a prim can name a file is rewritten, not just the obvious one. A mesh is a
-    **reference arc** to a sidecar, its original is named in `assetInfo["identifier"]`, and a
-    texture is a plain asset-valued attribute. Walking only the attributes found three assets in
-    a room of three and a half thousand and the engine then refused the first desk: "at least 4
-    vertices required", which is what an unresolved mesh looks like by the time anyone sees it.
+    Every way a prim can name a file is rewritten: a mesh is a **reference arc** to a sidecar, its
+    original is in `assetInfo["identifier"]`, and a texture is a plain asset-valued attribute.
+    Walking only the attributes found three assets in a room of three and a half thousand, and the
+    engine refused the first desk with "at least 4 vertices required".
 
-    Fetched once per machine, not once per process, and keyed by **content**: a layer that says
-    what an asset's hash is gets that asset skipped if those bytes are already on disk, and one
-    that does not gets it fetched and then keyed by the hash of what came back. The same bytes
-    are never stored twice and an unchanged mesh is never asked for again.
-
-    ``fetch`` is how a name becomes bytes: the asker knows who published the scene, and this
-    does not need to.
+    Fetched once per machine, keyed by **content**. ``fetch`` is how a name becomes bytes.
     """
     from dimos.robot.assets.usd import _layer_from, _pxr, asset_attributes
 
