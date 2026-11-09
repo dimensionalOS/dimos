@@ -22,8 +22,10 @@ so every assertion is deterministic.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import time
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.control.components import (
@@ -55,9 +57,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.message_utils import time as message_time
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -95,10 +98,25 @@ class TeleopStub(BaseControlTask):
 def _trajectory() -> JointTrajectory:
     """One second from the arm's current pose to +0.5 rad on every joint."""
     return JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         joint_names=list(ARM_JOINTS),
         points=[
-            TrajectoryPoint(positions=list(ARM_POSITIONS), time_from_start=0.0),
-            TrajectoryPoint(positions=[p + 0.5 for p in ARM_POSITIONS], time_from_start=1.0),
+            JointTrajectoryPoint(
+                positions=np.asarray(list(ARM_POSITIONS), dtype=np.float64),
+                velocities=np.asarray(np.zeros(len(list(ARM_POSITIONS))), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
+            ),
+            JointTrajectoryPoint(
+                positions=np.asarray([p + 0.5 for p in ARM_POSITIONS], dtype=np.float64),
+                velocities=np.asarray(
+                    np.zeros(len([p + 0.5 for p in ARM_POSITIONS])), dtype=np.float64
+                ),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(1.0),
+            ),
         ],
     )
 

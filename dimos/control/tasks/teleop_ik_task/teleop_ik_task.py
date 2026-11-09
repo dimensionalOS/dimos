@@ -20,6 +20,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import attrs
@@ -31,12 +32,14 @@ from dimos.control.tasks.pose_target_ik import (
     PoseTargetIKTask,
     PoseTargetIKTaskConfig,
     PoseTargetIKTaskParams,
+    pose_target_value,
     string_tuple_converter,
 )
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos.messages.std_msgs.msg import Header, UInt32
 from dimos.protocol.service.spec import BaseConfig
 from dimos.teleop.webxr.controller_types import Buttons
 
@@ -173,12 +176,7 @@ class TeleopIKTask(PoseTargetIKTask):
     ) -> bool:
         if hand not in self._bindings:
             return False
-        sample = PoseStamped(
-            ts=pose.ts if isinstance(pose, PoseStamped) else 0.0,
-            frame_id=pose.frame_id if isinstance(pose, PoseStamped) else "",
-            position=pose.position,
-            orientation=pose.orientation,
-        )
+        sample = pose_target_value(pose)
         with self._lock:
             if self._session_state is _SessionState.ESTOPPED:
                 return False
@@ -187,11 +185,12 @@ class TeleopIKTask(PoseTargetIKTask):
             state.last_update_time = t_now
         return True
 
-    def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
+    def on_teleop_buttons(self, msg: Buttons | UInt32, t_now: float) -> bool:
         """Update the all-bound-hands deadman condition."""
+        buttons = Buttons(msg.data)
         grip_by_hand = {
-            OperatorHand.LEFT: msg.left_grip,
-            OperatorHand.RIGHT: msg.right_grip,
+            OperatorHand.LEFT: buttons.left_grip,
+            OperatorHand.RIGHT: buttons.right_grip,
         }
         with self._lock:
             self._last_button_update_time = t_now
@@ -267,11 +266,26 @@ class TeleopIKTask(PoseTargetIKTask):
                 robot_reference = hand_state.robot_reference
                 if current is None or controller_reference is None or robot_reference is None:
                     return None
-                delta = current - controller_reference
+                translation = geometry.vector_array(current.pose.position) - geometry.vector_array(
+                    controller_reference.pose.position
+                )
+                rotation = geometry.quaternion_product(
+                    current.pose.orientation,
+                    geometry.quaternion_inverse(controller_reference.pose.orientation),
+                )
                 targets[binding.target_frame] = PoseStamped(
-                    frame_id=self._teleop_config.robot_model.base_pose.frame_id,
-                    position=robot_reference.position + delta.position,
-                    orientation=delta.orientation * robot_reference.orientation,
+                    header=Header(
+                        stamp=message_time.time_from_seconds(time.time()),
+                        frame_id=self._teleop_config.robot_model.base_pose.header.frame_id,
+                    ),
+                    pose=Pose(
+                        position=geometry.point_from_array(
+                            geometry.vector_array(robot_reference.pose.position) + translation
+                        ),
+                        orientation=geometry.quaternion_product(
+                            rotation, robot_reference.pose.orientation
+                        ),
+                    ),
                 )
                 update_times.append(hand_state.last_update_time)
             return FrameTargetSnapshot(

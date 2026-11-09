@@ -17,6 +17,7 @@
 from dataclasses import dataclass
 import math
 import sys
+import time
 from typing import Any
 
 import numpy as np
@@ -35,9 +36,10 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 @dataclass(frozen=True)
@@ -231,10 +233,14 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             [joint_space.normalize_positions(position) for position in canonical_positions]
         )
         points = [
-            TrajectoryPoint(
-                time_from_start=time,
-                positions=list(position),
-                velocities=[float(velocity[index]) for index in output_indices],
+            JointTrajectoryPoint(
+                positions=np.asarray(list(position), dtype=np.float64),
+                velocities=np.asarray(
+                    [float(velocity[index]) for index in output_indices], dtype=np.float64
+                ),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(time),
             )
             for time, position, velocity in zip(
                 times,
@@ -244,6 +250,7 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             )
         ]
         return JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=list(selection.joint_names),
             points=points,
         )

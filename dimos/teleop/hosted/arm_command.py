@@ -19,20 +19,26 @@ from the broker."""
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 import time
 from typing import Any
 
-from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
+from dimos_cdrgen.registry import decode as cdr_decode
 from reactivex.disposable import Disposable
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    PoseStamped,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos.messages.std_msgs.msg import Float32, Header
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.controller_types import Hand
@@ -75,7 +81,8 @@ class ArmCommandModule(ArmTeleopModule):
         self._last_stale_warn = 0.0
         self._last_future_warn = 0.0
 
-        self._decoders[LCMTwistStamped._get_packed_fingerprint()] = self._on_twist_bytes
+        self._command_types["twist"] = TwistStamped
+        self._decoders["twist"] = self._on_twist_bytes
 
     # No local WebSocket server — the operator connects through the broker.
     def _start_server(self) -> None:
@@ -103,25 +110,20 @@ class ArmCommandModule(ArmTeleopModule):
     # ─── Inbound command plane (operator → robot) ─────────────────────
 
     def _on_cmd_raw(self, data: Any) -> None:
-        """Fingerprint-dispatch LCM bytes (Pose/Joy inherited, Twist added here)."""
+        """Dispatch the shared data-frame envelope with canonical CDR payloads."""
         if isinstance(data, str):
             data = data.encode()
-        decoder = self._decoders.get(data[:8])
-        if decoder is None:
-            return
-        try:
-            decoder(data)
-        except Exception:
-            logger.warning("cmd_raw decode failed", exc_info=True)
+        if isinstance(data, bytes):
+            self._dispatch_binary_message(data)
 
     def _on_pose_bytes(self, data: bytes) -> None:
         """Controller pose → robot frame; stale/future/out-of-order dropped."""
-        msg = PoseStamped.lcm_decode(data)
+        msg = cdr_decode(data, PoseStamped)
         try:
-            hand = self._resolve_hand(msg.frame_id)
+            hand = self._resolve_hand(msg.header.frame_id)
         except ValueError:
             return
-        ts = float(msg.ts)
+        ts = message_time.to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
         age = time.time() - ts
@@ -143,13 +145,14 @@ class ArmCommandModule(ArmTeleopModule):
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
+            self._pose_headers[hand] = deepcopy(msg.header)
 
     def _on_twist_bytes(self, data: bytes) -> None:
         """Browser keyboard EE-twist → coordinator's eef_twist task."""
         if self._estopped:
             return
-        msg = TwistStamped.lcm_decode(data)
-        ts = float(msg.ts)
+        msg = cdr_decode(data, TwistStamped)
+        ts = message_time.to_seconds(msg.header.stamp)
         if not math.isfinite(ts):
             return
         age = time.time() - ts
@@ -159,26 +162,28 @@ class ArmCommandModule(ArmTeleopModule):
                 self._last_stale_warn = now
                 logger.warning("dropping stale ee_twist: age=%.2fs — operator link lagging", age)
             return
-        if age < 0:  # future-stamped: don't advance _last_twist_ts (would stall the jog)
+        if age < 0:  # future-stamped: don't advance the watermark (would stall the jog)
             now = time.monotonic()
             if now - self._last_future_warn >= 1.0:
                 self._last_future_warn = now
                 logger.warning("dropping future-stamped ee_twist — operator clock sync likely off")
             return
-        if ts <= self._last_twist_ts:  # out-of-order
+        if ts <= self._last_twist_ts:
             return
         self._last_twist_ts = ts
         with self._lock:
             scale = self._translation_scale
         self.ee_twist_command.publish(
             TwistStamped(
-                linear=[
-                    msg.linear.x * scale,
-                    msg.linear.y * scale,
-                    msg.linear.z * scale,
-                ],
-                angular=[msg.angular.x, msg.angular.y, msg.angular.z],
-                ts=msg.ts,
+                Header(deepcopy(msg.header.stamp), ""),
+                Twist(
+                    Vector3(
+                        msg.twist.linear.x * scale,
+                        msg.twist.linear.y * scale,
+                        msg.twist.linear.z * scale,
+                    ),
+                    deepcopy(msg.twist.angular),
+                ),
             )
         )
 

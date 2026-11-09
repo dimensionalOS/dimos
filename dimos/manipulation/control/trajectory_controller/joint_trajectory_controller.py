@@ -33,15 +33,18 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointCommand import JointCommand
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.RobotState import RobotState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import JointCommand, RobotState, TrajectoryStatus
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -178,7 +181,7 @@ class JointTrajectoryController(Module):
                 return False
 
             # Validate trajectory
-            if trajectory is None or trajectory.duration <= 0:
+            if trajectory is None or trajectory_utils.duration(trajectory) <= 0:
                 logger.warning("Invalid trajectory: None or zero duration")
                 return False
 
@@ -198,7 +201,7 @@ class JointTrajectoryController(Module):
 
             logger.info(
                 f"Executing trajectory: {len(trajectory.points)} points, "
-                f"duration={trajectory.duration:.3f}s"
+                f"duration={trajectory_utils.duration(trajectory):.3f}s"
             )
             return True
 
@@ -255,18 +258,21 @@ class JointTrajectoryController(Module):
 
             if self._trajectory is not None and self._state == TrajectoryState.EXECUTING:
                 time_elapsed = time.time() - self._start_time
-                time_remaining = max(0.0, self._trajectory.duration - time_elapsed)
+                time_remaining = max(
+                    0.0, trajectory_utils.duration(self._trajectory) - time_elapsed
+                )
                 progress = (
-                    min(1.0, time_elapsed / self._trajectory.duration)
-                    if self._trajectory.duration > 0
+                    min(1.0, time_elapsed / trajectory_utils.duration(self._trajectory))
+                    if trajectory_utils.duration(self._trajectory) > 0
                     else 1.0
                 )
 
             return TrajectoryStatus(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 state=self._state,
                 progress=progress,
-                time_elapsed=time_elapsed,
-                time_remaining=time_remaining,
+                time_elapsed=message_time.duration_from_seconds(time_elapsed),
+                time_remaining=message_time.duration_from_seconds(time_remaining),
                 error=self._error_message,
             )
 
@@ -281,7 +287,7 @@ class JointTrajectoryController(Module):
     def _on_trajectory(self, msg: JointTrajectory) -> None:
         """Callback when trajectory is received via topic."""
         logger.info(
-            f"Received trajectory via topic: {len(msg.points)} points, duration={msg.duration:.3f}s"
+            f"Received trajectory via topic: {len(msg.points)} points, duration={trajectory_utils.duration(msg):.3f}s"
         )
         self.execute_trajectory(msg)
 
@@ -313,17 +319,22 @@ class JointTrajectoryController(Module):
                         if self._trajectory is None:
                             self._state = TrajectoryState.FAULT
                             logger.error("Trajectory is None during execution")
-                        elif t >= self._trajectory.duration:
+                        elif t >= trajectory_utils.duration(self._trajectory):
                             self._state = TrajectoryState.COMPLETED
                             logger.info(
-                                f"Trajectory completed: duration={self._trajectory.duration:.3f}s"
+                                f"Trajectory completed: duration={trajectory_utils.duration(self._trajectory):.3f}s"
                             )
                         else:
                             # Sample trajectory
-                            q_ref, _qd_ref = self._trajectory.sample(t)
+                            q_ref, _qd_ref = trajectory_utils.sample(self._trajectory, t)
 
                             # Create and publish command (outside lock would be better but simpler here)
-                            cmd = JointCommand(positions=q_ref, timestamp=time.time())
+                            cmd = JointCommand(
+                                header=Header(
+                                    stamp=message_time.time_from_seconds(time.time()), frame_id=""
+                                ),
+                                positions=np.asarray(q_ref, dtype=np.float64),
+                            )
 
                             # Publish - must release lock first for thread safety
                             trajectory_active = True

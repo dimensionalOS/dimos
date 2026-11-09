@@ -15,8 +15,10 @@
 """Tests for the compatibility trajectory parametrizer Spec implementation."""
 
 from pathlib import Path
+import time
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
@@ -43,8 +45,10 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
 from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import (
     SimpleTrapezoidParametrizer,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -64,7 +68,10 @@ def _selection() -> PlanningGroupSelection:
 def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
     config = RobotModelConfig(
         model=RobotModel.from_file(Path("/robot.urdf")),
-        base_pose=PoseStamped(),
+        base_pose=PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         joint_names=["arm/a", "arm/b"],
         base_link="base",
     )
@@ -97,9 +104,27 @@ def _result() -> PlanningResult:
     return PlanningResult(
         status=PlanningStatus.SUCCESS,
         path=[
-            JointState(name=names, position=[0.0, 0.0]),
-            JointState(name=names, position=[0.2, 0.1]),
-            JointState(name=names, position=[0.4, 0.0]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([0.0, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([0.2, 0.1], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray([0.4, 0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         ],
     )
 
@@ -124,10 +149,10 @@ def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
     assert plan.group_ids == ("manipulator",)
     assert plan.trajectory.joint_names == ["arm/a", "arm/b"]
     assert len(plan.trajectory.points) == 9
-    assert plan.trajectory.points[0].positions == [0.0, 0.0]
-    assert plan.trajectory.points[4].positions == [0.2, 0.1]
-    assert plan.trajectory.points[-1].positions == [0.4, 0.0]
-    assert [state.position for state in result.path] == [
+    assert list(plan.trajectory.points[0].positions) == [0.0, 0.0]
+    assert list(plan.trajectory.points[4].positions) == [0.2, 0.1]
+    assert list(plan.trajectory.points[-1].positions) == [0.4, 0.0]
+    assert [list(state.position) for state in result.path] == [
         [0.0, 0.0],
         [0.2, 0.1],
         [0.4, 0.0],

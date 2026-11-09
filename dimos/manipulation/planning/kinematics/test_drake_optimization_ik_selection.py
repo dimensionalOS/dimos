@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -31,8 +32,10 @@ from dimos.manipulation.planning.spec.joint_space import (
 )
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
@@ -42,7 +45,7 @@ class FakeWorld:
             model=RobotModel.from_file(Path("/tmp/fake.urdf")),
             joint_names=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
         )
-        self.current_state = JointState(
+        self.current_state = joint_state_utils.from_mapping(
             {
                 "name": ["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
                 "position": [1.0, 2.0, 3.0, 4.0],
@@ -95,7 +98,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
         calls.append(kwargs)
         return IKResult(
             status=IKStatus.SUCCESS,
-            joint_state=JointState(
+            joint_state=joint_state_utils.from_mapping(
                 {
                     "name": ["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
                     "position": [10.0, 20.0, 30.0, 40.0],
@@ -110,8 +113,15 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
 
     result = DrakeOptimizationIK().solve_pose_targets(
         world=world,  # type: ignore[arg-type]
-        pose_targets={group: PoseStamped()},
-        seed=JointState({"name": ["arm/shoulder"], "position": [22.0]}),
+        pose_targets={
+            group: PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                pose=Pose(
+                    position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+                ),
+            )
+        },
+        seed=joint_state_utils.from_mapping({"name": ["arm/shoulder"], "position": [22.0]}),
         check_collision=False,
         max_attempts=1,
     )
@@ -119,7 +129,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
     assert result.is_success()
     assert result.joint_state is not None
     assert result.joint_state.name == ["arm/shoulder", "arm/wrist"]
-    assert result.joint_state.position == [20.0, 40.0]
+    assert list(result.joint_state.position) == [20.0, 40.0]
     assert calls[0]["target_frame_name"] == "group_tip_link"
     np.testing.assert_allclose(calls[0]["seed"], [1.0, 22.0, 3.0, 4.0])
     assert calls[0]["locked_joint_positions"] == {0: 1.0, 2: 3.0}

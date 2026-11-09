@@ -19,6 +19,7 @@ validated closed-loop against the in-repo FOPDT plant sim."""
 from __future__ import annotations
 
 import math
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -42,12 +43,10 @@ from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_ta
     DEFAULT_ARTIFACT_PATH,
     create_task,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.std_msgs.msg import Float32, Header
 from dimos.utils.trigonometry import angle_diff
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
@@ -56,8 +55,10 @@ _DT = 0.1
 
 def _pose(x=0.0, y=0.0, yaw=0.0):
     return PoseStamped(
-        position=Vector3(x, y, 0.0),
-        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(
+            position=Point(x, y, 0.0), orientation=geometry.quaternion_from_euler(0.0, 0.0, yaw)
+        ),
     )
 
 
@@ -107,7 +108,7 @@ def _run_closed_loop(task, path, max_ticks=2400, on_tick=None):
                 t=k * _DT,
                 pose=_pose(plant.x, plant.y, plant.yaw),
                 cmd_twist=Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz)),
-                actual_twist=Twist(),
+                actual_twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)),
             )
         )
         if on_tick is not None:
@@ -165,7 +166,10 @@ def test_set_speed_refused_while_active():
 
 def test_rejects_pure_rotation_path():
     task = _task()
-    path = Path(poses=[_pose(0, 0, 0.0), _pose(0, 0, 1.0)])
+    path = Path(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        poses=[_pose(0, 0, 0.0), _pose(0, 0, 1.0)],
+    )
     assert not task.start_path(path, _pose())
 
 
@@ -175,7 +179,7 @@ def test_compute_without_pose_commands_zero():
     state = CoordinatorState(joints=JointStateSnapshot(), t_now=0.0, dt=_DT)
     out = task.compute(state)
     assert out is not None
-    assert out.velocities == [0.0, 0.0, 0.0]
+    assert list(out.velocities) == [0.0, 0.0, 0.0]
 
 
 # The distinctive capability: commanded yaw decoupled from travel direction
@@ -206,7 +210,9 @@ def test_strafes_holding_commanded_yaw():
     task = _task()
     plant, executed = _run_closed_loop(task, strafe_line(length=2.0))
     assert executed.arrived
-    max_yaw = max(abs(t.pose.orientation.euler[2]) for t in executed.ticks)
+    max_yaw = max(
+        abs(geometry.quaternion_euler(t.pose.pose.orientation)[2]) for t in executed.ticks
+    )
     assert max_yaw < 0.1, "robot rotated instead of strafing"
     assert plant.y == pytest.approx(2.0, abs=0.25)
     # The motion was carried by the lateral channel.
@@ -221,7 +227,9 @@ def test_crab_walks_square_holding_heading():
     task = _task()
     plant, executed = _run_closed_loop(task, path)
     assert executed.arrived
-    max_yaw = max(abs(t.pose.orientation.euler[2]) for t in executed.ticks)
+    max_yaw = max(
+        abs(geometry.quaternion_euler(t.pose.pose.orientation)[2]) for t in executed.ticks
+    )
     assert max_yaw < 0.1, "robot turned instead of crab-walking the square"
     score = score_run(path, executed)
     assert score.cte_rms < 0.15
@@ -284,7 +292,7 @@ def test_stops_inside_the_goal_when_the_plant_runs_hot():
             break
         hot.step(vx, vy, wz, _DT)
     assert task.get_state() == "arrived"
-    goal = path.poses[-1].position
+    goal = path.poses[-1].pose.position
     rest_err = math.hypot(hot.x - goal.x, hot.y - goal.y)
     assert rest_err < task._config.goal_tolerance, f"rested {rest_err:.3f} m from goal"
     # Came to rest, not still coasting through.
@@ -305,7 +313,10 @@ def test_replan_reprojects_without_reramp():
     assert speed_before > 0.3
 
     # Replan: a new strafe path starting at the robot (as a planner would emit).
-    path_b = Path(poses=[_pose(plant.x, plant.y + 2.0 * i / 40, 0.0) for i in range(41)])
+    path_b = Path(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        poses=[_pose(plant.x, plant.y + 2.0 * i / 40, 0.0) for i in range(41)],
+    )
     task.start_path(path_b, _pose(plant.x, plant.y, plant.yaw))
     speeds = []
     for k in range(30, 40):
@@ -353,7 +364,9 @@ def test_speed_regulator_slows_for_fast_yaw_stretch():
     poses = [_pose(i * 0.1, 0.0, 0.0) for i in range(11)]
     poses += [_pose(1.0 + i * 0.1, 0.0, (math.pi / 2) * i / 6) for i in range(1, 7)]
     poses += [_pose(1.6 + i * 0.1, 0.0, math.pi / 2) for i in range(1, 11)]
-    path = Path(poses=poses)
+    path = Path(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""), poses=poses
+    )
     task = _task(speed=0.8)
     v_by_x: dict[float, float] = {}
 

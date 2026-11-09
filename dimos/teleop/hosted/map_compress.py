@@ -27,13 +27,17 @@ import json
 import time
 from typing import Any
 
+import cv2
+import numpy as np
 from reactivex.disposable import Disposable
+from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+from dimos.message_utils import occupancy, time as message_time
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -79,20 +83,17 @@ class MapCompressModule(Module):
         if now - self._last_map_pub < 1.0 / self.config.map_hz:
             return
 
-        cells = grid.grid
-        if cells is None or cells.size == 0:
-            return
-
         # A bad frame must drop, not kill the RxPY costmap subscription.
         try:
-            import cv2
-
-            res = grid.resolution
+            cells = occupancy.view(grid)
+            if cells.size == 0:
+                return
+            res = grid.info.resolution
             img_cells = cells
             if 0 < res < self.config.map_min_resolution:
                 factor = max(1, round(self.config.map_min_resolution / res))
                 if factor > 1:
-                    img_cells = block_max_reduce(cells, factor)
+                    img_cells = occupancy.block_max_reduce(cells, factor)
                     res = res * factor
 
             ok, buf = cv2.imencode(".png", self._occupancy_to_bgra(img_cells))
@@ -102,7 +103,7 @@ class MapCompressModule(Module):
 
             # origin lets the browser place map + robot: cell = (world_xy - origin)/res.
             h, w = img_cells.shape[:2]
-            origin = grid.origin.position
+            origin = grid.info.origin.position
             payload = {
                 "type": "map",
                 "fmt": "png",
@@ -110,7 +111,7 @@ class MapCompressModule(Module):
                 "h": int(h),
                 "res": float(res),
                 "origin": [float(origin.x), float(origin.y)],
-                "stamp": float(grid.ts),
+                "stamp": message_time.to_seconds(grid.header.stamp),
                 "png_b64": png_b64,
             }
             data = json.dumps(payload, separators=(",", ":")).encode()
@@ -130,12 +131,14 @@ class MapCompressModule(Module):
         if now - self._last_odom_pub < 1.0 / self.config.odom_hz:
             return
         try:
+            q = pose.pose.orientation
+            heading = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_euler("xyz")[2]
             payload = {
                 "type": "odom",
-                "x": float(pose.position.x),
-                "y": float(pose.position.y),
-                "yaw": float(pose.orientation.to_euler().yaw),
-                "ts": float(pose.ts),
+                "x": float(pose.pose.position.x),
+                "y": float(pose.pose.position.y),
+                "yaw": float(heading),
+                "ts": message_time.to_seconds(pose.header.stamp),
             }
             self.map_out.publish(json.dumps(payload).encode())
         except Exception:
@@ -146,8 +149,6 @@ class MapCompressModule(Module):
     @staticmethod
     def _occupancy_to_bgra(cells: Any) -> Any:
         """Occupancy int8 {-1,0,1..100} → BGRA for PNG; unknown transparent."""
-        import numpy as np
-
         # (B, G, R, A) — RGB reversed for OpenCV.
         c_unknown = (0, 0, 0, 0)
         c_free = (68, 58, 30, 255)  # #1e3a44 dark cyan

@@ -17,13 +17,14 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import PoseStamped
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -48,18 +49,13 @@ def webxr_to_robot(
 ) -> PoseStamped:
     """WebXR controller pose → robot frame (left +90° Z, right -90° Z);
     preserves ts and frame_id."""
-    webxr_matrix = pose_to_matrix(pose_stamped)
+    webxr_matrix = geometry.pose_matrix(pose_stamped.pose)
 
     direction = 1 if is_left_controller else -1
     z_rotation = R.from_euler("z", 90 * direction, degrees=True).as_matrix()
     webxr_matrix[:3, :3] = webxr_matrix[:3, :3] @ z_rotation
 
     robot_matrix = WEBXR_TO_ROBOT_FRAME @ webxr_matrix
-    robot_pose = matrix_to_pose(robot_matrix)
+    robot_pose = geometry.pose_from_matrix(robot_matrix)
 
-    return PoseStamped(
-        position=robot_pose.position,
-        orientation=robot_pose.orientation,
-        ts=pose_stamped.ts,
-        frame_id=pose_stamped.frame_id,
-    )
+    return PoseStamped(header=deepcopy(pose_stamped.header), pose=robot_pose)

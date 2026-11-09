@@ -16,7 +16,9 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+import time
 
+import numpy as np
 import pytest
 
 from dimos.manipulation.planning.groups.discovery import (
@@ -34,7 +36,9 @@ from dimos.manipulation.planning.groups.utils import (
     normalize_joint_target,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import JointDescription, RobotModel
 
 
@@ -162,23 +166,50 @@ def test_normalize_joint_target_accepts_exact_or_unnamed_target() -> None:
     group = PlanningGroup("left_arm", ("left/j1", "left/j2"), "base", "tool")
     named = normalize_joint_target(
         group,
-        JointState(name=["left/j1", "left/j2"], position=[1.0, 2.0]),
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["left/j1", "left/j2"],
+            position=np.asarray([1.0, 2.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
-    unnamed = normalize_joint_target(group, JointState(position=[3.0, 4.0]))
+    unnamed = normalize_joint_target(
+        group,
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=[],
+            position=np.asarray([3.0, 4.0], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
     assert named.name == ["left/j1", "left/j2"]
     assert unnamed.name == ["left/j1", "left/j2"]
     with pytest.raises(ValueError, match="missing joints"):
         normalize_joint_target(
             group,
-            JointState(name=["j1", "j2"], position=[1.0, 2.0]),
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=["j1", "j2"],
+                position=np.asarray([1.0, 2.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
         )
 
 
 def test_state_projection_requires_exact_canonical_names() -> None:
-    state = JointState(name=["right/j1", "left/j2", "left/j1"], position=[3.0, 2.0, 1.0])
+    state = JointState(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        name=["right/j1", "left/j2", "left/j1"],
+        position=np.asarray([3.0, 2.0, 1.0], dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
     projected = filter_joint_state_to_selected_joints(state, ("left/j1", "right/j1"))
     assert projected.name == ["left/j1", "right/j1"]
-    assert projected.position == [1.0, 3.0]
+    assert list(projected.position) == [1.0, 3.0]
     assert joint_state_to_ordered_positions(
         state, joint_names=("left/j1", "left/j2", "right/j1")
     ).tolist() == [1.0, 2.0, 3.0]

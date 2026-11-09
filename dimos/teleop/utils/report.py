@@ -33,11 +33,11 @@ from typing import Any
 import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.message_utils import time as message_time
+from dimos.messages.dimos_msgs.msg import VideoStats
+from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos.messages.std_msgs.msg import UInt32
 from dimos.teleop.utils.stream_stats import pcts
-from dimos.teleop.utils.video_stats import VideoStats
-from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -48,7 +48,7 @@ _STREAM_TYPES = {
     "cmd_vel_stamped": TwistStamped,
     "left_controller_output": PoseStamped,
     "right_controller_output": PoseStamped,
-    "teleop_buttons": Buttons,
+    "teleop_buttons": UInt32,
     "video_stats": VideoStats,
 }
 
@@ -144,10 +144,9 @@ def _run_duration(records: dict[str, list[Any]]) -> float:
 
 
 def _summary(records: list[Any], stall_factor: float = 3.0) -> dict[str, Any]:
-    """Stats for one twist/pose/buttons stream, from each message's ``.ts``
-    (sender stamp). Buttons lacks ``.ts``, so its rate/jitter are ``None``."""
+    """Stats from generated Header timestamps; unstamped buttons have no rate."""
     count = len(records)
-    tss = [float(m.ts) for m in records if getattr(m, "ts", None) is not None]
+    tss = [message_time.to_seconds(m.header.stamp) for m in records if hasattr(m, "header")]
 
     intervals_ms = (np.diff(sorted(tss)) * 1000.0).tolist() if len(tss) >= 2 else []
     span = (tss[-1] - tss[0]) if len(tss) >= 2 else 0.0

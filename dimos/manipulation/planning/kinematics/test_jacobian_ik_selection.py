@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+import time
 
 import numpy as np
 
@@ -31,15 +32,18 @@ from dimos.manipulation.planning.spec.joint_space import (
     JointSpace,
 )
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _pose(x: float = 0.0) -> PoseStamped:
-    return PoseStamped(position=Vector3(x, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0))
+    return PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        pose=Pose(position=Point(x, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+    )
 
 
 def _group(tip_link: str | None = "tool") -> PlanningGroup:
@@ -92,7 +96,7 @@ class _World:
         return nullcontext(None)
 
     def get_joint_state(self, ctx: object) -> JointState:
-        return JointState(
+        return joint_state_utils.from_mapping(
             {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": [0.0, 0.0, 0.9]}
         )
 
@@ -116,7 +120,7 @@ def test_solve_pose_targets_filters_to_group_and_uses_group_world_methods() -> N
     result = JacobianIK(max_iterations=2).solve_pose_targets(
         world=world,
         pose_targets={_group(): _pose()},
-        seed=JointState(
+        seed=joint_state_utils.from_mapping(
             {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": [0.0, 0.0, 0.9]}
         ),
         max_attempts=1,

@@ -22,6 +22,7 @@ deltas, and publishes PoseStamped commands.
 """
 
 import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 import logging
@@ -31,8 +32,7 @@ import threading
 import time
 from typing import Any, TypeVar
 
-from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-from dimos_lcm.sensor_msgs import Joy as LCMJoy
+from dimos_cdrgen.registry import decode as cdr_decode, schema as cdr_schema
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,15 +44,25 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Joy import Joy
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import (
+    Pose,
+    PoseStamped,
+)
+from dimos.messages.sensor_msgs.msg import Joy
+from dimos.messages.std_msgs.msg import Header, String, UInt32
+from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot
 
 # Hand is re-exported for callers; it lives in controller_types.
 from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.protocol import (
+    ProtocolError,
+    decode_data_frame,
+    peek_data_frame_lengths,
+)
 from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger()
@@ -114,9 +124,9 @@ class WebXRTeleopModule(Module):
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
-    teleop_buttons: Out[Buttons]
-    button_pressed: Out[Buttons]
-    button_released: Out[Buttons]
+    teleop_buttons: Out[UInt32]
+    button_pressed: Out[UInt32]
+    button_released: Out[UInt32]
     status: In[String]
     body_tracking: Out[BodyTrackingSnapshot]
 
@@ -127,6 +137,7 @@ class WebXRTeleopModule(Module):
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._pose_headers: dict[Hand, Header] = {}
         self._controllers: dict[Hand, WebXRControllerState | None] = {
             Hand.LEFT: None,
             Hand.RIGHT: None,
@@ -147,11 +158,11 @@ class WebXRTeleopModule(Module):
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
 
-        # Fingerprint-based message dispatch table
-        self._decoders: dict[bytes, Any] = {
-            LCMPoseStamped._get_packed_fingerprint(): self._on_pose_bytes,
-            LCMJoy._get_packed_fingerprint(): self._on_joy_bytes,
+        self._command_types: dict[str, type[Any]] = {
+            "pose": PoseStamped,
+            "joy": Joy,
         }
+        self._decoders = {"pose": self._on_pose_bytes, "joy": self._on_joy_bytes}
 
         # Tracked here so subclasses can push from non-asyncio threads.
         # _clients_lock guards add/discard/snapshot of the set across the
@@ -178,6 +189,16 @@ class WebXRTeleopModule(Module):
         @self._web_server.app.get("/teleop/config")
         async def teleop_config() -> dict[str, Any]:
             return self._webxr_client_config()
+
+        @self._web_server.app.get("/teleop/schema")
+        async def command_schemas() -> dict[str, dict[str, str]]:
+            return {
+                channel: {
+                    "type": message_type.__msgtype__,
+                    "definition": cdr_schema(message_type.__msgtype__),
+                }
+                for channel, message_type in self._command_types.items()
+            }
 
         if STATIC_DIR.is_dir():
             self._web_server.app.mount(
@@ -235,13 +256,24 @@ class WebXRTeleopModule(Module):
         }
 
     def _dispatch_binary_message(self, data: bytes) -> bool:
-        fingerprint = data[:8]
-        decoder = self._decoders.get(fingerprint)
-        if decoder is None:
-            logger.warning("Unknown WebXR message fingerprint", fingerprint=fingerprint.hex())
+        try:
+            lengths = peek_data_frame_lengths(data)
+            if lengths is None or lengths[2] != len(data):
+                return False
+            frame = decode_data_frame(data)
+            message_type = self._command_types.get(frame.header.ch)
+            metadata = frame.header.meta or {}
+            if (
+                message_type is None
+                or metadata.get("encoding") != "cdr"
+                or metadata.get("type") != message_type.__msgtype__
+            ):
+                return False
+            validate_cdr_payload(frame.payload)
+            return self._decoders[frame.header.ch](frame.payload) is not False
+        except (ProtocolError, ValueError):
+            logger.warning("Dropping malformed WebXR command frame")
             return False
-        decoder(data)
-        return True
 
     def _dispatch_text_message(self, payload: str) -> bool:
         try:
@@ -367,6 +399,7 @@ class WebXRTeleopModule(Module):
                 self._is_engaged[hand] = False
                 self._initial_poses[hand] = None
                 self._current_poses[hand] = None
+                self._pose_headers.pop(hand, None)
                 self._controllers[hand] = None
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
@@ -392,6 +425,7 @@ class WebXRTeleopModule(Module):
             )
             if pose_stale:
                 self._current_poses[hand] = None
+                self._pose_headers.pop(hand, None)
                 self._last_pose_update[hand] = None
             if controller_stale:
                 self._controllers[hand] = None
@@ -446,23 +480,24 @@ class WebXRTeleopModule(Module):
         raise ValueError(f"Unexpected frame_id: {frame_id!r}, expected 'left' or 'right'")
 
     def _on_pose_bytes(self, data: bytes) -> None:
-        """Decode LCM bytes into PoseStamped, transform to robot frame."""
-        msg = PoseStamped.lcm_decode(data)
-        hand = self._resolve_hand(msg.frame_id)
+        """Decode canonical CDR, adapting only at the existing pose-math boundary."""
+        msg = cdr_decode(data, PoseStamped)
+        hand = self._resolve_hand(msg.header.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
+            self._pose_headers[hand] = deepcopy(msg.header)
             self._last_pose_update[hand] = time.monotonic()
 
     def _on_joy_bytes(self, data: bytes) -> bool:
-        """Decode LCM bytes into Joy, parse into WebXRControllerState."""
-        msg = Joy.lcm_decode(data)
-        hand = self._resolve_hand(msg.frame_id)
+        """Decode canonical CDR, retaining the internal controller-state API."""
+        msg = cdr_decode(data, Joy)
+        hand = self._resolve_hand(msg.header.frame_id)
         try:
             controller = WebXRControllerState.from_joy(msg, is_left=(hand == Hand.LEFT))
         except ValueError:
             logger.warning(
-                f"Malformed Joy for {hand.name}: axes={len(msg.axes or [])}, buttons={len(msg.buttons or [])}"
+                f"Malformed Joy for {hand.name}: axes={len(msg.axes)}, buttons={len(msg.buttons)}"
             )
             with self._lock:
                 self._controllers[hand] = None
@@ -597,12 +632,17 @@ class WebXRTeleopModule(Module):
         if current_pose is None or initial_pose is None:
             return None
 
-        delta = current_pose - initial_pose
+        translation = (
+            geometry.vector_array(current_pose.pose.position)
+            - geometry.vector_array(initial_pose.pose.position)
+        ) * self._translation_scale
+        rotation = geometry.quaternion_product(
+            current_pose.pose.orientation,
+            geometry.quaternion_inverse(initial_pose.pose.orientation),
+        )
         return PoseStamped(
-            position=delta.position * self._translation_scale,
-            orientation=delta.orientation,
-            ts=current_pose.ts,
-            frame_id=current_pose.frame_id,
+            header=deepcopy(current_pose.header),
+            pose=Pose(position=geometry.point_from_array(translation), orientation=rotation),
         )
 
     def _set_translation_scale(self, translation_scale: float) -> None:
@@ -612,15 +652,19 @@ class WebXRTeleopModule(Module):
         with self._lock:
             self._translation_scale = translation_scale
 
+    def _output_header(self, hand: Hand, output_msg: PoseStamped) -> Header:
+        return deepcopy(output_msg.header)
+
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Publish message for a controller.
 
         Override to customize output (e.g., convert to Twist, scale values).
         """
+        message = deepcopy(output_msg)
         if hand == Hand.LEFT:
-            self.left_controller_output.publish(output_msg)
+            self.left_controller_output.publish(message)
         else:
-            self.right_controller_output.publish(output_msg)
+            self.right_controller_output.publish(message)
 
     def _publish_button_state(
         self,
@@ -637,7 +681,7 @@ class WebXRTeleopModule(Module):
 
     def _publish_buttons(self, buttons: Buttons) -> None:
         """Publish raw state and stable digital button edges."""
-        self.teleop_buttons.publish(buttons)
+        self.teleop_buttons.publish(UInt32(buttons.data))
         now = time.monotonic()
         observed = buttons.data & Buttons.DIGITAL_MASK
         pressed = 0
@@ -663,10 +707,10 @@ class WebXRTeleopModule(Module):
                 self._debounced_buttons &= ~mask
                 released |= mask
         if pressed:
-            self.button_pressed.publish(Buttons(pressed))
+            self.button_pressed.publish(UInt32(pressed))
             self._on_buttons_pressed(Buttons(pressed))
         if released:
-            self.button_released.publish(Buttons(released))
+            self.button_released.publish(UInt32(released))
 
     def _on_buttons_pressed(self, pressed: Buttons) -> None:
         """Override to react to debounced button presses."""
@@ -677,4 +721,4 @@ class WebXRTeleopModule(Module):
         self._debounced_buttons = 0
         self._button_candidates.clear()
         if released:
-            self.button_released.publish(Buttons(released))
+            self.button_released.publish(UInt32(released))

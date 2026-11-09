@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 import threading
+import time
 from typing import Any
 
 from pydantic import ConfigDict, NonNegativeFloat, PositiveFloat
@@ -35,8 +36,11 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
+from dimos.message_utils.trajectory import TrajectoryState
+from dimos.messages.dimos_msgs.msg import TrajectoryStatus
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -156,7 +160,9 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
 
     def get_status(self, t_now: float | None = None) -> TrajectoryStatus:
         with self._lock:
-            duration = self._trajectory.duration if self._trajectory is not None else 0.0
+            duration = (
+                trajectory_utils.duration(self._trajectory) if self._trajectory is not None else 0.0
+            )
             elapsed = self._elapsed
             if (
                 t_now is not None
@@ -166,10 +172,11 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                 elapsed = t_now - self._start_t
             progress = 1.0 if duration <= 0.0 else min(1.0, elapsed / duration)
             return TrajectoryStatus(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                 state=self._state,
                 progress=progress,
-                time_elapsed=elapsed,
-                time_remaining=max(0.0, duration - elapsed),
+                time_elapsed=message_time.duration_from_seconds(elapsed),
+                time_remaining=message_time.duration_from_seconds(max(0.0, duration - elapsed)),
                 error=self._error,
             )
 
@@ -221,7 +228,7 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
             if self._start_t is None:
                 self._start_t = state.t_now
             self._elapsed = state.t_now - self._start_t
-            reference, reference_velocity = self._trajectory.sample(self._elapsed)
+            reference, reference_velocity = trajectory_utils.sample(self._trajectory, self._elapsed)
             position_error = math.hypot(reference[0] - pose[0], reference[1] - pose[1])
             yaw_error = abs(angle_diff(reference[2], pose[2]))
 
@@ -243,14 +250,17 @@ class PlanarBaseTrajectoryTask(BaseControlTask):
                     state.t_now,
                     f"base is {position_error:.3f} m / {yaw_error:.3f} rad off the trajectory",
                 )
-            if self._elapsed >= self._trajectory.duration:
+            if self._elapsed >= trajectory_utils.duration(self._trajectory):
                 if (
                     position_error < config.position_goal_tolerance
                     and yaw_error < config.orientation_goal_tolerance
                 ):
                     self._stop(state.t_now, TrajectoryState.COMPLETED, "")
                     return self._command(0.0, 0.0, 0.0)
-                if self._elapsed - self._trajectory.duration > config.settle_timeout:
+                if (
+                    self._elapsed - trajectory_utils.duration(self._trajectory)
+                    > config.settle_timeout
+                ):
                     return self._fail(state.t_now, "base did not reach the end of the trajectory")
                 # Settling is pure feedback; the last point's velocity would carry it past.
                 reference_velocity = [0.0, 0.0, 0.0]
@@ -331,14 +341,21 @@ def _trajectory_problem(
     for point in trajectory.points:
         if len(point.positions) != 3 or len(point.velocities) != 3:
             return "Base trajectory points must carry x, y and yaw"
-        values = (*point.positions, *point.velocities, point.time_from_start)
+        values = (
+            *point.positions,
+            *point.velocities,
+            message_time.to_seconds(point.time_from_start),
+        )
         if not all(math.isfinite(value) for value in values):
             return "Base trajectory contains non-finite values"
-        if previous_time is None and point.time_from_start != 0.0:
+        if previous_time is None and message_time.to_seconds(point.time_from_start) != 0.0:
             return "Base trajectory must start at t=0"
-        if previous_time is not None and point.time_from_start <= previous_time:
+        if (
+            previous_time is not None
+            and message_time.to_seconds(point.time_from_start) <= previous_time
+        ):
             return "Base trajectory has non-increasing timestamps"
-        previous_time = point.time_from_start
+        previous_time = message_time.to_seconds(point.time_from_start)
         vx, vy, wz = point.velocities
         if (
             math.hypot(vx, vy) > config.max_linear + _SPEED_SLACK

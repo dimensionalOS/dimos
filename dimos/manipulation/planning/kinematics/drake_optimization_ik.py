@@ -31,9 +31,9 @@ from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry, joint_state as joint_state_utils
+from dimos.messages.geometry_msgs.msg import PoseStamped, Transform
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -99,10 +99,14 @@ class DrakeOptimizationIK:
             )
 
         # Convert PoseStamped to 4x4 matrix via Transform
-        target_matrix = Transform(
-            translation=target_pose.position,
-            rotation=target_pose.orientation,
-        ).to_matrix()
+        target_matrix = geometry.transform_matrix(
+            Transform(
+                translation=geometry.vector_from_array(
+                    geometry.vector_array(target_pose.pose.position)
+                ),
+                rotation=target_pose.pose.orientation,
+            )
+        )
 
         # Get joint limits
         lower_limits, upper_limits = world.get_prepared_model().joint_space.position_limits()
@@ -201,10 +205,14 @@ class DrakeOptimizationIK:
             )
 
         lower_limits, upper_limits = world.get_prepared_model().joint_space.position_limits()
-        target_matrix = Transform(
-            translation=request.target_pose.position,
-            rotation=request.target_pose.orientation,
-        ).to_matrix()
+        target_matrix = geometry.transform_matrix(
+            Transform(
+                translation=geometry.vector_from_array(
+                    geometry.vector_array(request.target_pose.pose.position)
+                ),
+                rotation=request.target_pose.pose.orientation,
+            )
+        )
         target_transform = RigidTransform(target_matrix)
         locked_positions = {
             index: float(request.seed_positions[index])
@@ -328,7 +336,9 @@ class DrakeOptimizationIK:
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
 
         # Compute actual error using FK
-        solution_state = JointState({"name": joint_names, "position": joint_solution.tolist()})
+        solution_state = joint_state_utils.from_mapping(
+            {"name": joint_names, "position": joint_solution.tolist()}
+        )
         with world.scratch_context() as ctx:
             world.set_joint_state(ctx, solution_state)
             actual_matrix = world.get_link_pose(ctx, target_frame_name)
@@ -356,7 +366,9 @@ def _create_success_result(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
+        joint_state=joint_state_utils.from_mapping(
+            {"name": joint_names, "position": joint_positions.tolist()}
+        ),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,

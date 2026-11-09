@@ -27,9 +27,14 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import RLock
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos.messages.std_msgs.msg import Header
 
 try:
     import roboplan.core as roboplan_core
@@ -59,8 +64,8 @@ from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanModel,
     build_roboplan_model,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
@@ -302,7 +307,13 @@ class RoboPlanWorld:
         q = ctx.q
         if not len(q):
             q = np.zeros(len(model_data.config.joint_names), dtype=np.float64)
-        return JointState(name=model_data.config.joint_names, position=q.astype(float).tolist())
+        return JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=model_data.config.joint_names,
+            position=np.asarray(q.astype(float).tolist(), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
 
     # Collision Checking
 
@@ -356,14 +367,13 @@ class RoboPlanWorld:
         mat = self.get_link_pose(ctx, group.tip_link)
         pose = matrix_to_pose(mat)
         return PoseStamped(
-            frame_id="world",
-            position=[pose.position.x, pose.position.y, pose.position.z],
-            orientation=[
-                pose.orientation.x,
-                pose.orientation.y,
-                pose.orientation.z,
-                pose.orientation.w,
-            ],
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(
+                position=Point(pose.position.x, pose.position.y, pose.position.z),
+                orientation=Quaternion(
+                    pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w
+                ),
+            ),
         )
 
     def get_link_pose(self, ctx: RoboPlanContext, link_name: str) -> NDArray[np.float64]:
@@ -417,7 +427,7 @@ class RoboPlanWorld:
     def _validate_model_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
             raise ValueError("RoboPlanWorld requires explicit joint_names")
-        if config.base_pose.frame_id not in ("", "world"):
+        if config.base_pose.header.frame_id not in ("", "world"):
             raise ValueError("RoboPlanWorld base_pose frame_id must be empty or 'world'")
 
     def _validate_planning_group_config(self, config: RobotModelConfig) -> None:

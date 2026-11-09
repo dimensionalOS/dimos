@@ -34,7 +34,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.std_msgs.Float32 import Float32
+    from dimos.messages.std_msgs.msg import Float32
     from dimos.robot.assets.model import RobotModel
 
 logger = setup_logger()

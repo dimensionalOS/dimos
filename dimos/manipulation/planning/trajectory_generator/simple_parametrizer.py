@@ -14,6 +14,7 @@
 
 """Trajectory parametrizer using segmented trapezoids."""
 
+from copy import deepcopy
 import math
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
@@ -28,8 +29,9 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
     BaseTrajectoryParametrizer,
     TrajectoryParametrizationError,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
+from dimos.messages.trajectory_msgs.msg import JointTrajectory
 
 
 class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
@@ -69,9 +71,9 @@ class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
                 f"Simple trapezoid parametrization failed: {exc}"
             ) from exc
         return JointTrajectory(
+            header=Header(stamp=deepcopy(generated.header.stamp), frame_id=""),
             joint_names=list(selection.joint_names),
             points=generated.points,
-            timestamp=generated.timestamp,
         )
 
     @staticmethod

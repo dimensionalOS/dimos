@@ -34,10 +34,9 @@ from typing import Any
 from dimos.control.benchmarking.benchmark import RunRecording
 from dimos.control.benchmarking.scoring import ExecutedTrajectory, TrajectoryTick, score_run
 from dimos.control.benchmarking.tuning import OperatingPoint, OperatingPointMap, invert_tolerance
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -50,12 +49,14 @@ def _executed_from_recording(rec: RunRecording) -> ExecutedTrajectory:
             TrajectoryTick(
                 t=t,
                 pose=PoseStamped(
-                    ts=t,
-                    position=Vector3(x, y, 0.0),
-                    orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                    header=Header(stamp=message_time.time_from_seconds(t), frame_id=""),
+                    pose=Pose(
+                        position=Point(x, y, 0.0),
+                        orientation=geometry.quaternion_from_euler(0.0, 0.0, yaw),
+                    ),
                 ),
                 cmd_twist=Twist(linear=Vector3(cvx, cvy, 0.0), angular=Vector3(0.0, 0.0, cwz)),
-                actual_twist=Twist(),
+                actual_twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)),
             )
         )
     return ExecutedTrajectory(ticks=ticks, arrived=rec.arrived)

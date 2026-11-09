@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -34,9 +35,10 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos
@@ -138,7 +140,13 @@ class Arm:
     ) -> ExecutionResult:
         """Plan and move to positions in group joint order; angular units are radians."""
         values = _vector(positions, len(self.info.joint_names), "positions")
-        target = JointState(name=list(self.info.joint_names), position=values.tolist())
+        target = JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=list(self.info.joint_names),
+            position=np.asarray(values.tolist(), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
         return self._move_joint_target("move_joints", target, speed_scale, timeout)
 
     def _move_joint_target(
@@ -166,13 +174,16 @@ class Arm:
         """
         xyz = _vector(position, 3, "position")
         rotation = (
-            self.pose().orientation
+            self.pose().pose.orientation
             if orientation is None
-            else Quaternion(_vector(orientation, 4, "orientation"))
+            else geometry.quaternion_from_array(_vector(orientation, 4, "orientation"))
         )
-        if math.hypot(*rotation.to_tuple()) == 0.0:
+        if math.hypot(*tuple(geometry.quaternion_array(rotation))) == 0.0:
             raise ValueError("orientation must have nonzero norm")
-        target = PoseStamped(frame_id="world", position=xyz, orientation=rotation)
+        target = PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id="world"),
+            pose=Pose(position=geometry.point_from_array(xyz), orientation=rotation),
+        )
         plan = self.rpc.plan_to_poses({self.info.id: target}, speed_scale=speed_scale)
         return self._execute("move_pose", plan, timeout)
 

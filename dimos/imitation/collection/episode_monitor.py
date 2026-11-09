@@ -38,7 +38,7 @@ from dimos.imitation.collection.episode import (
     EpisodeStatus,
     RecordingState,
 )
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.std_msgs.msg import String
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger

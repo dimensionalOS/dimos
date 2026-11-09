@@ -23,6 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.message_utils import time as message_time
+from dimos.messages.std_msgs.msg import Header
+
 try:
     import roboplan.cartesian_planning as roboplan_cartesian
     import roboplan.core as roboplan_core
@@ -55,11 +58,10 @@ from dimos.manipulation.planning.world.roboplan_world import (
     RoboPlanContext,
     RoboPlanWorld,
 )
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry
+from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -133,7 +135,13 @@ class RoboPlanPlanner:
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
                 ctx,
-                JointState(name=list(config.joint_names), position=q_start.tolist()),
+                JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                    name=list(config.joint_names),
+                    position=np.asarray(q_start.tolist(), dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                ),
             )
             return self._plan_group(
                 ctx,
@@ -374,8 +382,8 @@ class RoboPlanPlanner:
             waypoint_type = (
                 PoseStamped
                 if isinstance(target[0], PoseStamped)
-                else Transform
-                if isinstance(target[0], Transform)
+                else TransformStamped
+                if isinstance(target[0], TransformStamped)
                 else None
             )
             if waypoint_type is None or any(
@@ -385,10 +393,10 @@ class RoboPlanPlanner:
                     status=PlanningStatus.INVALID_GOAL,
                     message=(
                         f"Cartesian target for '{group_id}' must contain only PoseStamped "
-                        "waypoints or only Transform waypoints"
+                        "waypoints or only TransformStamped waypoints"
                     ),
                 )
-            if any(waypoint.frame_id != "world" for waypoint in target):
+            if any(waypoint.header.frame_id != "world" for waypoint in target):
                 return PlanningResult(
                     status=PlanningStatus.UNSUPPORTED,
                     message="Cartesian planning supports only world-frame waypoints",
@@ -420,7 +428,7 @@ class RoboPlanPlanner:
             if group.tip_link is None:
                 raise ValueError(f"Planning group '{group.id}' has no TCP tip link")
             start_pose = self._world.get_group_ee_pose(ctx, group.id)
-            start_matrix = np.asarray(pose_to_matrix(start_pose), dtype=np.float64)
+            start_matrix = np.asarray(geometry.pose_matrix(start_pose.pose), dtype=np.float64)
             target_matrices = [
                 self._resolve_cartesian_waypoint(start_matrix, waypoint) for waypoint in target
             ]
@@ -436,12 +444,12 @@ class RoboPlanPlanner:
     def _resolve_cartesian_waypoint(
         self,
         start_matrix: NDArray[np.float64],
-        waypoint: PoseStamped | Transform,
+        waypoint: PoseStamped | TransformStamped,
     ) -> NDArray[np.float64]:
         if isinstance(waypoint, PoseStamped):
-            return np.asarray(pose_to_matrix(waypoint), dtype=np.float64)
+            return np.asarray(geometry.pose_matrix(waypoint.pose), dtype=np.float64)
         target_matrix = start_matrix.copy()
-        delta_matrix = np.asarray(waypoint.to_matrix(), dtype=np.float64)
+        delta_matrix = np.asarray(geometry.transform_matrix(waypoint.transform), dtype=np.float64)
         target_matrix[:3, 3] += delta_matrix[:3, 3]
         target_matrix[:3, :3] = delta_matrix[:3, :3] @ start_matrix[:3, :3]
         return target_matrix
@@ -533,13 +541,23 @@ class RoboPlanPlanner:
             velocity_by_native = dict(zip(result_names, velocity_values, strict=True))
             path.append(
                 JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                     name=expected_names,
-                    position=[
-                        float(position_by_native[native_by_public[name]]) for name in expected_names
-                    ],
-                    velocity=[
-                        float(velocity_by_native[native_by_public[name]]) for name in expected_names
-                    ],
+                    position=np.asarray(
+                        [
+                            float(position_by_native[native_by_public[name]])
+                            for name in expected_names
+                        ],
+                        dtype=np.float64,
+                    ),
+                    velocity=np.asarray(
+                        [
+                            float(velocity_by_native[native_by_public[name]])
+                            for name in expected_names
+                        ],
+                        dtype=np.float64,
+                    ),
+                    effort=np.asarray([], dtype=np.float64),
                 )
             )
         return path, timestamps
@@ -556,8 +574,13 @@ class RoboPlanPlanner:
             steps = max(1, int(np.ceil(max_change / _CARTESIAN_COLLISION_STEP_SIZE)))
             for fraction in np.linspace(0.0, 1.0, steps + 1):
                 sample = JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                     name=start.name,
-                    position=(q_start + fraction * (q_end - q_start)).tolist(),
+                    position=np.asarray(
+                        (q_start + fraction * (q_end - q_start)).tolist(), dtype=np.float64
+                    ),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
                 )
                 self._apply_selected_state(ctx, sample)
                 if not self._world.is_collision_free(ctx):
@@ -736,8 +759,13 @@ class RoboPlanPlanner:
             positions = dict(zip(source_names, values, strict=True))
             path.append(
                 JointState(
+                    header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
                     name=list(ordered_output_names),
-                    position=[float(positions[name]) for name in ordered_output_names],
+                    position=np.asarray(
+                        [float(positions[name]) for name in ordered_output_names], dtype=np.float64
+                    ),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
                 )
             )
         return path
