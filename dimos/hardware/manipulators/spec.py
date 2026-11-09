@@ -27,9 +27,7 @@ from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from dimos.hardware.spec import JointLimits as _JointLimits
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
 
 
 class DriverStatus(Enum):

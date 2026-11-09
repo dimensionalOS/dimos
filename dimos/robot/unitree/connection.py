@@ -18,7 +18,7 @@ import functools
 import json
 import threading
 import time
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,34 +38,29 @@ from unitree_webrtc_connect.webrtc_driver import (
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, image, time as message_time
+from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped, Twist
+from dimos.messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,
     pointcloud2_from_webrtc_lidar,
 )
 from dimos.robot.unitree.type.lowstate import LowStateMsg
-from dimos.robot.unitree.type.odometry import Odometry
-from dimos.types.timestamped import Timestamped
+from dimos.robot.unitree.type.odometry import RawOdometryMessage, pose_from_message
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure, callback_to_observable
 from dimos.utils.sequential_ids import SequentialIds
 
-VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
-
 logger = setup_logger()
 
 
-_T = TypeVar("_T", bound=Timestamped)
+_T = TypeVar("_T", Image, PointCloud2, PoseStamped)
 
 
 def time_is_now(x: _T) -> _T:
-    x.ts = time.time()
+    x.header.stamp = message_time.time_from_seconds(time.time())
     return x
 
 
@@ -73,7 +68,7 @@ def time_is_now(x: _T) -> _T:
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray
+    data: NDArray[np.uint8]
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -93,7 +88,7 @@ class SerializableVideoFrame:
             format=frame.format.name if hasattr(frame, "format") and frame.format else None,
         )
 
-    def to_ndarray(self, format=None):  # type: ignore[no-untyped-def]
+    def to_ndarray(self, format: str | None = None) -> NDArray[np.uint8]:
         return self.data
 
 
@@ -284,7 +279,7 @@ class UnitreeWebRTCConnection(Resource):
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
 
     @simple_mcache
-    def raw_odom_stream(self) -> Observable[Pose]:
+    def raw_odom_stream(self) -> Observable[RawOdometryMessage]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
 
     @simple_mcache
@@ -298,16 +293,16 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     @simple_mcache
-    def tf_stream(self) -> Observable[Transform]:
-        base_link = functools.partial(Transform.from_pose, "base_link")
+    def tf_stream(self) -> Observable[TransformStamped]:
+        base_link = functools.partial(geometry.transform_from_pose, child_frame_id="base_link")
         return backpressure(self.odom_stream().pipe(ops.map(base_link)))
 
     @simple_mcache
-    def odom_stream(self) -> Observable[Pose]:
+    def odom_stream(self) -> Observable[PoseStamped]:
         return backpressure(
             self.raw_odom_stream().pipe(
                 ops.map(
-                    Odometry.from_msg,
+                    pose_from_message,
                 ),
                 ops.map(time_is_now),
             )
@@ -315,20 +310,14 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
-        return backpressure(
-            self.raw_video_stream().pipe(
-                ops.filter(lambda frame: frame is not None),
-                ops.map(
-                    lambda frame: Image.from_numpy(
-                        # np.ascontiguousarray(frame.to_ndarray("rgb24")),
-                        frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
-                        format=ImageFormat.RGB,  # Frame is RGB24, not BGR
-                        frame_id="camera_optical",
-                    ),
-                ),
-                ops.map(time_is_now),
+        def convert(frame: SerializableVideoFrame) -> Image:
+            return image.from_array(
+                frame.to_ndarray(format="rgb24"),
+                encoding="rgb8",
+                header=message_time.header_now("camera_optical"),
             )
-        )
+
+        return backpressure(self.raw_video_stream().pipe(ops.map(convert), ops.map(time_is_now)))
 
     @simple_mcache
     def lowstate_stream(self) -> Observable[LowStateMsg]:
@@ -450,8 +439,8 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     @simple_mcache
-    def raw_video_stream(self) -> Observable[VideoMessage]:
-        subject: Subject[VideoMessage] = Subject()
+    def raw_video_stream(self) -> Observable[SerializableVideoFrame]:
+        subject: Subject[SerializableVideoFrame] = Subject()
         stop_event = threading.Event()
 
         from aiortc import MediaStreamTrack

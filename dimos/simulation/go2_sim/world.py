@@ -24,6 +24,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
+from dimos.message_utils import geometry
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT, ROBOT_WIDTH
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import FRAMES
@@ -47,7 +48,9 @@ CLEARANCE_HEIGHT = 0.6
 def _mount() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """base_link -> mid360_link as a translation and rotation matrix, from the rig's frame tree."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
-    matrix = edges["front_camera"].to_matrix() @ edges["mid360_link"].to_matrix()
+    matrix = geometry.transform_matrix(edges["front_camera"].transform) @ geometry.transform_matrix(
+        edges["mid360_link"].transform
+    )
     return matrix[:3, 3].copy(), matrix[:3, :3].copy()
 
 

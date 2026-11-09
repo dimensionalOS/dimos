@@ -58,12 +58,10 @@ from dimos.control.path_following_coordinator import PathFollowingCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.std_msgs.Int8 import Int8
+from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos.messages.nav_msgs.msg import Path
+from dimos.messages.sensor_msgs.msg import JointState
+from dimos.messages.std_msgs.msg import Float32, Int8
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 

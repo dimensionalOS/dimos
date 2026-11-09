@@ -20,7 +20,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
 
 _mock_hw = HardwareComponent(
     hardware_id="arm",

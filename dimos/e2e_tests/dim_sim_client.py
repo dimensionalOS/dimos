@@ -14,7 +14,8 @@
 
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils.time import header_now
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.simulation.dimsim.scene_client import SceneClient
 
 
@@ -58,8 +59,7 @@ class DimSimClient:
     def publish_goal(self, x: float, y: float) -> None:
         self._goal_request.publish(
             PoseStamped(
-                position=(x, y, 0),
-                orientation=(0, 0, 0, 1),
-                frame_id="world",
+                header=header_now("world"),
+                pose=Pose(position=Point(x, y, 0), orientation=Quaternion(0, 0, 0, 1)),
             )
         )

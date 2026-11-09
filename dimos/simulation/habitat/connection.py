@@ -16,20 +16,25 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from dimos_lcm.geometry_msgs.Twist import Twist as WireTwist
+from dimos_lcm.geometry_msgs.Vector3 import Vector3 as WireVector3
 from pydantic import Field
+from reactivex.disposable import Disposable
 
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.memory.codecs.legacy import decode_lcm
+from dimos.messages.geometry_msgs.msg import Twist
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohPubSubBase
 from dimos.simulation.habitat.constants import HABITAT_ROOT, HM3D_EXAMPLE_DATASET_CONFIG
 from dimos.simulation.habitat.server import HabitatProp
 
@@ -101,3 +106,47 @@ class HabitatConnection(NativeModule):
     tf: Out[TFMessage]
     semantic_image: Out[Image]
     objects: Out[Detection3DArray]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._wire_prefix = f"habitat-native/{uuid4().hex}"
+        self._wire: ZenohPubSubBase | None = None
+
+    def _collect_topics(self) -> dict[str, str]:
+        return {name: f"{self._wire_prefix}/{name}" for name in super()._collect_topics()}
+
+    def _receive_wire(self, name: str, kind: type, data: bytes, _: Topic) -> None:
+        getattr(self, name).publish(decode_lcm(data, kind))
+
+    def _send_command(self, command: Twist) -> None:
+        assert self._wire is not None
+        linear, angular = command.linear, command.angular
+        payload = WireTwist(
+            WireVector3(linear.x, linear.y, linear.z), WireVector3(angular.x, angular.y, angular.z)
+        ).lcm_encode()
+        self._wire.publish(Topic(f"{self._wire_prefix}/cmd_vel"), payload)
+
+    def start(self) -> None:
+        # Habitat's independent Python 3.9 process keeps its raw LCM ABI. Only
+        # this process boundary translates it; every DimOS port is generated.
+        wire = ZenohPubSubBase()
+        wire.start()
+        self._wire = wire
+        self.register_disposable(Disposable(wire.stop))
+        kinds = {
+            "color_image": Image,
+            "depth_image": Image,
+            "camera_info": CameraInfo,
+            "registered_scan": PointCloud2,
+            "odometry": Odometry,
+            "tf": TFMessage,
+            "semantic_image": Image,
+            "objects": Detection3DArray,
+        }
+        topics = self._collect_topics()
+        for name, kind in kinds.items():
+            if name in topics:
+                wire.subscribe(Topic(topics[name]), partial(self._receive_wire, name, kind))
+        if "cmd_vel" in topics:
+            self.register_disposable(Disposable(self.cmd_vel.subscribe(self._send_command)))
+        super().start()

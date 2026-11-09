@@ -14,7 +14,10 @@
 
 """Self-hosted integration coverage for G1 full-body manipulation planning."""
 
+import numpy as np
 import pytest
+
+from dimos.message_utils import time as message_time
 
 pytest.importorskip("roboplan.core")
 pytest.importorskip("roboplan.cartesian_planning")
@@ -25,7 +28,7 @@ from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlanner
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world import roboplan_world as roboplan_world_module
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
     G1_RIGHT_ARM_JOINTS,
@@ -42,8 +45,11 @@ def test_full_body_state_supports_collision_checked_arm_only_plan() -> None:
     world.load_model(prepare_robot_model(config))
     world.finalize()
     full_body_state = JointState(
+        header=message_time.header_now(),
         name=list(config.joint_names),
-        position=[0.0] * len(config.joint_names),
+        position=np.asarray([0.0] * len(config.joint_names), dtype=np.float64),
+        velocity=np.empty(0, dtype=np.float64),
+        effort=np.empty(0, dtype=np.float64),
     )
     world.sync_from_joint_state(full_body_state)
 
@@ -52,10 +58,21 @@ def test_full_body_state_supports_collision_checked_arm_only_plan() -> None:
 
     selection = world._planning_groups.select(("left_arm", "right_arm"))
     arm_joint_names = [*G1_LEFT_ARM_JOINTS, *G1_RIGHT_ARM_JOINTS]
-    start = JointState(name=arm_joint_names, position=[0.0] * len(arm_joint_names))
-    goal = JointState(
+    start = JointState(
+        header=message_time.header_now(),
         name=arm_joint_names,
-        position=[*G1_READY_JOINTS["left_arm"], *G1_READY_JOINTS["right_arm"]],
+        position=np.asarray([0.0] * len(arm_joint_names), dtype=np.float64),
+        velocity=np.empty(0, dtype=np.float64),
+        effort=np.empty(0, dtype=np.float64),
+    )
+    goal = JointState(
+        header=message_time.header_now(),
+        name=arm_joint_names,
+        position=np.asarray(
+            [*G1_READY_JOINTS["left_arm"], *G1_READY_JOINTS["right_arm"]], dtype=np.float64
+        ),
+        velocity=np.empty(0, dtype=np.float64),
+        effort=np.empty(0, dtype=np.float64),
     )
 
     result = roboplan_planner_module.RoboPlanPlanner(

@@ -31,10 +31,14 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import time as message_time
+from dimos.messages.control_msgs.msg import DynamicJointState, InterfaceValue
+from dimos.messages.sensor_msgs.msg import Imu, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds import ros
 from dimos.robot.unitree.go2.dds.codec import GO2_CODECS, CdrStructCodec, FnCodec
 from dimos.robot.unitree.go2.dds.msgs.LowCmd import LowCmd
@@ -87,33 +91,24 @@ STD_STREAMS = (
 )
 
 
-def _dynamic_joint_state(ts: float, rows: list[tuple[str, dict[str, float]]]) -> object:
+def _dynamic_joint_state(ts: float, rows: list[tuple[str, dict[str, float]]]) -> DynamicJointState:
     """ros2_control control_msgs/DynamicJointState: per joint, named interface values."""
-    from dimos_lcm.control_msgs import DynamicJointState, InterfaceValue
 
-    msg = DynamicJointState()
-    msg.header.stamp.sec = int(ts)
-    msg.header.stamp.nsec = int((ts - int(ts)) * 1e9)
-    msg.joint_names = [name for name, _ in rows]
-    msg.joint_names_length = len(rows)
-    msg.interface_values = []
-    for _, vals in rows:
-        iv = InterfaceValue()
-        iv.interface_names, iv.values = list(vals), [float(v) for v in vals.values()]
-        iv.interface_names_length = iv.values_length = len(vals)
-        msg.interface_values.append(iv)
-    msg.interface_values_length = len(rows)
-    return msg
+    return DynamicJointState(
+        Header(message_time.time_from_seconds(ts), ""),
+        [name for name, _ in rows],
+        [
+            InterfaceValue(list(vals), np.asarray(list(vals.values()), dtype=np.float64))
+            for _, vals in rows
+        ],
+    )
 
 
 def add_std_streams(store: SqliteStore) -> None:
     """Standard ROS-typed views of lowstate/lowcmd. The raw Go2 streams stay as the lossless source."""
-    from dimos_lcm.control_msgs import DynamicJointState
 
-    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
-    from dimos.msgs.sensor_msgs.BatteryState import BatteryState
-    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
+    from dimos.messages.sensor_msgs.msg import BatteryState, JointState
 
     js, ms = store.stream("joint_state", JointState), store.stream("motor_state", DynamicJointState)
     imu, bat = store.stream("body_imu", Imu), store.stream("battery", BatteryState)
@@ -122,11 +117,11 @@ def add_std_streams(store: SqliteStore) -> None:
         legs = ls.motor_state[:12]
         js.append(
             JointState(
-                ts=ts,
+                header=Header(message_time.time_from_seconds(ts), ""),
                 name=LEG_JOINTS,
-                position=[m.q for m in legs],
-                velocity=[m.dq for m in legs],
-                effort=[m.tau_est for m in legs],
+                position=np.asarray([m.q for m in legs], dtype=np.float64),
+                velocity=np.asarray([m.dq for m in legs], dtype=np.float64),
+                effort=np.asarray([m.tau_est for m in legs], dtype=np.float64),
             ),
             ts=ts,
         )
@@ -156,20 +151,32 @@ def add_std_streams(store: SqliteStore) -> None:
                 angular_velocity=Vector3(*map(float, ls.imu_state.gyroscope)),
                 linear_acceleration=Vector3(*map(float, ls.imu_state.accelerometer)),
                 orientation=Quaternion(float(q[1]), float(q[2]), float(q[3]), float(q[0])),
-                frame_id="imu",
-                ts=ts,
+                header=Header(message_time.time_from_seconds(ts), "imu"),
+                orientation_covariance=np.zeros(9),
+                angular_velocity_covariance=np.zeros(9),
+                linear_acceleration_covariance=np.zeros(9),
             ),
             ts=ts,
         )
         bms = ls.bms_state
         bat.append(
             BatteryState(
-                ts=ts,
+                header=Header(message_time.time_from_seconds(ts), ""),
                 voltage=ls.power_v,
                 current=ls.power_a,
                 percentage=bms.soc / 100,
                 temperature=float(max(bms.bq_ntc)),
-                cell_voltage=[v / 1000 for v in bms.cell_vol],
+                cell_voltage=np.asarray([v / 1000 for v in bms.cell_vol], dtype=np.float32),
+                charge=float("nan"),
+                capacity=float("nan"),
+                design_capacity=float("nan"),
+                power_supply_status=0,
+                power_supply_health=0,
+                power_supply_technology=0,
+                present=True,
+                cell_temperature=np.empty(0, dtype=np.float32),
+                location="",
+                serial_number="",
             ),
             ts=ts,
         )

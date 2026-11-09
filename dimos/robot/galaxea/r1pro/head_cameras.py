@@ -35,12 +35,15 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.message_utils import camera_info as calibration, time as message_time
+from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -120,11 +123,17 @@ def head_camera_infos(path: str = HEAD_STEREO_CALIBRATION) -> tuple[CameraInfo, 
             height=height,
             width=width,
             distortion_model="rational_polynomial",
-            D=d,
-            K=k,
-            R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-            P=[k[0], k[1], k[2], 0.0, k[3], k[4], k[5], 0.0, k[6], k[7], k[8], 0.0],
-            frame_id=frame_id,
+            d=np.asarray(d, dtype=np.float64),
+            k=np.asarray(k, dtype=np.float64),
+            r=np.asarray([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float64),
+            p=np.asarray(
+                [k[0], k[1], k[2], 0.0, k[3], k[4], k[5], 0.0, k[6], k[7], k[8], 0.0],
+                dtype=np.float64,
+            ),
+            header=message_time.header_now(frame_id),
+            binning_x=0,
+            binning_y=0,
+            roi=RegionOfInterest(0, 0, 0, 0, False),
         )
 
     return eye("left", HEAD_LEFT_FRAME), eye("right", HEAD_RIGHT_FRAME)
@@ -179,7 +188,8 @@ class HeadCameraInfo(Module):
                 if self._stop.wait(_CALIBRATION_RETRY_S):
                     return
         while not self._stop.is_set():
+            stamp = message_time.time_from_nanoseconds(time.time_ns())
             for out, info in ((self.left_info, left), (self.right_info, right)):
-                info.ts = time.time()
-                out.publish(info)
+                message = calibration.with_stamp(info, stamp)
+                out.publish(message)
             self._stop.wait(1.0 / self.config.publish_hz)

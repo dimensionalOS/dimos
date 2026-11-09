@@ -17,7 +17,7 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.messages.geometry_msgs.msg import Twist
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.webxr.extensions import Go2TeleopModule
 

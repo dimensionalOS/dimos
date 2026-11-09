@@ -20,6 +20,9 @@ from typing import Any
 
 import numpy as np
 
+from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos.visualization.rerun.cdr import occupancy_archetype
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
@@ -37,13 +40,13 @@ _COSTMAP_LOOKUP_TABLE[2:101] = (255, 140, 0, 255)
 _COSTMAP_LOOKUP_TABLE[101] = (220, 30, 30, 255)
 
 
-def g1_costmap(grid: Any, z_offset: float = 0.02) -> Any:
+def g1_costmap(grid: OccupancyGrid, z_offset: float = 0.02) -> Any:
     """Render an OccupancyGrid with the classic costmap palette.
 
     The default z_offset lifts the mesh 2cm off the floor plane to avoid
     z-fighting with the ground.
     """
-    return grid.to_rerun(color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=z_offset)
+    return occupancy_archetype(grid, color_lookup_table=_COSTMAP_LOOKUP_TABLE, z_offset=z_offset)
 
 
 def g1_urdf_static_robot(root_path: str = G1_RERUN_ROOT) -> UrdfRobotStaticRerunFactory:
@@ -73,7 +76,7 @@ def g1_static_robot(rr: Any) -> list[Any]:
     ]
 
 
-def g1_odometry_tf_override(odom: Any) -> Any:
+def g1_odometry_tf_override(odom: PoseStamped) -> Any:
     """Publish odometry as a TF frame so sensor_scan/path/robot can reference it.
 
     The z is zeroed because point clouds already have the full init_pose
@@ -82,14 +85,16 @@ def g1_odometry_tf_override(odom: Any) -> Any:
     """
     import rerun as rr
 
+    position, orientation = odom.pose.position, odom.pose.orientation
+    x, y = position.x, position.y
     tf = rr.Transform3D(
-        translation=[odom.x, odom.y, 0.0],
+        translation=[x, y, 0.0],
         rotation=rr.Quaternion(
             xyzw=[
-                odom.orientation.x,
-                odom.orientation.y,
-                odom.orientation.z,
-                odom.orientation.w,
+                orientation.x,
+                orientation.y,
+                orientation.z,
+                orientation.w,
             ]
         ),
         parent_frame="tf#/map",

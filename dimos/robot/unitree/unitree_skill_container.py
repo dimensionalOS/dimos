@@ -25,10 +25,9 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Vector3
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
@@ -199,20 +198,25 @@ def _goal_pose(
     current: PoseStamped, x: float, y: float, degrees: float | None, relative: bool
 ) -> PoseStamped:
     """Where move_to sends the robot, in the world frame."""
-    euler = current.orientation.to_euler()
+    roll, pitch, current_yaw = geometry.quaternion_euler(current.pose.orientation)
+    p = current.pose.position
     if relative:
-        position = current.position + current.orientation.rotate_vector(Vector3(x, y, 0))
-        yaw = euler.yaw + math.radians(degrees or 0.0)
+        offset = geometry.rotate_vector(current.pose.orientation, Vector3(x, y, 0.0))
+        position = Point(p.x + offset.x, p.y + offset.y, p.z + offset.z)
+        yaw = current_yaw + math.radians(degrees or 0.0)
     else:
-        position = Vector3(x, y, current.position.z)
-        yaw = euler.yaw if degrees is None else math.radians(degrees)
-    orientation = Quaternion.from_euler(Vector3(euler.roll, euler.pitch, yaw))
-    return PoseStamped(position=position, orientation=orientation, frame_id="world")
+        position = Point(x, y, p.z)
+        yaw = current_yaw if degrees is None else math.radians(degrees)
+    return PoseStamped(
+        message_time.header_now("world"),
+        Pose(position, geometry.quaternion_from_euler(roll, pitch, yaw)),
+    )
 
 
 def _pose_text(pose: PoseStamped) -> str:
-    yaw = math.degrees(pose.orientation.to_euler().yaw)
-    return f"x={pose.position.x:.2f} y={pose.position.y:.2f} heading={yaw:.0f}deg"
+    yaw = math.degrees(geometry.yaw(pose.pose.orientation))
+    p = pose.pose.position
+    return f"x={p.x:.2f} y={p.y:.2f} heading={yaw:.0f}deg"
 
 
 class UnitreeSkillContainer(Module):
@@ -265,12 +269,12 @@ class UnitreeSkillContainer(Module):
         if tf is None:
             return "Failed to get the position of the robot."
 
-        goal = _goal_pose(tf.to_pose(), x, y, degrees, relative)
+        goal = _goal_pose(geometry.pose_from_transform(tf), x, y, degrees, relative)
         self._navigation.set_goal(goal)
         outcome = self._wait_for_goal()
 
         tf = self.tfbuffer.get("world", "base_link")
-        now = "unknown" if tf is None else _pose_text(tf.to_pose())
+        now = "unknown" if tf is None else _pose_text(geometry.pose_from_transform(tf))
         return f"{outcome}. Robot is at {now}; goal was {_pose_text(goal)}."
 
     def _wait_for_goal(self, timeout: float = 100.0, settle: float = 2.0) -> str:

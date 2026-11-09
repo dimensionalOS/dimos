@@ -16,7 +16,7 @@ import mujoco
 
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.messages.geometry_msgs.msg import Pose
 
 
 class PersonPositionController:

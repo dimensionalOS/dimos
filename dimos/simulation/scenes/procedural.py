@@ -28,7 +28,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy import ndimage
 
-from dimos.msgs.sim_msgs.Contacts import Kind
+from dimos.simulation.scenes.contact_types import Kind
 
 Vec3 = tuple[float, float, float]
 Rect = tuple[float, float, float, float]

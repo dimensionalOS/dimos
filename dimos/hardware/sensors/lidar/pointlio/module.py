@@ -41,10 +41,9 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import Imu, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.spec import perception
 
 # iVox local-map neighbor stencil. rust/src/module.rs maps the strings to

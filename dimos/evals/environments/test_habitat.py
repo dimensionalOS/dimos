@@ -22,9 +22,19 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.habitat import HabitatEnvironment
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.message_utils import image as image_utils
+from dimos.message_utils.geometry import vector_array
+from dimos.message_utils.time import header_now
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
 from dimos.simulation.habitat.connection import HabitatConnection, HabitatConnectionConfig
 
 
@@ -184,7 +194,7 @@ def test_readiness_failure_releases_resources(tmp_path, mocker):
 
 def test_readiness_and_pose_normalization():
     from dimos.memory.store.memory import MemoryStore
-    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.messages.sensor_msgs.msg import Image
 
     env = environment()
     with MemoryStore() as store:
@@ -192,14 +202,29 @@ def test_readiness_and_pose_normalization():
             env.latest_pose(store)
         with pytest.raises(TimeoutError):
             env.wait_ready(store, deadline=time.monotonic())
-        odom = Odometry(frame_id="world", pose=Pose(position=Vector3(1, 2, 3)))
+        odom = Odometry(
+            header=header_now("world"),
+            child_frame_id="base",
+            pose=PoseWithCovariance(
+                pose=Pose(position=Point(1, 2, 3), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+                covariance=np.zeros(36),
+            ),
+            twist=TwistWithCovariance(
+                twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)),
+                covariance=np.zeros(36),
+            ),
+        )
         store.stream("odometry", Odometry).append(odom)
-        store.stream("color_image", Image).append(Image(np.zeros((2, 2, 3), dtype=np.uint8)))
+        store.stream("color_image", Image).append(
+            image_utils.from_array(
+                np.zeros((2, 2, 3), dtype=np.uint8), encoding="rgb8", header=header_now()
+            )
+        )
         env.wait_ready(store, deadline=time.monotonic() + 1)
         pose = env.latest_pose(store)
-        assert pose.ts == odom.ts
-        assert pose.frame_id == "world"
-        assert tuple(pose.position) == (1, 2, 3)
+        assert pose.header.stamp == odom.header.stamp
+        assert pose.header.frame_id == "world"
+        assert tuple(vector_array(pose.pose.position)) == (1, 2, 3)
         assert env.episode_metadata()["initial_observed_position_ros"] == [1, 2, 3]
 
 

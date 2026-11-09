@@ -22,9 +22,9 @@ import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 
@@ -70,22 +70,16 @@ def pointcloud2_from_webrtc_lidar(raw_message: RawLidarMsg, ts: float | None = N
     occasionally re-emits a stale value on fresh scans — see
     :func:`repair_stale_ts` for the downstream repair.
     """
-    import open3d as o3d  # type: ignore[import-untyped]
-
     data = raw_message["data"]
-    points = data["data"]["points"]
-
-    pointcloud = o3d.geometry.PointCloud()
-    pointcloud.points = o3d.utility.Vector3dVector(points)
-
-    return PointCloud2(
-        pointcloud=pointcloud,
-        ts=ts if ts is not None else data["stamp"],
-        frame_id="world",
+    return pointcloud.from_xyz(
+        data["data"]["points"],
+        header=Header(
+            message_time.time_from_seconds(ts if ts is not None else data["stamp"]), "world"
+        ),
     )
 
 
-T = TypeVar("T", bound=Timestamped | CdrCloud)
+T = TypeVar("T", bound=PointCloud2 | Timestamped)
 
 
 def repair_stale_ts(
@@ -110,7 +104,9 @@ def repair_stale_ts(
 
     def _repair(item: T) -> T:
         nonlocal prev_good, prev_raw, n_seen, calibrated, use_system_time
-        raw = message_time.to_seconds(item.header.stamp) if isinstance(item, CdrCloud) else item.ts
+        raw = (
+            message_time.to_seconds(item.header.stamp) if isinstance(item, PointCloud2) else item.ts
+        )
         repaired = raw
         if use_system_time:
             repaired = now()
@@ -132,10 +128,10 @@ def repair_stale_ts(
                 )
         if repaired == raw:
             return item
-        if isinstance(item, CdrCloud):
+        if isinstance(item, PointCloud2):
             item.header.stamp = message_time.time_from_seconds(repaired)
-            return item
-        item.ts = repaired
+        else:
+            item.ts = repaired
         return item
 
     return ops.map(_repair)

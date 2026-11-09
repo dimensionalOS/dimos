@@ -14,7 +14,6 @@
 
 import threading
 from threading import Thread
-import time
 from typing import Any
 
 from pydantic import Field
@@ -24,18 +23,19 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
-from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -100,45 +100,26 @@ class G1SimConnection(G1ConnectionBase):
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         self.odom.publish(msg)
-
-        base_link = Transform.from_pose("base_link", msg)
-
-        # Publish camera_link and camera_optical transforms
-        camera_link = Transform(
-            translation=Vector3(0.05, 0.0, 0.6),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
+        base_link = geometry.transform_from_pose(msg, child_frame_id="base_link")
+        camera_link = TransformStamped(
+            message_time.header_now("base_link"),
+            "camera_link",
+            Transform(Vector3(0.05, 0.0, 0.6), Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
-
-        camera_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
-            ts=time.time(),
+        camera_optical = TransformStamped(
+            message_time.header_now("camera_link"),
+            "camera_optical",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(-0.5, 0.5, -0.5, 0.5)),
         )
-
-        map_to_world = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="map",
-            child_frame_id="world",
-            ts=time.time(),
+        map_to_world = TransformStamped(
+            message_time.header_now("map"),
+            "world",
+            Transform(Vector3(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
+        self.tf.publish(TFMessage([base_link, camera_link, camera_optical, map_to_world]))
 
-        self.tf.publish(TFMessage(base_link, camera_link, camera_optical, map_to_world))
-
-    def _publish_sim_odom(self, msg: SimOdometry) -> None:
-        self._publish_tf(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.position,
-                orientation=msg.orientation,
-            )
-        )
+    def _publish_sim_odom(self, msg: PoseStamped) -> None:
+        self._publish_tf(msg)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:

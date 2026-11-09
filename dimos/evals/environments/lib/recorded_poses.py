@@ -20,24 +20,24 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.messages.geometry_msgs.msg import TransformStamped
 
 
-def last_body_transform(recording: Store, body: str) -> Transform:
+def last_body_transform(recording: Store, body: str) -> TransformStamped:
     """The newest ``world -> body`` transform in the recording."""
     return _body_transform(recording, body, newest=True)
 
 
-def first_body_transform(recording: Store, body: str) -> Transform:
+def first_body_transform(recording: Store, body: str) -> TransformStamped:
     """The oldest ``world -> body`` transform in the recording."""
     return _body_transform(recording, body, newest=False)
 
 
-def _body_transform(recording: Store, body: str, *, newest: bool) -> Transform:
+def _body_transform(recording: Store, body: str, *, newest: bool) -> TransformStamped:
     if "body_poses" not in recording.streams:
         raise LookupError("No body_poses recorded")
     for record in recording.streams.body_poses.order_by("ts", desc=newest):
         for transform in record.data.transforms:
             if transform.child_frame_id == body:
-                return cast("Transform", transform)
+                return cast("TransformStamped", transform)
     raise LookupError(f"No pose for body {body!r}; is it in tracked_bodies?")

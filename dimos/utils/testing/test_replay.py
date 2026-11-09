@@ -17,7 +17,8 @@ import re
 import pytest
 from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
@@ -207,7 +208,13 @@ def test_first_methods() -> None:
     print("DONE")
     assert type(first_msg) is type(first_from_iterate)
     # Since pointcloud2_from_webrtc_lidar uses time.time(), timestamps will be slightly different
-    assert abs(first_msg.ts - first_from_iterate.ts) < 1.0  # Within 1 second tolerance
+    assert (
+        abs(
+            message_time.to_seconds(first_msg.header.stamp)
+            - message_time.to_seconds(first_from_iterate.header.stamp)
+        )
+        < 1.0
+    )  # Within 1 second tolerance
 
     # Test TimedSensorReplay.first_timestamp()
     odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)

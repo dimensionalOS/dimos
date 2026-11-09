@@ -38,13 +38,10 @@ from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.type.odometry import Odometry
+from dimos.message_utils import camera_info, image, pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -107,12 +104,12 @@ class MujocoConnection:
 
         atexit.register(cleanup_on_exit)
 
-    camera_info_static: CameraInfo = CameraInfo.from_fov(
-        fov_deg=VIDEO_CAMERA_FOV,
+    camera_info_static: CameraInfo = camera_info.from_fov(
+        fov_degrees=VIDEO_CAMERA_FOV,
         width=VIDEO_WIDTH,
         height=VIDEO_HEIGHT,
         axis="vertical",
-        frame_id="camera_optical",
+        header=message_time.header_now("camera_optical"),
     )
 
     def _launch(self) -> None:
@@ -329,7 +326,7 @@ class MujocoConnection:
 
         return None
 
-    def get_odom_message(self) -> Odometry | None:
+    def get_odom_message(self) -> PoseStamped | None:
         if self.shm_data is None:
             return None
 
@@ -341,11 +338,9 @@ class MujocoConnection:
             # Convert quaternion from (w,x,y,z) to (x,y,z,w) for ROS/Dimos
             orientation = Quaternion(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0])
 
-            return Odometry(
-                position=Vector3(pos[0], pos[1], pos[2]),
-                orientation=orientation,
-                ts=timestamp,
-                frame_id="world",
+            return PoseStamped(
+                Header(message_time.time_from_seconds(timestamp), "world"),
+                Pose(Point(float(pos[0]), float(pos[1]), float(pos[2])), orientation),
             )
 
         return None
@@ -358,7 +353,9 @@ class MujocoConnection:
         if seq > self._last_lidar_seq and lidar is not None:
             self._last_lidar_seq = seq
             points, ts = lidar
-            return PointCloud2.from_numpy(points, frame_id="world", timestamp=ts)
+            return pointcloud.from_xyz(
+                points, header=Header(message_time.time_from_seconds(ts), "world")
+            )
 
         return None
 
@@ -404,7 +401,7 @@ class MujocoConnection:
         return self._create_stream(self.get_lidar_message, LIDAR_FPS, "Lidar")
 
     @functools.cache
-    def odom_stream(self) -> Observable[Odometry]:
+    def odom_stream(self) -> Observable[PoseStamped]:
         return self._create_stream(self.get_odom_message, ODOM_FREQUENCY, "Odom")
 
     @functools.cache
@@ -412,7 +409,7 @@ class MujocoConnection:
         def get_video_as_image() -> Image | None:
             frame = self.get_video_frame()
             # MuJoCo renderer returns RGB uint8 frames; Image.from_numpy defaults to BGR.
-            return Image.from_numpy(frame, format=ImageFormat.RGB) if frame is not None else None
+            return image.from_array(frame, encoding="rgb8") if frame is not None else None
 
         return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
 

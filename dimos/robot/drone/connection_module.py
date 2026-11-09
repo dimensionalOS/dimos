@@ -21,7 +21,6 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import String
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -30,13 +29,20 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header, String
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
@@ -173,23 +179,17 @@ class DroneConnectionModule(Module):
         self.odom.publish(msg)
 
         # Publish base_link transform
-        base_link = Transform(
-            translation=msg.position,
-            rotation=msg.orientation,
-            frame_id="world",
-            child_frame_id="base_link",
-            ts=msg.ts if hasattr(msg, "ts") else time.time(),
+        base_link = TransformStamped(
+            Header(msg.header.stamp, "world"),
+            "base_link",
+            geometry.transform_from_pose(msg, child_frame_id="base_link").transform,
         )
-
-        # Publish camera_link transform (camera mounted on front of drone, no gimbal factored in yet)
-        camera_link = Transform(
-            translation=Vector3(0.1, 0.0, -0.05),  # 10cm forward, 5cm down
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),  # No rotation relative to base
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
+        camera_link = TransformStamped(
+            message_time.header_now("base_link"),
+            "camera_link",
+            Transform(Vector3(0.1, 0.0, -0.05), Quaternion(0.0, 0.0, 0.0, 1.0)),
         )
-        self.tf.publish(TFMessage(base_link, camera_link))
+        self.tf.publish(TFMessage([base_link, camera_link]))
 
     def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish drone status as JSON string."""
@@ -222,10 +222,8 @@ class DroneConnectionModule(Module):
                     if self._odom is None:
                         # Publish default pose
                         default_pose = PoseStamped(
-                            position=Vector3(0, 0, 0),
-                            orientation=Quaternion(0, 0, 0, 1),
-                            frame_id="world",
-                            ts=time.time(),
+                            header=message_time.header_now("world"),
+                            pose=Pose(Point(0.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
                         )
                         self._publish_tf(default_pose)
                         logger.debug("Publishing default odometry")

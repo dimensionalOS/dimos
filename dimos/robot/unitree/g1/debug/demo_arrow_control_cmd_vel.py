@@ -20,18 +20,14 @@ import time
 import traceback
 from typing import Any
 
-import lcm
-
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
 
-CMD_VEL_CHANNEL = "/cmd_vel#geometry_msgs.Twist"
+CMD_VEL_TOPIC = "/cmd_vel"
 
 
-def publish_twist(lc: lcm.LCM, twist: Twist) -> None:
-    lc.publish(CMD_VEL_CHANNEL, twist.lcm_encode())
+def publish_twist(transport: LCMTransport[Twist], twist: Twist) -> None:
+    transport.broadcast(None, twist)
 
 
 def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
@@ -70,6 +66,8 @@ def draw_ui(stdscr: Any, state_text: str = "Not connected") -> None:
 
 
 def main(stdscr: Any) -> None:
+    from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
+
     curses.curs_set(0)
     stdscr.nodelay(1)
     stdscr.timeout(100)
@@ -78,14 +76,12 @@ def main(stdscr: Any) -> None:
 
     # Set up G1HighLevelDdsSdk with cmd_vel LCM transport so it subscribes
     conn = G1HighLevelDdsSdk(network_interface="eth0")
-    conn.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
+    transport: LCMTransport[Twist] = LCMTransport(CMD_VEL_TOPIC, Twist)
+    conn.cmd_vel.transport = transport
     conn.start()
     time.sleep(1)
 
-    # Raw LCM publisher — messages go to the transport above
-    lc = lcm.LCM()
-
-    draw_ui(stdscr, "Connected - publishing on " + CMD_VEL_CHANNEL)
+    draw_ui(stdscr, "Connected - publishing on " + CMD_VEL_TOPIC)
 
     linear_speed = 0.3  # m/s
     angular_speed = 0.5  # rad/s
@@ -135,7 +131,7 @@ def main(stdscr: Any) -> None:
                 action = "Strafing right..."
             elif key_char == " ":
                 stop = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
-                publish_twist(lc, stop)
+                publish_twist(transport, stop)
                 action = "Stopped"
                 last_cmd_time = current_time
             elif key_char == "1":
@@ -150,7 +146,7 @@ def main(stdscr: Any) -> None:
                 last_cmd_time = current_time
 
             if twist is not None:
-                publish_twist(lc, twist)
+                publish_twist(transport, twist)
                 last_cmd_time = current_time
 
             if action:
@@ -161,7 +157,7 @@ def main(stdscr: Any) -> None:
     finally:
         draw_ui(stdscr, "Stopping...")
         stop = Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0))
-        publish_twist(lc, stop)
+        publish_twist(transport, stop)
         time.sleep(0.5)
         conn.disconnect()
         draw_ui(stdscr, "Done")

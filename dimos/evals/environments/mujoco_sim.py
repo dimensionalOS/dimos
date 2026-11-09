@@ -26,6 +26,7 @@ from pydantic import Field
 
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.message_utils.time import to_seconds
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -82,7 +83,8 @@ class MujocoEnvironment(Sim):
         while time.monotonic() < deadline:
             try:
                 ages = [
-                    time.time() - getattr(recording.streams, name).last().data.ts
+                    time.time()
+                    - to_seconds(getattr(recording.streams, name).last().data.header.stamp)
                     for name in self.config.ready_streams
                     if name in recording.streams
                 ]

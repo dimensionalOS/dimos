@@ -2,6 +2,7 @@
   description = "Point-LIO native module for dimos";
 
   inputs = {
+    dimos-source = { url = "path:../../../../../.."; flake = false; };
     nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
@@ -9,13 +10,19 @@
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, crate2nix }:
+  outputs = { self, dimos-source, nix-filter, nixpkgs, flake-utils, crate2nix }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-pointlio";
 
-        src = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        modulePath = "dimos/hardware/sensors/lidar/pointlio/rust";
+        moduleSource = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
+        staged = import (dimos-source + "/native/rust/module-source.nix") {
+          inherit pkgs modulePath moduleSource;
+          projectRoot = dimos-source;
+        };
+        src = staged + "/${modulePath}";
 
         generated = crate2nix.tools.${system}.generatedCargoNix { inherit name src; };
 

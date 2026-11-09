@@ -29,19 +29,25 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::clock::HostClock;
 use cyclonedds_rs::{DdsWriter, SampleBuffer, TopicType};
+use dimos_generated_messages::builtin_interfaces::msg::time::Time as VideoTime;
+use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+use dimos_generated_messages::control_msgs::msg::{
+    dynamic_joint_state::DynamicJointState, interface_value::InterfaceValue,
+};
+use dimos_generated_messages::foxglove_msgs::msg::compressed_video::CompressedVideo;
+use dimos_generated_messages::geometry_msgs::msg::{
+    point::Point, pose::Pose, pose_with_covariance::PoseWithCovariance, quaternion::Quaternion,
+    twist::Twist, twist_with_covariance::TwistWithCovariance, vector3::Vector3,
+};
+use dimos_generated_messages::nav_msgs::msg::odometry::Odometry;
+use dimos_generated_messages::sensor_msgs::msg::{
+    battery_state::BatteryState, camera_info::CameraInfo, compressed_image::CompressedImage,
+    imu::Imu, joint_state::JointState, joy::Joy, point_cloud2::PointCloud2,
+    point_field::PointField,
+};
+use dimos_generated_messages::std_msgs::msg::{header::Header, string::String as StringMessage};
 use dimos_module::nalgebra::{Isometry3, Quaternion as NQuaternion, Translation3, UnitQuaternion};
-use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
-use lcm_msgs::builtin_interfaces::Time as VideoTime;
-use lcm_msgs::control_msgs::{DynamicJointState, InterfaceValue};
-use lcm_msgs::foxglove_msgs::CompressedVideo;
-use lcm_msgs::geometry_msgs::{
-    Point, Pose, PoseWithCovariance, Quaternion, Twist, TwistWithCovariance, Vector3,
-};
-use lcm_msgs::nav_msgs::Odometry;
-use lcm_msgs::sensor_msgs::{
-    BatteryState, CameraInfo, CompressedImage, Imu, JointState, Joy, PointCloud2, PointField,
-};
-use lcm_msgs::std_msgs::{self, Header, Time};
+use dimos_module::{native_config, Input, Module, Output, Tf, TransformStamped};
 use tokio::runtime::Handle;
 use tracing::{info, warn};
 
@@ -142,25 +148,27 @@ pub struct Config {
 
 /// python's `CameraInfo` config dict <-> the message; the stamp is set per publish.
 mod camera_info_dict {
-    use lcm_msgs::sensor_msgs::CameraInfo;
-    use lcm_msgs::std_msgs::Header;
+    use dimos_generated_messages::builtin_interfaces::msg::time::Time;
+    use dimos_generated_messages::sensor_msgs::msg::camera_info::CameraInfo;
+    use dimos_generated_messages::sensor_msgs::msg::region_of_interest::RegionOfInterest;
+    use dimos_generated_messages::std_msgs::msg::header::Header;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     #[derive(Serialize, Deserialize)]
     #[allow(non_snake_case)]
     struct Dict {
         frame_id: String,
-        height: i32,
-        width: i32,
+        height: u32,
+        width: u32,
         distortion_model: String,
         D: Vec<f64>,
         K: [f64; 9],
         R: [f64; 9],
         P: [f64; 12],
         #[serde(default)]
-        binning_x: i32,
+        binning_x: u32,
         #[serde(default)]
-        binning_y: i32,
+        binning_y: u32,
     }
 
     pub fn deserialize<'de, De: Deserializer<'de>>(d: De) -> Result<CameraInfo, De::Error> {
@@ -168,18 +176,24 @@ mod camera_info_dict {
         Ok(CameraInfo {
             header: Header {
                 frame_id: c.frame_id,
-                ..Default::default()
+                stamp: Time { sec: 0, nanosec: 0 },
             },
             height: c.height,
             width: c.width,
             distortion_model: c.distortion_model,
-            D: c.D,
-            K: c.K,
-            R: c.R,
-            P: c.P,
+            d: c.D,
+            k: c.K,
+            r: c.R,
+            p: c.P,
             binning_x: c.binning_x,
             binning_y: c.binning_y,
-            ..Default::default()
+            roi: RegionOfInterest {
+                x_offset: 0,
+                y_offset: 0,
+                height: 0,
+                width: 0,
+                do_rectify: false,
+            },
         })
     }
 
@@ -189,10 +203,10 @@ mod camera_info_dict {
             height: c.height,
             width: c.width,
             distortion_model: c.distortion_model.clone(),
-            D: c.D.clone(),
-            K: c.K,
-            R: c.R,
-            P: c.P,
+            D: c.d.clone(),
+            K: c.k,
+            R: c.r,
+            P: c.p,
             binning_x: c.binning_x,
             binning_y: c.binning_y,
         }
@@ -320,52 +334,52 @@ pub fn parse_verb(verb: &str) -> Option<Vec<Cmd>> {
 #[derive(Module)]
 #[module(name = "go2_dds", setup = start, teardown = stop)]
 pub struct Go2Dds {
-    #[input(decode = Twist::decode, handler = on_cmd_vel)]
+    #[input(decode = dimos_module::cdr::decode, handler = on_cmd_vel)]
     cmd_vel: Input<Twist>,
 
-    #[input(decode = std_msgs::String::decode, handler = on_command)]
-    command: Input<std_msgs::String>,
+    #[input(decode = dimos_module::cdr::decode, handler = on_command)]
+    command: Input<StringMessage>,
 
-    #[output(encode = Odometry::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     odometry: Output<Odometry>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     lidar: Output<PointCloud2>,
 
-    #[output(encode = CompressedVideo::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     video: Output<CompressedVideo>,
 
-    #[output(encode = CompressedImage::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     image: Output<CompressedImage>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     lidar_raw: Output<PointCloud2>,
 
-    #[output(encode = Imu::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     lidar_imu: Output<Imu>,
 
-    #[output(encode = JointState::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     joint_state: Output<JointState>,
 
-    #[output(encode = DynamicJointState::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     motor_state: Output<DynamicJointState>,
 
-    #[output(encode = DynamicJointState::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     joint_command: Output<DynamicJointState>,
 
-    #[output(encode = PointCloud2::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     height_map: Output<PointCloud2>,
 
-    #[output(encode = Imu::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     imu: Output<Imu>,
 
-    #[output(encode = BatteryState::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     battery: Output<BatteryState>,
 
-    #[output(encode = Joy::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     joy: Output<Joy>,
 
-    #[output(encode = CameraInfo::encode)]
+    #[output(encode = dimos_module::cdr::encode)]
     camera_info: Output<CameraInfo>,
 
     #[config]
@@ -448,7 +462,7 @@ impl Go2Dds {
         });
     }
 
-    async fn on_command(&mut self, msg: std_msgs::String) {
+    async fn on_command(&mut self, msg: StringMessage) {
         match parse_verb(&msg.data) {
             Some(cmds) => {
                 info!(verb = %msg.data, ?cmds, "command");
@@ -526,10 +540,10 @@ fn source_stamped<T: TopicType>(
 }
 
 fn time_of_secs(ts: f64) -> Time {
-    let sec = ts.trunc();
+    let sec = ts.floor();
     Time {
         sec: sec as i32,
-        nsec: ((ts - sec) * 1e9) as i32,
+        nanosec: ((ts - sec) * 1e9) as u32,
     }
 }
 
@@ -580,7 +594,6 @@ impl Cadence {
 
 fn header(frame_id: &str, ts: f64) -> Header {
     Header {
-        seq: 0,
         stamp: time_of_secs(ts),
         frame_id: frame_id.into(),
     }
@@ -667,7 +680,7 @@ pub fn joint_command(c: &types::LowCmd, ts: f64) -> DynamicJointState {
 pub fn height_map(s: &types::HeightMap, ts: f64) -> PointCloud2 {
     let (w, r) = (s.width as usize, s.resolution);
     let mut data = Vec::with_capacity(s.data.len() * 12);
-    let mut n = 0i32;
+    let mut n = 0u32;
     for (i, &z) in s.data.iter().enumerate() {
         if !z.is_finite() || z.abs() >= HEIGHT_UNKNOWN || w == 0 {
             continue;
@@ -788,13 +801,12 @@ pub fn joy(s: &types::WirelessController, ts: f64) -> Joy {
 }
 
 /// The dimos odometry and its tf edge, at `ts`.
-pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
+pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, TransformStamped) {
     let p = &s.pose.pose.position;
     let q = &s.pose.pose.orientation;
     let (l, a) = (&s.twist.twist.linear, &s.twist.twist.angular);
     let odom = Odometry {
         header: Header {
-            seq: 0,
             stamp: time_of_secs(ts),
             frame_id: s.header.frame_id.clone(),
         },
@@ -835,53 +847,59 @@ pub fn odometry(s: &types::Odometry, ts: f64) -> (Odometry, Transform) {
         Translation3::new(p.x, p.y, p.z),
         UnitQuaternion::from_quaternion(NQuaternion::new(q.w, q.x, q.y, q.z)),
     );
-    let edge = Transform::new(s.header.frame_id.clone(), s.child_frame_id.clone(), ts, iso);
+    let edge = dimos_module::tf::from_isometry(
+        s.header.frame_id.clone(),
+        s.child_frame_id.clone(),
+        time_of_secs(ts),
+        iso,
+    );
     (odom, edge)
 }
 
 pub fn pointcloud(s: &types::PointCloud2, ts: f64) -> PointCloud2 {
     PointCloud2 {
         header: Header {
-            seq: 0,
             stamp: time_of_secs(ts),
             frame_id: s.header.frame_id.clone(),
         },
-        height: s.height as i32,
-        width: s.width as i32,
+        height: s.height as u32,
+        width: s.width as u32,
         fields: s
             .fields
             .iter()
             .map(|f| PointField {
                 name: f.name.clone(),
-                offset: f.offset as i32,
+                offset: f.offset as u32,
                 datatype: f.datatype,
-                count: f.count as i32,
+                count: f.count as u32,
             })
             .collect(),
         is_bigendian: s.is_bigendian,
-        point_step: s.point_step as i32,
-        row_step: s.row_step as i32,
+        point_step: s.point_step as u32,
+        row_step: s.row_step as u32,
         data: s.data.clone(),
         is_dense: s.is_dense,
     }
 }
 
-fn edge(parent: &str, child: &str, xyz: [f64; 3], rpy: [f64; 3], ts: f64) -> Transform {
+fn edge(parent: &str, child: &str, xyz: [f64; 3], rpy: [f64; 3], ts: f64) -> TransformStamped {
     let iso = Isometry3::from_parts(
         Translation3::new(xyz[0], xyz[1], xyz[2]),
         UnitQuaternion::from_euler_angles(rpy[0], rpy[1], rpy[2]),
     );
-    Transform::new(parent, child, ts, iso)
+    dimos_module::tf::from_isometry(parent, child, time_of_secs(ts), iso)
 }
 
-fn inverse(t: Transform) -> Transform {
-    let iso = Isometry3::from_parts(t.translation().into(), t.rotation()).inverse();
-    Transform::new(t.child, t.parent, t.ts, iso)
+fn inverse(t: TransformStamped) -> TransformStamped {
+    let iso = dimos_module::tf::isometry(&t)
+        .expect("valid mount transform")
+        .inverse();
+    dimos_module::tf::from_isometry(t.child_frame_id, t.header.frame_id, t.header.stamp, iso)
 }
 
 /// base_link -> {front_camera -> {mid360_link, camera_optical}, utlidar_lidar},
 /// re-rooted at `tf_root`.
-pub fn mount_tree(c: &Config, ts: f64) -> Vec<Transform> {
+pub fn mount_tree(c: &Config, ts: f64) -> Vec<TransformStamped> {
     let camera = edge(BODY_FRAME, MOUNT_FRAME, c.camera_xyz, [0.0; 3], ts);
     let mid360 = edge(
         MOUNT_FRAME,
@@ -1167,7 +1185,6 @@ impl DdsLoop {
                 if let Some((data, ts)) = newest_jpeg(replies) {
                     let msg = CompressedImage {
                         header: Header {
-                            seq: 0,
                             stamp: time_of_secs(ts),
                             frame_id: CAMERA_FRAME.to_string(),
                         },
@@ -1248,7 +1265,7 @@ impl VideoLoop {
                 let msg = CompressedVideo {
                     timestamp: VideoTime {
                         sec: (ts_ns / 1_000_000_000) as i32,
-                        nanosec: (ts_ns % 1_000_000_000) as i32,
+                        nanosec: (ts_ns % 1_000_000_000) as u32,
                     },
                     frame_id: CAMERA_FRAME.to_string(),
                     data: au.data,
@@ -1503,15 +1520,15 @@ mod tests {
         let info = config().camera_info;
         assert_eq!((info.width, info.height), (1280, 720));
         assert_eq!(info.header.frame_id, CAMERA_FRAME);
-        assert_eq!(info.K[0], 797.4756164864929);
-        assert_eq!(info.D.len(), 4);
+        assert_eq!(info.k[0], 797.4756164864929);
+        assert_eq!(info.d.len(), 4);
     }
 
     #[test]
     fn mount_tree_reroots_at_the_lidar() {
         let mut c = config();
         let body = mount_tree(&c, 1.0);
-        let optical = body[2].rotation();
+        let optical = dimos_module::tf::isometry(&body[2]).unwrap().rotation;
         let q = optical.quaternion();
         assert!(
             (q.coords - dimos_module::nalgebra::Vector4::new(-0.5, 0.5, -0.5, 0.5)).norm() < 1e-9
@@ -1520,7 +1537,7 @@ mod tests {
         let lidar = mount_tree(&c, 1.0);
         let parents: Vec<_> = lidar
             .iter()
-            .map(|t| (t.parent.as_str(), t.child.as_str()))
+            .map(|t| (t.header.frame_id.as_str(), t.child_frame_id.as_str()))
             .collect();
         assert_eq!(
             parents,
@@ -1532,12 +1549,32 @@ mod tests {
             ]
         );
         // The L1 hangs off base_link either way, at the configured mount.
-        assert_eq!(lidar[3].translation(), body[3].translation());
-        let (r, p, y) = body[3].rotation().euler_angles();
+        assert_eq!(
+            dimos_module::tf::isometry(&lidar[3])
+                .unwrap()
+                .translation
+                .vector,
+            dimos_module::tf::isometry(&body[3])
+                .unwrap()
+                .translation
+                .vector
+        );
+        let (r, p, y) = dimos_module::tf::isometry(&body[3])
+            .unwrap()
+            .rotation
+            .euler_angles();
         let rpy = c.l1_mount.map(f64::to_radians);
         assert!((r - rpy[0]).abs() + (p - rpy[1]).abs() + (y - rpy[2]).abs() < 1e-9);
         // Inverting the lidar edge and composing back lands on the identity.
-        let round = body[1].translation() + body[1].rotation() * lidar[0].translation();
+        let round = dimos_module::tf::isometry(&body[1])
+            .unwrap()
+            .translation
+            .vector
+            + dimos_module::tf::isometry(&body[1]).unwrap().rotation
+                * dimos_module::tf::isometry(&lidar[0])
+                    .unwrap()
+                    .translation
+                    .vector;
         assert!(round.norm() < 1e-9);
     }
 
@@ -1564,17 +1601,24 @@ mod tests {
             odom.header.stamp,
             Time {
                 sec: 1234,
-                nsec: 500_000_000
+                nanosec: 500_000_000
             }
         );
         assert_eq!(
-            (edge.parent.as_str(), edge.child.as_str()),
+            (edge.header.frame_id.as_str(), edge.child_frame_id.as_str()),
             ("odom", "base_link")
         );
         assert_eq!(
-            edge.translation(),
+            dimos_module::tf::isometry(&edge)
+                .unwrap()
+                .translation
+                .vector,
             dimos_module::nalgebra::Vector3::new(1.0, 2.0, 0.3)
         );
-        assert!((edge.rotation().angle() - std::f64::consts::PI).abs() < 1e-9);
+        assert!(
+            (dimos_module::tf::isometry(&edge).unwrap().rotation.angle() - std::f64::consts::PI)
+                .abs()
+                < 1e-9
+        );
     }
 }
