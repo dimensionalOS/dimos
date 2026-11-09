@@ -14,26 +14,43 @@
 
 from __future__ import annotations
 
-from dimos.msgs.sensor_msgs.Image import Image
+import io
+
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+import numpy as np
+from turbojpeg import TJPF_RGB, TurboJPEG
+
+from dimos.messages.builtin_interfaces.msg import Time
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 
 
 class JpegCodec:
-    """Codec for Image types — JPEG-compressed inside an LCM Image envelope.
-
-    Uses ``Image.lcm_jpeg_encode/decode`` which preserves ``ts``, ``frame_id``,
-    and all LCM header fields. Pixel data is lossy-compressed via TurboJPEG.
-    """
+    """Read historical JPEG-in-LCM images as generated RGB Image messages."""
 
     def __init__(self, quality: int = 50) -> None:
         self._quality = quality
+        self._decoder = TurboJPEG()
 
     @property
     def payload_type(self) -> type[Image]:
-        """Message type decoded by this storage codec."""
         return Image
 
     def encode(self, value: Image) -> bytes:
-        return value.lcm_jpeg_encode(quality=self._quality)
+        raise TypeError("Historical JPEG codecs are read-only; use CDR for new recordings")
 
     def decode(self, data: bytes) -> Image:
-        return Image.lcm_jpeg_decode(data)
+        stream = io.BytesIO(data)
+        old = LCMImage.lcm_decode(stream)
+        if stream.tell() != len(data) or old.encoding != "jpeg":
+            raise ValueError("Expected one historical JPEG Image envelope")
+        pixels = self._decoder.decode(old.data, pixel_format=TJPF_RGB)
+        return Image(
+            header=Header(Time(old.header.stamp.sec, old.header.stamp.nsec), old.header.frame_id),
+            height=pixels.shape[0],
+            width=pixels.shape[1],
+            encoding="rgb8",
+            is_bigendian=0,
+            step=pixels.shape[1] * 3,
+            data=np.frombuffer(pixels.tobytes(), dtype=np.uint8).copy(),
+        )

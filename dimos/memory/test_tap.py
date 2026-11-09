@@ -27,8 +27,10 @@ from dimos.experimental.memory import rust_cli_recorder
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 
 
 class _Transport(Transport[Any]):
@@ -61,12 +63,32 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     unsub = rec.tap("odom", PoseStamped, odom)
     assert rec.tap("goal", PoseStamped, goal) is None  # filtered out
     assert rec.tap("lidar", dict, raw) is None  # not a dimos message type
-    odom.publish(PoseStamped(ts=1.0))
-    odom.publish(PoseStamped(ts=2.0))
-    goal.publish(PoseStamped(ts=3.0))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
+    goal.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(3.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
     assert unsub is not None
     unsub()
-    odom.publish(PoseStamped(ts=4.0))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(4.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
     rec.close()
     store.stop()
 
@@ -77,8 +99,7 @@ def test_taps_matching_dimos_streams(tmp_path: Path) -> None:
     store.stop()
 
 
-def test_depth_is_recorded_losslessly_and_colour_as_jpeg(tmp_path: Path) -> None:
-    pytest.importorskip("turbojpeg")
+def test_generated_images_are_recorded_losslessly(tmp_path: Path) -> None:
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
@@ -86,9 +107,19 @@ def test_depth_is_recorded_losslessly_and_colour_as_jpeg(tmp_path: Path) -> None
     mm = np.arange(48 * 64, dtype=np.uint16).reshape(48, 64) * 7
     metres = mm.astype(np.float32) / 1000
     frames = {
-        "depth16": Image(data=mm, format=ImageFormat.DEPTH16, frame_id="depth_optical", ts=1.0),
-        "depth": Image(data=metres, format=ImageFormat.DEPTH, frame_id="depth_optical", ts=1.0),
-        "color": Image(data=np.zeros((48, 64, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=1.0),
+        "depth16": image_utils.from_array(
+            mm, encoding="16UC1", header=Header(message_time.time_from_seconds(1), "depth_optical")
+        ),
+        "depth": image_utils.from_array(
+            metres,
+            encoding="32FC1",
+            header=Header(message_time.time_from_seconds(1), "depth_optical"),
+        ),
+        "color": image_utils.from_array(
+            np.zeros((48, 64, 3), dtype=np.uint8),
+            encoding="rgb8",
+            header=Header(message_time.time_from_seconds(1), ""),
+        ),
     }
     for name, frame in frames.items():
         transport = _Transport()
@@ -100,10 +131,10 @@ def test_depth_is_recorded_losslessly_and_colour_as_jpeg(tmp_path: Path) -> None
     store = SqliteStore(path=str(path), must_exist=True)
     store.start()
     codecs = {name: store._registry.get(name)["codec_id"] for name in frames}  # type: ignore[index]
-    assert codecs == {"depth16": "lz4+lcm", "depth": "lz4+lcm", "color": "jpeg"}
-    for name in ("depth16", "depth"):
+    assert codecs == {name: "cdr" for name in frames}
+    for name in frames:
         decoded = store.stream(name, Image).first().data
-        assert decoded.format == frames[name].format
+        assert decoded.encoding == frames[name].encoding
         np.testing.assert_array_equal(decoded.data, frames[name].data)
     store.stop()
 
@@ -118,9 +149,24 @@ def test_full_queue_drops_and_counts(tmp_path: Path, monkeypatch: pytest.MonkeyP
     rec._writer.join()
     odom = _Transport()
     rec.tap("odom", PoseStamped, odom)
-    odom.publish(PoseStamped(ts=1.0))
-    odom.publish(PoseStamped(ts=2.0))
-    odom.publish(PoseStamped(ts=3.0))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(3.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
     assert rec.dropped == 2
     assert len(warnings) == 1
     store.stop()
@@ -134,7 +180,12 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
     odom = _Transport()
     rec.tap("odom", PoseStamped, odom)
     odom.publish("not a PoseStamped")  # append raises TypeError inside the writer
-    odom.publish(PoseStamped(ts=2.0))
+    odom.publish(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(2.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        )
+    )
     rec.close()  # returns: the writer is still draining
     store.stop()
 

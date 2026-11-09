@@ -61,6 +61,8 @@ from dimos.memory.vis import color
 from dimos.memory.vis.plot.elements import Series
 from dimos.memory.vis.plot.plot import Plot
 from dimos.utils.data import get_data
+from dimos.message_utils import image as image_utils
+import cv2
 
 store = SqliteStore(path=get_data("go2_bigoffice.db"))
 images = store.streams.color_image
@@ -73,7 +75,7 @@ plot.add(
 )
 
 plot.add(
-    images.transform(throttle(0.5)).map_data(lambda obs: obs.data.brightness).transform(smooth(10)),
+    images.transform(throttle(0.5)).map_data(lambda obs: image_utils.brightness(obs.data)).transform(smooth(10)),
     label="brightness",
     color=color.blue,
 )
@@ -159,7 +161,7 @@ plot.add(plantness_similarity,
 )
 
 plot.add(
-    images.transform(throttle(0.5)).map_data(lambda obs: obs.data.brightness),
+    images.transform(throttle(0.5)).map_data(lambda obs: image_utils.brightness(obs.data)),
     label="brightness",
     axis="brightness"
 )
@@ -237,7 +239,7 @@ moondream.start()
 # so we can just draw it directly via mosaic that takes image streams
 m = mosaic(semantic_peaks.map_data(lambda obs: moondream.query_detections(obs.data, "plant")))
 
-m.data.save("assets/plants_auto.png")
+cv2.imwrite("assets/plants_auto.png", image_utils.to_bgr(m.data))
 ```
 
 ```results
@@ -288,7 +290,7 @@ for peak in meaningful_peaks:
     plot.add(VLine(peak.ts, color=color.red))
 
 m = mosaic(meaningful_peaks)
-m.data.save("assets/plants_meaningful.png")
+cv2.imwrite("assets/plants_meaningful.png", image_utils.to_bgr(m.data))
 
 plot.to_svg("assets/plot_plantness_significant.svg")
 ```
@@ -320,8 +322,8 @@ meaningful_peak = meaningful_peaks.first()
 
 # load all images captured in the readius around the semantic peak
 near_images = images.near(meaningful_peak.pose_stamped, radius=2.5) \
-    .filter(lambda obs: obs.data.brightness > 0.1) \
-    .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+    .filter(lambda obs: image_utils.brightness(obs.data) > 0.1) \
+    .transform(QualityWindow(lambda img: image_utils.sharpness(img), window=0.5))
 
 # load all lidar frames captured in the readius around the semantic peak
 # feed them into a global mapper to get a single pointcloud around our area of interest
@@ -345,7 +347,7 @@ drawing.add(detections)
 drawing.to_svg("assets/peak_space.svg")
 
 m = mosaic(detections)
-m.data.save("assets/plants_peak_detections.png")
+cv2.imwrite("assets/plants_peak_detections.png", image_utils.to_bgr(m.data))
 ```
 
 ![output](assets/peak_space.svg)
@@ -362,14 +364,14 @@ from dimos.robot.unitree.go2.connection import (
     BASE_TO_OPTICAL,
 )
 from dimos.memory.vis.space.elements import Box3D
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos.message_utils import geometry
 
 # TODO We need a nicer way to get optical transform for image streams
 # depending on the source
 def world_to_optical(base_pose):
-    return -(Transform.from_pose("base_link", base_pose) + BASE_TO_OPTICAL)
+    world_to_base = geometry.transform_from_pose(base_pose, child_frame_id="base_link")
+    return geometry.inverse_transform(geometry.compose_transforms(world_to_base, BASE_TO_OPTICAL))
 
 drawing = Space()
 
@@ -394,7 +396,10 @@ for obs in detections3d:
         aabb = d3d.get_bounding_box()
         c, e = aabb.get_center(), aabb.get_extent()
         drawing.add(Box3D(
-            center=Pose(float(c[0]), float(c[1]), float(c[2])),
+            center=Pose(
+                position=Point(float(c[0]), float(c[1]), float(c[2])),
+                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            ),
             size=Vector3(float(e[0]), float(e[1]), float(e[2])),
             color=color.green, label="plant",
         ))

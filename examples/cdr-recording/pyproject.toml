@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-cdr-recording-example"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["dimos", "mcap>=1.2"]
+
+[project.entry-points."dimos.blueprints"]
+pose = "cdr_recording_example:MovingPose"
+
+[tool.setuptools]
+py-modules = ["cdr_recording_example"]

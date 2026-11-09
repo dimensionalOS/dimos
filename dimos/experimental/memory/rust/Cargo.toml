@@ -9,8 +9,8 @@ license = "Apache-2.0"
 anyhow = "1"
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", version = "=0.1.0" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-module = { path = "../../../../native/rust/dimos-module", version = "=0.2.0" }
+dimos-generated-msgs = { package = "dimos-generated-messages", path = "../../../../build/message-source/rust" }
 lz4_flex = "0.14.0"
 mcap = { version = "0.25.0", default-features = false, features = ["zstd"] }
 rayon = "1"
