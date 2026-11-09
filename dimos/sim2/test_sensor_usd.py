@@ -86,7 +86,6 @@ def _anonymous(usd: str) -> object:
 
 
 def test_the_simulated_mid360_describes_the_same_box_as_the_real_one() -> None:
-    """A sim twin that described itself differently would change shape with which one is running."""
     from dimos.hardware.sensors.lidar.livox.module import mid360_usd
     from dimos.sim2.livox import LivoxSim
 

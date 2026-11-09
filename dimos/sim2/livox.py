@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LivoxSim: the sim twin of the Mid360 module, read from a world of its own making.
-
-The lidar casts the fitted Mid-360 scan pattern and return model; the IMU is the one inside
-the unit, at the same mount. It describes itself to nobody: a manager mounts its `get_usd`
-onto the frame it is bolted to, and this then asks that manager for the scene and ranges
-against the furniture that is really there.
-"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -48,21 +41,12 @@ from dimos.utils.data import get_data
 
 
 class LivoxSimConfig(SceneConfig):
-    # The lidar's frame, as a robot's description or the scene names it: where it sits.
     frame_id: str = "mid360_link"
     imu_frame_id: str = "imu_link"
     rate_hz: float = 10.0
     imu_rate_hz: float = 200.0
-    # A lidar sees whatever a body would walk into, so these are the groups MuJoCo's own convention
-    # puts collision geometry in: 0 for a hand-written scene's planes and boxes, 3 for a converted
-    # one's collision meshes and every robot's. Group 1 is left out because it holds visual-only
-    # meshes (contype 0). Seeing only group 0 was the old default: in office_555 that is 354 geoms
-    # out of 4138, so the beam passed through every desk, chair and robot and returned the wall.
     geom_groups: tuple[int, ...] = (0, 3)
-    # Further frames the beam passes through, beyond the one the sensor is mounted on (which it
-    # never sees, the way a real one cannot see its own housing): a radome, a mast, a test's wall.
     blind_to: tuple[str, ...] = ()
-    # The Go2 rig's mount blocks some directions; only meaningful when mounted on a Go2.
     go2_occlusion: bool = False
     seed: int = 0
 
@@ -75,12 +59,6 @@ class LivoxSim(Module):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: the MID-360, in the frames this instance stamps.
-
-        The same layer the real Mid360 driver answers with, not a copy: a sim twin that described
-        itself differently would put a different box on the screen depending which one was running.
-        The root is that driver's directory, for the reason it gives.
-        """
         return [
             str(Path(mid360_driver.__file__ or "").parent),
             mid360_usd(self.frame_id, self.config.imu_frame_id),
@@ -96,7 +74,6 @@ class LivoxSim(Module):
         self._reading.cancel()
 
     def _layer(self) -> Path:
-        """The composed scene, as a file. Asked for once; both tasks build their own world from it."""
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:
             raise ValueError(
@@ -106,10 +83,6 @@ class LivoxSim(Module):
         return usd_layer(scene)
 
     def _open(self, layer: Path) -> WorldView:
-        """This sensor's own world: the composed scene, with a site at its own mount. Opened on the
-        first frame rather than at start, because the robots in the world are the ones the observations
-        announce, and the view has to name its bodies the way they do.
-        """
         return open_view(
             layer,
             robot_ids(self._world),
@@ -121,7 +94,6 @@ class LivoxSim(Module):
         view: WorldView | None = None
         sensor: SimLidar | None = None
         points_per_scan = int(POINT_RATE / self.config.rate_hz)
-        # Scans and IMU readings pace on sim time, so both keep their rates per sim second at any speed.
         async for _ in self._world.ticks(self.config.rate_hz):
             if view is None:
                 layer = layer or self._layer()
@@ -140,11 +112,9 @@ class LivoxSim(Module):
             assert sensor is not None
             view.update(self._world)
             position, orientation = view.pose(site)
-            # Off the loop, so the IMU beside it keeps its rate while a scan is cast.
             points = await asyncio.to_thread(
                 sensor.cast, position, rotation_matrix(orientation), points_per_scan
             )
-            # The Mid360's own layout; each scan is cast from one pose, so every point is at offset 0.
             self.lidar.publish(
                 PointCloud2.from_numpy(
                     points,
@@ -155,7 +125,6 @@ class LivoxSim(Module):
             )
 
     async def _read_imu(self) -> None:
-        """A world of its own, so a reading is not waiting on a scan being cast."""
         site, view = self.frame_id, None
         async for _ in self._world.ticks(self.config.imu_rate_hz):
             if view is None:
