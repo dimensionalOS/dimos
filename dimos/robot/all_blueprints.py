@@ -376,7 +376,7 @@ all_modules = {
     "teleop-recorder": "dimos.teleop.utils.recorder.TeleopRecorder",
     "teleop-skills": "dimos.agents.skills.teleop_skills.TeleopSkills",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
-    "trajectory-follower-native": "dimos.navigation.trajectory_follower.fancy.native.TrajectoryFollowerNative",
+    "trajectory-follower-native": "dimos.navigation.trajectory_follower.native.TrajectoryFollowerNative",
     "twist-teleop-module": "dimos.teleop.webxr.extensions.TwistTeleopModule",
     "type-safe-agent": "dimos.agents.typesafe.agent.TypeSafeAgent",
     "type-safe-navigation-agent": "dimos.agents.typesafe.navigation.TypeSafeNavigationAgent",
