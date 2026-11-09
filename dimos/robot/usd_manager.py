@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One URDF and the live joint state: every joint on tf, and the robot as USD for renderers."""
+"""One description and the live joint state: every joint on tf, and the robot as USD for renderers."""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def _as_usd(model: RobotModel | UsdModel) -> UsdModel:
 # names no files.
 ASSET_ROOT, USD = 0, 1
 
-# What a renderer asks for to get the scene itself. The URDF is this module's input, not its
+# What a renderer asks for to get the scene itself. A description is this module's input, not its
 # output: what it serves is USD.
 USD_SUFFIXES = (".usd", ".usda")
 
@@ -249,14 +249,14 @@ class UsdManagerConfig(ModuleConfig):
     # since only the sim needs the geometry, and the mount points stay identical either way.
     # This robot's own layer only -- what a mounted module answers with is its own say.
     trivialize: bool = False
-    # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
+    # Every single-DOF and fixed joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
     # An edge goes out when it moves, at most this often...
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
     # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
     # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
-    # What is bolted to this robot: a frame of its URDF -> the module owning the subtree there.
+    # What is bolted to this robot: a frame of its description -> the module owning the subtree there.
     # Keys are the names as they end up in the scene, so a frame inside a mounted subtree
     # carries that subtree's prefix.
     mounts: dict[str, Mount] = Field(default_factory=dict)
@@ -282,7 +282,7 @@ class UsdManagerConfig(ModuleConfig):
 
 
 class UsdManager(Module):
-    """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
+    """Poses the description from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
     config: UsdManagerConfig
 
@@ -325,7 +325,7 @@ class UsdManager(Module):
         # Keyed by remote name: two instances of one class are two different modules to ask.
         self._subtree_clients: dict[str, RPCClient] = {}
         # What the last scene promised to answer for: public asset path -> the real file.
-        # render_file_request serves these as well as the URDF's own names, which is the whole
+        # render_file_request serves these as well as the description's own names, which is the whole
         # point of handing out paths that are not paths on anyone's disk.
         self._published_assets: dict[str, str] = {}
         try:
@@ -405,10 +405,10 @@ class UsdManager(Module):
 
     @rpc
     def get_usd(self) -> list[str]:
-        """``[asset_root, usd]``: this robot's own URDF as a USD layer, nothing attached.
+        """``[asset_root, usd]``: this robot's own description as a USD layer, nothing attached.
 
         Anything mountable answers this, UsdManager included, so a robot on a robot is no
-        special case. The root is the URDF's own directory: a mounted module whose asset paths
+        special case. The root is the description's own directory: a mounted module whose asset paths
         are relative needs one, and the asker cannot tell which kind it got.
         """
         with self._usd_lock:
@@ -428,7 +428,7 @@ class UsdManager(Module):
 
     @rpc
     async def get_scene(self, visited: list[str] | None = None) -> list[str]:
-        """``[asset_root, usd]``: this URDF with every mounted subtree grafted on.
+        """``[asset_root, usd]``: this description with every mounted subtree grafted on.
 
         Async and meant to be called before start(). It waits with no deadline: half a scene is
         a robot with no arm, so a mount that never answers hangs the caller instead.
@@ -436,7 +436,7 @@ class UsdManager(Module):
         Each subtree is rebased onto the root its own module reported before it is grafted, so
         the one root this answers with covers the whole scene.
 
-        A mount whose frame belongs to another subtree rather than to this URDF is grafted once
+        A mount whose frame belongs to another subtree rather than to this one is grafted once
         that subtree is in place, so a lidar can hang off a g1 that is itself mounted here. See
         _graft_in_waves.
 
@@ -494,7 +494,7 @@ class UsdManager(Module):
         """This manager's own layer, and it with every mounted subtree grafted on."""
         subtrees = await self._subtrees([*chain, self._scene_identity])
         # Off the loop thread: building the layer imports usd-core and converts the whole
-        # URDF, which is a tenth of a second on a real robot and would stall tf meanwhile.
+        # description, which is a tenth of a second on a real robot and would stall tf meanwhile.
         root = await asyncio.to_thread(self.get_usd)
         scene = (
             await asyncio.to_thread(self._graft_in_waves, root[USD], subtrees)
@@ -678,14 +678,14 @@ class UsdManager(Module):
             self.file_info.publish(File(name, usd.encode()))
             return
         # Only files this manager has published: a request is never an arbitrary path into the
-        # filesystem. That is the URDF's own names, plus the public names the last scene handed
+        # filesystem. That is the description's own names, plus the public names the last scene handed
         # out, which is how a mounted arm's mesh gets served at all.
         real = self._published_assets.get(name, name if name in self._file_paths else None)
         if real is None:
             # debug, not warning: another module on this topic (the sim's world) answers for
             # its own files, and every one of those would otherwise be logged here as a miss.
             logger.debug(
-                f"render_file_request for {name!r}, which is neither a file this URDF names nor "
+                f"render_file_request for {name!r}, which is neither a file this description names nor "
                 f"an asset the last scene published"
             )
             return
@@ -730,7 +730,7 @@ class UsdManager(Module):
         return due
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
-        """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
+        """One parent -> child transform per joint; joints the state leaves out stay at zero."""
         # A joint state may key by the description's own name ("left_knee_joint"), or by the
         # name this manager publishes that joint under, which is what a namespaced coordinator
         # sends ("main/left_knee"). Resolve each joint through both.
