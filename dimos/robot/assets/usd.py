@@ -32,15 +32,11 @@ import uuid
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.utils.logging_config import setup_logger
-
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
 Vector = tuple[float, float, float]
-
-logger = setup_logger()
 
 
 _NO_USD = (
@@ -352,46 +348,6 @@ def usd_frame_names(usd: str, root: Path | str | None = None) -> set[str]:
     if default:
         names.add(default.GetDisplayName() or default.GetName())
     return names
-
-
-def trivialize_usd(usd: str) -> str:
-    """``usd`` with every link, joint and light kept, and the shapes they carry dropped.
-
-    One description serves real hardware and a simulation, but only the sim needs the shapes, and
-    the frames come out identical either way. Lights stay: a light is how the scene looks, and the
-    one thing a viewer cannot work out for itself.
-    """
-    pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a layer")
-    stage = pxr.Usd.Stage.Open(layer)
-    # Whatever holds a frame stays; the prims holding no frame at all are the geometry.
-    doomed = []
-    stack = list(stage.GetPseudoRoot().GetChildren())
-    while stack:
-        prim = stack.pop()
-        if _holds_a_frame(pxr, prim):
-            stack.extend(prim.GetChildren())
-        else:
-            doomed.append(prim.GetPath())
-    if not doomed:
-        return usd
-    for path in doomed:
-        spec = layer.GetPrimAtPath(path)
-        # A prim at the layer's own root has no nameParent -- a converted scene keeps its materials and
-        # render settings up there, and removing one is the layer's business, not ours.
-        if spec is not None and spec.nameParent is not None:
-            del spec.nameParent.nameChildren[spec.name]
-    return str(layer.ExportToString())
-
-
-def _holds_a_frame(pxr: Pxr, prim: Prim) -> bool:
-    if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
-        return True
-    # By type name rather than UsdLux.LightAPI, which load_pxr does not carry: the same test the viewer
-    # makes, and it covers Dome, Distant, Sphere, Disk and RectLight without naming each.
-    if str(prim.GetTypeName()).endswith("Light"):
-        return True
-    return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
 
 
 def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | None = None) -> str:

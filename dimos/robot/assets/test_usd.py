@@ -26,7 +26,6 @@ from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
     rename_usd_frames,
-    trivialize_usd,
     usd_drives,
     usd_frame_names,
     usd_with_drives,
@@ -460,20 +459,6 @@ def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
 def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no frame 'nowhere'"):
         usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
-
-
-def test_trivializing_keeps_the_lights_and_drops_the_shapes(toy: Any) -> None:
-    lit = urdf_to_usd(toy).replace(
-        'def Xform "toy"\n{',
-        'def Xform "toy"\n{\n    def DomeLight "sky"\n    {\n'
-        "        color3f inputs:color = (0.4, 0.6, 0.9)\n    }\n",
-    )
-    assert 'def DomeLight "sky"' in lit, "the fixture has to actually carry a light"
-
-    lean = trivialize_usd(lit)
-
-    assert 'def DomeLight "sky"' in lean, "the sky survives"
-    assert "def Mesh " not in lean and "def Cube " not in lean, "the shapes do not"
 
 
 def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
