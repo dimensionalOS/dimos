@@ -262,6 +262,13 @@ class UsdManager(SharedConfigModule):
     file_info: Out[File]
 
     def __init__(self, **kwargs: object) -> None:
+        # Set once this manager is wholly built. super().__init__ takes an RPC session, so from
+        # that line on a caller can ask for the scene -- and one does, the moment a Simulation
+        # goes looking for the world it is about to run. That reached a half-built object:
+        # `AttributeError: 'UsdManager' object has no attribute '_subtree_clients'`. The rpcs
+        # that need this module assembled wait on it instead, which they can because they are
+        # async: the handler is entered, yields, and resumes once __init__ has returned.
+        self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
         self._load(self.config.model)
@@ -292,9 +299,12 @@ class UsdManager(SharedConfigModule):
                 self._check_renames_matched(self._matched_own_renames())
         except Exception:
             # super().__init__ already took a loop thread and an RPC session; hand them back
-            # rather than leave a half-built module behind for the caller to notice.
+            # rather than leave a half-built module behind for the caller to notice. _ready
+            # stays clear: there is nothing to be ready, and a caller waiting on a manager that
+            # failed to build is waiting on a deployment that is going down anyway.
             self.dispose()
             raise
+        self._ready.set()
 
     def _own_frame_names(self) -> set[str]:
         """Every link and joint name this robot's own layer carries, before any rename."""
@@ -430,6 +440,7 @@ class UsdManager(SharedConfigModule):
         how a mount cycle is caught instead of recursing until something falls over. Callers
         leave it alone; a manager asking one of its own mounts passes it on.
         """
+        await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
         root, scene = await self._compose(chain)
@@ -459,6 +470,7 @@ class UsdManager(SharedConfigModule):
         Same machine only, and deliberately so. A backend somewhere else has to be handed the
         bytes, not a path, and that is `get_scene` plus `render_file_request`.
         """
+        await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
         root, scene = await self._compose(chain)

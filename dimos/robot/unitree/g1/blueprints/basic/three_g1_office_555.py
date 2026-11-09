@@ -43,7 +43,7 @@ from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import G1Sim
+from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.module import Simulation
@@ -143,12 +143,17 @@ def _walker(name: str):
 # same form a robot's are, so the viewer reads them by the path it already has.
 # "office_555" is the scene's root link: a converted room is one Xform holding its furniture,
 # and the furniture is what carries the frames, so a visitor hangs off the root itself.
+# At HOME_HEIGHT rather than on the floor, because this frame is the one statement of where a
+# robot stands: the simulation gets this world from the manager and finds its robots already in
+# it, so a frame on the floor would be a G1 with its pelvis at ankle height. It used to be said
+# twice -- here at z=0 for the picture, and again as G1Sim's xy plus HOME_HEIGHT for the physics
+# -- agreeing only because both read SPOTS.
 SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
-    {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
+    {name: ("office_555", (x, y, HOME_HEIGHT), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
 
-def _robot(name: str, xy: tuple[float, float]):
+def _robot(name: str):
     """One G1 in the room: the sim module, the description it serves, and its Mid-360."""
     return (
         autoconnect(
@@ -157,7 +162,7 @@ def _robot(name: str, xy: tuple[float, float]):
             # "left/mid360_link" finds "left/pelvis" above it.
             G1Sim.blueprint(
                 robot_id=name,
-                xy=xy,
+                # No xy: the scene's mount frame places this robot now.
                 frame_id=f"{name}/pelvis",
                 # No fade-in, to match the controller arming with no ramp. The fade-in exists
                 # for a real G1, where something else holds the robot while stiffness comes up.
@@ -196,7 +201,7 @@ def _manager_name(blueprint) -> str:
     return next(atom.name for atom in blueprint.blueprints if atom.module is UsdManager)
 
 
-_robots = {name: _robot(name, xy) for name, xy in SPOTS.items()}
+_robots = {name: _robot(name) for name in SPOTS}
 
 # The one manager a viewer talks to. The Controller asks a single "*.usd" on the unnamespaced
 # /render_file_request and draws whatever one stage comes back; three namespaced managers are on
@@ -227,7 +232,12 @@ scene_manager = UsdManager.blueprint(
 )
 
 three_g1_office_555 = autoconnect(
-    Simulation.blueprint(scene=SCENE),
+    # The world comes from the manager that composes it rather than from a file: the room, its
+    # three mount frames, and the three robots standing on them -- the same layer the viewer
+    # draws. One statement of what is in this world, for the physics and the picture both. By
+    # instance name, not the blueprint object: a config value is read again in the worker the
+    # module lands in, and a blueprint reaches it flattened to a plain dict.
+    Simulation.blueprint(scene_manager=_manager_name(scene_manager)),
     vis_module(viewer_backend=global_config.viewer),
     scene_manager,
     *_robots.values(),
