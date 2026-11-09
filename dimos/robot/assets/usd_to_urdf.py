@@ -27,6 +27,7 @@ arbitrary USD: another tool's layer states its physics differently.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import warnings
 import xml.etree.ElementTree as ET
@@ -34,7 +35,8 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.usd import PASSTHROUGH_KEY, _layer_from, _pxr
+from dimos.robot.assets.urdf_to_usd import _OUT_OF_PLANE, PASSTHROUGH_KEY
+from dimos.robot.assets.usd import Prim, Pxr, Stage, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -42,7 +44,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# A revolute limit is degrees in USD and radians in URDF (see _set_joint_limits).
+# A revolute limit is degrees in USD and radians in URDF (see urdf_to_usd._set_joint_limits).
 _DEGREES = 180.0 / np.pi
 
 # UsdPhysics joint prim type -> URDF joint type. A revolute joint with no limit authored is
@@ -56,19 +58,21 @@ _JOINT_TYPES = {
     "PhysicsJoint": "floating",
 }
 
-# A URDF planar joint moves in its own xy and turns about z, so a planar one has these locked.
-_OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 
-
-def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
+def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = None) -> str:
     """``usd`` as URDF XML. ``name`` overrides the robot name, which otherwise comes from the
     layer's default prim.
+
+    ``root`` is the directory the layer's relative paths resolve against, references to other
+    layers included. Without it a composed scene converts to a URDF of whatever it holds
+    directly and silently loses what it referenced -- which looks like a room that has no walls
+    and a robot with several candidate roots.
     """
-    pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a layer")
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd, "a layer", root)
     stage = pxr.Usd.Stage.Open(layer)
 
-    links = _links_of(pxr, stage)
+    links = _usd_links_of(pxr, stage)
     joints = [
         joint
         for joint in (_joint_of(pxr, prim) for prim in _joint_prims(pxr, stage))
@@ -77,31 +81,31 @@ def usd_to_urdf(usd: str, *, name: str | None = None) -> str:
 
     default_prim = stage.GetDefaultPrim()
     robot_name = name or (default_prim.GetName() if default_prim else "robot")
-    root = ET.Element("robot", name=robot_name)
+    robot = ET.Element("robot", name=robot_name)
     # Decided once for the whole layer: a model that marks collision properly is never
     # second-guessed, and one that marks none at all falls back to MuJoCo's grouping.
     by_group = not _marks_collision(pxr, stage)
 
     for link_name, prim in links.items():
-        _write_link(pxr, root, link_name, prim, by_group=by_group)
+        _write_link(pxr, robot, link_name, prim, by_group=by_group)
     # USD conveys parent and child by nesting; a UsdPhysics joint only adds how it moves. URDF has
     # to be told outright that a nested link with no joint is welded, or the tree comes out
     # disconnected and will not load.
     joints = joints + _welds_of(pxr, links, joints)
     for joint in joints:
-        _write_joint(root, joint)
+        _write_joint(robot, joint)
 
     _warn_about_orphans(links, joints)
-    return ET.tostring(root, encoding="unicode")
+    return ET.tostring(robot, encoding="unicode")
 
 
-def usd_root_link(usd: str) -> str:
+def usd_root_link(usd: str, root: Path | str | None = None) -> str:
     """The link everything else hangs under. The layer's defaultPrim is the robot, not a link, so
     the root is found the way a URDF defines it: the one link no joint claims and nothing contains.
     """
-    pxr = _pxr()
-    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
-    links = _links_of(pxr, stage)
+    pxr = load_pxr()
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
+    links = _usd_links_of(pxr, stage)
     joints = list(_joint_prims(pxr, stage))
     children = {_body_name(prim, "physics:body1") for prim in joints} | _nested_link_names(
         pxr, links
@@ -114,7 +118,7 @@ def usd_root_link(usd: str) -> str:
     return roots[0]
 
 
-def _world_root(pxr: Any, stage: Any, joints: list[Any]) -> str:
+def _world_root(pxr: Pxr, stage: Stage, joints: list[Any]) -> str:
     """The prim every joint hangs off, when it is not itself a link.
 
     A scene converted from an MJCF welds each item to the worldbody, which is not a rigid body, so
@@ -127,7 +131,7 @@ def _world_root(pxr: Any, stage: Any, joints: list[Any]) -> str:
     return next(iter(parents)) if len(parents) == 1 else ""
 
 
-def _nested_link_names(pxr: Any, links: dict[str, Any]) -> set[str]:
+def _nested_link_names(pxr: Pxr, links: dict[str, Any]) -> set[str]:
     """Every link that sits inside another link, which is a welded child."""
     nested = set()
     for name, prim in links.items():
@@ -136,7 +140,7 @@ def _nested_link_names(pxr: Any, links: dict[str, Any]) -> set[str]:
     return nested
 
 
-def _link_ancestor(pxr: Any, prim: Any) -> Any | None:
+def _link_ancestor(pxr: Pxr, prim: Prim) -> Any | None:
     """The nearest enclosing link prim, or None at the top of the tree."""
     parent = prim.GetParent()
     while parent and parent.GetPath() != pxr.Sdf.Path.absoluteRootPath:
@@ -146,7 +150,7 @@ def _link_ancestor(pxr: Any, prim: Any) -> Any | None:
     return None
 
 
-def _links_of(pxr: Any, stage: Any) -> dict[str, Any]:
+def _usd_links_of(pxr: Pxr, stage: Stage) -> dict[str, Any]:
     """Every link prim, by the name it travels under: a prim with ``PhysicsRigidBodyAPI``, the same
     test graft_usd and the renamers use, so these names are the frame_ids the rest of dimos sees.
     """
@@ -162,7 +166,7 @@ def _links_of(pxr: Any, stage: Any) -> dict[str, Any]:
     return links
 
 
-def _joint_prims(pxr: Any, stage: Any) -> list[Any]:
+def _joint_prims(pxr: Pxr, stage: Stage) -> list[Any]:
     return [prim for prim in stage.Traverse() if prim.IsA(pxr.UsdPhysics.Joint)]
 
 
@@ -194,8 +198,8 @@ class _Joint:
         self.extras = extras
 
 
-def _joint_of(pxr: Any, prim: Any) -> _Joint | None:
-    """Undo _set_joint_frames and _set_joint_limits for one joint prim."""
+def _joint_of(pxr: Pxr, prim: Prim) -> _Joint | None:
+    """Undo urdf_to_usd's _set_joint_frames and _set_joint_limits for one joint prim."""
     joint = pxr.UsdPhysics.Joint(prim)
     parent = _body_name(prim, "physics:body0")
     child = _body_name(prim, "physics:body1")
@@ -233,7 +237,7 @@ def _joint_of(pxr: Any, prim: Any) -> _Joint | None:
     )
 
 
-def _free_kind(prim: Any) -> str:
+def _free_kind(prim: Prim) -> str:
     """floating, or planar when the axes out of one plane are locked. Read off the applied schemas
     rather than metadata of ours, so a layer written by anything else says the same thing.
     """
@@ -243,7 +247,7 @@ def _free_kind(prim: Any) -> str:
     return "floating"
 
 
-def _body_name(prim: Any, relationship: str) -> str | None:
+def _body_name(prim: Prim, relationship: str) -> str | None:
     """The link name a joint's body relationship points at."""
     targets = prim.GetRelationship(relationship).GetTargets()
     if not targets:
@@ -255,7 +259,7 @@ def _body_name(prim: Any, relationship: str) -> str | None:
     return str(body.GetDisplayName() or body.GetName())
 
 
-def _limits_of(prim: Any, kind: str) -> tuple[float | None, float | None]:
+def _limits_of(prim: Prim, kind: str) -> tuple[float | None, float | None]:
     """The limits in URDF units, or (None, None) when the joint carries none."""
     lower_attr = prim.GetAttribute("physics:lowerLimit")
     upper_attr = prim.GetAttribute("physics:upperLimit")
@@ -281,14 +285,14 @@ def _quat_rotation(quat: Any) -> Rotation:
     return Rotation.from_quat([imaginary[0], imaginary[1], imaginary[2], quat.GetReal()])
 
 
-def _passthrough_of(prim: Any) -> list[str]:
+def _passthrough_of(prim: Prim) -> list[str]:
     """The XML fragments the conversion to USD could not express, verbatim."""
     data = prim.GetCustomData() or {}
     urdf = data.get("urdf") or {}
     return [str(fragment) for fragment in urdf.get(PASSTHROUGH_KEY.split(":", 1)[1], ())]
 
 
-def _write_link(pxr: Any, root: ET.Element, link_name: str, prim: Any, *, by_group: bool) -> None:
+def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim, *, by_group: bool) -> None:
     element = ET.SubElement(root, "link", name=link_name)
     for child in prim.GetChildren():
         if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
@@ -303,11 +307,11 @@ def _write_link(pxr: Any, root: ET.Element, link_name: str, prim: Any, *, by_gro
 _MJC_COLLISION_GROUP = 3
 
 
-def _marks_collision(pxr: Any, stage: Any) -> bool:
+def _marks_collision(pxr: Pxr, stage: Stage) -> bool:
     return any(prim.HasAPI(pxr.UsdPhysics.CollisionAPI) for prim in stage.Traverse())
 
 
-def _collides(pxr: Any, prim: Any, *, by_group: bool) -> bool:
+def _collides(pxr: Pxr, prim: Prim, *, by_group: bool) -> bool:
     """Whether this geometry prim is a collision volume rather than something to look at.
 
     CollisionAPI where the layer uses it. A model converted from an MJCF that switches collision
@@ -323,7 +327,7 @@ def _collides(pxr: Any, prim: Any, *, by_group: bool) -> bool:
     return bool(group) and group.Get() == _MJC_COLLISION_GROUP
 
 
-def _write_geometry(pxr: Any, link: ET.Element, prim: Any, *, by_group: bool) -> None:
+def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim, *, by_group: bool) -> None:
     shape = _shape_of(pxr, prim)
     if shape is None:
         return
@@ -337,7 +341,7 @@ def _write_geometry(pxr: Any, link: ET.Element, prim: Any, *, by_group: bool) ->
     geometry.append(shape)
 
 
-def _shape_of(pxr: Any, prim: Any) -> ET.Element | None:
+def _shape_of(pxr: Pxr, prim: Prim) -> ET.Element | None:
     """The <box>/<cylinder>/<sphere>/<mesh> element for a geometry prim, or None."""
     type_name = str(prim.GetTypeName())
     scale = _scale_of(prim)
@@ -377,7 +381,7 @@ def _shape_of(pxr: Any, prim: Any) -> ET.Element | None:
     return None
 
 
-def _referenced_path(prim: Any) -> str | None:
+def _referenced_path(prim: Prim) -> str | None:
     """The asset path a mesh prim names, which is the filename the URDF named.
 
     assetInfo first, because that is where a mesh written by urdf_to_usd names its file: a
@@ -396,7 +400,7 @@ def _referenced_path(prim: Any) -> str | None:
     return None
 
 
-def _placement_of(prim: Any) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+def _placement_of(prim: Prim) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """A geometry prim's <origin>, out of the transform op urdf_to_usd wrote."""
     transform = prim.GetAttribute("xformOp:transform")
     if not transform or transform.Get() is None:
@@ -412,7 +416,7 @@ def _placement_of(prim: Any) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     return matrix[:3, 3], rpy
 
 
-def _scale_of(prim: Any) -> NDArray[np.float64]:
+def _scale_of(prim: Prim) -> NDArray[np.float64]:
     attribute = prim.GetAttribute("xformOp:scale")
     if not attribute or attribute.Get() is None:
         return np.ones(3)
@@ -420,7 +424,7 @@ def _scale_of(prim: Any) -> NDArray[np.float64]:
     return np.asarray([value[0], value[1], value[2]], dtype=np.float64)
 
 
-def _float_attr(prim: Any, name: str, default: float) -> float:
+def _float_attr(prim: Prim, name: str, default: float) -> float:
     attribute = prim.GetAttribute(name)
     if not attribute or attribute.Get() is None:
         return default
@@ -456,7 +460,7 @@ def _append_fragment(parent: ET.Element, fragment: str) -> None:
         logger.warning(f"dropping an unconverted fragment that will not parse: {fragment[:60]}")
 
 
-def _welds_of(pxr: Any, links: dict[str, Any], joints: list[_Joint]) -> list[_Joint]:
+def _welds_of(pxr: Pxr, links: dict[str, Any], joints: list[_Joint]) -> list[_Joint]:
     """A joint for every nested link no joint prim already accounts for.
 
     USD conveys parent and child by nesting and a joint prim only adds how the child moves, so a

@@ -12,20 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Measure which directions a robot's own body blocks, as the OcclusionMap a SimLidar reads.
-
-The cast itself cannot answer this: a lidar sits inside its mount's collision hull rather than
-proud of its surface, and a hull is a few convex shapes around a shape that is neither -- the
-G1's Mid-360 is inside the head's, so a cast against colliders says "blocked" in every
-direction including straight up. The G1's head leaves a gap on each side; the hull does not.
-
-So the mount is left out of the cast (``MujocoView.raycaster(mounted_at=...)``) and what it
-really blocks is measured here against the robot's *visual* meshes, which are the shape of the
-actual shell. The result is a probability per one-degree cell.
-
-    python -m dimos.simulation.sensors.mid360.make_occlusion \\
-        --robot g1 --frame mid360_link --out data/g1_sim/g1_mid360_occlusion.npz
-"""
 
 from __future__ import annotations
 
@@ -37,11 +23,7 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-# How far a hit has to be to count as the robot's own body rather than the world. The robot is
-# a metre tall and a sensor on it is centimetres from its shell, so anything past this is room.
 _SELF_RANGE = 1.2
-# Samples per cell, jittered inside it: a cell on the edge of the shell is blocked some of the
-# time, and that fraction is the number the lidar wants.
 _SAMPLES = 16
 
 
@@ -55,13 +37,11 @@ def occlusion_grid(
     samples: int = _SAMPLES,
     seed: int = 0,
 ) -> NDArray[np.float32]:
-    """The fraction of each cell's rays the robot's own visual geometry stops."""
     index = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site)
     if index < 0:
         raise ValueError(f"the model has no site named {site!r}")
     origin = data.site_xpos[index].copy()
     world_from_sensor = data.site_xmat[index].reshape(3, 3)
-    # Group 2 is where a robot's visual meshes sit: the shell as it is, not its convex hull.
     mask = np.zeros(mujoco.mjNGROUP, np.uint8)
     mask[2] = 1
 
@@ -76,7 +56,6 @@ def occlusion_grid(
             np.repeat(az_edges[:-1], samples)
             + rng.random(cols * samples) * (az_edges[1] - az_edges[0])
         )
-        # In the sensor's own frame, the way the pattern and the map are both written.
         sensor_dirs = np.column_stack(
             [np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)]
         )
