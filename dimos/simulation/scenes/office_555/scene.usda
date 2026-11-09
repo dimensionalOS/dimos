@@ -139636,7 +139636,7 @@ def RenderSettings "Look"
     # Without that curve the same light clips the walls to flat white, so the room is exposed down
     # to put the bright end back inside the range, and the contrast bump -- which pushes exactly the
     # values that were clipping -- goes away. Saturation is what is actually wanted here.
-    float dimos:look:exposure = 0.9
+    float dimos:look:exposure = 0.85
     # No environment light. Blender's bounce comes from irradiance volumes, which vary through space
     # and know what is occluding what; a single environment map does not, so it fills the floor under
     # a desk exactly as much as the floor beside it and erases the shadow it was meant to soften.
