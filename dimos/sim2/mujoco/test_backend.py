@@ -28,65 +28,49 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.shared_config import shared_config
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
-from dimos.sim2.module import Simulation, SimulationConfig
-from dimos.sim2.mujoco_backend import MujocoBackend
-from dimos.sim2.spec import SimulatedRobot, SimulatedSensor, resolve
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.world import compile_world
+from dimos.sim2.assets.toy import toy_robot
+from dimos.sim2.mujoco.backend import MujocoBackend
+from dimos.sim2.mujoco.sim import MujocoSim
+from dimos.sim2.mujoco.world import compile_world
+from dimos.sim2.sim import SimulatedWorld, sim_module
+from dimos.sim2.spec import Servo, SimulatedRobot, SimulatedSensor, resolve
+from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import ACT, WorldMirror
 
-
-@pytest.fixture
-def scene(tmp_path: Path) -> Path:
-    path = tmp_path / "scene.xml"
-    path.write_text("""
-<mujoco>
-  <worldbody>
-    <geom name="floor" type="plane" size="5 5 .1"/>
-    <body name="shelf" pos="2 0 1"/>
-    <site name="overhead" pos="0 0 3"/>
-    <body name="crate" pos="0 2 .5"><freejoint/><geom type="box" size=".1 .1 .1"/></body>
-  </worldbody>
-</mujoco>
-""")
-    return path
+SCENE = Path(__file__).parent / "assets" / "scene.usda"
 
 
 @pytest.fixture
-def robot_model(tmp_path: Path) -> Path:
-    path = tmp_path / "robot.xml"
-    path.write_text("""
-<mujoco>
-  <worldbody>
-    <body name="base" pos="9 9 9">
-      <freejoint/>
-      <geom type="box" size=".2 .1 .1" mass="1"/>
-      <body name="head" pos=".2 0 .1">
-        <joint name="neck" type="hinge" axis="0 0 1"/>
-        <geom type="sphere" size=".05" mass=".1"/>
-      </body>
-    </body>
-  </worldbody>
-  <actuator><motor name="neck" joint="neck"/></actuator>
-  <keyframe><key name="home" qpos="0 0 0 1 0 0 0 0"/></keyframe>
-</mujoco>
-""")
-    return path
+def scene() -> UsdModel:
+    """The room these tests run in: a floor, a shelf, a crate on a free joint, and a mount above.
 
-
-def test_robots_and_sensors_compile_into_one_world(scene, robot_model, tmp_path):
-    # Two dogs, one with an eye on its head, the other a lidar 20 cm above its base; and a camera over the scene.
-    left = mjcf_with_frames(robot_model, {"eye": ("head", (0, 0, 0), (0, 0, 0))}, out_dir=tmp_path)
-    right = mjcf_with_frames(
-        robot_model, {"lidar": ("base", (0, 0, 0.2), (0, 0, 0))}, out_dir=tmp_path
+    USD, like everything else a world is made of, and converted once from the MJCF it used to be
+    written as -- `assets/scene.usda`, beside this file. `overhead` is added as a *frame* rather
+    than being in the layer, which is how a scene says where something can be mounted: the room
+    holds the spot, and whatever is bolted there says what it is.
+    """
+    return UsdModel.from_file(SCENE).with_frames(
+        {"overhead": ("scene", (0.0, 0.0, 3.0), (0.0, 0.0, 0.0))}
     )
+
+
+@pytest.fixture
+def robot_model() -> UsdModel:
+    return toy_robot()
+
+
+def test_robots_and_sensors_compile_into_one_world(scene, robot_model):
+    # Two dogs, one with an eye on its head, the other a lidar 20 cm above its base; and a camera over the scene.
+    left = robot_model.with_frames({"eye": ("head", (0, 0, 0), (0, 0, 0))})
+    right = robot_model.with_frames({"lidar": ("base", (0, 0, 0.2), (0, 0, 0))})
     model = compile_world(
-        scene,
+        usd_layer(scene),
         resolve(
             [
-                SimulatedRobot("left", left, "base", xyz=(-1, 0, 0.3)),
-                SimulatedRobot("right", right, "base", xyz=(1, 0, 0.3)),
+                SimulatedRobot("left", left, xyz=(-1, 0, 0.3)),
+                SimulatedRobot("right", right, xyz=(1, 0, 0.3)),
                 SimulatedSensor("camera", "eye"),
                 SimulatedSensor("lidar", "lidar"),
                 SimulatedSensor("camera", "overhead"),
@@ -105,29 +89,36 @@ def test_robots_and_sensors_compile_into_one_world(scene, robot_model, tmp_path)
 
 def test_sensor_at_a_missing_frame_is_rejected(scene):
     with pytest.raises(ValueError, match="no site or body 'nowhere'"):
-        compile_world(scene, [SimulatedSensor("imu", "nowhere")])
+        compile_world(usd_layer(scene), [SimulatedSensor("imu", "nowhere")])
 
 
 class _DogConfig(ModuleConfig):
-    model: Path
+    model: UsdModel
 
 
 class _Dog(Module):
     config: _DogConfig
 
-    @shared_config(Simulation)
+    @shared_config(SimulatedWorld)
     def simulated(self) -> dict[str, Any]:
-        return {"simulated": SimulatedRobot("dog", self.config.model, "base")}
+        return {"simulated": SimulatedRobot("dog", self.config.model)}
 
 
-def test_simulation_builds_the_world_its_blueprint_describes(scene, robot_model):
-    blueprint = autoconnect(_Dog.blueprint(model=robot_model), Simulation.blueprint(scene=scene))
+def test_the_engine_builds_the_world_its_blueprint_describes(scene, robot_model):
+    """Through `sim_module`, and described to as `SimulatedWorld` -- neither names MuJoCo.
+
+    The robot's `@shared_config(SimulatedWorld)` reaches the engine because a receiver matches
+    subclasses, which is the whole mechanism that lets a robot be run by an engine it has never
+    heard of.
+    """
+    blueprint = autoconnect(_Dog.blueprint(model=robot_model), sim_module(scene=scene))
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
-        description = coordinator.get_instance(Simulation).describe()
+        description = coordinator.get_instance(MujocoSim).describe()
         assert description["robots"] == ["dog"]
-        assert description["scene"] == str(scene)
+        assert description["backend"] == "mujoco"
+        assert description["scene"] == str(usd_layer(scene))
         assert [d.robot_id for d in description["simulated"]] == ["dog"]
     finally:
         coordinator.stop()
@@ -147,28 +138,44 @@ class _Collect:
         self.frames.append(frame)
 
 
-def test_backend_steps_physics_and_takes_commands(scene, robot_model, tmp_path):
-    backend = MujocoBackend(
-        SimulationConfig(scene=scene),
-        {"dog": SimulatedRobot("dog", robot_model, "base", xyz=(0, 0, 1))},
-        tmp_path,
-    )
-    published = _Collect()
+@contextlib.asynccontextmanager
+async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
+    """The module's own loop, running this engine and publishing into `published`.
 
-    async def run_briefly() -> None:
-        running = asyncio.create_task(backend.run(published))
-        await asyncio.sleep(0.05)
-        backend.apply([JointCommand("dog", ("neck",), effort=(1.0,))])
-        await asyncio.sleep(0.5)
+    The engine does not loop: `step` advances the world once and hands back a frame, and pacing
+    it, publishing it and waiting at a controller's tick is the module's work. So a test about
+    what a running world does runs the real `MujocoSim._run`, with its publisher swapped for
+    something that keeps what it was given.
+    """
+    sim = MujocoSim()
+    sim._backend, sim._publisher = backend, published
+    sim._all_started.set()
+    running = asyncio.create_task(sim._run())
+    try:
+        yield sim
+    finally:
         running.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await running
 
+
+def test_backend_steps_physics_and_takes_commands(scene, robot_model):
+    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model, xyz=(0, 0, 1))})
+    published = _Collect()
+
+    async def run_briefly() -> None:
+        async with _looping(backend, published):
+            await asyncio.sleep(0.05)
+            backend.apply([JointCommand("dog", ("neck",), effort=(1.0,))])
+            await asyncio.sleep(0.5)
+
     asyncio.run(run_briefly())
     world = published.world
     assert world.time > 0.3
-    # It fell from z=1 onto the floor.
-    assert world.entity("dog").pose[2] < 0.2
+    # It fell from z=1 onto the floor. Not nearer than 0.3, because it comes to rest tilted on
+    # its head as well as its box, and how high that leaves the base is the toy's shape rather
+    # than anything this test is about.
+    assert world.entity("dog").pose[2] < 0.3
     names, joints = world.joints("dog")
     assert names == ["neck"]
     assert joints[0, 1] > 1.0
@@ -176,15 +183,13 @@ def test_backend_steps_physics_and_takes_commands(scene, robot_model, tmp_path):
     assert world.entity("dog").velocity is not None
 
 
-def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_model, tmp_path):
-    backend = MujocoBackend(
-        SimulationConfig(scene=scene), {"dog": SimulatedRobot("dog", robot_model, "base")}, tmp_path
-    )
+def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_model):
+    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model)})
     backend.apply([JointCommand("dog", ("neck",), effort=(0.5,))])
     backend._apply_pending()
     seen = _Collect()
     seen.offer(backend.frame())
-    assert seen.world.entity("dog").cbor["model"] == str(robot_model)
+    assert seen.world.entity("dog").cbor["model"] == str(usd_layer(robot_model))
     assert seen.world.joints("dog")[0] == ["neck"]
     assert seen.world.entity("crate").pose[:3] == pytest.approx([0, 2, 0.5])
     # Its ts is the wall time the sim started at, plus sim time.
@@ -192,10 +197,8 @@ def test_frames_report_robots_and_objects_and_actions_drive_them(scene, robot_mo
     assert backend.data.ctrl[backend.model.actuator("dog/neck").id] == 0.5
 
 
-def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, robot_model, tmp_path):
-    backend = MujocoBackend(
-        SimulationConfig(scene=scene), {"dog": SimulatedRobot("dog", robot_model, "base")}, tmp_path
-    )
+def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, robot_model):
+    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model)})
     seen = _Collect()
     seen.offer(backend.frame())
     actions = [
@@ -209,14 +212,12 @@ def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, rob
     assert seen.world.entity("dog").cbor["note"] == {"a": 1}
 
 
-def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, tmp_path):
-    backend = MujocoBackend(
-        SimulationConfig(scene=scene), {"dog": SimulatedRobot("dog", robot_model, "base")}, tmp_path
-    )
+def test_scene_data_describes_the_world_without_its_robots(scene, robot_model):
+    backend = MujocoBackend(scene, {"dog": SimulatedRobot("dog", robot_model)})
     data = json.loads(backend.scene_data())
     assert data["format"] == "dimos.scene_data.v1" and data["frame"] == "world"
     bodies = {body["name"]: body for body in data["bodies"]}
-    assert set(bodies) == {"world", "crate"}
+    assert set(bodies) == {"world", "shelf", "crate"}
     assert [geom["type"] for geom in bodies["world"]["geoms"]] == ["plane"]
     crate = bodies["crate"]
     assert crate["pos"] == pytest.approx([0, 2, 0.5])
@@ -225,9 +226,29 @@ def test_scene_data_describes_the_world_without_its_robots(scene, robot_model, t
     )
 
 
-def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model, tmp_path):
-    robot = SimulatedRobot("dog", robot_model, "base", control_period=0.02)
-    backend = MujocoBackend(SimulationConfig(scene=scene), {"dog": robot}, tmp_path)
+def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
+    robot = SimulatedRobot("dog", robot_model, servos=(Servo("neck", 0.01, 0.001),))
+    backend = MujocoBackend(scene, {"dog": robot})
+    published = _Collect()
+
+    async def run_briefly() -> None:
+        async with _looping(backend, published):
+            await asyncio.sleep(0.05)
+            backend.apply(
+                [JointCommand("dog", ("neck",), position=(0.5,), kp=(0.05,), kd=(0.005,))]
+            )
+            await asyncio.sleep(1.0)
+
+    asyncio.run(run_briefly())
+    actuator = backend.model.actuator("dog/neck").id
+    assert backend.model.actuator_gainprm[actuator, 0] == 0.05
+    assert tuple(backend.model.actuator_biasprm[actuator, 1:3]) == (-0.05, -0.005)
+    assert published.world.joints("dog")[1][0, 0] == pytest.approx(0.5, abs=0.02)
+
+
+def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model):
+    robot = SimulatedRobot("dog", robot_model, control_period=0.02)
+    backend = MujocoBackend(scene, {"dog": robot})
     tick_times: list[float] = []
 
     class _Controller(_Collect):
@@ -242,11 +263,8 @@ def test_world_holds_at_each_control_tick_for_its_controller(scene, robot_model,
                 )
 
     async def run_briefly() -> None:
-        running = asyncio.create_task(backend.run(_Controller()))
-        await asyncio.sleep(0.6)
-        running.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await running
+        async with _looping(backend, _Controller()):
+            await asyncio.sleep(0.6)
 
     asyncio.run(run_briefly())
     # It is not waited for until it has first acted; from then on, though slow, it sees every tick.
