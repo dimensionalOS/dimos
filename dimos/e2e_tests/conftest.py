@@ -152,36 +152,51 @@ def dimsim_port() -> int:
 
 
 @pytest.fixture
-def start_blueprint(mcp_port: int, dimsim_port: int) -> Iterator[Callable[..., DimosCliCall]]:
+def dimos_cli_call(mcp_port: int, dimsim_port: int) -> Iterator[DimosCliCall]:
+    """The `dimos` process `start_blueprint` launches, stopped after the test."""
     dimos_robot_call = DimosCliCall()
     dimos_robot_call.mcp_port = mcp_port
     dimos_robot_call.dimsim_port = dimsim_port
 
-    def set_name_and_start(
-        *demo_args: str,
-        simulator: str | None = None,
-    ) -> DimosCliCall:
-        dimos_robot_call.demo_args = list(demo_args)
-        if simulator is not None:
-            dimos_robot_call.simulator = simulator
-        dimos_robot_call.start()
-        return dimos_robot_call
-
-    yield set_name_and_start
+    yield dimos_robot_call
 
     dimos_robot_call.stop()
 
 
 @pytest.fixture
-def wait_for_system_ready() -> Callable[..., None]:
+def start_blueprint(dimos_cli_call: DimosCliCall) -> Callable[..., DimosCliCall]:
+    def set_name_and_start(
+        *demo_args: str,
+        simulator: str | None = None,
+    ) -> DimosCliCall:
+        dimos_cli_call.demo_args = list(demo_args)
+        if simulator is not None:
+            dimos_cli_call.simulator = simulator
+        dimos_cli_call.start()
+        return dimos_cli_call
+
+    return set_name_and_start
+
+
+@pytest.fixture
+def wait_for_system_ready(dimos_cli_call: DimosCliCall) -> Callable[..., None]:
     """Block until the blueprint is up.
 
     The CLI serves Coordinator RPC only after build() started every module and
-    delivered on_system_modules.
+    delivered on_system_modules. A module that fails to deploy takes the whole
+    `dimos` process down instead, so nothing would ever answer: fail as soon as
+    it exits rather than waiting out `timeout` (and pytest's own 600 s limit).
     """
 
+    def assert_dimos_alive() -> None:
+        process = dimos_cli_call.process
+        assert process is not None, "start_blueprint() was not called"
+        assert process.poll() is None, (
+            f"dimos exited with {process.returncode} before the Coordinator came up"
+        )
+
     def wait(timeout: float = 120.0) -> None:
-        CoordinatorRPC.connect(timeout=timeout).stop()
+        CoordinatorRPC.connect(timeout=timeout, before_retry=assert_dimos_alive).stop()
 
     return wait
 
