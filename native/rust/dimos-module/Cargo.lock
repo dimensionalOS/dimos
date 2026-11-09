@@ -627,8 +627,6 @@ name = "dimos-module"
 version = "0.1.0"
 dependencies = [
  "ciborium",
- "ciborium-io",
- "ciborium-ll",
  "dimos-lcm",
  "dimos-module-macros",
  "hex",
@@ -636,6 +634,7 @@ dependencies = [
  "nalgebra",
  "rayon",
  "serde",
+ "serde_bytes",
  "serde_json",
  "thiserror",
  "tokio",
@@ -2567,6 +2566,16 @@ checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde_bytes"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

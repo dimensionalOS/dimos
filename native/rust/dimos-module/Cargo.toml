@@ -9,8 +9,6 @@ license = "Apache-2.0"
 
 [dependencies]
 ciborium = "0.2"
-ciborium-io = "0.2"
-ciborium-ll = "0.2"
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -18,6 +16,7 @@ nalgebra = "0.35.0"
 rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 # Without preserve_order a Value::Object is a BTreeMap, so parsing the stdin line
 # alphabetises every key before the config struct ever sees it.
 serde_json = { version = "1", features = ["preserve_order"] }

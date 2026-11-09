@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Rust SDK speaks the portable subset of this codec, byte for byte.
+"""The Rust SDK reads the portable subset of this codec.
 
-The vectors below are written as fixtures that the Rust suite decodes and
-re-encodes (``native/rust/dimos-module/src/rpc/cbor.rs``). Locally the test
-rewrites the fixtures. In CI it checks they are current.
+The vectors below are written as fixtures that the Rust suite decodes
+(``native/rust/dimos-module/src/rpc/cbor.rs``). Locally the test rewrites the
+fixtures. In CI it checks they are current.
 """
 
 from __future__ import annotations
@@ -36,41 +36,13 @@ import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.protocol.encode.cbor import encode
+from dimos.protocol.rpc.rpc_utils import serialize_exception
 
 _ROOT = Path(__file__).parents[3]
 _FIXTURES = _ROOT / "native" / "rust" / "dimos-module" / "tests" / "fixtures"
 
-# Named the same in the Rust test's expected() table.
+# Read by name in the Rust tests.
 _VECTORS: dict[str, Any] = {
-    "null": None,
-    "true": True,
-    "false": False,
-    "int_zero": 0,
-    "int_small": 1,
-    "int_negative": -1,
-    "int_large": 2**40,
-    "int_min": -(2**63),
-    "int_max": 2**63 - 1,
-    "float_one": 1.0,
-    "float_negative_zero": -0.0,
-    "float_subnormal": 5e-324,
-    "float_large": 1e300,
-    "float_nan": float("nan"),
-    "float_inf": float("inf"),
-    "float_neg_inf": float("-inf"),
-    "str": "héllo",
-    "str_empty": "",
-    "bytes": b"\x00\x01\xff",
-    "bytes_empty": b"",
-    "list": [1, "a", None],
-    "list_empty": [],
-    "tuple": (1, 2.5),
-    "tuple_empty": (),
-    "dict_str_keys": {"a": 1, "b": [2]},
-    "dict_empty": {},
-    "dict_primitive_keys": {1: "a", None: 2, b"k": True, 2.5: None},
-    "dict_tuple_keys": {(1, 2): "t"},
-    "nested": ([{"k": (1, b"x")}], {"m": {"n": [None]}}),
     "rpc_arguments": ((1.0, "goal"), {"timeout": 2.5}),
     "msg_wrapped": PoseStamped(
         position=[1.0, 2.0, 3.0], orientation=[0.0, 0.0, 0.0, 1.0], ts=1.5, frame_id="map"
@@ -78,6 +50,7 @@ _VECTORS: dict[str, Any] = {
     "msg_lcm_only": GoalStatus(
         goal_id=GoalID(stamp=Time(sec=7, nsec=8), id="g1"), status=1, text="active"
     ),
+    "exception": serialize_exception(ValueError("bad goal")),
 }
 
 

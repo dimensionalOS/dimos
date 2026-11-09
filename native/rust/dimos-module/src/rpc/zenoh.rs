@@ -21,8 +21,9 @@ use std::time::{Duration, Instant};
 use ::zenoh::bytes::Encoding;
 use ::zenoh::qos::CongestionControl;
 use ::zenoh::query::{ConsolidationMode, Query, QueryTarget};
+use serde::de::DeserializeOwned;
 
-use super::{decode, encode, Args, Handler, RemoteError, Rpc, RpcError, Value};
+use super::{decode, encode, Args, Handler, RemoteError, RpcError};
 use crate::zenoh::{to_io, ZenohTransport};
 
 /// Python's retry interval while no queryable has answered a query.
@@ -38,10 +39,16 @@ fn exception_encoding() -> Encoding {
     Encoding::from("dimos/rpc-exception")
 }
 
-impl Rpc for ZenohTransport {
-    async fn call(&self, name: &str, args: &Args, timeout: Duration) -> Result<Value, RpcError> {
+impl ZenohTransport {
+    /// Call `name` (`<rpc_name>/<method>`) and wait up to `timeout` for the result.
+    pub async fn call<R: DeserializeOwned>(
+        &self,
+        name: &str,
+        args: &Args,
+        timeout: Duration,
+    ) -> Result<R, RpcError> {
         let key = key(name);
-        let payload = encode(&args.to_value());
+        let payload = encode(args)?;
         let deadline = Instant::now() + timeout;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -65,10 +72,9 @@ impl Rpc for ZenohTransport {
                 return match reply.result() {
                     Ok(sample) => Ok(decode(&sample.payload().to_bytes())?),
                     Err(err) if *err.encoding() == exception_encoding() => {
-                        let exception = decode(&err.payload().to_bytes())?;
-                        Err(RemoteError::from_value(exception)?.into())
+                        Err(decode::<RemoteError>(&err.payload().to_bytes())?.into())
                     }
-                    Err(err) => Err(RpcError::Transport(io_error(format!(
+                    Err(err) => Err(RpcError::Transport(std::io::Error::other(format!(
                         "reply to {name} failed with encoding {}",
                         err.encoding()
                     )))),
@@ -78,10 +84,11 @@ impl Rpc for ZenohTransport {
         }
     }
 
-    async fn call_nowait(&self, name: &str, args: &Args) -> Result<(), RpcError> {
+    /// Call `name` without waiting for, or receiving, a result.
+    pub async fn call_nowait(&self, name: &str, args: &Args) -> Result<(), RpcError> {
         self.session()
             .get(key(name))
-            .payload(encode(&args.to_value()))
+            .payload(encode(args)?)
             .target(QueryTarget::All)
             .consolidation(ConsolidationMode::None)
             .congestion_control(CongestionControl::Block)
@@ -92,7 +99,8 @@ impl Rpc for ZenohTransport {
         Ok(())
     }
 
-    async fn serve(&self, name: &str, handler: Handler) -> Result<(), RpcError> {
+    /// Answer calls to `name` with `handler` for the rest of the session.
+    pub async fn serve(&self, name: &str, handler: Handler) -> Result<(), RpcError> {
         let runtime = tokio::runtime::Handle::current();
         let name = name.to_owned();
         self.session()
@@ -112,9 +120,13 @@ impl Rpc for ZenohTransport {
 
 async fn answer(name: &str, query: Query, handler: Handler) {
     let nowait = query.attachment().is_some();
-    let result = match arguments(&query) {
-        Ok(args) => handler(args).await,
-        Err(e) => Err(RemoteError::new("DecodeError", e.to_string())),
+    let result = match query.payload().map(|p| decode::<Args>(&p.to_bytes())) {
+        Some(Ok(args)) => handler(args).await,
+        Some(Err(e)) => Err(RemoteError::new("DecodeError", e.to_string())),
+        None => Err(RemoteError::new(
+            "DecodeError",
+            "the query carries no arguments",
+        )),
     };
     if let Err(e) = &result {
         tracing::warn!(name, error = %e, "rpc handler failed");
@@ -123,35 +135,32 @@ async fn answer(name: &str, query: Query, handler: Handler) {
         return;
     }
     let sent = match result {
-        Ok(value) => query.reply(query.key_expr().clone(), encode(&value)).await,
-        Err(e) => {
-            query
-                .reply_err(encode(&e.to_value()))
-                .encoding(exception_encoding())
-                .await
-        }
+        Ok(value) => match encode(&value) {
+            Ok(payload) => query.reply(query.key_expr().clone(), payload).await,
+            Err(e) => Err(e.into()),
+        },
+        Err(e) => match encode(&e) {
+            Ok(payload) => {
+                query
+                    .reply_err(payload)
+                    .encoding(exception_encoding())
+                    .await
+            }
+            Err(e) => Err(e.into()),
+        },
     };
     if let Err(e) = sent {
         tracing::warn!(name, error = %e, "rpc reply not sent");
     }
 }
 
-fn arguments(query: &Query) -> Result<Args, RpcError> {
-    let payload = query
-        .payload()
-        .ok_or(RpcError::Malformed("the query carries no arguments"))?;
-    Args::from_value(decode(&payload.to_bytes())?)
-}
-
-fn io_error(message: String) -> std::io::Error {
-    std::io::Error::other(message)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use super::*;
+    use crate::rpc::Value;
 
     /// One session calling itself, discovery off, as the Python suite does.
     async fn transport() -> ZenohTransport {
@@ -162,17 +171,19 @@ mod tests {
         ZenohTransport::wrap(::zenoh::open(config).await.unwrap())
     }
 
+    fn number(value: &Value) -> Result<f64, RemoteError> {
+        value
+            .as_float()
+            .or_else(|| value.as_integer().map(|n| i128::from(n) as f64))
+            .ok_or_else(|| RemoteError::new("TypeError", "not a number"))
+    }
+
     fn adder() -> Handler {
-        Arc::new(|args: Args| {
+        Arc::new(|(positional, keyword): Args| {
             Box::pin(async move {
                 let mut sum = 0.0;
-                for value in &args.positional {
-                    sum += value
-                        .as_f64()
-                        .ok_or_else(|| RemoteError::new("TypeError", "not a number"))?;
-                }
-                for (_, value) in &args.keyword {
-                    sum += value.as_f64().unwrap_or(0.0);
+                for value in positional.iter().chain(keyword.values()) {
+                    sum += number(value)?;
                 }
                 Ok(Value::Float(sum))
             })
@@ -183,24 +194,24 @@ mod tests {
     async fn a_call_reaches_the_handler_and_the_result_comes_back() {
         let transport = transport().await;
         transport.serve("Calc/add", adder()).await.unwrap();
-        let args = Args {
-            positional: vec![Value::Int(1), Value::Float(2.5)],
-            keyword: vec![("offset".into(), Value::Float(10.0))],
-        };
-        let result = transport
+        let args = (
+            vec![Value::from(1), Value::from(2.5)],
+            HashMap::from([("offset".to_owned(), Value::from(10.0))]),
+        );
+        let result: f64 = transport
             .call("Calc/add", &args, Duration::from_secs(5))
             .await
             .unwrap();
-        assert_eq!(result, Value::Float(13.5));
+        assert_eq!(result, 13.5);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_handler_failure_arrives_as_the_remote_error() {
         let transport = transport().await;
         transport.serve("Calc/add", adder()).await.unwrap();
-        let args = Args::positional(vec![Value::from("x")]);
+        let args = (vec![Value::from("x")], HashMap::new());
         let err = transport
-            .call("Calc/add", &args, Duration::from_secs(5))
+            .call::<f64>("Calc/add", &args, Duration::from_secs(5))
             .await
             .unwrap_err();
         match err {

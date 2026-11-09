@@ -12,88 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! RPC between native modules and the rest of a dimos graph.
-//!
-//! The wire is the one Python speaks (`dimos/protocol/rpc`): CBOR payloads
-//! with dimos' own tags, a call named `<rpc_name>/<method>`, and a failure
-//! carried as the serialized exception Python raises on the caller's side.
+//! RPC between native modules and the rest of a dimos graph, on the wire
+//! Python speaks (`dimos/protocol/rpc`): CBOR payloads, a call named
+//! `<rpc_name>/<method>`, and a failure carried as Python's serialized exception.
 
 use std::collections::HashMap;
-use std::fmt;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod cbor;
 pub mod zenoh;
 
-pub use cbor::{decode, encode, DecodeError, Msg, Value};
+pub use cbor::{decode, encode, DecodeError, EncodeError, Msg};
+pub use ciborium::Value;
 
-/// The arguments of one call: Python's `(args, kwargs)`.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Args {
-    pub positional: Vec<Value>,
-    pub keyword: Vec<(String, Value)>,
-}
-
-impl Args {
-    pub fn positional(values: Vec<Value>) -> Self {
-        Self {
-            positional: values,
-            keyword: Vec::new(),
-        }
-    }
-
-    pub fn from_value(value: Value) -> Result<Self, RpcError> {
-        let malformed = || RpcError::Malformed("arguments are not an (args, kwargs) pair");
-        let [args, kwargs]: [Value; 2] = match value {
-            Value::Tuple(items) | Value::List(items) => {
-                items.try_into().map_err(|_| malformed())?
-            }
-            _ => return Err(malformed()),
-        };
-        let positional = match args {
-            Value::Tuple(items) | Value::List(items) => items,
-            _ => return Err(malformed()),
-        };
-        let Value::Map(entries) = kwargs else {
-            return Err(malformed());
-        };
-        let keyword = entries
-            .into_iter()
-            .map(|(key, value)| match key {
-                Value::Str(key) => Ok((key, value)),
-                _ => Err(RpcError::Malformed(
-                    "a keyword argument name is not a string",
-                )),
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(Self {
-            positional,
-            keyword,
-        })
-    }
-
-    pub fn to_value(&self) -> Value {
-        Value::Tuple(vec![
-            Value::Tuple(self.positional.clone()),
-            Value::Map(
-                self.keyword
-                    .iter()
-                    .map(|(key, value)| (Value::Str(key.clone()), value.clone()))
-                    .collect(),
-            ),
-        ])
-    }
-}
+/// Python's `(args, kwargs)`.
+pub type Args = (Vec<Value>, HashMap<String, Value>);
 
 /// A failure on either side of a call, in the shape of Python's
 /// `SerializedException`. One raised here has the module `rust`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Error)]
+#[error("[Remote {type_module}.{type_name}] {args:?}\n{traceback}")]
 pub struct RemoteError {
     pub type_name: String,
     pub type_module: String,
@@ -102,74 +47,15 @@ pub struct RemoteError {
 }
 
 impl RemoteError {
-    /// A failure of this process: `type_name` is the kind, `message` says what went wrong.
     pub fn new(type_name: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             type_name: type_name.into(),
             type_module: "rust".into(),
-            args: vec![Value::Str(message.into())],
+            args: vec![Value::Text(message.into())],
             traceback: String::new(),
         }
     }
-
-    pub fn from_value(value: Value) -> Result<Self, RpcError> {
-        let field = |name: &str| {
-            value.get(name).ok_or(RpcError::Malformed(
-                "a serialized exception is missing a field",
-            ))
-        };
-        let text = |name: &str| -> Result<String, RpcError> {
-            field(name)?
-                .as_str()
-                .map(str::to_owned)
-                .ok_or(RpcError::Malformed(
-                    "a serialized exception field is not text",
-                ))
-        };
-        Ok(Self {
-            type_name: text("type_name")?,
-            type_module: text("type_module")?,
-            args: field("args")?.as_slice().unwrap_or_default().to_vec(),
-            traceback: text("traceback")?,
-        })
-    }
-
-    pub fn to_value(&self) -> Value {
-        Value::Map(vec![
-            (
-                Value::from("type_name"),
-                Value::from(self.type_name.as_str()),
-            ),
-            (
-                Value::from("type_module"),
-                Value::from(self.type_module.as_str()),
-            ),
-            (Value::from("args"), Value::Tuple(self.args.clone())),
-            (
-                Value::from("traceback"),
-                Value::from(self.traceback.as_str()),
-            ),
-        ])
-    }
 }
-
-impl fmt::Display for RemoteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[Remote {}.{}]", self.type_module, self.type_name)?;
-        for arg in &self.args {
-            match arg {
-                Value::Str(text) => write!(f, " {text}")?,
-                other => write!(f, " {other:?}")?,
-            }
-        }
-        if !self.traceback.is_empty() {
-            write!(f, "\n\nRemote traceback:\n{}", self.traceback)?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for RemoteError {}
 
 #[derive(Debug, Error)]
 pub enum RpcError {
@@ -179,8 +65,8 @@ pub enum RpcError {
     Timeout { name: String, timeout: Duration },
     #[error(transparent)]
     Decode(#[from] DecodeError),
-    #[error("{0}")]
-    Malformed(&'static str),
+    #[error(transparent)]
+    Encode(#[from] EncodeError),
     #[error(transparent)]
     Transport(#[from] io::Error),
 }
@@ -211,49 +97,19 @@ impl Timeouts {
     }
 }
 
-/// Calls and serves RPCs on the same wire as Python's `RPCSpec`.
-pub trait Rpc: Send + Sync {
-    /// Call `name` (`<rpc_name>/<method>`) and wait up to `timeout` for the result.
-    fn call(
-        &self,
-        name: &str,
-        args: &Args,
-        timeout: Duration,
-    ) -> impl Future<Output = Result<Value, RpcError>> + Send;
-
-    /// Call `name` without waiting for, or receiving, a result.
-    fn call_nowait(
-        &self,
-        name: &str,
-        args: &Args,
-    ) -> impl Future<Output = Result<(), RpcError>> + Send;
-
-    /// Answer calls to `name` with `handler` for the rest of the session.
-    fn serve(
-        &self,
-        name: &str,
-        handler: Handler,
-    ) -> impl Future<Output = Result<(), RpcError>> + Send;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn arguments_match_the_python_envelope() {
-        let fixtures: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_str(include_str!("../../tests/fixtures/rpc_cbor.json")).unwrap();
-        let bytes = hex::decode(fixtures["rpc_arguments"].as_str().unwrap()).unwrap();
-        let args = Args::from_value(decode(&bytes).unwrap()).unwrap();
+    fn a_python_exception_decodes_into_the_remote_error() {
+        let error: RemoteError = decode(&cbor::fixture("exception")).unwrap();
+        assert_eq!(error.type_name, "ValueError");
+        assert_eq!(error.type_module, "builtins");
+        assert_eq!(error.args, vec![Value::Text("bad goal".into())]);
         assert_eq!(
-            args.positional,
-            vec![Value::Float(1.0), Value::from("goal")]
+            decode::<RemoteError>(&encode(&error).unwrap()).unwrap(),
+            error
         );
-        assert_eq!(
-            args.keyword,
-            vec![("timeout".to_owned(), Value::Float(2.5))]
-        );
-        assert_eq!(encode(&args.to_value()), bytes);
     }
 }
