@@ -23,10 +23,8 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.urdf_to_usd import urdf_to_usd
 from dimos.robot.assets.usd_to_urdf import usd_to_urdf
 
-# usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
 pytest.importorskip("pxr")
 
-# Every joint type, an axis on none of the three USD axes, and one of each geometry kind.
 _URDF = """<?xml version="1.0"?>
 <robot name="probe">
   <link name="base">
@@ -74,16 +72,12 @@ def probe(tmp_path: Path) -> Any:
 
 
 def _round_trip(loaded: Any, tmp_path: Path) -> Any:
-    """The description after URDF -> USD -> URDF, loaded again for comparison."""
     recovered = tmp_path / "recovered.urdf"
     recovered.write_text(usd_to_urdf(urdf_to_usd(loaded)))
     return RobotModel.from_file(recovered).load()
 
 
 def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path) -> None:
-    """Covers the conversions that are easy to get backwards: an axis folded into the local
-    rotations, and a revolute limit that is degrees in USD and radians in URDF.
-    """
     back = _round_trip(probe, tmp_path)
 
     assert [joint.name for joint in back.joints] == [joint.name for joint in probe.joints]
@@ -95,8 +89,6 @@ def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path)
             original.parent_link,
             original.child_link,
         )
-        # 1e-6, not exact: UsdPhysics declares localPos as point3f and localRot as quatf, so a joint's
-        # placement goes through single precision (~2e-8 on a metre).
         np.testing.assert_allclose(got.origin_xyz, original.origin_xyz, atol=1e-6)
         np.testing.assert_allclose(got.origin_rpy, original.origin_rpy, atol=1e-6)
         np.testing.assert_allclose(got.axis, original.axis, atol=1e-6)
@@ -146,7 +138,6 @@ def test_each_shape_keeps_its_dimensions(probe: Any) -> None:
 
 
 def test_a_geometry_origin_survives(probe: Any) -> None:
-    # The box is the only one placed off its link's frame.
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
     base = next(link for link in root.findall("link") if link.get("name") == "base")
 
@@ -277,17 +268,12 @@ def Xform "leg"
 
 
 def test_a_capsule_becomes_a_cylinder_that_covers_it() -> None:
-    """URDF has no capsule, and dropping one leaves the link with no collision volume at all: the
-    G1's thighs, shins and hands are capsules. A cylinder spanning the full length, caps
-    included, is the usual stand-in.
-    """
     root = ET.fromstring(usd_to_urdf(_CAPSULE_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
 
     cylinder = link.find("collision/geometry/cylinder")
     assert cylinder is not None, "the capsule was dropped"
     assert float(cylinder.get("radius") or 0) == pytest.approx(0.04)
-    # height + both hemispherical caps, so the stand-in is never shorter than what it replaces.
     assert float(cylinder.get("length") or 0) == pytest.approx(0.38)
 
 
@@ -319,9 +305,6 @@ def Xform "leg"
 
 
 def test_a_layer_that_marks_no_collision_falls_back_to_mujocos_grouping() -> None:
-    """The G1's default class is `contype="0" conaffinity="0"`, so the converted layer carries no
-    CollisionAPI anywhere; such models still put their collision geoms in MuJoCo's group 3.
-    """
     root = ET.fromstring(usd_to_urdf(_MJC_GROUPED_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
 
@@ -359,9 +342,6 @@ def Xform "leg"
 
 
 def test_a_layer_that_marks_collision_is_not_second_guessed() -> None:
-    """The group number is per-model -- the M20's vendor MJCF collides on group 1, not 3 -- so the
-    fallback must stay a fallback.
-    """
     root = ET.fromstring(usd_to_urdf(_MARKED_AND_GROUPED_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
 
@@ -405,16 +385,11 @@ def Xform "room"
 
 
 def test_a_scene_is_rooted_at_the_prim_every_joint_hangs_off() -> None:
-    """An MJCF worldbody is not a rigid body, so every item is some weld's child and "the link no
-    joint claims" comes back empty: the fallback rooted office_555's 448 pieces of furniture at a
-    cardboard box. The prim all the welds name is the root, link or not.
-    """
     from dimos.robot.assets.usd_to_urdf import usd_root_link
 
     assert usd_root_link(_SCENE_USDA) == "room"
 
 
-# The chair hangs off a second, real prim, so the layer has two candidate roots.
 _TWO_PARENTS_USDA = _SCENE_USDA.replace(
     "rel physics:body0 = </room>\n            rel physics:body1 = </room/chair>",
     "rel physics:body0 = </room/alcove>\n            rel physics:body1 = </room/chair>",
@@ -425,18 +400,12 @@ _TWO_PARENTS_USDA = _SCENE_USDA.replace(
 
 
 def test_two_candidate_roots_are_not_guessed_between() -> None:
-    """Two different parents means the layer is not a flat scene, and picking either would be a
-    guess dressed up as a root.
-    """
     from dimos.robot.assets.usd_to_urdf import usd_root_link
 
     assert usd_root_link(_TWO_PARENTS_USDA) in {"desk", "chair"}
 
 
 def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
-    """USD conveys the tree by nesting and a URDF with two unconnected links will not load, so a
-    hand-written layer that states only the hierarchy needs the weld inferred.
-    """
     root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
 
     assert {link.get("name") for link in root.findall("link")} == {"chassis", "mast"}
@@ -492,10 +461,6 @@ def walker(tmp_path: Path) -> Any:
 
 
 def test_a_floating_base_does_not_come_back_welded(walker: Any, tmp_path: Path) -> None:
-    """A floating joint is written as no joint prim, which is indistinguishable from a nested,
-    welded body, so the joint left out is recorded on the child. Without that a walking robot's
-    base comes back fixed and anything posing it from odometry is ignored.
-    """
     back = _round_trip(walker, tmp_path)
 
     joint = back.get_joint("floating_base")

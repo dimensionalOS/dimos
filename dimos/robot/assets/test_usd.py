@@ -33,11 +33,8 @@ from dimos.robot.assets.usd import (
 )
 from dimos.robot.assets.usd_assets import asset_hash, require_asset_hashes, unhashed_assets
 
-# usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
 pytest.importorskip("pxr")
 
-# A base with a fixed mount, a revolute joint about a non-axis-aligned axis, and a link name
-# that is not a USD identifier.
 _URDF = """<?xml version="1.0"?>
 <robot name="toy">
   <link name="base_link">
@@ -84,7 +81,6 @@ def _stage(usd: str) -> Any:
 
 
 def _prim_by_link(stage: Any, link: str) -> Any:
-    """The link prim whose name is ``link``, the same way graft_usd finds a mount frame."""
     from pxr import UsdPhysics
 
     for prim in stage.Traverse():
@@ -108,8 +104,6 @@ def test_links_nest_down_the_kinematic_tree(toy: Any) -> None:
 
 
 def test_a_link_name_that_is_not_a_usd_identifier_keeps_its_urdf_spelling(toy: Any) -> None:
-    # "arm-1" cannot be a prim name, so displayName -- USD's own field for a name identifier
-    # syntax cannot hold -- is the only way back to the tf frame.
     stage = _stage(urdf_to_usd(toy))
     prim = _prim_by_link(stage, "arm-1")
 
@@ -138,7 +132,6 @@ def test_a_revolute_limit_is_radians_in_urdf_and_degrees_in_usd(toy: Any) -> Non
 
 
 def test_a_continuous_joint_is_authored_without_limits(toy: Any) -> None:
-    # No limit attributes at all is how USD says unlimited.
     stage = _stage(urdf_to_usd(toy))
     joint = stage.GetPrimAtPath("/toy/joints/arm_to_spin")
 
@@ -149,7 +142,6 @@ def test_a_continuous_joint_is_authored_without_limits(toy: Any) -> None:
 def test_an_off_axis_joint_turns_about_the_urdf_axis(toy: Any) -> None:
     from scipy.spatial.transform import Rotation
 
-    # physics:axis is only ever X/Y/Z, so the axis has to come out of the local rotations.
     stage = _stage(urdf_to_usd(toy))
     joint = stage.GetPrimAtPath("/toy/joints/mount_to_arm")
     assert str(joint.GetAttribute("physics:axis").Get()) == "Z"
@@ -206,7 +198,6 @@ def _mesh_urdf(mesh_path: str) -> str:
 
 @pytest.fixture
 def meshy(tmp_path: Path) -> Any:
-    # The file never has to exist: nothing here reads it.
     urdf = tmp_path / "meshy.urdf"
     urdf.write_text(_mesh_urdf("meshes/box.stl"))
     return RobotModel.from_file(urdf).load()
@@ -219,13 +210,11 @@ def _references(prim: Any) -> list[str]:
     for spec in prim.GetPrimStack():
         for ref in spec.referenceList.GetAddedOrExplicitItems():
             items.append(ref.assetPath)
-    assert Usd  # the import documents where GetPrimStack comes from
+    assert Usd
     return items
 
 
 def test_a_mesh_names_the_path_the_urdf_named(meshy: Any) -> None:
-    # assetInfo is USD's own "which asset is this prim": no attribute of ours, no triangles of
-    # ours, and UsdManager already serves exactly these paths.
     stage = _stage(urdf_to_usd(meshy))
     mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
 
@@ -246,7 +235,6 @@ def test_a_mesh_file_is_not_referenced_as_though_it_were_a_usd_layer(meshy: Any)
 
 
 def test_a_mesh_carries_no_geometry_of_its_own(meshy: Any) -> None:
-    # Nothing is read, parsed or converted, so trimesh is not a dependency of this path.
     stage = _stage(urdf_to_usd(meshy))
     mesh = stage.GetPrimAtPath("/meshy/base_link/visual_0")
 
@@ -254,7 +242,6 @@ def test_a_mesh_carries_no_geometry_of_its_own(meshy: Any) -> None:
 
 
 def test_the_layer_authors_no_custom_attributes(toy: Any) -> None:
-    # Standard schemas only: a consumer should need nothing of ours to read this.
     usd = urdf_to_usd(toy)
 
     assert "custom " not in usd
@@ -270,7 +257,6 @@ def test_a_subtree_is_grafted_under_the_frame_it_names(toy: Any) -> None:
 
 
 def test_a_grafted_subtree_keeps_its_joints_pointing_at_its_own_links(toy: Any) -> None:
-    # Copied specs keep their authored paths, so the body rels have to be rebased.
     root = urdf_to_usd(toy)
 
     stage = _stage(graft_usd(root, {"mount": urdf_to_usd(toy, name="arm_sub")}))
@@ -355,7 +341,6 @@ def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(to
         and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
     ]
     assert len(welds) == 1, "the frame is held by exactly one weld"
-    # No body0: that is how USD says "to the world".
     assert welds[0].GetRelationship("physics:body0").GetTargets() == []
 
 
@@ -377,7 +362,6 @@ def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
 
 
 def _with_actuator(usd: str, joint: str, *, biased: bool) -> str:
-    """``usd`` with a MuJoCo actuator on ``joint``, carrying a control range of plus/minus 23.7."""
     from pxr import Sdf, Usd, UsdPhysics
 
     layer = Sdf.Layer.CreateAnonymous(".usda")
@@ -429,7 +413,6 @@ def test_the_drives_read_back_as_they_were_written(toy: Any) -> None:
         "base_to_mount": pytest.approx((40.0, 2.0, 0.25)),
         "mount_to_arm": pytest.approx((8.0, 0.4, -1.5)),
     }
-    # A joint nobody drives is not in there, which is what tells a reader it has no gains.
     assert "nowhere" not in usd_drives(urdf_to_usd(toy))
 
 
@@ -475,9 +458,6 @@ def test_a_subtree_can_be_grafted_at_the_roots_own_name(toy: Any) -> None:
 
 
 def test_grafting_two_copies_of_one_description_at_one_frame_is_an_error(toy: Any) -> None:
-    """Both mount under the same prim name, so the second would quietly replace the first: three
-    G1s grafted at one frame came out as one G1, with the right frame count and no complaint.
-    """
     root = graft_usd(urdf_to_usd(toy), {"toy": urdf_to_usd(toy, name="arm_sub")})
 
     with pytest.raises(ValueError, match="is taken"):
@@ -548,7 +528,6 @@ def test_a_links_unconverted_urdf_rides_along_on_its_prim(extra: Any) -> None:
 
 
 def test_a_vendors_own_tag_rides_along_too(extra: Any) -> None:
-    # The whole point: a converter cannot know what a vendor put in there.
     stage = _stage(urdf_to_usd(extra))
 
     kept = _passthrough(stage, "/extra/base_link")
@@ -559,7 +538,6 @@ def test_a_vendors_own_tag_rides_along_too(extra: Any) -> None:
 def test_what_the_converter_does_read_is_not_duplicated_into_the_passthrough(
     extra: Any,
 ) -> None:
-    # visual became a Cube prim, so keeping the XML too would be two sources of truth.
     stage = _stage(urdf_to_usd(extra))
 
     kept = _passthrough(stage, "/extra/base_link")
@@ -573,7 +551,6 @@ def test_a_joints_unconverted_urdf_rides_along_on_its_joint_prim(extra: Any) -> 
     kept = _passthrough(stage, "/extra/joints/shoulder")
 
     assert any("dynamics" in fragment and "0.7" in fragment for fragment in kept)
-    # origin is read into the joint frames, so it is not duplicated here either.
     assert not any("<origin" in fragment for fragment in kept)
 
 
@@ -584,7 +561,6 @@ def test_a_link_with_nothing_unconverted_carries_no_passthrough(extra: Any) -> N
 
 
 def test_passthrough_is_customdata_not_an_attribute(extra: Any) -> None:
-    # customData is USD's own field for this, so the "no custom attributes" rule still holds.
     usd = urdf_to_usd(extra)
 
     assert "customData" in usd
@@ -670,7 +646,6 @@ def hashy(tmp_path: Path) -> Any:
 
 
 def test_a_mesh_is_identified_by_the_hash_of_its_contents(hashy: Any) -> None:
-    """A path alone cannot say whether the file fetched is the file meant."""
     stage = _stage(urdf_to_usd(hashy))
     prim = stage.GetPrimAtPath("/hashy/base_link/visual_0")
 
@@ -686,18 +661,14 @@ def test_the_asset_identifier_is_the_path_it_references(hashy: Any) -> None:
 
 
 def test_a_hashed_layer_passes_the_requirement(hashy: Any) -> None:
-    require_asset_hashes(urdf_to_usd(hashy), what="this layer")  # does not raise
+    require_asset_hashes(urdf_to_usd(hashy), what="this layer")
 
 
 def test_a_layer_with_no_assets_at_all_passes(toy: Any) -> None:
-    # Nothing to identify, so nothing to refuse.
     require_asset_hashes(urdf_to_usd(toy), what="this layer")
 
 
 def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: Any) -> None:
-    """The answer is the fix: the error carries the value to paste, which matters most for a layer
-    written by hand or baked into a constant.
-    """
     usd = urdf_to_usd(hashy).replace("string version", "string notversion")
 
     with pytest.raises(ValueError) as caught:
@@ -710,7 +681,6 @@ def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: An
 
 
 def test_an_unreadable_asset_is_refused_but_says_where_to_hash_it(toy: Any, tmp_path: Path) -> None:
-    # A consumer cannot hash a file it does not have; it can still say what is wrong.
     urdf = tmp_path / "gone.urdf"
     urdf.write_text(
         '<?xml version="1.0"?><robot name="gone"><link name="base_link">'
@@ -773,10 +743,6 @@ def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
 
 
 def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
-    """Without this a reader falls back to a density over the visual meshes -- MuJoCo says "has only
-    visual gprims and no colliders or explicit inertia; falling back to default density" -- and a
-    G1 whose every link weighs the wrong amount loads fine and cannot stand up.
-    """
     from pxr import UsdPhysics
 
     urdf = tmp_path / "weighed.urdf"
@@ -804,12 +770,10 @@ def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: P
     mass = UsdPhysics.MassAPI(base)
     assert mass.GetMassAttr().Get() == pytest.approx(3.813)
     assert tuple(mass.GetCenterOfMassAttr().Get()) == pytest.approx((0.0, 0.0, -0.076))
-    # already diagonal, so the principal moments are the tensor's own, smallest first
     assert tuple(mass.GetDiagonalInertiaAttr().Get()) == pytest.approx(
         (0.0079184, 0.0093089, 0.010549), rel=1e-5
     )
 
-    # a link with no <inertial> is a frame -- an IMU mount, a foot contact -- and stays massless
     assert not _prim_by_link(stage, "frame_only").HasAPI(UsdPhysics.MassAPI)
 
 
@@ -832,8 +796,6 @@ def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: P
     stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="tilted"))
     mass = UsdPhysics.MassAPI(_prim_by_link(stage, "base"))
     moments = tuple(mass.GetDiagonalInertiaAttr().Get())
-    # the trace is invariant under the rotation onto the principal axes
     assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
-    # and the axes are a rotation, not a reflection
     axes = mass.GetPrincipalAxesAttr().Get()
     assert axes is not None
