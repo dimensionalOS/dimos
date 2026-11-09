@@ -15,10 +15,9 @@
 """Compile a scene and its robots into one MuJoCo model, and mount a sensor in a copy of it.
 
 Two callers, which is why the sensor part is separate. `compile_world` builds the world the
-physics runs, and that world holds no sensors at all: a sensor is not something the simulation
-was told about. A sensor builds its *own* world out of the same scene and calls `mount_sensor`
-on it, so a camera's resolution and field of view are its own business and nothing in the
-physics has an opinion about either.
+physics runs, and it holds no sensors at all: a sensor builds its *own* world out of the same
+scene and calls `mount_sensor` on it, so a camera's resolution and field of view are its own
+business.
 """
 
 from collections.abc import Iterable
@@ -43,17 +42,14 @@ _SITE_SIZE = (0.001, 0.001, 0.001)
 class SensorMount:
     """What a sensor tells *its own* world about itself: where it sits and what to build there.
 
-    Not a description anything else sees. It used to travel to the simulation over
-    a description the simulation was handed, which made the difference between a camera and a
-    lidar core's business and left this engine reading a `kind` nobody else had any use for. A
-    sensor knows what it is; it only has to say so to the world it renders with.
+    Not a description anything else sees. A sensor knows what it is; it only has to say so to the
+    world it renders with.
     """
 
-    # What to build at the frame. A camera is a camera; everything else is a site, because what
-    # a lidar or an IMU needs from a world is a pose to read it from. MuJoCo's own gyro and
-    # accelerometer sensors are not used: nothing here reads `MjData.sensordata`, and an IMU is
-    # differenced from the site's pose and velocity instead -- which is what lets the Mid-360's
-    # IMU work off a view that only ever asked for a lidar's site.
+    # What to build at the frame. A camera is a camera; everything else is a site, because what a
+    # lidar or an IMU needs from a world is a pose to read it from. MuJoCo's own gyro and
+    # accelerometer sensors are not used: an IMU is differenced from the site's pose and velocity,
+    # which is what lets the Mid-360's IMU work off a view that only asked for a lidar's site.
     kind: Literal["camera", "lidar", "imu"]
     # Its frame as the composed scene names it: a site or a body, of a robot or of the room.
     frame_id: str
@@ -70,9 +66,8 @@ def _register_usd_reader(scene: Path) -> None:
     """MuJoCo reads USD, but only once `mujoco._usd` has been imported.
 
     Without it `MjSpec.from_file` falls back to the MJCF parser and a USD layer comes back as
-    "syntax error: line 1, column 0" -- XML's complaint about a file that was never XML. The
-    import is what registers the reader, so it has to happen in whichever process loads the
-    scene, not merely somewhere in the application.
+    "syntax error: line 1, column 0". The import is what registers the reader, so it has to happen
+    in whichever process loads the scene.
     """
     if scene.suffix.lower() not in _USD_SUFFIXES:
         return
@@ -89,19 +84,16 @@ def compile_world(
 ) -> mujoco.MjSpec:
     """The world the physics runs: the scene, with each robot prefixed "<robot_id>/".
 
-    A robot the world already holds is configured where it stands. A composed scene arrives with
-    its robots grafted in -- that is what `get_scene` answers with, and the layer the viewer draws
-    -- and attaching one on top of that would put a second copy of the robot in the room. Where
-    the world does not hold it, its own layer is read and attached, which is how a scene that is
-    only a room gets a robot at all.
+    A robot the world already holds is configured where it stands: a composed scene arrives with
+    its robots grafted in, and attaching one on top of that would put a second copy in the room.
+    Where the world does not hold it, its own layer is read and attached.
     """
     _register_usd_reader(Path(scene))
     robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
     validate(robots)
-    # The robots whose parts get short names. Named explicitly by a *sensor*, which compiles the
-    # same composed scene and has no descriptions to read them off: it is told what is in the
-    # world by the world, and has to shorten exactly what the physics shortened or the entity
-    # ids in the observations will not match the bodies it is posing.
+    # The robots whose parts get short names. Named explicitly by a *sensor*, which has no
+    # descriptions to read them off: it has to shorten exactly what the physics shortened, or the
+    # entity ids in the observations will not match the bodies it is posing.
     owners = [robot.robot_id for robot in robots] if ids is None else list(ids)
 
     world = mujoco.MjSpec.from_file(str(scene))
@@ -148,22 +140,14 @@ def compile_world(
 def _free_if_unjointed(spec: mujoco.MjSpec, robot_id: str) -> None:
     """Give this robot a free joint if nothing in the layer gave it one.
 
-    A graft says "this subtree floats on its mount" with a generic six-degree `PhysicsJoint`,
-    which is how USD says it. MuJoCo's USD reader does not read that one -- "Unsupported joint
-    type for /scene/dog/toy/dog_mount" on the way past -- and a nested rigid body with no joint
-    is welded to its parent. So a composed world came out with every robot bolted to the room:
-    it started, it stood, it never fell over, and it never walked either, with nothing in the
-    log but that one warning.
+    A graft says "this subtree floats on its mount" with a generic six-degree `PhysicsJoint`, which
+    MuJoCo's USD reader does not read ("Unsupported joint type"), and a nested rigid body with no
+    joint is welded -- so every robot in a composed world was bolted to the room: it stood, it
+    never fell over, and it never walked.
 
-    The joint goes on the *mount frame*, not on the robot's own root: MuJoCo allows a free joint
-    only on a top-level body ("free joint can only be used on top level"), and in a composed
-    scene the robot hangs off a frame that the room holds. The frame carries no mass and is
-    welded to the root, so MuJoCo folds the two together and the robot floats as one body --
-    which is what the graft was saying all along.
-
-    A robot attached from its own layer already has the free joint its layer declares, which is
-    why this only ever fires for the composed case. A robot that is not floating is left alone,
-    and so is a mount frame with nothing grafted onto it: a stand for a camera does not move.
+    The joint goes on the *mount frame*, because MuJoCo allows a free joint only on a top-level
+    body; the frame is massless and welded to the root, so the two fold together. Only fires for
+    the composed case, and a mount frame with nothing grafted on is left alone.
     """
     prefix = f"{robot_id}/"
     for body in list(spec.bodies):
@@ -197,17 +181,9 @@ def _configure(
 ) -> None:
     """What is left to do to a robot after its layer has been read: hold it still if it is fixed.
 
-    Its gains are not here any more. They are in its layer, as a drive on each joint and as
-    MuJoCo's own actuator attributes beside it, so MuJoCo arrives at a position servo by reading
-    the file -- nothing has to turn a motor into one afterwards, and there is no second place for
-    a robot's gains to disagree with the robot.
-
-    Keyframes are dropped, because a vendor layer's pose is not the one the controller holds and
-    a composed world's qpos is not the shape a robot's own keyframe was written for.
-
-    Called once per robot, on its own layer before it is attached or on the world it already
-    stands in. ``prefix`` is how that robot's parts are named in ``spec``: nothing on its own
-    layer, "<robot_id>/" in a world.
+    Its gains are in its layer, as a drive per joint and MuJoCo's own actuator attributes beside
+    it. Keyframes are dropped: a vendor layer's pose is not the one the controller holds, and a
+    composed world's qpos is not the shape a robot's own keyframe was written for.
     """
     if not robot.floating:
         root.mocap = True
@@ -218,16 +194,9 @@ def _configure(
 def mount_sensor(spec: mujoco.MjSpec, sensor: SensorMount) -> None:
     """Mount the sensor at its frame: a site of the model, a body, or the world itself.
 
-    In the sensor's own copy of the world, never in the one the physics runs: a camera here has
-    the field of view that sensor was configured with, and the physics neither needs it nor
-    should have a say in it.
-
-    A frame read out of USD is named by its prim path, so the name the description uses is
-    resolved against what the model actually calls things; a scene written as an MJCF names it
-    the same either way.
-
-    A frame read out of USD is named by its prim path, so the name the sensor uses is resolved
-    against what the model actually calls things.
+    In the sensor's own copy of the world, never the one the physics runs: a camera here has the
+    field of view that sensor was configured with. A frame read out of USD is named by its prim
+    path, so the name the sensor uses is resolved against what the model actually calls things.
     """
     frame = sensor.frame_id
     site, body, pos, quat = None, spec.worldbody, np.zeros(3), np.array([1.0, 0.0, 0.0, 0.0])

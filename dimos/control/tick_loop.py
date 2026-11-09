@@ -302,9 +302,9 @@ class TickLoop:
             joint_positions=joint_positions,
             joint_velocities=joint_velocities,
             joint_efforts=joint_efforts,
-            # The newest reading's own stamp, falling back to the wall clock when nothing carries
-            # one. Taking the wall clock regardless threw away the sim time the readings arrived
-            # with, and put every joint on a different clock from the pose they hang off.
+            # The newest reading's own stamp, falling back to the wall clock when nothing carries one.
+            # Taking the wall clock regardless put every joint on a different clock from the pose they
+            # hang off.
             timestamp=max(read_at) if read_at else time.time(),
         )
         return snapshot, per_hardware

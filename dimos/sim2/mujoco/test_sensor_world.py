@@ -30,12 +30,9 @@ SCENE = Path(__file__).parent / "assets" / "scene.usda"
 
 @pytest.fixture
 def composed() -> Path:
-    """The world as a sensor really gets it: a room with the robot already grafted into it.
-
-    This is what `get_scene` answers with -- the manager composes the room and everything
-    mounted on it into one layer -- so a sensor compiling it is compiling the same thing the
-    physics is running. There is no description anywhere in it: the frames the sensor needs are
-    in the layer because the robot's model carries them.
+    """The world as a sensor really gets it: a room with the robot already grafted into it, which
+    is what `get_scene` answers with. There is no description anywhere in it: the frames the
+    sensor needs are in the layer because the robot's model carries them.
     """
     robot = toy_robot().with_frames(
         {
@@ -52,10 +49,8 @@ def composed() -> Path:
 
 
 def _view(composed: Path, kind: str = "lidar", frame: str = "dog/lidar"):
-    """A sensor's own world: the composed scene, with this sensor at its own frame.
-
-    The robot id comes from the world, as it does in a sensor: the first frame of observations
-    announces it. Here that is `_World`, which announces the dog the way a backend would.
+    """A sensor's own world: the composed scene, with this sensor at its own frame. The robot id
+    comes from the world, as it does in a sensor: the first frame of observations announces it.
     """
     return open_view(composed, ["dog"], SensorMount(kind, frame, frame))
 
@@ -81,11 +76,9 @@ class _World:
 
 
 def test_the_robots_in_the_world_are_the_ones_the_world_announced():
-    """Nobody tells a sensor what is in the world; the world does, on its first frame.
-
-    A robot is announced with the layer it was drawn from and a crate is not, which is the whole
-    difference. The ids matter because the view has to shorten its own copy for exactly the
-    robots the physics shortened for, or an entity in the observations names nothing it can pose.
+    """Nobody tells a sensor what is in the world; the world does, on its first frame. A robot is
+    announced with the layer it was drawn from and a crate is not. The ids matter because the view
+    has to shorten its own copy for exactly the robots the physics shortened for.
     """
     assert robot_ids(_World().at(0.0, 0.0, 0.0)) == ["dog"]
 
@@ -108,12 +101,10 @@ def test_the_view_is_posed_by_the_world_alone(composed):
 
 
 def test_a_sensor_does_not_see_the_body_it_is_mounted_on(composed):
-    """The lidar site sits at the centre of the head's sphere, as a real one sits inside its shell.
-
-    A collision hull is a few convex shapes around a shape that is neither, so a sensor bolted
-    to a robot is inside its mount rather than proud of it -- the G1's Mid-360 is 22 mm inside
-    torso_link's. Casting without saying so returns the mount for every ray in every direction,
-    and a lidar that drops returns inside its blind range then reports an empty scan.
+    """The lidar site sits at the centre of the head's sphere, as a real one sits inside its shell:
+    a sensor bolted to a robot is inside its mount's collision hull rather than proud of it (the
+    G1's Mid-360 is 22 mm inside torso_link's). Casting without saying so returns the mount for
+    every ray, and a lidar that drops returns inside its blind range reports an empty scan.
     """
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
@@ -124,9 +115,8 @@ def test_a_sensor_does_not_see_the_body_it_is_mounted_on(composed):
     blinded, _ = view.raycaster((0,)).cast(origin, out_and_down, 10.0)
     seeing, _ = view.raycaster((0,), mounted_at="dog/lidar").cast(origin, out_and_down, 10.0)
 
-    # Starting inside its own mount, the ray gets no further than the mount's own surface --
-    # 50 mm here, 22 mm on the real G1, both well inside a Mid-360's 160 mm blind range, so
-    # every such return is dropped and the scan comes out empty.
+    # Starting inside its own mount, the ray gets no further than the mount's own surface -- 50 mm
+    # here, 22 mm on the real G1, both well inside a Mid-360's 160 mm blind range.
     assert blinded[0] == pytest.approx(0.05, abs=1e-3)
     # With the mount left out it carries on to the floor, a good way below.
     assert seeing[0] > 1.0

@@ -73,9 +73,8 @@ _ARM = (
 def g1_drives() -> dict[str, tuple[float, float, float]]:
     """The gains and home pose the GR00T controller holds the robot at, as `usd_with_drives` wants.
 
-    Written into the committed layer by `scripts/usd_drives.py`, which is where a robot's gains
-    belong: whatever runs this robot reads them from the same place, and the test beside it
-    notices if the two drift apart. Never called at runtime.
+    Written into the committed layer by `scripts/usd_drives.py`, so whatever runs this robot reads
+    them from the same place; the test beside it notices if the two drift. Never called at runtime.
     """
     return {
         f"{side}_{name}_joint": (kp, kd, _home(side, name, initial))
@@ -133,9 +132,9 @@ class G1Sim(Module):
     # Named and ordered as G1WholeBodyConnection's.
     motor_states: Out[JointState]
     imu: Out[Imu]
-    # Where the robot is. The sim knows it exactly, and nothing else does: without it a viewer
-    # has no way to place the robot, so the model goes undrawn and every frame hanging off it --
-    # the Mid-360's mount among them -- is reported as missing from the tf tree.
+    # Where the robot is. The sim knows it exactly and nothing else does: without it a viewer
+    # cannot place the robot, so the model goes undrawn and every frame hanging off it is reported
+    # as missing from the tf tree.
     odom: Out[PoseStamped]
     tf: Out[TFMessage]
     _view: WorldView | None = None
@@ -196,10 +195,8 @@ class G1Sim(Module):
     def _open(self) -> WorldView:
         """This robot's own world, for the IMU in its pelvis: the scene, with a site at that frame.
 
-        A robot reads its own IMU the way a sensor module does, out of a copy of the world it
-        builds itself. Opened on the first frame rather than at start, because the robots in the
-        world are what the world says they are and the view has to name its bodies the way the
-        observations do.
+        Opened on the first frame rather than at start, because the robots in the world are the ones
+        the observations announce, and the view has to name its bodies the way they do.
         """
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if scene is None:

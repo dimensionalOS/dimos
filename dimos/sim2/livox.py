@@ -14,11 +14,10 @@
 
 """LivoxSim: the sim twin of the Mid360 module, read from a world of its own making.
 
-The lidar casts the fitted Mid-360 scan pattern and return model; the IMU is the one inside the
-unit, at the same mount. It describes itself to nobody: a manager mounts its `get_usd` -- the
-same layer the real driver answers with -- onto the frame it is bolted to, so the composed scene
-has the sensor in it. This then asks that manager for the scene, builds its own world out of it,
-and ranges against the furniture that is really there.
+The lidar casts the fitted Mid-360 scan pattern and return model; the IMU is the one inside
+the unit, at the same mount. It describes itself to nobody: a manager mounts its `get_usd`
+onto the frame it is bolted to, and this then asks that manager for the scene and ranges
+against the furniture that is really there.
 """
 
 import asyncio
@@ -54,17 +53,14 @@ class LivoxSimConfig(SceneConfig):
     imu_frame_id: str = "imu_link"
     rate_hz: float = 10.0
     imu_rate_hz: float = 200.0
-    # A lidar sees whatever a body would walk into, so these are the groups MuJoCo's own
-    # convention puts collision geometry in: 0, where a hand-written scene's planes and boxes
-    # go, and 3, where a converted one's collision meshes and every robot's do. Group 1 is left
-    # out because it holds visual-only meshes (contype 0) -- drawing a desk is not the same as
-    # being able to hit it. Seeing only group 0 was the old default: in office_555 that is 354
-    # geoms out of 4138, so the beam passed straight through every desk, chair and robot and
-    # returned the wall behind them.
+    # A lidar sees whatever a body would walk into, so these are the groups MuJoCo's own convention
+    # puts collision geometry in: 0 for a hand-written scene's planes and boxes, 3 for a converted
+    # one's collision meshes and every robot's. Group 1 is left out because it holds visual-only
+    # meshes (contype 0). Seeing only group 0 was the old default: in office_555 that is 354 geoms
+    # out of 4138, so the beam passed through every desk, chair and robot and returned the wall.
     geom_groups: tuple[int, ...] = (0, 3)
     # Further frames the beam passes through, beyond the one the sensor is mounted on (which it
-    # never sees, the way a real one cannot see its own housing). For a radome, a mast, or a
-    # wall a test wants out of the way.
+    # never sees, the way a real one cannot see its own housing): a radome, a mast, a test's wall.
     blind_to: tuple[str, ...] = ()
     # The Go2 rig's mount blocks some directions; only meaningful when mounted on a Go2.
     go2_occlusion: bool = False
@@ -81,10 +77,9 @@ class LivoxSim(Module):
     def get_usd(self) -> list[str]:
         """``[asset_root, usd]``: the MID-360, in the frames this instance stamps.
 
-        The same layer the real Mid360 driver answers with, not a copy of it: a sim twin that
-        described itself differently from the sensor it stands in for would put a different box
-        on the screen depending on which one was running. The root is that driver's directory,
-        for the reason it gives: the one path that is right wherever it is installed.
+        The same layer the real Mid360 driver answers with, not a copy: a sim twin that described
+        itself differently would put a different box on the screen depending which one was running.
+        The root is that driver's directory, for the reason it gives.
         """
         return [
             str(Path(mid360_driver.__file__ or "").parent),
@@ -111,11 +106,9 @@ class LivoxSim(Module):
         return usd_layer(scene)
 
     def _open(self, layer: Path) -> WorldView:
-        """This sensor's own world: the composed scene, with a site at its own mount.
-
-        Opened on the first frame rather than at start, because the robots in the world are what
-        the world says they are -- the observations announce them -- and the view has to name its
-        bodies the way the observations do.
+        """This sensor's own world: the composed scene, with a site at its own mount. Opened on the
+        first frame rather than at start, because the robots in the world are the ones the observations
+        announce, and the view has to name its bodies the way they do.
         """
         return open_view(
             layer,

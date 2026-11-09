@@ -107,11 +107,9 @@ def turbo_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
     """
     color_lut = _turbo_lut()
 
-    # Map grid values to lookup indices
-    # Values: -1 -> 255, 0-100 -> 0-100, clipped to valid range. The index array is built as
-    # uint8 from the start rather than by casting afterwards: numpy 2 will not weigh a Python
-    # 255 against an int8 array and raises "Python integer 255 out of bounds for int8", so the
-    # turbo view of any occupancy grid stopped working.
+    # -1 -> 255, 0-100 -> 0-100. The index array is built as uint8 from the start rather than cast
+    # afterwards: numpy 2 will not weigh a Python 255 against an int8 array and raises "Python
+    # integer 255 out of bounds for int8".
     lookup_indices = np.where(grid == -1, np.uint8(255), np.clip(grid, 0, 100).astype(np.uint8))
 
     # Create BGR image using lookup table (vectorized operation)

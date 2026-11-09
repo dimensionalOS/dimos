@@ -15,15 +15,13 @@
 """A sim blueprint's managers have to compose the whole world, not just the robot.
 
 Two managers, nested. The inner one answers for the robot -- its layer with each sensor grafted
-onto the frame it is bolted to -- and the outer one for the world, the room with the robot
-grafted into it. What the outer one composes is what `get_scene` hands out, which is what the
-physics runs and what every sensor renders from.
+onto the frame it is bolted to -- and the outer one for the world. What the outer one composes
+is what `get_scene` hands out, which is what the physics runs and what every sensor renders
+from.
 
-Each link in that chain fails silently. A manager with no mounts answers for the robot alone, so
-the sensors are nowhere in the stage a viewer draws: the lidar publishes and nothing on screen
-shows what is doing the sensing. A sensor pointed at no manager has no world to render. Both are
-visible only as an absence, which is why they are worth a test that reads the wiring rather than
-waiting to notice.
+Each link in that chain fails silently: a manager with no mounts answers for the robot alone,
+so the sensors are nowhere in the stage a viewer draws, and a sensor pointed at no manager has
+no world to render. Both are visible only as an absence.
 """
 
 from typing import Any

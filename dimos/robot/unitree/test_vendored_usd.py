@@ -14,14 +14,10 @@
 
 """The committed layer is the robot: what both ends read off it, with nothing else on disk.
 
-These robots used to be described by an MJCF converted at import time, and what was worth
-checking then was that the converter's URDF matched that MJCF (see
-an MJCF-to-URDF conversion that is gone). The description is now one committed `.usda` and these
-are the properties that replace it: the layer loads, it carries the frames the module advertises
-mounts at, and every file it names is there to be served.
-
-Reading the layer rather than running the sim, so a broken vendoring is caught in a second
-instead of as a robot missing from a scene thirteen minutes in.
+The properties: the layer loads, it carries the frames the module advertises mounts at, and
+every file it names is there to be served. Reading the layer rather than running the sim, so a
+broken vendoring is caught in a second instead of as a robot missing from a scene thirteen
+minutes in.
 """
 
 from __future__ import annotations
@@ -113,13 +109,11 @@ def test_mujoco_simulates_the_robot_off_the_layer_alone(robot: str) -> None:
 def test_mujoco_keeps_its_actuators_when_usd_core_went_first() -> None:
     """Writing a layer with usd-core must not cost MuJoCo the physics prims when it reads one.
 
-    Two OpenUSD runtimes end up in one process and whichever initialises first owns the plugin
-    registry, so with usd-core first MuJoCo's ``mjcPhysics`` schemas go unregistered and every
-    ``MjcActuator`` is dropped. Geometry loads either way, so the G1 came up as a complete robot
-    with no actuators at all and the only symptom was a servo failing to find its motor.
+    Whichever of the two OpenUSD runtimes initialises first owns the plugin registry, so with
+    usd-core first MuJoCo's ``mjcPhysics`` schemas go unregistered and every ``MjcActuator`` is
+    dropped -- the G1 came up as a complete robot with no actuators at all.
 
-    In a subprocess, because what is being tested is the order in which a *process* first
-    touches each runtime, and this one has already touched both.
+    In a subprocess, because what is tested is the order a *process* first touches each runtime.
     """
     source = textwrap.dedent("""
         from dimos.robot.unitree.g1.sim2 import G1Sim

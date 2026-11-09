@@ -20,12 +20,9 @@ pytest.importorskip("pxr")
 
 
 def test_the_layer_carries_the_gains_the_policy_runs_on() -> None:
-    """The gains are in the layer, written there once by `scripts/usd_drives.py`.
-
-    Which means they can go stale: the policy blob is where they came from, and nothing stops
-    somebody replacing it. This is what notices. Run the script again if it fails -- the layer is
-    the source of truth for whatever runs the robot, and it has to agree with the controller the
-    robot actually ships with.
+    """The gains are in the layer, written there once by `scripts/usd_drives.py`, so they can go
+    stale if somebody replaces the policy blob. This is what notices; run the script again if it
+    fails.
     """
     from dimos.robot.assets.usd import usd_drives
     from dimos.robot.unitree.go2.sim2 import Go2Sim, go2_drives

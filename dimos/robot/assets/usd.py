@@ -14,8 +14,7 @@
 
 """URDF to USD: one robot as a USD stage, and the grafting that joins subtrees onto it.
 
-A converted stage is a string (a ``.usda`` layer), never a file: a description already travels
-as one through ``UsdManager.file_info``.
+A stage is a string (a ``.usda`` layer), never a file.
 """
 
 from __future__ import annotations
@@ -53,8 +52,7 @@ _OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 # The algorithm is inside the value, so it can change without the old ones becoming unreadable.
 HASH_ALGORITHM = "sha256"
 
-# Asset paths a scene leaves with are not paths on any disk: they are names the manager that
-# assembled the scene answers for, under a root nothing can collide with.
+# Not paths on any disk: names the manager that assembled the scene answers for.
 ASSET_ROOT_PREFIX = "/dimos/assets/"
 
 # customData holding the URDF this converter does not read. Standard field, not an attribute.
@@ -68,21 +66,16 @@ _NO_USD = (
 )
 
 
-# The import, done once, behind a lock. A manager assembling a scene hashes every mounted
-# subtree in parallel, so three robots is three threads reaching this at the same instant; a
+# Done once, behind a lock: a manager hashes every mounted subtree in parallel, and a
 # concurrent first `from pxr import ...` wedges on CPython's per-module import lock and never
-# comes back. The module then answers nothing -- not its file requests, not even its rpcs --
-# while looking perfectly healthy, because nothing raised.
+# comes back -- the module then answers nothing, not even its rpcs, and nothing has raised.
 _PXR_LOCK = Lock()
 _PXR: _Pxr | None = None
 
 
 def _pxr() -> _Pxr:
-    """The pxr modules, imported once on first use.
-
-    Deferred because usd-core is an optional extra, and on linux-aarch64 it is installable
-    only on Python 3.11 and up: a robot must come up and pose itself on tf without it, and
-    only asking for a USD layer needs it.
+    """The pxr modules, imported once on first use. Deferred: usd-core is an optional extra
+    (linux-aarch64 needs Python 3.11+) and a robot must pose itself on tf without it.
     """
     global _PXR
     if _PXR is not None:
@@ -103,20 +96,9 @@ def _pxr() -> _Pxr:
 def _let_mujoco_register_its_schemas_first() -> None:
     """Import MuJoCo's USD reader before pxr, where MuJoCo is installed at all.
 
-    Two OpenUSD runtimes end up in one process -- usd-core's, which this module uses to write a
-    layer, and the one MuJoCo bundles to read one -- and whichever initialises first owns the
-    plugin registry. With usd-core first, MuJoCo's own ``mjcPhysics`` schemas are never
-    registered, so every ``MjcActuator`` in a layer parses as an untyped prim and is dropped.
-
-    Nothing says so. Geometry is plain UsdGeom and UsdPhysics and loads either way, so the G1
-    came up as a complete robot with **no actuators at all** and the only symptom, much later,
-    was `no 'left_hip_pitch_joint' among ` -- a servo looking for a motor in a model that had
-    silently lost all 29 of them.
-
-    Importing it here is the only placement that holds, because this function is where pxr is
-    first touched and a caller cannot know it is the first. It costs nothing where MuJoCo is
-    absent (a robot posing itself on tf never has it) and nothing on later calls, since the
-    import is cached and this runs once.
+    Whichever OpenUSD runtime initialises first owns the plugin registry; with usd-core first,
+    MuJoCo's ``mjcPhysics`` schemas go unregistered and every ``MjcActuator`` is silently dropped
+    (the G1 loaded with none of its 29 motors). This is where pxr is first touched.
     """
     try:
         import mujoco._usd  # noqa: F401
@@ -158,9 +140,8 @@ def urdf_to_usd(
 ) -> str:
     """``model`` as one ``.usda`` layer; ``name`` is the defaultPrim, default ``<robot name>``.
 
-    Links nest down the kinematic tree at the URDF zero pose, so a viewer with no physics
-    engine still shows the robot assembled; joints are also written as ``UsdPhysics`` prims. A
-    ``<mesh>`` becomes a reference to the path the URDF named, converted no further.
+    Links nest down the kinematic tree at the URDF zero pose, so a viewer with no physics engine
+    still shows the robot assembled. A ``<mesh>`` keeps the path the URDF named.
     """
     pxr = _pxr()
     root_element = ET.fromstring(model.xml)
@@ -204,9 +185,8 @@ def urdf_to_usd(
 def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | None = None) -> str:
     """``root_usd`` with each subtree copied in under the prim standing for its frame.
 
-    Each key is a frame_id in ``root_usd`` (a URDF link, matched on its ``displayName``) and each value is a USD layer whose default prim is that subtree's root. The
-    result is one layer again: specs are copied, not referenced, because the scene leaves as
-    a string with no layer the far side could resolve.
+    Keys are frame_ids in ``root_usd``, matched on ``displayName``. Specs are copied, not
+    referenced: the scene leaves as a string with no layer the far side could resolve.
     """
     pxr = _pxr()
     root_layer = _layer_from(pxr, root_usd, "root")
@@ -235,8 +215,7 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | Non
             )
         if not pxr.Sdf.CopySpec(sub_layer, source.GetPath(), root_layer, target):
             raise ValueError(f"could not copy the subtree USD for {frame_id!r} into the scene")
-        # Copied specs keep their authored target paths, so a joint's body rels would still
-        # point at the subtree's old root. Rebase them onto where the subtree now lives.
+        # Copied specs keep authored targets, so a joint's body rels still name the old subtree root.
         _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
         _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
 
@@ -246,16 +225,11 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | Non
 def usd_with_frames(
     usd: str, frames: Mapping[str, tuple[str, Vector, Vector]], root: Path | str | None = None
 ) -> str:
-    """``usd`` with each named frame added as a link on the frame it hangs off.
+    """``usd`` with each named frame, ``(parent frame, xyz, rpy)``, added as a link.
 
-    A scene needs somewhere to mount things that are not part of it -- three robots standing in
-    a room need three frames, because grafting two subtrees at one frame is refused and rightly
-    so -- and a converted room arrives with frames for its own furniture and none for its
-    visitors.
-
-    Each value is ``(parent frame, xyz, rpy)``. The frame becomes a prim carrying
-    RigidBodyAPI, which is what makes it a link to everything that reads this layer: graft_usd
-    matches a mount frame on it, and the viewer places it from tf like any other.
+    Mount points for things not part of the scene; grafting two subtrees at one frame is refused,
+    so three robots in a room need three frames. Each carries RigidBodyAPI, which is what makes
+    it a link to everything reading this layer.
     """
     if not frames:
         return usd
@@ -263,10 +237,8 @@ def usd_with_frames(
     layer = _layer_from(pxr, usd, "a scene", root)
     stage = pxr.Usd.Stage.Open(layer)
     for name, (parent, xyz, rpy) in frames.items():
-        # Read afresh each time, because a frame may hang off one added a moment ago: the Go2's
-        # Mid-360 sits on its front camera, which is itself a frame the rig adds. Reading the
-        # layer's links once before the loop made that "the layer has no frame 'front_camera'",
-        # which is true of the file and not of the stage it is being built into.
+        # Read afresh each time: a frame may hang off one added a moment ago (the Go2's Mid-360 sits on
+        # its front camera, itself a frame the rig adds), which is in the stage, not in the layer.
         by_link = _link_prim_paths(stage)
         parent_path = by_link.get(parent)
         if parent_path is None:
@@ -289,22 +261,12 @@ def usd_with_frames(
 
 
 def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) -> None:
-    """Say what holds the frame: the link it hangs off, or the world where that is not a link.
+    """Weld the frame to the link it hangs off, or to the world where that is not a link.
 
-    Nesting places a frame but says nothing about how it is held, and a physics engine has to
-    decide. MuJoCo's guess is the most permissive one -- a body free in all six degrees -- and a
-    frame carries no mass, so the G1's lidar mount came back as "mass and inertia of moving
-    bodies must be larger than mjMINVAL" and the robot would not compile at all. A weld is the
-    honest statement (a mount bolted to the torso is not free to move) and it costs no degree of
-    freedom: MuJoCo folds a welded massless body into its parent.
-
-    Where the parent is *not* a link the frame is welded to the world instead, which is what a
-    FixedJoint naming only body1 means. That is the case for a converted room, whose root is an
-    Xform and not a rigid body: a stand frame hanging off it is a body with no mass and nothing
-    holding it, and the room came back with the same mjMINVAL complaint as the lidar mount did.
-    Leaving the weld out instead does not work either -- a frame is a rigid body because that is
-    what makes MuJoCo give it a body at all, and a prim that is only an Xform is a mount point
-    no engine can find.
+    MuJoCo's default for a nested frame is a free body, which fails mjMINVAL because a frame is
+    massless; a weld costs no degree of freedom (MuJoCo folds a welded massless body into its
+    parent). A FixedJoint naming only body1 is the weld to the world, for a converted room whose
+    root is an Xform. It still has to be a rigid body, or MuJoCo gives it no body at all.
     """
     parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
     joint = pxr.UsdPhysics.FixedJoint.Define(
@@ -326,24 +288,11 @@ def usd_with_drives(
 ) -> str:
     """``usd`` with each named joint driven as a position servo, by ``(kp, kd, target)``.
 
-    Where a robot's gains belong. They are a fact about the robot -- what holds its leg up is
-    the controller it ships with -- and saying them in the layer means whatever runs the robot
-    reads them from the same place, instead of each simulation being handed them separately and
-    a real robot being configured somewhere else again.
-
-    Written twice, because two kinds of reader want two different spellings of it:
-
-    * ``UsdPhysics.DriveAPI`` on the joint (stiffness, damping, target), which is the standard
-      and what Isaac reads: an ImplicitActuator takes its gains off the joint prim unless the
-      config overrides them.
-    * MuJoCo's own ``MjcActuator`` attributes on whichever actuator drives that joint --
-      ``mjc:gainPrm[0] = kp`` and ``mjc:biasPrm = [0, -kp, -kd]`` with ``mjc:biasType =
-      "affine"``, which is a position servo written out longhand. MuJoCo reads that straight out
-      of the layer, so nothing has to turn a motor into a servo after loading.
-
-    A motor's control range, where it has one, is its torque limit, so it moves to the force
-    range and the control limit comes off: a servo's control signal is a position, and leaving a
-    torque range on it as a control range clamps the position instead.
+    Gains belong in the layer, so whatever runs the robot reads them from one place. Written
+    twice: ``UsdPhysics.DriveAPI`` on the joint (standard, and what Isaac reads) and MuJoCo's
+    ``mjc:gainPrm[0]=kp``, ``mjc:biasPrm=[0,-kp,-kd]``, ``mjc:biasType="affine"``. A motor's
+    control range is a torque limit, so it moves to the force range: left in place it would clamp
+    a servo's commanded position.
     """
     if not drives:
         return usd
@@ -385,15 +334,10 @@ def _is_joint(pxr: Any, prim: Any) -> bool:
 def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
     """MuJoCo's longhand for a position servo, on an actuator prim it will read back.
 
-    What happens to the control range depends on what the actuator *was*. A plain motor's
-    control signal is a torque, so its range is a torque limit and moves to the force range: a
-    servo is commanded a position, and a torque range left in place would clamp the position
-    instead. An actuator that already biases is already a servo -- the G1's layer arrives with
-    kp=500 and the joint's own travel as its control range -- and moving that to the force range
-    would limit each joint to a couple of newton-metres, which is not enough to hold a leg up.
-
-    The control limit comes off either way: a servo is commanded where to go, and whatever it
-    is allowed to reach is the joint's own range to enforce.
+    A plain motor's control range is a torque and moves to the force range; one that already
+    biases is already a servo (the G1 arrives with kp=500 and the joint's travel as its range),
+    and moving that would cap each joint at a couple of newton-metres. The control limit comes
+    off either way: travel is the joint's own range to enforce.
     """
     bias = actuator.GetAttribute("mjc:biasType")
     was_a_motor = not (bias and bias.HasAuthoredValue() and str(bias.Get()) != "none")
@@ -415,18 +359,11 @@ def _write_mjc_servo(pxr: Any, actuator: Any, kp: float, kd: float) -> None:
 
 
 def usd_drives(usd: str, root: Path | str | None = None) -> dict[str, tuple[float, float, float]]:
-    """Every driven joint in ``usd``, as ``{joint: (kp, kd, target)}``. The other half of usd_with_drives.
+    """Every driven joint in ``usd``, as ``{joint: (kp, kd, target)}``.
 
-    Read from `UsdPhysics.DriveAPI` rather than from MuJoCo's spelling of the same thing,
-    because this is the standard one and because it is the one that survives composition: a
-    drive sits on the joint prim, so it is still there after a robot has been grafted into a
-    room, whatever the engine then does with it.
-
-    Which is the reason there is no keyframe here. A keyframe would be the natural place for
-    "the pose this starts in", and MuJoCo reads one out of a layer -- but a keyframe is the
-    whole model's and a composed world's qpos is a different vector, so a robot's own keyframe
-    means nothing once it is standing in a room. A target on each joint means the same thing and
-    composes.
+    From `UsdPhysics.DriveAPI`, not MuJoCo's spelling: it sits on the joint prim and survives
+    composition into a room. Same reason there is no keyframe -- a keyframe is the whole model's,
+    and a composed world's qpos is a different vector.
     """
     pxr = _pxr()
     stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a robot", root))
@@ -449,22 +386,12 @@ def usd_drives(usd: str, root: Path | str | None = None) -> dict[str, tuple[floa
 def prefix_usd_frames(usd: str, prefix: str) -> str:
     """``usd`` with every link and joint name it carries moved under ``prefix``.
 
-    A description's link names are its tf frame_ids, and they come from the URDF, so every copy
-    of one arm names the same frames. Two of that arm on one robot therefore need one of them
-    renamed, and the namespace it is deployed under ("left" out of "left/xarm") is the name that
-    is already unique. Joint names move with the links: they are what a JointState keys on, and
-    two arms answering to one joint name is the same collision one layer down.
-
-    Only ``displayName`` changes. Prim names cannot hold a "/" and prim paths are already unique
-    by nesting, so neither needs to move. A prim with no displayName of its own is given one
-    from its prim name, because the prefixed name is exactly the case the prim name cannot hold.
-
-    The defaultPrim moves too, the same way it does in ``usd_frame_names`` and
-    ``rename_usd_frames``. A converted room is a plain Xform holding its furniture, so that root
-    is a frame without being a link, and it is the one frame every copy of the layer names the
-    same. Leaving it behind is what the prefix exists to prevent: two namespaced copies would
-    publish "left/desk" and "right/desk" under a single shared "room", their subtrees would
-    merge there, and whichever copy published its root's pose last would move both.
+    Link names are tf frame_ids off the URDF, so two copies of one arm name the same frames; the
+    namespace it is deployed under is already unique. Joint names move too -- they are what a
+    JointState keys on. Only ``displayName`` changes: prim names cannot hold a "/" and prim paths
+    are unique by nesting. The defaultPrim moves as well, because a converted room's root is a
+    frame without being a link and the one frame every copy names the same; left behind, two
+    namespaced copies would merge their subtrees there.
     """
     if not prefix:
         return usd
@@ -482,13 +409,9 @@ def prefix_usd_frames(usd: str, prefix: str) -> str:
 def usd_frame_names(usd: str, root: Path | str | None = None) -> set[str]:
     """Every link and joint name ``usd`` carries, under the names they travel as.
 
-    The defaultPrim counts, the same way it does in ``_link_prim_paths`` and for the same
-    reason: a converted room is a plain Xform holding its furniture, so the frame everything
-    in it hangs off is that root and not a link at all. Leaving it out means nothing can
-    rename it, and a scene whose root is named something tf never publishes -- "office_555"
-    where the robots stand in "world" -- cannot be placed and so is not drawn.
-
-    Last, and only under a name no link has taken, so a real link still wins any clash.
+    The defaultPrim counts: a converted room's root is a plain Xform, so the frame everything
+    hangs off is not a link, and a scene rooted at a name tf never publishes is never drawn.
+    Last, and only under a name no link has taken.
     """
     pxr = _pxr()
     stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer", root))
@@ -506,23 +429,14 @@ def usd_frame_names(usd: str, root: Path | str | None = None) -> set[str]:
 def trivialize_usd(usd: str) -> str:
     """``usd`` with every link, joint and light kept, and the shapes they carry dropped.
 
-    The same description serves a robot on real hardware and a simulated one, but only the sim
-    needs the shapes: on a real robot the geometry is the world itself. So this keeps the
-    skeleton -- the links, the joints between them and their poses, which is what tf and a
-    mount point are -- and removes the visuals, the collision shapes and the meshes they
-    reference. The frames come out identical either way, so one description can be the only
-    one rather than a trivial second copy that drifts from it.
-
-    Lights stay. A light is not a shape: it is how the scene looks, and it is the one thing a
-    viewer cannot work out for itself -- told none, it has to invent some, and a room that said
-    what its sky and its eighteen ceiling fittings are gets lit by a guess instead. Keeping them
-    is what lets a scene hand over its lighting without handing over its geometry twice.
+    One description serves real hardware and a simulation, but only the sim needs the shapes, and
+    the frames come out identical either way. Lights stay: a light is how the scene looks, and the
+    one thing a viewer cannot work out for itself.
     """
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a layer")
     stage = pxr.Usd.Stage.Open(layer)
-    # Whatever holds a frame stays, which keeps the robot prim and the Scope the joints sit in
-    # without naming either: it is the prims holding no frame at all that are geometry.
+    # Whatever holds a frame stays; the prims holding no frame at all are the geometry.
     doomed = []
     stack = list(stage.GetPseudoRoot().GetChildren())
     while stack:
@@ -535,21 +449,18 @@ def trivialize_usd(usd: str) -> str:
         return usd
     for path in doomed:
         spec = layer.GetPrimAtPath(path)
-        # A prim at the layer's own root has no nameParent to be removed from -- a converted
-        # scene keeps its materials and its render settings up there beside the room. Those are
-        # not geometry hanging off a frame, and removing one is the layer's business, not ours.
+        # A prim at the layer's own root has no nameParent -- a converted scene keeps its materials and
+        # render settings up there, and removing one is the layer's business, not ours.
         if spec is not None and spec.nameParent is not None:
             del spec.nameParent.nameChildren[spec.name]
     return str(layer.ExportToString())
 
 
 def _holds_a_frame(pxr: Any, prim: Any) -> bool:
-    """True when ``prim`` or anything under it is a link, a joint, or a light."""
     if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
         return True
-    # By type name rather than UsdLux.LightAPI, which _pxr does not carry: this is the same test
-    # the viewer makes, and it covers DomeLight, DistantLight, SphereLight, DiskLight and RectLight
-    # without naming each one.
+    # By type name rather than UsdLux.LightAPI, which _pxr does not carry: the same test the viewer
+    # makes, and it covers Dome, Distant, Sphere, Disk and RectLight without naming each.
     if str(prim.GetTypeName()).endswith("Light"):
         return True
     return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
@@ -558,14 +469,9 @@ def _holds_a_frame(pxr: Any, prim: Any) -> bool:
 def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | None = None) -> str:
     """``usd`` with the named links and joints renamed; names it does not carry are ignored.
 
-    A vendor description names its frames whatever it names them, which is rarely what the robot
-    they are bolted to calls them. This is the hook for saying so.
-
-    Renames are applied simultaneously, so swapping a pair of names does what it looks like
-    rather than collapsing both onto one. A name this layer does not have is skipped rather
-    than refused, because one mapping is applied to every subtree of a scene and most keys are
-    meant for exactly one of them; whether a key matched *anywhere* is the caller's to check
-    (see usd_frame_names).
+    Renames are applied simultaneously, so swapping a pair does not collapse both onto one. A
+    missing name is skipped rather than refused, because one mapping is applied to every subtree
+    of a scene; whether a key matched *anywhere* is the caller's to check (see usd_frame_names).
     """
     if not renames:
         return usd
@@ -577,10 +483,8 @@ def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | N
         for prim in stage.Traverse()
         if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
     ]
-    # The defaultPrim is a frame too, the same way usd_frame_names and _link_prim_paths count
-    # it: a converted room is a plain Xform holding its furniture, so the frame everything in
-    # it hangs off is that root. Leaving it out here means a rename validates and then quietly
-    # does nothing, which is worse than refusing it.
+    # The defaultPrim is a frame too, the way usd_frame_names and _link_prim_paths count it.
+    # Leaving it out means a rename validates and then quietly does nothing.
     root = stage.GetDefaultPrim()
     if root and root not in frames:
         frames.append(root)
@@ -597,13 +501,10 @@ def rename_usd_frames(usd: str, renames: Mapping[str, str], root: Path | str | N
 def resolve_usd_assets(usd: str, root: str) -> str:
     """``usd`` with every relative asset path rewritten to sit under ``root``.
 
-    A layer only says where its meshes are relative to something; the module that answered for
-    it is the only thing that knows what. So a subtree is rebased as it arrives, before it joins
-    a scene whose other subtrees were rooted somewhere else entirely.
-
-    An absolute path is left alone, and so is everything when ``root`` is empty. The layer is
-    read *under* that root as well, so USD can resolve the paths while it composes and does
-    not warn once per mesh prim that it could not open the file.
+    Only the module that answered for a layer knows what its mesh paths are relative to, so a
+    subtree is rebased as it arrives. Absolute paths, and everything when ``root`` is empty, are
+    left alone. The layer is read *under* that root too, so USD resolves while composing instead
+    of warning once per mesh prim.
     """
     if not root:
         return usd
@@ -634,9 +535,8 @@ def resolve_usd_assets(usd: str, root: str) -> str:
             # assetInfo is a proxy, not a dict: set the key on it rather than assigning a copy.
             spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
             changed = True
-        # A texture names its image in an ordinary asset attribute, which is neither a reference
-        # nor assetInfo. Rebasing only those two left every texture pointing at a path relative
-        # to a directory that no longer figures anywhere, so it resolved against nothing.
+        # A texture names its image in an ordinary asset attribute, neither a reference nor assetInfo.
+        # Rebasing only those two left every texture relative to a directory that no longer figures.
         for attribute, value in asset_attributes(spec):
             if not Path(str(value.path)).is_absolute():
                 attribute.default = pxr.Sdf.AssetPath(str(base / str(value.path)))
@@ -646,19 +546,12 @@ def resolve_usd_assets(usd: str, root: str) -> str:
 
 
 def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
-    """``usd`` with every asset path replaced by a stable public one, and the map back.
+    """``usd`` with every asset path replaced by a stable public one, and ``{public: real}``.
 
-    The paths a scene is built with are absolute on whichever machine assembled it, which says
-    nothing to whoever asks for the file. So before a scene leaves, every asset is renamed to a
-    path under one fictional root, and the manager keeps the mapping so it can answer for them.
-
-    A name is taken from where the asset first appears in the scene -- its prim path, which is
-    the mount point it hangs from -- so it is stable across runs of the same scene rather than
-    being an opaque number. The *first* appearance wins and every later reference to the same
-    file reuses it: two copies of one arm are two mount points but one mesh, and the asset is
-    the same asset regardless of how many times the thing carrying it was duplicated.
-
-    Returns the rewritten layer and ``{public path: real path}``.
+    The paths a scene is built with are absolute on the machine that assembled it, which says
+    nothing to whoever asks for the file. A name comes from where the asset first appears -- its
+    prim path -- so it is stable across runs; later references reuse it, because two copies of one
+    arm are one mesh.
     """
     pxr = _pxr()
     layer = _layer_from(pxr, usd, "a scene")
@@ -697,12 +590,7 @@ def asset_attributes(spec: Any) -> list[tuple[Any, Any]]:
 
     A texture is neither a reference nor a mesh: a `UsdUVTexture` names its image in
     `inputs:file`, an ordinary attribute of type `asset`. Walking only arcs and assetInfo left
-    every texture unseen -- unpublished, so nothing could fetch it, and unhashed, so the check
-    that exists to refuse an unidentified asset passed over it in silence.
-
-    Anything else that names a file this way is seen for the same reason: a splat, a volume,
-    whatever comes next. Seen is not hashed -- whoever authors it still has to say the hash --
-    but it is refused loudly rather than shipped unidentified.
+    every texture unpublished and unhashed, and silently so.
     """
     found = []
     for attribute in spec.attributes:
@@ -715,9 +603,8 @@ def asset_attributes(spec: Any) -> list[tuple[Any, Any]]:
 def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
     """A path under the fictional root, from where this asset first appears.
 
-    The prim path is already unique within a scene, so the only way two assets collide is by
-    being on one prim -- a link with two meshes. The suffix is for exactly that, and it counts
-    rather than hashes so the names stay readable.
+    The prim path is unique within a scene, so two assets collide only on one prim -- a link with
+    two meshes. The suffix counts rather than hashes, to stay readable.
     """
     stem = f"{ASSET_ROOT_PREFIX}{prim_path.lstrip('/')}/{Path(real).name}"
     if stem not in taken:
@@ -731,7 +618,6 @@ def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
 
 
 def _rewrite_assets(pxr: Any, spec: Any, public: Mapping[str, str]) -> bool:
-    """Point this prim spec's asset paths at their public names."""
     changed = False
     items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
     rebased = [
@@ -758,16 +644,10 @@ def _rewrite_assets(pxr: Any, spec: Any, public: Mapping[str, str]) -> bool:
 def _mount_joint(pxr: Any, stage: Any, mount_path: str, subtree_path: str, frame_id: str) -> None:
     """A floating joint from the mount frame to the subtree's root link.
 
-    Nesting alone says a grafted subtree hangs off the mount frame, but says nothing about how.
-    A reader is then left to guess, and the one guess it cannot make is a weld: the root of an
-    articulated subtree is a frame tf already publishes, so welding it to the room as well would
-    give it two parents and its pose would flip between them. The honest answer is a joint free
-    in all six degrees -- "something else places this" -- which is what tf does.
-
-    Saying it costs nothing and buys two things: a reader that has no tf yet still has somewhere
-    to put the subtree (its mount), instead of a root it must either drop or place at random;
-    and the root stops looking like a link nothing hangs off, which is how a scene's static
-    tiles are told apart from a robot.
+    Nesting says a subtree hangs off the mount but not how, and the one guess a reader must not
+    make is a weld: the subtree's root is a frame tf already publishes, so welding it would give
+    it two parents and flip its pose between them. Free in all six degrees says "something else
+    places this".
     """
     root_link = _first_link(pxr, stage, subtree_path)
     if root_link is None:
@@ -777,8 +657,7 @@ def _mount_joint(pxr: Any, stage: Any, mount_path: str, subtree_path: str, frame
     joint = pxr.UsdPhysics.Joint.Define(stage, f"{subtree_path}/{name}")
     joint.CreateBody0Rel().SetTargets([mount.GetPath()])
     joint.CreateBody1Rel().SetTargets([root_link.GetPath()])
-    # The subtree sits where its mount is: the nesting already placed it, so the joint adds no
-    # offset of its own.
+    # The nesting already placed the subtree, so the joint adds no offset of its own.
     joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
     joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
@@ -804,11 +683,9 @@ def _frame_name(prim: Any) -> str:
 def warm_usd() -> None:
     """Load the USD bindings, on this thread, before anything uses them from several.
 
-    Importing `pxr` once behind a lock is not enough: pxr pulls its own submodules in lazily
-    from inside C code, the first time a layer is read rather than at import. Two threads
-    reaching that at the same instant wedge on CPython's per-module import lock, and the module
-    they belong to stops answering anything at all without raising. Reading one tiny layer here
-    walks the same path once, on one thread, so the pool that follows finds it all loaded.
+    Importing `pxr` once behind a lock is not enough: it pulls its own submodules in lazily from
+    inside C code, the first time a layer is read, and two threads reaching that at once wedge on
+    CPython's per-module import lock without raising.
     """
     pxr = _pxr()
     layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
@@ -822,15 +699,10 @@ def warm_usd() -> None:
 def _layer_from(pxr: Any, usd: str, what: str, root: Path | str | None = None) -> Any:
     """``usd`` as a layer. ``root`` is the directory its relative asset paths are relative to.
 
-    Given a root, the layer takes an identifier *in* that directory -- a name nothing is ever
-    written to -- so that USD can resolve the references it carries. Without one, every mesh a
-    committed robot layer names comes out as a warning per prim while the stage composes:
-    "Could not open asset @meshes/base_0.usdc@ ... (instantiating stage on stage @anon:0x...@)".
-    Nothing here needs the geometry, so the result is the same either way, but one start of the
-    three-G1 office printed 139k lines of it and real errors went down in the noise.
-
-    The name is unique per call because `Sdf.Layer.New` refuses an identifier another live layer
-    already holds, and two frames being added to one robot is two layers off the same file.
+    With a root the layer takes an identifier *in* that directory -- a name nothing is written to
+    -- so USD can resolve its references; without one every mesh warns "Could not open asset"
+    once per prim while composing (139k lines on one three-G1 office start). The name is unique
+    per call because `Sdf.Layer.New` refuses an identifier another live layer holds.
     """
     if root is None:
         layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
@@ -847,7 +719,6 @@ def _layer_from(pxr: Any, usd: str, what: str, root: Path | str | None = None) -
 def _rebase_relationships(
     pxr: Any, layer: Any, root: Any, old_prefix: str, new_prefix: str
 ) -> None:
-    """Rewrite every relationship target under ``root`` that still names the old subtree root."""
     stack = [layer.GetPrimAtPath(root)]
     while stack:
         spec = stack.pop()
@@ -871,13 +742,10 @@ def _rebase_relationships(
 def _link_prim_paths(stage: Any) -> dict[str, str]:
     """URDF link name -> prim path, for every prim carrying ``UsdPhysics.RigidBodyAPI``.
 
-    Narrower than "any Xform": it leaves out the joints, which could shadow a link sharing a
-    name. The name is displayName, or the prim name without one.
-
-    The defaultPrim is included last and only under a name no link has taken, so a link still
-    wins any clash. It has to be here because it is what a scene is rooted at: a converted room
-    is a plain Xform holding 450 bodies, so without this there is nowhere to mount a robot in
-    one -- and `usd_root_link` names it as the root, which would then not be attachable.
+    Narrower than "any Xform": it leaves out the joints, which could shadow a link of the same
+    name. The name is displayName, or the prim name without one. The defaultPrim comes last and
+    only under an untaken name, because it is what a scene is rooted at -- a converted room is a
+    plain Xform, so without it there is nowhere to mount a robot in one.
     """
     pxr = _pxr()
     paths: dict[str, str] = {}
@@ -893,8 +761,8 @@ def _link_prim_paths(stage: Any) -> dict[str, str]:
 def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
     """Each link's mass, centre of mass and inertia tensor, from its ``<inertial>``.
 
-    A link without one is left out: in a converted MJCF that is a frame -- an IMU mount, a foot
-    contact point, a lidar mount -- which is massless on purpose.
+    A link without one is left out: in a converted MJCF that is a frame -- a sensor mount, a foot
+    contact point -- massless on purpose.
     """
     found: dict[str, tuple[float, np.ndarray, np.ndarray]] = {}
     for link in ET.fromstring(xml).iter("link"):
@@ -926,12 +794,11 @@ def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
 
 
 def _write_mass(pxr: Any, prim: Any, mass: float, centre: np.ndarray, tensor: np.ndarray) -> None:
-    """Say the link's mass in the way a physics engine reading this layer looks for it.
+    """Say the link's mass the way a physics engine reading this layer looks for it.
 
     The URDF's tensor is a full symmetric matrix; UsdPhysics wants principal moments and the
-    rotation onto them, so it is diagonalised. Without this a reader falls back to a default
-    density over the visual meshes, which for a G1 means a robot whose every link weighs the wrong
-    amount -- it loads, and it cannot stand up.
+    rotation onto them. Without this a reader falls back to a density over the visual meshes, and
+    a G1 loads but cannot stand up.
     """
     moments, axes = np.linalg.eigh(tensor)
     if np.linalg.det(axes) < 0:
@@ -962,7 +829,6 @@ def _write_link_tree(
     inertials: Mapping[str, tuple[float, np.ndarray, np.ndarray]] | None = None,
     joint: JointDescription | None = None,
 ) -> None:
-    """Define the prim for ``link`` under ``parent_path``, then recurse into its children."""
     prim_path = f"{parent_path}/{_identifier(pxr, link)}"
     if link in paths:
         # A URDF is a tree, so a second arrival means a malformed description; keep the first.
@@ -1012,8 +878,8 @@ def _geometry_name(geometry: _Geometry, index: int) -> str:
 def _zero_pose(joint: JointDescription) -> NDArray[np.float64]:
     """Where this joint puts its child before anything moves.
 
-    A floating or planar joint has no single position to be asked for, so its origin stands in
-    -- which is also what parent_from_child(0) gives every other type.
+    A floating or planar joint has no single position to be asked for, so its origin stands in --
+    which is also what parent_from_child(0) gives every other type.
     """
     if joint.type in _MULTI_DOF_JOINT_TYPES:
         return joint.origin()
@@ -1065,19 +931,11 @@ def _define_mesh(
 ) -> Any:
     """The file the URDF named, in assetInfo, plus its hash. Nothing is converted here.
 
-    Named in ``assetInfo`` and **not** by a reference arc. A reference composes another USD
-    layer; it is not "this geometry lives over there" for an arbitrary file. Pointing one at an
-    STL makes the layer invalid -- every standard consumer reports
-
-        Cannot determine file format for @.../arm.stl:SDF_FORMAT_ARGS:target=usd@
-
-    and composes the mesh to nothing, which is a robot with no geometry in usdview, in Isaac and
-    in MuJoCo. dimos never noticed because it reads the authored path itself and serves the file
-    over its own bus rather than composing the stage.
-
-    assetInfo is the right place for it: it is USD's own metadata for "which asset is this prim",
-    it travels through grafting and publishing unchanged, and a consumer that cannot fetch the
-    file sees an empty mesh rather than a broken layer.
+    In ``assetInfo`` and **not** by a reference arc: a reference composes another USD layer, so
+    pointing one at an STL makes the layer invalid ("Cannot determine file format for
+    @...stl:SDF_FORMAT_ARGS:target=usd@") and composes the mesh to nothing in usdview, Isaac and
+    MuJoCo. assetInfo survives grafting and publishing, and a consumer that cannot fetch the file
+    sees an empty mesh rather than a broken layer.
     """
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
@@ -1122,10 +980,8 @@ def _define_joint(pxr: Any, stage: Any, path: str, joint: JointDescription) -> A
     if joint.type == "fixed":
         return pxr.UsdPhysics.FixedJoint.Define(stage, path)
     if joint.type in _MULTI_DOF_JOINT_TYPES:
-        # The base PhysicsJoint is the generic one: with nothing locked it is free in all six
-        # degrees, which is a URDF floating joint. A planar joint is the same with the axes out
-        # of its plane locked, which is what PhysicsLimitAPI is for. Both are standard, so
-        # nothing downstream has to read metadata of ours to recognise them.
+        # The base PhysicsJoint with nothing locked is free in all six degrees, which is a URDF
+        # floating joint; a planar one is the same with the out-of-plane axes locked by PhysicsLimitAPI.
         prim = pxr.UsdPhysics.Joint.Define(stage, path)
         if joint.type == "planar":
             for axis in _OUT_OF_PLANE:
@@ -1207,7 +1063,6 @@ def _children_by_parent(
 
 
 def _links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geometry]]:
-    """Every link's visual (and optionally collision) geometry, by link name."""
     links: dict[str, list[_Geometry]] = {}
     for link in ET.fromstring(xml).iter("link"):
         name = link.get("name")
@@ -1222,15 +1077,13 @@ def _links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geometry]
     return links
 
 
-# What urdf_to_usd reads for itself. Everything else a <link> or <joint> carries is passed
-# through untouched rather than dropped, which is what <inertial>, <gazebo>, <transmission>,
-# <sensor> and any vendor tag amount to.
+# What urdf_to_usd reads for itself. Everything else a <link> or <joint> carries -- <inertial>,
+# <gazebo>, <transmission>, <sensor>, vendor tags -- is passed through untouched, not dropped.
 _UNDERSTOOD_LINK_TAGS = frozenset({"visual", "collision"})
 _UNDERSTOOD_JOINT_TAGS = frozenset({"origin", "parent", "child", "axis", "limit", "mimic"})
 
 
 def _passthrough_xml(element: ET.Element, understood: frozenset[str]) -> list[str]:
-    """The children of ``element`` this converter does not read, as XML text."""
     return [
         ET.tostring(child, encoding="unicode").strip()
         for child in element
@@ -1239,9 +1092,8 @@ def _passthrough_xml(element: ET.Element, understood: frozenset[str]) -> list[st
 
 
 def _urdf_extras(xml: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Per-link and per-joint XML that urdf_to_usd does not itself understand.
-
-    Inertia, gazebo blocks, transmissions, vendor tags: meaningless here, not a reason to lose.
+    """Per-link and per-joint XML that urdf_to_usd does not itself understand: inertia, gazebo
+    blocks, transmissions, vendor tags. Meaningless here, not a reason to lose.
     """
     root = ET.fromstring(xml)
     links = {
@@ -1276,10 +1128,8 @@ def hash_of_file(path: str, base_dir: Path | None = None) -> str | None:
 
 
 def _set_asset_info(pxr: Any, prim: Any, filename: str, base_dir: Path | None) -> None:
-    """Identify the asset this prim references, and hash it if it can be read.
-
-    assetInfo is USD's own metadata for this, so a consumer can check what it fetched against
-    what the description meant without knowing anything about us.
+    """Identify the asset this prim references, and hash it if it can be read. assetInfo is USD's
+    own metadata for this, so a consumer can check what it fetched against what was meant.
     """
     prim.SetAssetInfoByKey("identifier", pxr.Sdf.AssetPath(filename))
     digest = hash_of_file(filename, base_dir)
@@ -1319,10 +1169,9 @@ def unhashed_assets(usd: str) -> dict[str, str]:
 def _referenced_assets(pxr: Any, prim: Any) -> list[str]:
     """The asset paths this prim names, as authored.
 
-    Three ways a prim can name one: a reference arc, for a prim that really does compose
-    another USD layer; assetInfo, which is how a mesh names the file it is; and an asset-valued
-    attribute, which is how a texture names its image. Reading only arcs would make the hash
-    check pass vacuously on every mesh, and reading only those two passed over every texture.
+    Three ways a prim can name one: a reference arc, assetInfo (a mesh's file) and an asset-valued
+    attribute (a texture's image). Only arcs made the hash check pass vacuously on every mesh;
+    only those two passed over every texture.
     """
     assets = []
     for spec in prim.GetPrimStack():
@@ -1337,10 +1186,8 @@ def _referenced_assets(pxr: Any, prim: Any) -> list[str]:
 
 
 def require_asset_hashes(usd: str, *, what: str) -> None:
-    """Refuse a layer whose assets are not identified by content.
-
-    The error carries the hash each one should have had, computed wherever the file can still
-    be read, so the answer is the fix ready to paste.
+    """Refuse a layer whose assets are not identified by content. The error carries the hash each
+    one should have had, computed wherever the file can still be read.
     """
     missing = unhashed_assets(usd)
     if not missing:
@@ -1365,11 +1212,7 @@ def require_asset_hashes(usd: str, *, what: str) -> None:
 
 
 def _set_passthrough(pxr: Any, prim: Any, xml: Sequence[str] | None) -> None:
-    """Hang the URDF this converter did not read off the prim it belongs to.
-
-    Nothing here is interpreted; it is kept so converting is not also a way to lose half a
-    description.
-    """
+    """Hang the URDF this converter did not read off the prim it belongs to, uninterpreted."""
     if xml:
         # A plain python list is not a value USD can hold; an array of strings is.
         prim.SetCustomDataByKey(PASSTHROUGH_KEY, pxr.Vt.StringArray(list(xml)))

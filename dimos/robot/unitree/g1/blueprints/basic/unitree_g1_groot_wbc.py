@@ -315,15 +315,11 @@ else:
         from dimos.sim2.sim import sim_module
         from dimos.sim2.spec import SimulatedRobot
 
-        # The real stack with each device swapped for its sim twin: G1Sim for the connection,
-        # LivoxSim at G1Sim's Mid-360 frame for the Mid360.
-        #
-        # Two managers, nested, as every sim2 blueprint has. The inner one answers for the robot
-        # -- G1Sim's layer with the lidar grafted onto the frame it is bolted to, so the stage a
-        # viewer draws holds the whole robot rather than the robot alone -- and the outer one for
-        # the world, the room with the robot standing in it. What the outer one composes is what
-        # the physics runs and what the lidar ranges against. The real stack has no joint tf, so
-        # neither does this.
+        # The real stack with each device swapped for its sim twin: G1Sim for the connection, LivoxSim
+        # at G1Sim's Mid-360 frame for the Mid360. Two managers, nested, as every sim2 blueprint has:
+        # the inner one answers for the robot, the outer one for the world, and what the outer one
+        # composes is what the physics runs and what the lidar ranges against. The real stack has no
+        # joint tf, so neither does this.
         _robot_id = "g1"
         _scene_manager = f"scene/{UsdManager.name}"
         _mid360 = LivoxSim.blueprint(

@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a simulated sensor sees: its own world, built from the composed scene and posed from observations.
+"""What a simulated sensor sees: its own world, built from the composed scene and posed from
+observations.
 
-A sensor never reads a physics engine and is never described to one. It asks the manager for the
-scene -- the same layer the engine is running -- builds a world of its own out of it, adds
-whatever it needs at its own mount, applies the observations as they arrive, and reports what
-its copy says. So it works the same whichever engine steps the world, and a scan lands on the
-furniture that is drawn rather than on a generated stand-in.
+A sensor never reads a physics engine and is never described to one. It asks the manager for
+the same layer the engine is running, builds a world of its own out of it, adds whatever it
+needs at its own mount, and reports what its copy says -- so a scan lands on the furniture
+that is drawn rather than on a generated stand-in.
 """
 
 from collections.abc import Iterable, Sequence
@@ -84,11 +84,9 @@ def rotation_matrix(wxyz: Vector) -> Vector:
 def robot_ids(world: WorldMirror) -> list[str]:
     """The robots in the world, as the world itself announced them.
 
-    A sensor is not told what is in the world by anybody; it is told by the world. The first
-    frame of observations adds each entity, and the ones that are robots carry the layer they
-    were drawn from, which is what distinguishes a robot from a crate. Those ids are what the
-    view has to shorten its own copy for, so that an entity in the observations names a body it
-    can pose.
+    Nobody tells a sensor what is in the world. The first frame of observations adds each entity,
+    and the ones that are robots carry the layer they were drawn from, which is what distinguishes
+    a robot from a crate. Those ids are what the view has to shorten its own copy for.
     """
     with world.lock:
         return sorted(entity.path for entity in world.entities.values() if "model" in entity.cbor)
@@ -97,9 +95,8 @@ def robot_ids(world: WorldMirror) -> list[str]:
 def open_view(scene: Path, ids: Iterable[str] = (), mount: SensorMount | None = None) -> WorldView:
     """A sensor's own world: the composed scene, with what this sensor needs at its own mount.
 
-    This belongs to the sensors and to the engine they build with -- not to sim2's core, which
-    instantiates a backend, publishes observations and takes actions, and has no business
-    knowing that anything is watching.
+    Belongs to the sensors and the engine they build with, not to sim2's core, which has no
+    business knowing that anything is watching.
     """
     from dimos.sim2.mujoco.view import MujocoView
 

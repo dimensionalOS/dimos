@@ -44,10 +44,9 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
     the actual wire contract."""
     meta = vec["meta"]
     cells = np.frombuffer(base64.b64decode(vec["grid_b64"]), dtype=np.uint8)
-    # Reinterpreted, not compared: 255 as int8 *is* -1, and every other occupancy value is 0-100,
-    # so the view is byte-for-byte what the old np.where(cells == 255, -1, cells) meant. numpy 2
-    # refuses to weigh a Python -1 against a uint8 array at all ("Python integer -1 out of bounds
-    # for uint8"), so that spelling stopped working.
+    # Reinterpreted, not compared: 255 as int8 *is* -1 and every other occupancy value is 0-100.
+    # numpy 2 refuses to weigh a Python -1 against a uint8 array at all ("Python integer -1 out of
+    # bounds for uint8"), so np.where(cells == 255, -1, cells) stopped working.
     rows = cells.view(np.int8).reshape(meta["h"], meta["w"])
     ox, oy, yaw = meta["origin"]
     msg = grid_msg(rows.tolist(), meta["res"], ox, oy, yaw)

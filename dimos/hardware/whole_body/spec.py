@@ -92,9 +92,8 @@ class WholeBodyAdapter(Protocol):
         """When the latest motor states were taken, or None where the robot does not say.
 
         On hardware this is the wall clock and the same as now. In sim it is sim time, which runs
-        slower than the wall whenever the box is loaded, and the difference reaches minutes -- so a
-        reading restamped on arrival describes a pose the robot left long ago. Everything built
-        from these inherits it, down to the joint transforms on tf a lidar scan is placed against.
+        slower than the wall whenever the box is loaded, so a reading restamped on arrival describes a
+        pose the robot left long ago -- down to the joint transforms on tf a scan is placed against.
         """
         return None
 
