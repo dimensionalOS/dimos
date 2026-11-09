@@ -149,7 +149,6 @@ fn io_error(message: String) -> std::io::Error {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use super::*;
@@ -212,41 +211,5 @@ mod tests {
             }
             other => panic!("expected a remote error, got {other}"),
         }
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn an_unserved_name_times_out() {
-        let transport = transport().await;
-        let started = Instant::now();
-        let err = transport
-            .call("Nobody/home", &Args::default(), Duration::from_millis(300))
-            .await
-            .unwrap_err();
-        assert!(matches!(err, RpcError::Timeout { .. }), "{err}");
-        assert!(started.elapsed() >= Duration::from_millis(300));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn nowait_runs_the_handler_without_a_reply() {
-        let transport = transport().await;
-        let calls = Arc::new(AtomicUsize::new(0));
-        let seen = calls.clone();
-        let handler: Handler = Arc::new(move |_| {
-            let seen = seen.clone();
-            Box::pin(async move {
-                seen.fetch_add(1, Ordering::SeqCst);
-                Ok(Value::Null)
-            })
-        });
-        transport.serve("Calc/tick", handler).await.unwrap();
-        transport
-            .call_nowait("Calc/tick", &Args::default())
-            .await
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while calls.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

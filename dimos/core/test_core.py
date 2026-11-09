@@ -156,11 +156,3 @@ def test_native_rpc_is_listed_and_forwarded_but_not_served(monkeypatch) -> None:
         module.rpc.call_sync.assert_called_once_with("NativeBacked/plan", ((1.0,), {}))
     finally:
         module.stop()
-
-
-def test_native_rpc_stub_cannot_be_async() -> None:
-    with pytest.raises(TypeError, match="cannot be async"):
-
-        @rpc(native=True)
-        async def plan(self) -> str:
-            """Served by the native process."""

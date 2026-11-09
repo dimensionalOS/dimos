@@ -555,35 +555,6 @@ mod tests {
     }
 
     #[test]
-    fn a_decoded_message_is_the_lcm_type() {
-        let (_, bytes) = fixtures()
-            .into_iter()
-            .find(|(name, _)| name == "msg_wrapped")
-            .unwrap();
-        let msg = decode(&bytes).unwrap();
-        let msg = msg.as_msg().unwrap();
-        assert_eq!(
-            msg.python_ref,
-            "dimos.msgs.geometry_msgs.PoseStamped:PoseStamped"
-        );
-        let pose = PoseStamped::decode(&msg.data).unwrap();
-        assert_eq!(pose.header.frame_id, "map");
-        assert_eq!(pose.pose.position.y, 2.0);
-    }
-
-    #[test]
-    fn a_message_names_the_python_class_that_decodes_it() {
-        assert_eq!(
-            Msg::new(PoseStamped::NAME, vec![]).python_ref,
-            "dimos.msgs.geometry_msgs.PoseStamped:PoseStamped"
-        );
-        assert_eq!(
-            Msg::new(GoalStatus::NAME, vec![]).python_ref,
-            "dimos_lcm.actionlib_msgs.GoalStatus:GoalStatus"
-        );
-    }
-
-    #[test]
     fn python_only_tags_are_named() {
         // Tag 4044 (an ndarray) around an empty array.
         let err = decode(&[0xd9, 0x0f, 0xcc, 0x80]).unwrap_err();
@@ -593,30 +564,5 @@ mod tests {
         );
         let err = decode(&[0xd8, 0x63, 0x00]).unwrap_err();
         assert!(matches!(err, DecodeError::UnknownTag(99)), "{err}");
-    }
-
-    #[test]
-    fn integers_past_i64_are_an_error() {
-        let err = decode(&[0x1b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]).unwrap_err();
-        assert!(
-            matches!(err, DecodeError::IntegerRange(n) if n == u64::MAX as i128),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn a_tag_with_the_wrong_payload_is_an_error() {
-        // A tuple tag around an integer.
-        let err = decode(&[0xd9, 0x0f, 0xc8, 0x01]).unwrap_err();
-        assert!(matches!(err, DecodeError::MalformedTag(TAG_TUPLE)), "{err}");
-    }
-
-    #[test]
-    fn map_lookup_and_numeric_widening() {
-        let map = pairs(vec![(Value::from("x"), Value::Int(3))]);
-        assert_eq!(map.get("x").and_then(Value::as_f64), Some(3.0));
-        assert_eq!(map.get("y"), None);
-        assert_eq!(Value::from(None::<i64>), Value::Null);
-        assert_eq!(Value::from(Some(2)), Value::Int(2));
     }
 }

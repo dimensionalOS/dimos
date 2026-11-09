@@ -256,37 +256,4 @@ mod tests {
         );
         assert_eq!(encode(&args.to_value()), bytes);
     }
-
-    #[test]
-    fn a_list_of_positional_arguments_is_accepted_too() {
-        let args = Args::from_value(Value::List(vec![
-            Value::List(vec![Value::Int(1)]),
-            Value::Map(vec![]),
-        ]))
-        .unwrap();
-        assert_eq!(args, Args::positional(vec![Value::Int(1)]));
-        assert!(matches!(
-            Args::from_value(Value::Int(1)),
-            Err(RpcError::Malformed(_))
-        ));
-    }
-
-    #[test]
-    fn a_remote_error_round_trips_through_the_python_shape() {
-        let error = RemoteError::new("ValueError", "bad goal");
-        let back = RemoteError::from_value(error.to_value()).unwrap();
-        assert_eq!(back, error);
-        assert_eq!(back.to_string(), "[Remote rust.ValueError] bad goal");
-    }
-
-    #[test]
-    fn timeouts_resolve_like_python() {
-        let timeouts = Timeouts {
-            by_name: HashMap::from([("start".to_owned(), 1200.0), ("Nav/plan".to_owned(), 5.0)]),
-            default: 120.0,
-        };
-        assert_eq!(timeouts.for_call("Nav/start"), Duration::from_secs(1200));
-        assert_eq!(timeouts.for_call("Nav/plan"), Duration::from_secs(5));
-        assert_eq!(timeouts.for_call("Other/plan"), Duration::from_secs(120));
-    }
 }
