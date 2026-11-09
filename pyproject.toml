@@ -2,7 +2,7 @@
 requires = [
     "setuptools>=70",
     "wheel",
-    "dimos-cdrgen[prepare]==0.1.2",
+    "dimos-cdrgen[prepare] @ git+https://github.com/TomCC7/dimos-cdrgen.git@825f31d441a8bc1b7075a3f11297d8272eef434f",
     "pydantic>=2,<3",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
@@ -36,6 +36,7 @@ exclude = [
     "experimental.gateway.tests*",
     "dimos.agents.node_modules*",
     "dimos.agents.dist*",
+    "dimos.web.relay_bridge.tests*",
     "dimos.web.websocket_vis.node_modules*",
 ]
 
@@ -53,6 +54,7 @@ exclude = [
     "**/*.html",
     "**/*.css",
     "**/*.js",
+    "**/*.mjs",
     "**/*.svg",
     "**/*.tcss",
     "**/*.pyi",
@@ -108,7 +110,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "dimos-cdrgen==0.1.2",
+    "dimos-cdrgen @ git+https://github.com/TomCC7/dimos-cdrgen.git@825f31d441a8bc1b7075a3f11297d8272eef434f",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.6",
@@ -432,7 +434,7 @@ project-deps = [
 ]
 
 tests = [
-    "dimos-cdrgen==0.1.2",
+    "dimos-cdrgen @ git+https://github.com/TomCC7/dimos-cdrgen.git@825f31d441a8bc1b7075a3f11297d8272eef434f",
     "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
@@ -492,7 +494,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
-    "dimos-cdrgen==0.1.2",
+    "dimos-cdrgen @ git+https://github.com/TomCC7/dimos-cdrgen.git@825f31d441a8bc1b7075a3f11297d8272eef434f",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -606,8 +608,7 @@ known_first_party = ["dimos"]
 
 [tool.deptry.per_rule_ignores]
 # ROS, system bindings, vendor SDKs and in-tree native builds are installed
-# outside uv. Isaac imports come from the Isaac Sim application runtime;
-# lcm_msgs is a legacy optional message namespace guarded by ImportError.
+# outside uv. Isaac imports come from the Isaac Sim application runtime.
 # Ignore both codes so installing an external package cannot change the result.
 DEP001 = [
     "a1z",
@@ -622,7 +623,6 @@ DEP001 = [
     "gs_usb",
     "habitat_sim",
     "isaacsim",
-    "lcm_msgs",
     "nav_msgs",
     "omni",
     "pyzed",
@@ -644,7 +644,6 @@ DEP003 = [
     "gs_usb",
     "habitat_sim",
     "isaacsim",
-    "lcm_msgs",
     "nav_msgs",
     "omni",
     "pyzed",
@@ -745,7 +744,8 @@ runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
 files = ["dimos/", "experimental/gateway/"]
-mypy_path = "stubs/"
+# Editable installs expose generated messages through an import hook; mypy needs the source path.
+mypy_path = ["stubs/", "build/message-source/python"]
 python_version = "3.12"
 incremental = true
 strict = true
