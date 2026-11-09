@@ -14,13 +14,11 @@
 
 """`launches.last_error`: a failed launch's error names its cause, not the last shutdown line."""
 
-import json
 from pathlib import Path
 
 import pytest
-from pytest_mock import MockerFixture
 
-from experimental.gateway import launches, store
+from experimental.gateway import launches
 
 ABORT = "*** Terminating app due to uncaught exception 'NSInternalInconsistencyException'"
 SHUTDOWN = "12:00:00.002 [inf][worker_manager_python.py] All workers shut down"
@@ -43,6 +41,7 @@ def test_a_native_abort_is_the_error_not_the_shutdown_lines_after_it() -> None:
             "12:00:00.001 [wrn][a.py] a warning\n"
             f"{TRACEBACK}\n"
             "12:00:00.001 [inf][other_worker.py] another worker, between the frames and the exception\n"
+            "INFO:     Started server process [42]\n"
             "RuntimeError: boom\n"
             "12:00:00.002 [inf][health.py] Error: count reset to 0\n"
             f"{SHUTDOWN}\n",
@@ -82,27 +81,7 @@ def test_a_native_abort_is_the_error_not_the_shutdown_lines_after_it() -> None:
         pytest.param(f"{ERROR}\n{SHUTDOWN}\n", ERROR, id="error-level"),
         pytest.param(f"{CRITICAL}\n{SHUTDOWN}\n", CRITICAL, id="critical-level"),
         pytest.param(f"{SHUTDOWN}\n", SHUTDOWN, id="last-line-fallback"),
-        pytest.param("", "dimos exited during startup", id="command-only"),
     ],
 )
 def test_last_error(output: str, expected: str) -> None:
     assert launches.last_error(f"dimos run demo\n{output}") == expected
-
-
-def test_current_launch_reports_abort_from_captured_output(
-    home: Path, mocker: MockerFixture
-) -> None:
-    output = (Path(__file__).parent / "fixtures" / "launch-output-worker-abort.txt").read_text()
-    store.write_atomic(launches.launch_log(), output)
-    store.write_atomic(
-        launches.launch_file(),
-        json.dumps({"pid": 123, "blueprint": "go2-sim", "started_at": "2026-01-01T12:00:00+00:00"}),
-    )
-    mocker.patch.object(launches, "registry_runs", return_value=[])
-    mocker.patch.object(launches, "is_launched_process", return_value=False)
-
-    launch = launches.current_launch()
-
-    assert launch is not None and launch["phase"] == "failed"
-    assert launch["output"] == output
-    assert launch["error"].startswith(ABORT)

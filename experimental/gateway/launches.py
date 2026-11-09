@@ -399,6 +399,8 @@ def last_error(output: str) -> str:
             cause = line.strip()
         elif in_traceback and EXCEPTION_LINE.fullmatch(line):
             # Other workers' output can land between the frames and the exception.
+            if re.match(r"(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL|NOTSET):", line):
+                continue
             cause = line.strip()
             in_traceback = False
     if cause is None:
