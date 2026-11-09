@@ -77,10 +77,8 @@ def robot_model() -> UsdModel:
 
 @pytest.fixture
 def composed(robot_model: UsdModel) -> UsdModel:
-    """The world as a manager composes it: the room, with the dog grafted onto a spot on its floor.
-
-    What the simulation runs and what every sensor renders from, which is the point -- one layer,
-    one world, and the furniture a scan comes back off is the furniture that is drawn.
+    """The world as a manager composes it: the room, with the dog grafted onto a spot on its
+    floor. One layer, one world, so the furniture a scan comes back off is the one that is drawn.
     """
     # The toy's layer puts its base at (9, 9, 9), so the spot it stands on takes that back out:
     # a mount frame places a robot by its own layer's origin, not by where its root happens to be.
@@ -195,8 +193,8 @@ def _run(
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
         readings = coordinator.get_instance(_Readings)
-        # At least `seconds` of wall time, then until every sensor has steady stamps: on a loaded machine
-        # a sensor's first point cloud (it imports open3d) can take most of that.
+        # At least `seconds` of wall time, then until every sensor has steady stamps: a sensor's first
+        # point cloud (it imports open3d) can take most of that on a loaded machine.
         deadline = time.monotonic() + seconds + MAX_EXTRA_WALL
         time.sleep(seconds)
         while time.monotonic() < deadline and not _steady(readings.readings()["stamps"]):

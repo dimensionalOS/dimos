@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing world_observations and sending joint commands.
+"""A simulated Go2 with GO2Connection's cmd_vel/odom/tf: the walking policy, observing
+world_observations and sending joint commands.
 
-Go2Sim.usd is the committed Go2 layer with the rig's sensor frames added: a sensor names one
-(Go2Sim.lidar_mount_frame, ...) as its frame_id, and the blueprint hands the same layer to a
-UsdManager, which poses those frames on tf, and to `sim_module`, which runs them. The layer
-carries the policy's gains and its home pose as drives (see `go2_drives`), so what holds this
-robot up is stated once, where the robot is described.
+Go2Sim.usd is the committed Go2 layer with the rig's sensor frames added: a sensor names one as
+its frame_id, and the blueprint hands the same layer to a UsdManager, which poses those frames
+on tf, and to `sim_module`, which runs them. The layer carries the policy's gains and its home
+pose as drives (see `go2_drives`).
 """
 
 import asyncio
@@ -58,11 +58,10 @@ from dimos.simulation.go2_legged.robot import COMMAND_SLEW, projected_gravity, y
 def go2_drives() -> dict[str, tuple[float, float, float]]:
     """The gains and home pose the walking policy runs on, as `usd_with_drives` wants them.
 
-    Read out of the policy blob, which carries its own kp, kd and default pose: the gains that
-    hold this robot up are the controller's, not the vendor's. Called by
-    `scripts/usd_drives.py` to write them into the committed layer, and by the test that keeps
-    the layer honest if the blob ever changes -- never at runtime, because by then the layer is
-    what says it.
+    Read out of the policy blob, which carries its own kp, kd and default pose: the gains that hold
+    this robot up are the controller's, not the vendor's. Called by `scripts/usd_drives.py` to
+    write them into the committed layer, and by the test that keeps the layer honest -- never at
+    runtime, because by then the layer is what says it.
     """
     policy = load_policy(None)
     return {
@@ -82,9 +81,9 @@ class Go2SimConfig(ModuleConfig):
 
 
 class Go2Sim(Module):
-    # The committed layer, converted once from the vendor MJCF (see assets/go2.usda), carrying
-    # the real rig's frames (go2_mid360_static_transforms) on its base. The mounts are added here
-    # rather than baked in because a mount is whose robot carries it, not what the robot is.
+    # The committed layer, converted once from the vendor MJCF (see assets/go2.usda), carrying the
+    # real rig's frames on its base. The mounts are added here rather than baked in because a mount
+    # is whose robot carries it, not what the robot is.
     usd = UsdModel.from_file(Path(__file__).parent / "assets" / "go2.usda").with_frames(
         {
             "utlidar_lidar": (
