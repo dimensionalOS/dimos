@@ -43,10 +43,9 @@ SCENE = Path(__file__).parent / "assets" / "scene.usda"
 def scene() -> UsdModel:
     """The room these tests run in: a floor, a shelf, a crate on a free joint, and a mount above.
 
-    USD, like everything else a world is made of, and converted once from the MJCF it used to be
-    written as -- `assets/scene.usda`, beside this file. `overhead` is added as a *frame* rather
-    than being in the layer, which is how a scene says where something can be mounted: the room
-    holds the spot, and whatever is bolted there says what it is.
+    USD, converted once from the MJCF it used to be (`assets/scene.usda`, beside this file).
+    `overhead` is added as a *frame* rather than being in the layer, which is how a scene says
+    where something can be mounted.
     """
     return UsdModel.from_file(SCENE).with_frames(
         {"overhead": ("scene", (0.0, 0.0, 3.0), (0.0, 0.0, 0.0))}
@@ -59,10 +58,8 @@ def robot_model() -> UsdModel:
 
 
 def test_robots_compile_into_one_world(scene, robot_model):
-    """Two dogs in one room, each where its description puts it -- and no sensors in it.
-
-    The world the physics runs holds robots and a room. A sensor is not something the simulation
-    was told about, so there is nothing here to put a camera or a site in it.
+    """The world the physics runs holds robots and a room. A sensor is not something the
+    simulation was told about, so there is nothing here to put a camera or a site in it.
     """
     left = robot_model.with_frames({"eye": ("head", (0, 0, 0), (0, 0, 0))})
     right = robot_model.with_frames({"lidar": ("base", (0, 0, 0.2), (0, 0, 0))})
@@ -82,9 +79,7 @@ def test_robots_compile_into_one_world(scene, robot_model):
 
 
 def test_a_sensor_mounts_itself_in_a_world_of_its_own(scene, robot_model):
-    """The same scene, compiled again by a sensor, with what that sensor needs added to it.
-
-    A camera's field of view and a lidar's site belong to the sensor that reads them, so they go
+    """A camera's field of view and a lidar's site belong to the sensor that reads them, so they go
     into the copy it renders from. The mount frames are already there: a robot's model carries
     them, and a composed scene carries the room's.
     """
@@ -107,12 +102,9 @@ def test_a_sensor_mounts_itself_in_a_world_of_its_own(scene, robot_model):
 
 
 def test_a_robot_grafted_into_a_scene_is_still_free_to_move(scene, robot_model):
-    """A composed world is how a robot really arrives: grafted onto a frame the room holds.
-
-    USD says "this subtree floats on its mount" with a generic six-degree joint, and MuJoCo's USD
-    reader does not read that one. A nested body with no joint is welded, so every robot in a
-    composed world was bolted to the room: it stood, it never fell over, and it never walked,
-    with nothing in the log but one "Unsupported joint type" warning.
+    """USD says "this subtree floats on its mount" with a generic six-degree joint, and MuJoCo's
+    USD reader does not read that one. A nested body with no joint is welded, so every robot in a
+    composed world was bolted to the room: it stood, it never fell over, and it never walked.
     """
     composed = graft_usd(
         scene.with_frames({"dog": ("scene", (0.0, 0.0, 1.0), (0.0, 0.0, 0.0))}).usd,
@@ -139,9 +131,7 @@ def test_mounting_at_a_frame_the_world_does_not_have_is_rejected(scene):
 
 
 def test_the_engine_runs_the_robots_the_blueprint_put_in_the_world(scene, robot_model):
-    """Through `sim_module`, which names neither MuJoCo nor anything that reaches into it.
-
-    The robots are config, set where the blueprint already knows them, so a robot module needs
+    """The robots are config, set where the blueprint already knows them, so a robot module needs
     no way to find whatever engine is running and the engine needs no way to hear from anything.
     """
     blueprint = sim_module(scene=scene, robots=[SimulatedRobot("dog", robot_model)])
@@ -156,11 +146,8 @@ def test_the_engine_runs_the_robots_the_blueprint_put_in_the_world(scene, robot_
 
 
 def test_the_world_the_engine_runs_is_the_scene_it_was_given(scene, robot_model):
-    """And it is built when the module runs, not when it is built.
-
-    Building it means asking a manager for the scene, and a manager that has not been
-    constructed yet cannot be asked -- which it had not, while the modules were still being
-    built.
+    """Building the world means asking a manager for the scene, and a manager that has not been
+    constructed yet cannot be asked -- which it had not, while the modules were still being built.
     """
     sim = MujocoSim(scene=scene, robots=[SimulatedRobot("dog", robot_model)])
     try:
@@ -187,10 +174,9 @@ class _Collect:
 async def _looping(backend: MujocoBackend, published: _Collect) -> Any:
     """The module's own loop, running this engine and publishing into `published`.
 
-    The engine does not loop: `step` advances the world once and hands back a frame, and pacing
-    it, publishing it and waiting at a controller's tick is the module's work. So a test about
-    what a running world does runs the real `MujocoSim._run`, with its publisher swapped for
-    something that keeps what it was given.
+    The engine does not loop: `step` advances the world once and hands back a frame, and pacing,
+    publishing and waiting at a tick is the module's work. So this runs the real `MujocoSim._run`
+    with its publisher swapped out.
     """
     sim = MujocoSim()
     # The engine the module would have built for itself: these tests are about what the loop
@@ -220,9 +206,8 @@ def test_backend_steps_physics_and_takes_commands(scene, robot_model):
     asyncio.run(run_briefly())
     world = published.world
     assert world.time > 0.3
-    # It fell from z=1 onto the floor. Not nearer than 0.3, because it comes to rest tilted on
-    # its head as well as its box, and how high that leaves the base is the toy's shape rather
-    # than anything this test is about.
+    # It fell from z=1 onto the floor. Not nearer than 0.3, because it comes to rest tilted on its
+    # head as well as its box.
     assert world.entity("dog").pose[2] < 0.3
     names, joints = world.joints("dog")
     assert names == ["neck"]
@@ -263,9 +248,8 @@ def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, rob
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
     """The layer's gains are what the joint starts with; a command carries its own and wins.
 
-    The gains come out of the robot's own layer now -- `usd_with_drives` writes them as MuJoCo's
-    own actuator attributes, which it reads back out of the file -- so there is nothing in the
-    description to set them with and nothing to set them with afterwards.
+    The gains come out of the robot's own layer -- `usd_with_drives` writes them as MuJoCo's own
+    actuator attributes -- so there is nothing in the description to set them with.
     """
     driven = UsdModel.from_layer(usd_with_drives(robot_model.usd, {"neck": (0.01, 0.001, 0.2)}))
     backend = MujocoBackend(scene, [SimulatedRobot("dog", driven)])

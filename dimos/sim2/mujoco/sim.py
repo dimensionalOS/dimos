@@ -43,20 +43,17 @@ logger = setup_logger()
 class MujocoSimConfig(SimulatedWorldConfig):
     # How much physics this world will catch up on in one go. It steps in bursts rather than one
     # step at a time because macOS oversleeps a short wait, and lag past one burst is dropped: a
-    # controller's command must not land a whole control period late. Smaller means a world that
-    # falls behind sooner but never runs ahead of what is watching it.
+    # controller's command must not land a whole control period late.
     max_burst_seconds: float = 0.01
 
 
 class MujocoSim(Module):
     """One compiled MuJoCo world, stepped in real time, publishing a frame of what moved.
 
-    A `SimulatedWorld` by shape rather than by inheritance -- actions in, observations out -- so
-    that what core asks of a backend is something a native module could satisfy too.
-
-    It steps only once every module has started: a module that misses a frame never gets it,
-    because a frame says what *changed* and the first one is the only one that says a robot
-    exists at all.
+    A `SimulatedWorld` by shape rather than by inheritance, so that what core asks of a backend is
+    something a native module could satisfy too. It steps only once every module has started: a
+    module that misses a frame never gets it, because a frame says what *changed* and the first
+    one is the only one that says a robot exists at all.
     """
 
     config: MujocoSimConfig
@@ -111,10 +108,9 @@ class MujocoSim(Module):
     async def _run(self) -> None:
         """Build the world, then step it, publishing what moved and holding at each tick.
 
-        Built here rather than in `build()`, because building it means asking the manager for the
-        scene and a manager that is not constructed yet cannot be asked. By the time a module is
-        running, every module exists. On a thread, since the ask is blocking and fetching a
-        room's worth of meshes should not stop this module answering anything else.
+        Built here rather than in `build()`, because building it means asking the manager for the scene
+        and a manager that is not constructed yet cannot be asked. On a thread, since the ask is
+        blocking and fetching a room's worth of meshes should not stop this module answering.
         """
         backend = self._backend = await asyncio.to_thread(self._engine)
         publisher = self._publisher
@@ -160,12 +156,9 @@ class MujocoSim(Module):
 
     @rpc
     def describe(self) -> dict[str, Any]:
-        """The robots in this world, and where its layer landed. Nothing reads it to build one.
-
-        A sensor used to: it asked for this and compiled the world the description named, which
-        made the simulation something every renderer had to be able to reach. A sensor reads the
-        composed scene instead, so this is left as what it sounds like -- something to look at
-        when a world is not doing what it was expected to.
+        """The robots in this world, and where its layer landed. Nothing reads it to build one: a
+        sensor reads the composed scene instead, so this is left as something to look at when a world
+        is not doing what it was expected to.
         """
         return {
             **(self._backend.describe() if self._backend is not None else {}),
