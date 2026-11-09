@@ -168,7 +168,10 @@ def scene_from(
 
 # Which module runs the world, by name: the only thing core knows about any engine, and it knows
 # it as a string so core imports none of them.
-BACKENDS = {"mujoco": "dimos.sim2.mujoco.sim.MujocoSim"}
+BACKENDS = {
+    "mujoco": "dimos.sim2.mujoco.sim.MujocoSim",
+    "dimsim": "dimos.sim2.dimsim.sim.DimSimSim",
+}
 
 
 def sim_module(backend: str = "mujoco", **config: Any) -> Blueprint:
