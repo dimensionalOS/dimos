@@ -16,11 +16,10 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 
 import numpy as np
-
-from copy import deepcopy
 
 from dimos.mapping.relocalization.go2.relocalize import Target, prepare, relocalize, wall_fitness
 from dimos.message_utils import geometry, pointcloud

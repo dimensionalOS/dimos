@@ -77,9 +77,7 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             position=Point(
                 float(center_xy[0]), float(center_xy[1]), self._tip_height(low_z, high_z)
             ),
-            orientation=geometry.quaternion_from_euler(
-                -math.pi, 0.0, self._narrow_axis_yaw(xy)
-            ),
+            orientation=geometry.quaternion_from_euler(-math.pi, 0.0, self._narrow_axis_yaw(xy)),
         )
         return GraspCandidateArray(
             deepcopy(object_pointcloud.header),
