@@ -14,21 +14,13 @@
 
 """Finding a thing in a model that came from USD, by the name a description calls it.
 
-MuJoCo reads USD, and names everything in it by its full prim path: the body a URDF called
-``pelvis`` arrives as ``/g1/Joints/pelvis``, and 448 of the office scene's 449 bodies carry a
-``/``. A description should not have to know that -- ``root_body="pelvis"`` is what a person
-writes, and what the same robot's MJCF would have been called -- so the path is resolved here and
-stays an implementation detail of loading.
+MuJoCo names everything by its full prim path: the body a URDF called ``pelvis`` arrives as
+``/g1/Joints/pelvis``. Exact match wins; otherwise the last path segment is what a short name
+refers to, and ambiguity is an error rather than a guess.
 
-Exact match wins, because a model that really does name something ``/g1/Joints/pelvis`` means it.
-Otherwise the last segment of the path is what a short name refers to. Ambiguity is an error
-rather than a guess: two bodies ending ``pelvis`` means the description has to say which.
-
-Resolving a lookup is not enough for a robot, because its names leave the simulation: attaching
-one under its id makes every body ``g1/<whatever MuJoCo called it>``, and that string is the
-entity id actions address, the tf frame the viewer places, and what a sensor's view asks for. A
-robot's elements are therefore renamed to what the description calls them before it is attached
-(``shorten``); the scene keeps its own names, since nothing addresses a room by short name.
+That is not enough for a robot, because its names leave the simulation as entity ids and tf
+frames, so a robot's elements are renamed before it is attached (``shorten``). The scene keeps
+its own names: nothing addresses a room by short name.
 """
 
 from collections import Counter
@@ -64,10 +56,9 @@ def short_names(names: Iterable[str]) -> dict[str, str]:
     """Each name mapped to its last path segment, where that segment names only one of them.
 
     For the handful of things in a *scene* that are addressed rather than merely drawn: a crate
-    with a free joint is an entity an action can push and a viewer places, and off a USD layer it
-    arrives called ``/warehouse/Geometry/crate``. The room's own walls are not renamed -- there
-    are hundreds of them, nothing addresses one, and two of them ending alike is likely -- so
-    this is applied to the entities and not to the model.
+    with a free joint arrives called ``/warehouse/Geometry/crate``. The room's own walls are not
+    renamed -- hundreds of them, nothing addresses one, and two ending alike is likely -- so this
+    is applied to the entities and not to the model.
     """
     full = list(names)
     tails = Counter(name.rsplit("/", 1)[-1] for name in full)
@@ -77,40 +68,24 @@ def short_names(names: Iterable[str]) -> dict[str, str]:
 def shorten(spec: Any, ids: Iterable[str] = ()) -> dict[str, str]:
     """Rename a loaded model's parts to the names a description uses. Returns what was renamed.
 
-    What a robot's parts are called does not stay inside the engine: attaching a robot under its
-    id names every body ``g1/<engine's name>``, and that is the entity id an action addresses and
-    the tf frame a viewer places a model at. Off a USD layer the engine's name is the prim path,
-    so the world came out publishing ``dog//toy/Geometry/base`` -- which nobody can write down,
-    and a description that said ``root_body="base"`` could not find its own robot in the world it
-    had just built.
+    What a robot's parts are called leaves the engine: attaching a robot under its id names every
+    body ``g1/<engine's name>``, which is the entity id an action addresses and the tf frame a
+    viewer places. Off a USD layer that name is the prim path, so the world published
+    ``dog//toy/Geometry/base`` and ``root_body="base"`` found nothing.
 
-    **References move with the names.** A model refers to its own parts by name, as strings --
-    an actuator names the joint it drives, a sensor the site it reads -- and renaming an element
-    does not touch them. Leaving them behind is worse than not renaming at all, and silent: the
-    toy robot's motor kept pointing at the joint's old path, so the compiled world came out with
-    no actuators and nothing to tell you why.
+    **References move with the names**: a model names its own parts as strings, and renaming an
+    element does not touch them. The toy's motor kept pointing at the joint's old path, so the
+    compiled world came out with no actuators and nothing to say why.
 
-    Geoms are deliberately left alone. Nothing addresses one by short name, and a model is far
-    more likely to have two of them ending the same way (``base_0``, ``base_1``) than two bodies.
+    Geoms are left alone -- nothing addresses one by short name, and two ending alike is likely.
 
-    ``ids`` names the robots a *composed* world holds, and is what keeps three of one robot apart
-    in it. A grafted subtree is nested under a prim named after the frame it was mounted at, so
-    MuJoCo sees ``/office_555/left/g1_29dof_rev_1_0/Geometry/pelvis`` -- the id is in the path,
-    even though the namespace itself only lives in a displayName MuJoCo never reads. An element
-    under a named robot becomes ``<id>/<tail>``, which is both what a single attached robot is
-    called and what tf already publishes. Without the ids every robot's pelvis shortens to
-    "pelvis", three of them are each other's ambiguity, and none is renamed at all.
-
-    Given ids, **only** what belongs to one of them is renamed. The world around the robots keeps
-    the names it came with: a converted room's 449 bodies are already published under those names
-    and ``resolve`` is what spares a description from having to know them, so renaming the
-    furniture would change a wire format to no purpose. Given no ids there is one model and
-    everything in it is renamed, which is the robot's own layer on its way to being attached.
+    ``ids`` names the robots a *composed* world holds, which keeps three of one robot apart: a
+    grafted subtree is nested under a prim named after its mount frame, so the id is in the path,
+    and an element under a named robot becomes ``<id>/<tail>``. Given ids, only what belongs to one
+    is renamed; given none, everything is, which is a robot's own layer before attaching.
 
     Ambiguity is left alone rather than guessed at: two elements *of one kind* whose paths end
-    the same way, or a short name another of that kind already holds, keep the paths they came
-    with. ``resolve`` still finds those, and a name that cannot be made unique is better long
-    than quietly wrong.
+    alike keep what they came with, and ``resolve`` still finds those.
     """
     # A kind at a time, because MuJoCo's namespaces are per kind: the toy robot's hinge and the
     # motor driving it are both called "neck", and judging them together made each the other's
@@ -135,9 +110,8 @@ _REFERENCES = {
 
 
 def _shortened(elements: Iterable[Any], owners: Sequence[str] = ()) -> dict[str, str]:
-    """Each element renamed to the name its description uses, where that is unambiguous.
-
-    old name -> new. See ``shorten``; ``owners`` are the robot ids a composed world holds.
+    """Each element renamed to the name its description uses, where that is unambiguous. See
+    ``shorten``; ``owners`` are the robot ids a composed world holds.
     """
     named = [element for element in elements if element.name]
     tails = Counter(_wanted(element.name, owners) for element in named)
@@ -156,10 +130,9 @@ def _shortened(elements: Iterable[Any], owners: Sequence[str] = ()) -> dict[str,
 
 
 def _wanted(name: str, owners: Sequence[str]) -> str:
-    """The name a description would use for the element the engine calls ``name``.
-
-    ``name`` itself where it belongs to no named robot in a world that has some: nothing to
-    rename, and ``_shortened`` reads that as "leave it alone".
+    """The name a description would use for the element the engine calls ``name``, or ``name``
+    itself where it belongs to no named robot in a world that has some -- which ``_shortened``
+    reads as "leave it alone".
     """
     tail = name.rsplit("/", 1)[-1]
     for owner in owners:

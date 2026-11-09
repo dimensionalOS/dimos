@@ -69,11 +69,9 @@ class UsdManagerPointClearing(UsdManager):
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
     def _filter_description(self) -> LoadedRobotModel:
-        """The URDF RoboPlan builds its collision scene from.
-
-        It only reads URDF, so a robot described in USD is converted back. That conversion is
-        the inverse of the one the manager did on the way in, and for a model that came from a
-        URDF the original is still there to hand over -- no round trip, and no pxr needed.
+        """The URDF RoboPlan builds its collision scene from. It only reads URDF, so a USD-described
+        robot is converted back; where the model came from a URDF the original is still there to hand
+        over -- no round trip, and no pxr needed.
         """
         kept = self._description.urdf()
         if kept is not None:
@@ -185,11 +183,10 @@ class UsdManagerPointClearing(UsdManager):
     def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
         """One tf lookup, in the description's names.
 
-        The renaming happens here rather than at the call sites: this module works in the
-        names its URDF uses, tf carries the names the manager publishes, and tf_renames is
-        the difference. One crossing point means a lookup added later cannot forget it and
-        quietly find nothing. A frame that is not this robot's own (a sensor's) is not a
-        rename key, so it passes through.
+        The renaming happens here rather than at the call sites -- this module works in its URDF's
+        names, tf carries the names the manager publishes, and tf_renames is the difference -- so a
+        lookup added later cannot forget it. A frame that is not this robot's own (a sensor's) is not
+        a rename key, so it passes through.
         """
         return self.tfbuffer.get(
             self.frame(parent),

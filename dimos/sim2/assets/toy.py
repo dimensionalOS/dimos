@@ -16,14 +16,11 @@
 
 The head sits clear of the box (0.3, 0, 0.2 from its centre, which is 0.2 x 0.1 x 0.1) rather
 than touching its corner, so a sensor at the head's centre is inside the sphere and nothing
-else. A ray from a point lying exactly on two surfaces is a coin toss, and a test that wants to
-know what a sensor sees from inside its own housing should not be deciding it.
+else: a ray from a point lying exactly on two surfaces is a coin toss.
 
-Converted once from an MJCF and committed beside this file, the same way the G1 and the room are,
-because the tests describe robots the way a blueprint does and a description is USD. It has to come
-through the real converter rather than be written by hand or converted from a URDF: a servo needs an
-actuator, and only mujoco-usd-converter writes one (as an MjcActuator prim). All primitives, so it
-names no mesh files at all.
+Converted once from an MJCF and committed beside this file. It has to come through the real
+converter rather than be written by hand: a servo needs an actuator, and only
+mujoco-usd-converter writes one (as an MjcActuator prim). All primitives, so no mesh files.
 
     MuJoCo: bodies 3, joints 2 (free + neck), actuators 1, geoms 2 (a 0.2x0.1x0.1 box, a
             0.05 sphere)

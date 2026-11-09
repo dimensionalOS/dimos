@@ -14,16 +14,10 @@
 
 """What a sensor answers `get_usd` with when nobody has measured its case.
 
-Everything mountable describes itself in USD, so a UsdManager can graft it onto the frame it is
-bolted to and a viewer can place it from tf. A sensor that someone has measured says so with its
-real dimensions -- the MID-360 is a 65 x 65 x 60 mm box, and `mid360_usd` is that box. For the
-rest, the honest description is **the frame and nothing else**: a camera's optical frame is a pose,
-not a shape, and a layer claiming a case nobody measured would put a made-up box in the physics and
-on the screen.
-
-A frame is also most of what a consumer needs from these. Nothing collides with a camera; what
-asks is asking where it is -- and, for a camera, what it can see from there, which is a USD
-camera's job to say.
+Everything mountable describes itself in USD so a UsdManager can graft it onto its frame. A
+sensor someone has measured says so with real dimensions (the MID-360 is a 65 x 65 x 60 mm
+box); for the rest the honest description is **the frame and nothing else**, because a layer
+claiming a case nobody measured puts a made-up box in the physics and on the screen.
 """
 
 import math
@@ -41,25 +35,20 @@ _APERTURE_MM = 24.0
 def frame_usd(frame_id: str, *, name: str) -> list[str]:
     """``[asset_root, usd]``: one link called ``frame_id``, under a layer called ``name``.
 
-    The asset root is empty because the layer names no files. Saying so is not the same as
-    saying "wherever you like": a manager rebases a subtree onto the root its module reported,
-    and an empty one means there is nothing to rebase.
+    The asset root is empty because the layer names no files, which is not the same as "wherever
+    you like": a manager rebases a subtree onto the root its module reported.
     """
     return ["", UsdModel.from_robot_model(RobotModel.from_root_link(frame_id, name=name)).usd]
 
 
 def camera_usd(frame_id: str, *, name: str, fovy: float) -> list[str]:
-    """``[asset_root, usd]``: the camera's optical frame, with a USD camera on it saying its field of view.
+    """``[asset_root, usd]``: the camera's optical frame, with a USD camera on it saying its field
+    of view, which is where USD keeps the two.
 
-    The frame is the pose and the camera prim is the optics, which is where USD keeps them. A
-    consumer that wants to draw what this camera can see has it from the layer rather than from
-    this module's config, and nothing has to be told twice.
-
-    USD states optics as a focal length against an aperture rather than as an angle, so the
-    vertical aperture is fixed at a film back's 24 mm and the focal length is whatever gives
-    ``fovy``. It is also turned to face the way USD faces: a camera prim looks down -z with +y
-    up, and an optical frame is z forward with y down, which is the same 180 degrees about x
-    that a MuJoCo camera needs.
+    USD states optics as a focal length against an aperture rather than an angle, so the vertical
+    aperture is fixed at a film back's 24 mm and the focal length is whatever gives ``fovy``. Also
+    turned to face the way USD faces: a camera prim looks down -z with +y up, an optical frame is
+    z forward with y down -- the same 180 degrees about x a MuJoCo camera needs.
     """
     from dimos.robot.assets.usd import _identifier, _layer_from, _link_prim_paths, _matrix, _pxr
 
