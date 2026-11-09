@@ -20,12 +20,14 @@ import subprocess
 import threading
 from unittest.mock import ANY
 
+import psutil
 import pytest
 import rerun as rr
 
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.visualization.rerun.bridge import Config, _resolve_pubsubs
+from dimos.visualization.rerun import bridge as bridge_module
+from dimos.visualization.rerun.bridge import Config, RerunBridgeModule, _resolve_pubsubs
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 from dimos.visualization.rerun.init import _VIEWER_RUST_LOG, spawn_viewer
 
@@ -117,3 +119,30 @@ class TestBridgePubsubResolution:
         pubsubs = _resolve_pubsubs(config)
 
         assert pubsubs == [custom]
+
+
+class TestMemoryLimits:
+    @pytest.mark.parametrize(
+        ("ram_gib", "limit"),
+        [(8, "2048MiB"), (16, "4096MiB"), (128, "4096MiB")],
+    )
+    def test_default_viewer_limit_is_a_quarter_of_ram_up_to_a_cap(self, mocker, ram_gib, limit):
+        mocker.patch.object(psutil, "virtual_memory").return_value.total = ram_gib * 2**30
+
+        assert Config().memory_limit == limit
+
+    def test_replay_buffer_does_not_take_the_viewer_limit(self, mocker):
+        server_uri = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
+        init = mocker.patch.object(bridge_module, "rerun_init", return_value=server_uri)
+        spawn = mocker.patch.object(bridge_module, "spawn_viewer", return_value=True)
+        bridge = RerunBridgeModule(
+            pubsubs=[ExplicitPubSubOverride()], blueprint=None, memory_limit="8GB"
+        )
+
+        try:
+            bridge.start()
+        finally:
+            bridge.stop()
+
+        assert init.call_args.kwargs["grpc_config"]["server_memory_limit"] == "1GiB"
+        assert spawn.call_args.args[1] == "8GB"

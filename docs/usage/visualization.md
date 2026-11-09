@@ -114,6 +114,17 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 - Larger voxels = fewer voxels = faster updates
 - But slightly less detail in the map
 
+### Limit Memory
+
+Rerun keeps what the bridge logs in two places. Each has its own limit:
+
+| Flag | Default | What it limits |
+|------|---------|----------------|
+| `--rerunbridgemodule.memory-limit` | A quarter of RAM, at most 4 GiB | The viewer. Past the limit it drops its oldest data, so the timeline gets shorter. |
+| `--rerunbridgemodule.server-memory-limit` | `1GiB` | The replay buffer in the bridge's worker. A viewer that connects late starts from what is in it. |
+
+Both take a size (`2GB`) or a share of RAM (`10%`).
+
 ---
 
 ## Direct Visualization from a Module

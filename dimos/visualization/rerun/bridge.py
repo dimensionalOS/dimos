@@ -43,6 +43,7 @@ from typing import (
 from urllib.parse import urlparse
 
 import numpy as np
+import psutil
 from pydantic import Field
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -270,6 +271,17 @@ def _resolve_pubsubs(config: Any) -> list[SubscribeAllCapable[Any, Any]]:
     return _default_pubsubs(getattr(config, "g", config))
 
 
+# A viewer spends its memory on timeline history, so a machine with more RAM
+# does not need a bigger limit.
+VIEWER_MEMORY_CAP_MIB = 4096
+
+
+def _default_memory_limit() -> str:
+    """A quarter of RAM, capped."""
+    quarter_mib = psutil.virtual_memory().total // 4 // 2**20
+    return f"{min(quarter_mib, VIEWER_MEMORY_CAP_MIB)}MiB"
+
+
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule.
 
@@ -296,7 +308,10 @@ class Config(ModuleConfig):
     host: str = Field(default_factory=lambda m: m["g"].listen_host)
     # None: the RerunWebSocketServer in this blueprint, or the default without one.
     websocket_url: str | None = None
-    memory_limit: str = "25%"
+    # The viewer drops its oldest data past this.
+    memory_limit: str = Field(default_factory=_default_memory_limit)
+    # What the bridge keeps in its own process to replay to a viewer that connects late.
+    server_memory_limit: str = "1GiB"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
     rerun_save: bool = False
@@ -536,7 +551,7 @@ class RerunBridgeModule(Module):
             start_grpc=True,
             grpc_config={
                 "connect_url": connect_url,
-                "server_memory_limit": self.config.memory_limit,
+                "server_memory_limit": self.config.server_memory_limit,
             },
         )
         assert server_uri is not None  # start_grpc=True guarantees a URI
@@ -630,6 +645,8 @@ class RerunBridgeModule(Module):
         local_ips = get_local_ips()
         local_grpc = f"rerun+http://{self.host}:{grpc_port}/proxy"
         local_ws = self._websocket_url
+        # Without it a viewer started by hand takes Rerun's default, 75% of RAM.
+        limit = f"--memory-limit {self.config.memory_limit}"
         hostname = socket.gethostname()
 
         columns = 60
@@ -639,7 +656,7 @@ class RerunBridgeModule(Module):
             "Rerun gRPC server running (no viewer opened)",
             "",
             "Connect a viewer:",
-            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws}",
+            f"  dimos-viewer --connect {local_grpc} --ws-url {local_ws} {limit}",
         ]
         for ip, iface in local_ips:
             remote_grpc = f"rerun+http://{ip}:{grpc_port}/proxy"
@@ -649,7 +666,9 @@ class RerunBridgeModule(Module):
                 host = f"[{ip}]" if ":" in ip else ip
                 netloc = f"{host}:{ws.port}" if ws.port is not None else host
                 remote_ws = ws._replace(netloc=netloc).geturl()
-            lines.append(f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws}  # {iface}")
+            lines.append(
+                f"  dimos-viewer --connect {remote_grpc} --ws-url {remote_ws} {limit}  # {iface}"
+            )
         lines.append("")
         lines.append(f"  hostname: {hostname}")
         lines.append("=" * columns)
