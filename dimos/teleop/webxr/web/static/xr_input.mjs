@@ -1,4 +1,5 @@
 // Copyright 2026 Dimensional Inc. Licensed under the Apache License, Version 2.0.
+import {handClosure} from './hand_follow.mjs';
 // Device input only: no robot geometry, command transport or scene placement.
 const point = p => [p.x, p.y, p.z];
 const quaternion = q => [q.x, q.y, q.z, q.w];
@@ -16,7 +17,7 @@ export function interactionMode(preference, samples) {
     : preference;
 }
 
-export function sampleXRInputs(frame, reference) {
+export function sampleXRInputs(frame, reference, {bodyFollow=false}={}) {
   const samples = {};
   for (const source of frame.session.inputSources) {
     const side = source.handedness;
@@ -34,9 +35,10 @@ export function sampleXRInputs(frame, reference) {
       const a = point(thumb.transform.position), b = point(index.transform.position);
       const middle = poses['middle-finger-tip'];
       const distance = separation(a, b);
-      sample = {kind: 'hand', poses, position: a.map((v, i) => (v + b[i]) / 2),
+      sample = {kind: 'hand', poses, position: bodyFollow?point(wrist.transform.position):a.map((v, i) => (v + b[i]) / 2),
+        pinchPosition:a.map((v,i)=>(v+b[i])/2),
         orientation: quaternion(wrist.transform.orientation), distance, clutchDistance: distance,
-        trigger: middle ? Math.max(0, Math.min(1, (0.04 - separation(a, point(middle.transform.position))) / 0.02)) : 0};
+        trigger: bodyFollow?handClosure(poses):middle ? Math.max(0, Math.min(1, (0.04 - separation(a, point(middle.transform.position))) / 0.02)) : 0};
     } else {
       const pose = source.gripSpace && frame.getPose(source.gripSpace, reference);
       if (!pose || !source.gamepad) continue;

@@ -70,6 +70,7 @@ def steer_targets(
 
 class R1ProSimControlConfig(ModuleConfig):
     upper_command_joints: tuple[str, ...] = UPPER_JOINTS
+    coordinator_torso: bool = False
 
 
 class R1ProSimControl(SharedConfigModule):
@@ -167,6 +168,8 @@ class R1ProSimControl(SharedConfigModule):
 
     async def handle_torso_height_command(self, command: Float32) -> None:
         """Positive input raises the body; release/timeout holds the reached height."""
+        if self.config.coordinator_torso:
+            return
         if not math.isfinite(command.data) or not -1 <= command.data <= 1:
             raise ValueError("torso height input must be finite and in [-1, 1]")
         with self._lock:

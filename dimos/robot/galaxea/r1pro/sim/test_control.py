@@ -195,3 +195,17 @@ async def test_torso_folds_together_and_release_or_timeout_holds(controller, moc
 async def test_invalid_torso_input_rejected(controller, axis):
     with pytest.raises(ValueError, match="torso height"):
         await controller.handle_torso_height_command(Float32(data=axis))
+
+
+async def test_coordinator_owns_torso_without_the_old_height_servo_overwriting_it(controller):
+    controller.config.coordinator_torso = True
+    await controller.handle_torso_height_command(Float32(data=-1))
+    targets = [0.2, -0.4, -0.1, 0.3]
+    await controller.handle_upper_command(JointState(name=list(UPPER_JOINTS[:4]), position=targets))
+    for i in range(300):
+        action = controller.compute(
+            JointState(name=list(JOINTS), position=[0.0] * len(JOINTS), ts=i * 0.02)
+        )
+    assert action is not None
+    positions = next(c.values for c in action.joint_commands if c.interface_name == "position")
+    np.testing.assert_allclose(positions[:4], targets, atol=1e-9)

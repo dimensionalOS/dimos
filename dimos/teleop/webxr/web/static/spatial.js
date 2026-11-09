@@ -12,6 +12,8 @@ import {KeyboardClutch} from './spatial_keyboard.mjs';
 import {BodyClutchFrame} from './body_clutch.mjs';
 import {BodyFollow} from './body_follow.mjs';
 import {captureBody} from './webxr_body.mjs';
+import {HandFollowSession} from './hand_follow.mjs';
+import {RobotEyesView} from './spatial_view.mjs';
 
 const embedded = new URLSearchParams(location.search).has('embedded');
 const boundSession = new URLSearchParams(location.search).get('operator_session');
@@ -42,11 +44,11 @@ orbit.target.set(0, 1, -0.4); orbit.update();
 const basis = new THREE.Matrix4().set(0,-1,0,0, 0,0,1,0, -1,0,0,0, 0,0,0,1);
 const workspace = new WorkspaceTransform();
 const stage = new THREE.Group(); stage.matrixAutoUpdate = false;
-scene.add(stage); applyPlacement();
+scene.add(stage); stage.matrix.copy(basis);
 const inverseStage = new THREE.Matrix4();
 const body = new THREE.Group(); stage.add(body);
 const arms = {}, handles = {}, gestures = {}, handDots = {}, openingControls = {};
-const clutches = {}, sources = {}, rays = {};
+const clutches = {}, sources = {}, rays = {}, menuPinches = {};
 const colours = {left: 0x76e2c1, right: 0xfab972};
 for (const side of ['left', 'right']) {
   arms[side] = new THREE.Group(); stage.add(arms[side]);
@@ -54,7 +56,7 @@ for (const side of ['left', 'right']) {
     new THREE.MeshBasicMaterial({color: colours[side], transparent: true, opacity: 0.7, wireframe: true}));
   handles[side] = handle; stage.add(handle); handle.visible = false;
   gestures[side] = new ToolPinch();
-  clutches[side] = new PinchGrab();
+  clutches[side] = new PinchGrab(); menuPinches[side]=new PinchGrab();
   rays[side]=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),
     new THREE.LineBasicMaterial({color:colours[side],transparent:true,opacity:0.6}));
   rays[side].visible=false; scene.add(rays[side]);
@@ -88,6 +90,10 @@ let entryError = '';
 let paused = false, inputGeneration=0, controlEpoch=null;
 let modePreference='auto', activeMode='tools';
 let driveAxes=[0,0,0], torsoAxis=0;
+let viewMode='workspace',latestViewer=null,lastRawHands={},nativeHandSelection=false,menuButtonHeld=false;
+let savedDesktopView=null;
+const robotEyes=new RobotEyesView();
+const handFollow=new HandFollowSession();
 let desktopFramed=false, selectedArm='left';
 let keyboardEnabled=false, keyboardSide='left', keyboardFrame='world', lastKeyboardSend=0;
 let objectsTS=0, selectedObject=null;
@@ -97,12 +103,15 @@ const bodyFollow=new BodyFollow();
 let calibrateBodyAt=0;
 function requestBodyCalibration() {
   if(!renderer.xr.isPresenting) {entryError='Enter XR before calibrating your body.';return;}
-  bodyFollow.reset(); calibrateBodyAt=performance.now()+3000; resetHands(); send({});
+  handFollow.hold(); bodyFollow.reset(); calibrateBodyAt=performance.now()+3000; resetHands(); send({});
 }
 const ui = new SpatialUI(stage,endpoint,{embedded,xrScene:scene,onAction:(action,state)=>{
+  if(action==='follow_hands') { if(handFollow.enabled)handFollow.hold();else handFollow.enable();resetTools();send({});return; }
+  if(action==='menu_open') {handFollow.hold();resetHands();send({});return;}
+  if(action.startsWith('view:')) {setViewMode(action.slice(5));return;}
   if(action==='calibrate_body') { requestBodyCalibration(); return; }
   if(action==='toggle_map') { mapCloud.visible=!mapCloud.visible; return; }
-  if(action==='hold'||action==='resume') bodyClutch.reset();
+  if(action==='hold'||action==='resume') {bodyClutch.reset();handFollow.hold();}
   if(state) { feedback=state; paused=!!state.control?.paused; }
   if(action==='actual_size') { workspace.resize(1,workspacePivot().applyMatrix4(stage.matrixWorld).toArray()); applyPlacement(); }
   if(action==='scale_down'||action==='scale_up') {
@@ -125,7 +134,7 @@ if(geometry.absolute_body_targets) {
   choice.querySelector('[value="clutch"]').textContent='Body follow';
   document.querySelector('#body-calibration').hidden=false;
   document.querySelector('#tool-help').hidden=true;
-  document.querySelector('#control-help').textContent='Calibrate body once in XR: release grips and extend both arms forward during the three-second countdown. Hold both grips to follow your body; triggers close the jaws. Release either grip to hold both arms. Re-engaging keeps the same body reference.';
+  document.querySelector('#control-help').textContent='Calibrate with arms forward, palms down and hands open. Choose Follow hands: open hands open the jaws, fists close them. Raise your left palm and point/pinch Controls to hold and open the menu. Controllers: both grips enable arms, triggers close jaws, Y opens controls.';
 }
 const meshes = {};
 if(!geometry.finger_geometry) {
@@ -172,8 +181,8 @@ function connect() {
   const url=embedded?new URL(endpoint('ws')):new URL('/ws',location.href);
   url.protocol=url.protocol==='https:'?'wss:':'ws:';
   socket = new WebSocket(url.href);
-  socket.onopen = () => { sequence = 0; controlEpoch=null; entryError=''; bodyClutch.reset(); resetHands(); };
-  socket.onclose = event => { resetHands(); if(event.code===1008) entryError='Another operator currently owns control.'; if (!stopped && controlRequested) setTimeout(connect, 1500); };
+  socket.onopen = () => { handFollow.hold(); sequence = 0; controlEpoch=null; entryError=''; bodyClutch.reset(); resetHands(); };
+  socket.onclose = event => { handFollow.hold(); resetHands(); if(event.code===1008) entryError='Another operator currently owns control.'; if (!stopped && controlRequested) setTimeout(connect, 1500); };
 }
 poll(endpoint('state'), 35, async response => {
   const next = await response.json();
@@ -190,7 +199,7 @@ poll(endpoint('state'), 35, async response => {
   }
   feedback = next; feedbackAt = performance.now(); paused=!!next.control.paused;
   if(controlEpoch!==feedback.control.epoch) {
-    bodyClutch.reset();
+    bodyClutch.reset(); handFollow.hold();
     resetTools(); keyboard.reset(); controlEpoch=feedback.control.epoch;
   }
   (feedback.body || []).forEach((matrix,i)=>body.children[i]?.matrix.fromArray(matrix));
@@ -212,12 +221,6 @@ poll(endpoint('state'), 35, async response => {
       ctx.strokeText(text,128,48); ctx.fillText(text,128,48);
       c.texture.needsUpdate=true;
     }
-  }
-  if(!workspace.active) {
-    const bounds=new THREE.Box3();
-    for(const group of Object.values(arms)) for(const mesh of group.children)
-      bounds.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrix));
-    ui.setWorkspaceBounds(bounds);
   }
   document.querySelector('#perception').textContent = feedback.objects_ts
     ? `${feedback.objects.length} observed objects · last scan ${Math.max(0,Math.round(feedback.server_time-feedback.objects_ts))} s ago`
@@ -272,8 +275,7 @@ let mapStamp=0;
 poll(endpoint('map'),1000,async response=>{if(response.status===204)return;const stamp=Number(response.headers.get('X-Frame-Timestamp'));if(stamp===mapStamp)return;mapCloud.update(new Float32Array(await response.arrayBuffer()),geometry.map_voxel_size_m??0.05);mapStamp=stamp;});
 function resetTools() {
   inputGeneration++;
-  for (const state of [...Object.values(gestures),...Object.values(clutches)]) state.reset();
-  ui.layout.cancel();
+  for (const state of [...Object.values(gestures),...Object.values(clutches),...Object.values(menuPinches)]) state.reset();
 }
 function resetHands() {
   torsoAxis=0;
@@ -295,7 +297,24 @@ function workspacePivot() {
   return known.reduce((center,arm)=>center.add(new THREE.Vector3().fromArray(arm.grasp)),new THREE.Vector3())
     .multiplyScalar(known.length?1/known.length:0);
 }
+function setViewMode(mode) {
+  if(mode==='ego' && (!geometry.egocentric_available || !feedback?.eye_pose)) {entryError='Waiting for the robot head pose.';return;}
+  if(mode===viewMode)return;
+  handFollow.hold();resetHands();send({});
+  if(mode==='ego') {
+    savedDesktopView={position:camera.position.clone(),quaternion:camera.quaternion.clone(),target:orbit.target.clone()};
+    if(latestViewer)robotEyes.enter(latestViewer);
+  }else if(savedDesktopView) {
+    camera.position.copy(savedDesktopView.position);camera.quaternion.copy(savedDesktopView.quaternion);orbit.target.copy(savedDesktopView.target);
+  }
+  viewMode=mode;orbit.enabled=mode==='workspace'&&!renderer.xr.isPresenting;applyPlacement();
+}
 function applyPlacement() {
+  if(viewMode==='ego') {
+    if(renderer.xr.isPresenting && robotEyes.anchor && feedback?.eye_pose)stage.matrix.copy(robotEyes.placement(feedback.eye_pose));
+    else if(!renderer.xr.isPresenting)stage.matrix.copy(basis);
+    stage.updateMatrixWorld(true);return;
+  }
   stage.matrix.makeRotationY(workspace.yaw).multiply(basis)
     .scale(new THREE.Vector3().setScalar(workspace.scale)).setPosition(...workspace.position);
   stage.updateMatrixWorld(true);
@@ -312,6 +331,7 @@ function observationsFresh() {
     && Object.entries(surfaces).some(([slot,surface])=>surfaceFresh(slot,surface));
 }
 function place(viewer) {
+  if(viewMode==='ego'){placeAhead=false;return;}
   const position = new THREE.Vector3().copy(viewer.transform.position);
   const heading = new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion().copy(viewer.transform.orientation));
   heading.y = 0; if (heading.length() < 0.1) return;
@@ -321,7 +341,7 @@ function place(viewer) {
   const offset=workspacePivot().applyMatrix4(new THREE.Matrix4().makeRotationY(yaw).multiply(basis)
     .scale(new THREE.Vector3().setScalar(workspace.scale)));
   workspace.place(target.sub(offset).toArray(),yaw);
-  applyPlacement(); ui.recenter(); resetHands(); send({}); placeAhead = false;
+  applyPlacement(); resetHands(); send({}); placeAhead = false;
 }
 document.querySelector('#calibrate-body').onclick=requestBodyCalibration;
 document.querySelector('#place').onclick = () => { placeAhead=true; resetHands(); send({}); };
@@ -334,15 +354,21 @@ enter.onclick = async () => {
     scene.background=session.environmentBlendMode==='opaque'?new THREE.Color('#11181d'):null;
     renderer.setClearAlpha(scene.background?1:0);
     session.addEventListener('end', () => {
-      bodyFollow.reset(); calibrateBodyAt=0;
+      handFollow.hold(); bodyFollow.reset(); calibrateBodyAt=0;
       controlRequested = false; resetHands(); send({}); socket?.close(); enter.disabled = false; orbit.enabled = true;
       document.querySelector('#xr-mode').disabled=false;
       scene.background=new THREE.Color('#11181d'); renderer.setClearAlpha(1);
     });
-    session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') { resetHands(); send({}); } });
+    session.addEventListener('visibilitychange', () => { if (session.visibilityState !== 'visible') { handFollow.hold(); resetHands(); send({}); } });
+    nativeHandSelection=false;
+    session.addEventListener('selectstart',event=>{
+      if(event.inputSource.targetRayMode!=='transient-pointer')return;nativeHandSelection=true;
+      if(nativeMenuHit(event)){handFollow.hold();resetHands();send({});}
+    });
+    session.addEventListener('select',event=>{if(event.inputSource.targetRayMode==='transient-pointer'){const hit=nativeMenuHit(event);if(hit)ui.activate(hit.action);}});
     await renderer.xr.setSession(session);
-    renderer.xr.getReferenceSpace().addEventListener('reset',()=>{bodyFollow.reset();calibrateBodyAt=0;resetHands();send({});});
-    connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
+    renderer.xr.getReferenceSpace().addEventListener('reset',()=>{handFollow.hold();bodyFollow.reset();calibrateBodyAt=0;resetHands();robotEyes.anchor=null;send({});});
+    handFollow.hold();robotEyes.anchor=null;connect(); placeAhead = true; orbit.enabled = false; enter.disabled = true;
     document.querySelector('#xr-mode').disabled=true;
   } catch (error) {
     controlRequested = false; socket?.close(); entryError = `Cannot enter WebXR: ${error.message}`;
@@ -369,11 +395,22 @@ function send(hands, focus = null) {
   socket.send(JSON.stringify({type: 'spatial_input', session: boundSession || feedback?.control?.session, mode: activeMode, sequence: sequence++, control_epoch: controlEpoch, observed_at: feedback?.ts || 0, hands, focus, drive: paused ? [0,0,0] : driveAxes,
     pose_frame:bodyInput?'body':'world',torso_height:paused?0:torsoAxis}));
 }
+function nativeMenuHit(event) {
+  const pose=event.frame.getPose(event.inputSource.targetRaySpace,renderer.xr.getReferenceSpace());
+  if(!pose)return null;
+  const ray=new THREE.Raycaster(new THREE.Vector3().copy(pose.transform.position),
+    new THREE.Vector3(0,0,-1).applyQuaternion(new THREE.Quaternion().copy(pose.transform.orientation)),0,3);
+  return ui.hit(ray,event.inputSource.handedness);
+}
 function track(frame, reference, observationsFresh, viewer) {
-  const raw=sampleXRInputs(frame,reference), samples={};
+  const raw=sampleXRInputs(frame,reference,{bodyFollow:geometry.absolute_body_targets}), samples={};
+  lastRawHands=raw;
+  const menuPressed=!!raw.left?.source?.gamepad?.buttons?.[5]?.pressed;
+  if(menuPressed&&!menuButtonHeld)ui.activate('toggle_menu');menuButtonHeld=menuPressed;
   const axis=(side,index)=> {const value=raw[side]?.source?.gamepad?.axes?.[index]||0;return Math.abs(value)<0.15?0:Math.max(-1,Math.min(1,value));};
   driveAxes=geometry.base_drive?[-axis('left',3),-axis('left',2),-axis('right',2)]:[0,0,0];
   torsoAxis=geometry.torso_height_control?-axis('right',3):0;
+  if(ui.open){driveAxes=[0,0,0];torsoAxis=0;}
   const mode=Object.keys(raw).length?interactionMode(modePreference,raw):activeMode;
   if(mode!==activeMode) { activeMode=mode; resetHands(); send({}); }
   const robotReady=feedback?.control?.robot_ready && feedback.control.mode===activeMode;
@@ -387,7 +424,7 @@ function track(frame, reference, observationsFresh, viewer) {
       resetHands(); send({});
     }
     document.querySelector('#body-calibration-status').textContent=(calibrateBodyAt?`Calibration in ${Math.ceil((calibrateBodyAt-performance.now())/1000)}s: release grips, extend both arms forward.`:bodyFollow.error) ||
-      `Body follow calibrated · ${bodyFollow.calibration.source}. Grips enable both arms; release holds without changing calibration.`;
+      `Calibrated · ${bodyFollow.calibration?.source}. ${handFollow.reason}`;
   }
   if(bodyInput && !paused && robotReady && viewer) {
     const p=viewer.transform.position,q=viewer.transform.orientation;
@@ -399,7 +436,7 @@ function track(frame, reference, observationsFresh, viewer) {
     for(const dot of handDots[side]) dot.visible=false;
     rays[side].visible=false;
     if(sources[side]!==sample?.source) {
-      gestures[side].reset(); clutches[side].reset(); ui.layout.end(side); sources[side]=sample?.source;
+      gestures[side].reset(); clutches[side].reset(); sources[side]=sample?.source;
     }
     if(!sample) continue;
     const position=new THREE.Vector3().fromArray(sample.position);
@@ -422,12 +459,12 @@ function track(frame, reference, observationsFresh, viewer) {
   inverseStage.copy(stage.matrixWorld).invert();
   const owned=[...Object.values(gestures),...Object.values(clutches)].some(g=>g.grabbed);
   const now=performance.now();
-  ui.updatePalm(samples,viewer?.transform.position,workspace.active||owned,now);
+  ui.updatePalm(samples,viewer?.transform.position,false,now);
   // Resolve every tool/UI target before considering a two-hand air grab.
   for(const [side,hand] of Object.entries(samples)) {
     hand.local=hand.position.clone().applyMatrix4(inverseStage);
     hand.uiHit=ui.hit(hand.ray,side,hand.position);
-    if(hand.kind==='controller' && hand.ray) {
+    if(hand.ray && (hand.uiHit || hand.kind==='controller')) {
       const points=rays[side].geometry.attributes.position;
       const end=hand.uiHit?.point??hand.ray.ray.at(1,new THREE.Vector3());
       points.setXYZ(0,...hand.ray.ray.origin.toArray()); points.setXYZ(1,...end.toArray());
@@ -447,12 +484,20 @@ function track(frame, reference, observationsFresh, viewer) {
     hand.tool=targets.sort((a,b)=>a.distance-b.distance)[0]??null;
     hand.target=hand.tool?.action || (hand.uiHit?`ui:${hand.uiHit.action}`:null);
   }
-  const arranging=workspace.update(workspaceHands(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
+  const arranging=viewMode==='workspace'&&!ui.open&&workspace.update(workspaceHands(Object.fromEntries(Object.entries(samples).map(([side,hand])=>[
     side,{...hand,position:hand.position.toArray()},
   ])),activeMode),workspacePivot().applyMatrix4(stage.matrixWorld).toArray(),now,owned);
   if(arranging) {
     driveAxes=[0,0,0]; torsoAxis=0; applyPlacement(); resetTools(); send({}); return;
   }
+  for(const [side,hand] of Object.entries(samples)) {
+    const click=menuPinches[side].update(hand.distance,!!hand.uiHit);
+    if(hand.uiHit){ui.hovered=hand.uiHit.action;uiPointer.position.copy(hand.uiHit.point);uiPointer.visible=true;}
+    if(click.pressed&&click.grab&&!(hand.kind==='hand'&&nativeHandSelection)) {
+      handFollow.hold();ui.activate(hand.uiHit.action);
+    }
+  }
+  const handsFollowing=handFollow.update(raw,{ready:robotReady&&!paused,calibrated:!!bodyFollow.calibration,blocked:ui.open});
   const inputs = {}; let focus = null;
   const generation=inputGeneration;
   // A control has one owner. Keep previous owners reserved through their release
@@ -464,11 +509,16 @@ function track(frame, reference, observationsFresh, viewer) {
   for(const [side,hand] of Object.entries(samples)) {
     const {local:pinchPosition,ray,uiHit}=hand;
     const orientation=rotation.clone().multiply(hand.orientation);
-    if(activeMode==='clutch') {
+    if(geometry.absolute_body_targets && hand.kind==='hand' && handsFollowing) {
+      const pose=bodyFollow.pose(side,{position:hand.position.toArray(),orientation:hand.orientation.toArray()},viewerPose,trackedBody);
+      if(!pose){handFollow.hold();send({});return;}
+      inputs[side]={...pose,pinched:true,arm:side,action:'move',trigger:hand.trigger};continue;
+    }
+    if(activeMode==='clutch' && !(geometry.absolute_body_targets && hand.kind==='hand')) {
       const clutch=clutches[side].update(hand.clutchDistance,
-        !paused && robotReady && (!bodyInput || (geometry.absolute_body_targets?bodyFollow.calibration!==null:bodyClutch.rotation!==null)) && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
+        !ui.open && !paused && robotReady && (!bodyInput || (geometry.absolute_body_targets?bodyFollow.calibration!==null:bodyClutch.rotation!==null)) && !gestures[side].grabbed && !(hand.kind==='hand' && uiHit));
       if(clutch.grab) {
-        gestures[side].reset(); ui.layout.end(side);
+        gestures[side].reset();
         const pose=bodyInput?(geometry.absolute_body_targets?bodyFollow.pose(side,{position:hand.position.toArray(),orientation:hand.orientation.toArray()},viewerPose,trackedBody):bodyClutch.pose(hand.position.toArray(),hand.orientation.toArray()))
           :{position:pinchPosition.toArray(),orientation:orientation.toArray()};
         if(!pose) { clutches[side].reset(); continue; }
@@ -489,8 +539,6 @@ function track(frame, reference, observationsFresh, viewer) {
     if(state.arm!==null) owners.set(`${state.arm}:${state.action}`,side);
     if(feedback?.arms && !paused) inputs[side] = {position: pinchPosition.toArray(), orientation: orientation.toArray(),
       pinched:activeMode==='tools'&&gesture.pinched, arm:state.arm, action:['move','opening'].includes(gesture.action)?gesture.action:null};
-    ui.drag(gesture.action,side,hand.pose,gesture.pressed);
-    if(gesture.pressed && gesture.action?.startsWith('ui:') && !gesture.action.startsWith('ui:drag:')) ui.activate(gesture.action.slice(3));
     if (activeMode==='tools' && observationsFresh && gesture.releasedFree && target===null) {
       if (ray) {
         const hit = ray.intersectObjects(Object.entries(surfaces).filter(([slot,surface])=>surfaceFresh(slot,surface)).map(([,surface])=>surface.mesh))[0];
@@ -503,6 +551,7 @@ function track(frame, reference, observationsFresh, viewer) {
 renderer.setAnimationLoop((time, frame) => {
   const immersive=renderer.xr.isPresenting;
   ui.setImmersive(immersive);
+  body.visible=viewMode!=='ego';
   const fresh = !!observationsFresh();
   const ready = !!feedback?.control?.robot_ready && controlEpoch!==null;
   for (const side of ['left', 'right']) {
@@ -536,21 +585,27 @@ renderer.setAnimationLoop((time, frame) => {
   ui.update({now:feedback?feedback.server_time+(performance.now()-feedbackAt)/1000:Date.now()/1000,
     ready,observationsFresh:fresh,holdReason:feedback?.control?.hold_reason,surfaceAvailable:Object.values(surfaces).some(surface=>surface.ts>0),connected:socket?.readyState===WebSocket.OPEN,paused:!!feedback?.control?.paused,actions:feedback?.actions,preview:!controlRequested,control:feedback?.control,
     workspaceScale:workspace.scale,workspaceActive:workspace.active,mode:activeMode,
+    calibrated:!!bodyFollow.calibration,handsAvailable:['left','right'].every(side=>lastRawHands[side]?.kind==='hand'&&Number.isFinite(lastRawHands[side].trigger)),following:handFollow.enabled,viewMode,egoAvailable:geometry.egocentric_available&&!!feedback?.eye_pose,
     absoluteBody:geometry.absolute_body_targets,bodyStatus:geometry.absolute_body_targets?document.querySelector('#body-calibration-status').textContent:null,torsoHeightControl:geometry.torso_height_control,mapVisible:mapCloud.visible});
   if (frame) {
     const reference = renderer.xr.getReferenceSpace();
     const viewer = frame.getViewerPose(reference);
-    if(viewer) ui.layout.updateHead(
-      new THREE.Vector3().copy(viewer.transform.position).toArray(),
-      new THREE.Quaternion().copy(viewer.transform.orientation).toArray());
+    if(viewer) {
+      latestViewer={position:new THREE.Vector3().copy(viewer.transform.position).toArray(),orientation:new THREE.Quaternion().copy(viewer.transform.orientation).toArray()};
+      ui.updateHead(latestViewer.position,latestViewer.orientation);
+      if(viewMode==='ego' && !robotEyes.anchor)robotEyes.enter(latestViewer);
+    }
+    if(viewMode==='ego')applyPlacement();
     if (placeAhead && viewer) place(viewer);
     if (time-lastSend > 20) {
       lastSend = time;
       if (frame.session.visibilityState === 'visible') track(frame, reference, fresh, viewer);
-      else { resetHands(); uiPointer.visible=false; send({}); }
+      else { handFollow.hold();resetHands(); uiPointer.visible=false; send({}); }
     }
   } else {
-    orbit.update();
+    if(viewMode==='ego'&&feedback?.eye_pose) {
+      applyPlacement();robotEyes.desktopCamera(stage.matrix,feedback.eye_pose).decompose(camera.position,camera.quaternion,new THREE.Vector3());
+    }else orbit.update();
     if(keyboardEnabled && time-lastKeyboardSend>20) {
       const measured=feedback?.arms?.[keyboardSide];
       if(measured){
@@ -585,7 +640,7 @@ if(embedded) {
     if(event.source!==parent || event.origin!==location.origin) return;
     if(event.data?.type==='dimos.spatial.layer'){if(event.data.value.name==='surface')showSurface=event.data.value.visible;if(event.data.value.name==='map')mapCloud.visible=event.data.value.visible;}
     if(event.data?.type==='dimos.spatial.selection' && geometry.sides.includes(event.data.value)) selectedArm=event.data.value;
-    if(event.data?.type==='dimos.spatial.view' && ['fit','top','front'].includes(event.data.value)) frameWorkspace(event.data.value);
+    if(event.data?.type==='dimos.spatial.view') {if(event.data.value==='ego')setViewMode('ego');else if(['fit','top','front'].includes(event.data.value)){setViewMode('workspace');frameWorkspace(event.data.value);}}
     if(event.data?.type==='dimos.spatial.target')operator?.setTarget(event.data.value);
     if(event.data?.type==='dimos.spatial.preview')void operator?.preview(event.data.value);
     if(event.data?.type==='dimos.spatial.object'){

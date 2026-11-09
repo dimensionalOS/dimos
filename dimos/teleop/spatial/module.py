@@ -143,6 +143,7 @@ class SpatialViewerConfig(WebXRTeleopConfig):
     camera_max_edge_m: dict[str, float] = Field(default_factory=dict)
     base_drive: bool = False
     absolute_body_targets: bool = False
+    egocentric_frame: str | None = None
     body_relative_clutch: bool = False
     torso_height_control: bool = False
     start_paused: bool = True
@@ -325,6 +326,7 @@ class SpatialTeleopModule(ArmTeleopModule):
                 "base_drive": self.config.base_drive,
                 "body_relative_clutch": self.config.body_relative_clutch,
                 "absolute_body_targets": self.config.absolute_body_targets,
+                "egocentric_available": self.config.egocentric_frame is not None,
                 "torso_height_control": self.config.torso_height_control,
                 "map_voxel_size_m": self.config.map_voxel_size_m,
                 "headset_port": self.config.server_port,
@@ -572,6 +574,16 @@ class SpatialTeleopModule(ArmTeleopModule):
                 "joints": positions,
                 "body": self._robot.body_transforms(transform.to_matrix()),
             }
+            self._feedback["eye_pose"] = None
+            if self.config.egocentric_frame is not None:
+                eye = self._transforms.get(
+                    "world", self.config.egocentric_frame, message.ts, 0.1, warn=False
+                )
+                if eye is not None:
+                    self._feedback["eye_pose"] = {
+                        "position": eye.translation.to_list(),
+                        "orientation": eye.rotation.to_list(),
+                    }
             self._feedback_received = time.monotonic()
 
     def _on_map(self, message: PointCloud2) -> None:

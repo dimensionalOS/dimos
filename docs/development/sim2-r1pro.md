@@ -53,39 +53,33 @@ source is `../dim-spatial-workspace`; install that repository's
 `feat/spatial-workspace` branch as `dim-spatial-workspace`.
 
 Use **Headset** for the current LAN URL, `https://<laptop-wifi-ip>:8443/spatial`.
-The headset needs a trusted HTTPS connection and a WebXR browser on the same
-reachable network. Opening the view only observes. Enter XR facing your intended
-forward direction, release the grips, then grip again to engage. This simulation
-starts enabled; it does not require a separate Resume after every restart.
-An explicit Hold still latches until Resume. Other stations default to paused.
+The headset needs trusted HTTPS and a WebXR browser on the same reachable
+network. Opening the page only observes. Enter XR, then choose **Calibrate body**:
+extend both arms forward at shoulder height, palms down and hands open during
+the three-second countdown. This calibrates reach and the estimated body heading.
 
-- Controllers: grip clutches the corresponding arm; release holds it. Left stick
-  drives/strafes and right stick horizontal turns, capped at 0.2 m/s and 0.3 rad/s.
-  Right stick vertical raises/lowers the torso; release holds the reached height.
-  It starts fully raised, with about 21 cm of commanded lowering available.
-- Face your intended forward direction on XR entry or when pressing **Resume**. Controller
-  motion maps to robot-body forward/left/up, at one physical metre per metre,
-  independent of scene rotation/scale and robot world position/heading. Looking
-  around does not recalibrate. Hold then Resume recalibrates; reconnecting or
-  changing input mode also requires a fresh calibration and release/re-grip.
-- Hand tracking: pinch a tool handle to move that arm. Two free-space pinches
-  reposition/scale the workspace; camera and control panels can be moved/pinned.
-- Controller triggers never resize the scene. Use the HUD's −/+ and Actual size
-  buttons. In Classic teleop, hold the corresponding grip and squeeze its trigger
-  to close the gripper; release the trigger to open it. Tool handles mode provides
-  independent opening sliders. Two free hand-tracking pinches still arrange the
-  scene in Tool handles mode; arm and base commands are held during arrangement.
-- The session HUD starts pinned in front of your view. **Bring here** also
-  restores the HUD and camera panels relative to the headset, independent of the
-  robot's world position. **UNPIN** parks the HUD in the scene; **HUD** pins it again.
-- The lidar global map is displayed as instanced 5 cm cubes matching the mapper's
-  voxel size. It remains a sensor-derived map, separate from the RGB-D surfaces.
-- Desktop joint jogs pause headset input and command the existing upper servo.
-  Hold clears control; resume requires release and re-grip. Base buttons drive
-  only while pressed. Lost input stops the base after 0.3 s.
-- Both G1Z grippers are driven in simulation, with normalized opening feedback.
-  Recording and home planning controls require optional providers and are hidden
-  or disabled when absent.
+- **AVP / tracked hands:** choose **Follow hands**, then release the menu pinch.
+  Wrist poses continuously drive both arms relative to your estimated shoulders.
+  Open hands open the grippers; curling into fists closes them proportionally.
+  Tracking loss holds both arms and requires choosing Follow hands again.
+- **Controllers:** hold both grips to follow your calibrated body pose; triggers
+  close the jaws. Releasing a grip holds the arms without changing calibration.
+  Left stick drives/strafes, right stick X turns, and right stick Y changes height.
+- **Controls:** raise your left palm, then point/pinch Controls with your other
+  hand (controller Y also opens the menu). Opening it holds hand following.
+  One world-anchored menu replaces the HUD and separate camera panels; it never
+  follows your head or scales with the workspace. The Cameras tab selects one
+  head/left-wrist/right-wrist preview at a time.
+- **View:** switch between Workspace and Robot eyes. Robot eyes places you at
+  the head camera at life size and follows the robot; you can look around the
+  observed RGB-D scene. It is a reconstructed sensor view, not a new panoramic
+  renderer, so unobserved areas remain empty. Workspace scale and placement are
+  retained when switching back. Use the View tab to resize or hide the voxel map.
+- An explicit **Hold robot** latches until Resume. The simulation starts enabled.
+  Desktop joint jogs pause headset input. Base buttons drive only while pressed;
+  lost input stops the base after 0.3 seconds. Tracked hands do not drive the base.
+- Both simulated G1Z grippers report normalized openings. Recording/home controls
+  require optional providers and are hidden or disabled when absent.
 
 Robot geometry, joints, tool/base frames and camera labels are configured in the
 blueprint. Shared code lives under `dimos/teleop/spatial`; R1-specific base driving,
@@ -95,14 +89,19 @@ two operator arm slots (`left`/`right`) and three optional camera slots
 one or two arms with arbitrary joint names; it is not yet an unlimited-group or
 arbitrary-camera-count UI. Real robot controllers still need their own bindings.
 
-Arm targets pass through Pink IK and the control coordinator to sim2's upper-body
-servo. Each measured body-to-shoulder transform is captured on grip engagement so
-driving carries held arms with the base. Each task owns seven arm joints. The
-torso servo owns a separate height input; the arm coordinator cannot overwrite it.
-Tool handles and desktop keyboard control retain their spatial-world semantics.
-The shared protocol validates sessions/epochs and requires a fresh release after
-input loss. Joint feedback freshness uses receipt time, so simulation timestamps
-are not compared against the wall clock.
+Arm targets pass through one bimanual Pink IK task and the control coordinator
+to sim2's upper-body servo. Both arms and top waist pitch/yaw share the solve;
+targets use measured TF into `r1pro/torso_link2`. Human reach is normalized to
+98% of robot reach, independent of workspace scale and world heading. Height
+runs through a separate coordinator task whose pitch compensation yields to IK.
+The old independent torso servo is disabled for this blueprint.
+
+The shared protocol validates sessions/epochs and requires release after input
+loss. Joint feedback freshness uses receipt time, not simulation clock time.
+The headset-based shoulder estimate does not measure elbows or torso rotation;
+recalibrate after turning your body. This differential IK path has no
+self-collision constraints. AVP hand input is covered by synthetic browser tests;
+physical headset tracking quality still needs operator testing.
 
 ## Sensors and display
 
@@ -154,7 +153,7 @@ Unreal reuses up to three target resolutions and resets temporal history when
 switching optical frames to prevent cross-camera ghosting. Rebuild the prepared
 renderer after updating native source (see the SF555 setup).
 
-Desktop and headset expose Head / Left wrist / Right wrist panels. Each RGB-D
+Desktop exposes Head / Left wrist / Right wrist views; XR selects one camera in its menu. Each RGB-D
 pair has its own calibration, timestamped optical-to-world TF and mesh. Wrist
 meshes reject depth discontinuities over 3.5 cm. Empty depth clears previous
 geometry; stale camera surfaces are hidden rather than attached to a moving arm.
@@ -343,7 +342,7 @@ had already reconnected; no new live arm-motion result is claimed.
 
 `r1pro-spatial` uses the same Desktop/WebXR workstation as `r1pro-sim2`.
 It replaces simulation with `R1ProConnection`, the vendor joint tracker and
-chassis gatekeeper. Both use the shared arm IK tasks and body-relative clutch.
+chassis gatekeeper. Both use calibrated absolute body targets and shared bimanual IK.
 The hardware binding captures measured posture at engagement; it never homes
 on startup. Grippers use the vendor's 0–100 percent opening, not the simulated
 finger displacement. Hardware joint jogging and automatic homing are disabled.
@@ -372,10 +371,10 @@ Open `https://100.68.53.40:8443/spatial` over Tailscale, or
 HTTPS accepted/trusted by the headset browser. The checkout uses the robot's
 existing Desktop certificate (covers both addresses). The same spatial page is
 exposed as a Desktop webview when that Desktop is connected to this run.
-Enter XR, release then squeeze a grip to clutch that arm, and use its trigger
-for the gripper. Left stick drives/straffes; right stick X turns; right stick Y
+Enter XR and calibrate body reach, then hold both grips to follow; triggers
+control the grippers. Left stick drives/straffes; right stick X turns; right stick Y
 changes torso height. Hold is explicit and latches until Resume. View scaling
-is on the HUD and does not share the gripper triggers.
+is in the Controls → View menu and does not share the gripper triggers.
 
 Hardware control caps arm commands at 0.25 rad/s, torso joints at 0.15 rad/s,
 base translation at 0.15 m/s and rotation at 0.25 rad/s. Torso height follows the

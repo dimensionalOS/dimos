@@ -9,7 +9,7 @@ const yawQ=yaw=>[0,Math.sin(yaw/2),0,Math.cos(yaw/2)];
 const flu=[0.5,-0.5,-0.5,0.5];
 export class BodyFollow {
   constructor() { this.reset(); }
-  reset() { this.calibration=null; this.error='Calibrate body with both arms extended forward and grips released.'; }
+  reset() { this.calibration=null; this.error='Calibrate with arms forward, palms down, hands open (controllers: release grips).'; }
   frame(viewer, body) {
     const left=body?.['left-arm-upper'], right=body?.['right-arm-upper'];
     if(left && right) {
@@ -25,7 +25,7 @@ export class BodyFollow {
     return {rotation:mul(flu,yawQ(-yaw)),yaw,
       shoulders:Object.fromEntries(['left','right'].map(side=>[side,
         add(viewer.position,rotate([side==='left'?-0.18:0.18,-0.22,0],yawQ(yaw)))])),
-      source:'estimated shoulders (headset + controllers)'};
+      source:'estimated shoulders (headset)'};
   }
   calibrate(viewer, hands, body) {
     // A new explicit calibration may change heading; grip engagement may not.
@@ -39,7 +39,7 @@ export class BodyFollow {
       const offset=rotate(sub(hand.position,frame.shoulders[side]),frame.rotation);
       const reach=Math.hypot(...offset);
       if(reach<0.35 || reach>1.1 || offset[0]/reach<0.8) {
-        this.error='Extend both arms forward, shoulder height, pointing controllers forward.';return false;
+        this.error='Extend arms forward at shoulder height, palms down, hands open.';return false;
       }
       arms[side]={reach,orientation:inverse(mul(frame.rotation,hand.orientation))};
     }

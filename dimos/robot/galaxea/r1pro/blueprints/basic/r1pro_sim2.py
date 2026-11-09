@@ -19,6 +19,7 @@ Prepare the R1 Pro model and office assets; see docs/development/sim2-r1pro.md.
 
 from dataclasses import replace
 from functools import partial
+import math
 import os
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -37,7 +38,7 @@ from dimos.robot.galaxea.r1pro.sim.model import FINGER_TRAVEL_M
 from dimos.robot.galaxea.r1pro.sim.teleop import (
     TELEOP_MODEL,
     R1ProTeleopCoordinator,
-    arm_tasks,
+    spatial_tasks,
 )
 from dimos.robot.galaxea.r1pro.spatial import R1ProSpatialTeleop
 from dimos.robot.urdf_manager import UrdfManager
@@ -111,15 +112,14 @@ r1pro_sim2 = (
             block_count=100_000,
             emit_every=5,
         ).remappings([(VoxelGridMapper, "lidar", "pointcloud")]),
-        R1ProSimControl.blueprint(
-            upper_command_joints=tuple(
-                f"r1pro/{side}_arm_joint{i}" for side in ("left", "right") for i in range(1, 8)
-            )
-        ),
+        R1ProSimControl.blueprint(coordinator_torso=True),
         R1ProSpatialTeleop.blueprint(
             title="R1 Pro · SF555",
             environment="Simulation",
             joint_jog_available=True,
+            absolute_body_targets=True,
+            ik_base_frame="r1pro/torso_link2",
+            egocentric_frame="r1pro/camera_head_left_link",
             robot_model=RobotModelConfig(
                 model=MODEL, joint_names=list(JOINTS), base_link="r1pro/base_link"
             ),
@@ -129,6 +129,9 @@ r1pro_sim2 = (
                     joint_names=tuple(f"r1pro/{side}_arm_joint{i}" for i in range(1, 8)),
                     tip_frame=f"r1pro/{side}_gripper_link",
                     base_frame=f"r1pro/{side}_arm_base_link",
+                    body_shoulder_frame=f"r1pro/{side}_arm_link2",
+                    body_anchor_frame="r1pro/torso_link3",
+                    body_forward_orientation=(0, -math.sqrt(0.5), 0, math.sqrt(0.5)),
                     gripper_joint=f"r1pro/{side}_gripper_finger_joint1",
                     gripper_open_position=FINGER_TRAVEL_M,
                 )
@@ -151,7 +154,7 @@ r1pro_sim2 = (
         R1ProTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=TELEOP_MODEL,
-            tasks=arm_tasks(),
+            tasks=spatial_tasks(),
             tick_rate=50,
             publish_joint_state=False,
         ),

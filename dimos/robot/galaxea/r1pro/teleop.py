@@ -74,13 +74,12 @@ def arm_tasks(models: Mapping[str, RobotModel], frame_prefix: str = "") -> list[
     ]
 
 
-class R1HardwareTeleopCoordinator(TeleopControlCoordinator):
+class R1BodyTeleopCoordinator(TeleopControlCoordinator):
     """Bimanual IK, height and chassis arbitration on the connection contract."""
 
     dedicated_worker = True
     r1pro_joint_state: In[JointState]
     r1pro_position_command: Out[JointState]
-    r1pro_cmd_vel: Out[Twist]
     torso_height_command: In[Float32]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -114,6 +113,10 @@ class R1HardwareTeleopCoordinator(TeleopControlCoordinator):
         if self._height_task is not None:
             self._height_task.on_preempted("stop", self._height_task.claim().joints)
         super().stop()
+
+
+class R1HardwareTeleopCoordinator(R1BodyTeleopCoordinator):
+    r1pro_cmd_vel: Out[Twist]
 
     @rpc
     def set_joint(self, name: str, position: float) -> None:

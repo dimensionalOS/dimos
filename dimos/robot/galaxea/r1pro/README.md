@@ -80,8 +80,16 @@ separate tasks. Base velocity also passes through coordinator arbitration.
 Offline checks cover frame mapping at nonzero torso height, bounded reaching,
 release/re-engagement, timeout, and E-stop. They do not establish on-robot tracking
 quality or collision avoidance: this differential IK path has no self-collision
-constraints and does not mirror measured human elbow poses. The existing
-`r1pro-sim2` and CC's `r1pro-vr-teleop` retain their original input modes.
+constraints and does not mirror measured human elbow poses. `r1pro-sim2` now uses the same absolute body mapping and bimanual solve.
+CC's `r1pro-vr-teleop` retains its original input mode.
+
+For tracked hands (including AVP WebXR), calibrate with palms down and hands
+open, then choose **Follow hands**. Open hands open the jaws; fists close them.
+Tracking loss or opening Controls holds both arms until Follow hands is selected
+again. Raise your left palm and select Controls with the other hand to summon
+one fixed-size menu. Its View tab offers workspace scaling, map visibility, and
+**Robot eyes** in sim2: a life-size view from the head camera using observed
+RGB-D surfaces. It is not a panoramic rendered scene.
 
 ## Quest VR teleop
 

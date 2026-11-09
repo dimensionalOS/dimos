@@ -17,13 +17,15 @@
 from pydantic import Field
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.stream import In, Out
+from dimos.core.stream import Out
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_spatial import (
+    spatial_tasks as hardware_spatial_tasks,
+)
 from dimos.robot.galaxea.r1pro.sim.config import MODEL
 from dimos.robot.galaxea.r1pro.sim.model import FINGER_JOINTS, STEER_JOINTS, WHEEL_JOINTS
-from dimos.robot.galaxea.r1pro.teleop import arm_tasks as r1_arm_tasks
+from dimos.robot.galaxea.r1pro.teleop import R1BodyTeleopCoordinator, arm_tasks as r1_arm_tasks
 from dimos.teleop.webxr.controller_types import Hand
 from dimos.teleop.webxr.extensions import VideoArmTeleopConfig, VideoArmTeleopModule
 
@@ -46,12 +48,10 @@ def arm_tasks() -> list[TaskConfig]:
     )
 
 
-class R1ProTeleopCoordinator(TeleopControlCoordinator):
+class R1ProTeleopCoordinator(R1BodyTeleopCoordinator):
     """Use the coordinator's standard connection ports instead of hardware adapters."""
 
     dedicated_worker = True
-    r1pro_joint_state: In[JointState]
-    r1pro_position_command: Out[JointState]
 
 
 class R1ProWebXRConfig(VideoArmTeleopConfig):
@@ -99,3 +99,25 @@ class R1ProWebXR(VideoArmTeleopModule):
 
     def _axis(self, value: float) -> float:
         return 0.0 if abs(value) < self.config.deadzone else max(-1.0, min(1.0, value))
+
+
+def spatial_tasks() -> list[TaskConfig]:
+    """The hardware bimanual body mapping, bound to sim2's prefixed frames."""
+    tasks = [
+        task for task in hardware_spatial_tasks() if task.type in ("teleop_ik", "operator_hold")
+    ]
+    for task in tasks:
+        if task.type != "teleop_ik":
+            continue
+        task.params["robot_model"] = RobotModelConfig(
+            model=MODEL.with_subtree_rooted_at("r1pro/torso_link2")
+            .with_fixed_joints(*FINGER_JOINTS)
+            .with_default_joint_acceleration_limit(2.0),
+            joint_names=list(task.joint_names),
+            base_link="r1pro/torso_link2",
+        )
+        task.params["bindings"] = [
+            {"hand": side, "target_frame": f"r1pro/{side}_gripper_link"}
+            for side in ("left", "right")
+        ]
+    return tasks

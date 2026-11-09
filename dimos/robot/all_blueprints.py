@@ -343,6 +343,7 @@ all_modules = {
     "point-cloud-box-filter": "dimos.mapping.pointclouds.box_filter.PointCloudBoxFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
+    "r1-body-teleop-coordinator": "dimos.robot.galaxea.r1pro.teleop.R1BodyTeleopCoordinator",
     "r1-hardware-teleop-coordinator": "dimos.robot.galaxea.r1pro.teleop.R1HardwareTeleopCoordinator",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator.R1ProCoordinator",
