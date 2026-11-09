@@ -14,6 +14,3 @@ proc-macro = true
 syn = { version = "3", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
-# `#[module(name = ...)]` reads the crate's own Cargo.toml to check the ports it
-# declares against `[package.metadata.dimos.module.*]`.
-toml = "1.1"

@@ -318,7 +318,7 @@ pub fn parse_verb(verb: &str) -> Option<Vec<Cmd>> {
 }
 
 #[derive(Module)]
-#[module(name = "go2_dds", setup = start, teardown = stop)]
+#[module(setup = start, teardown = stop)]
 pub struct Go2Dds {
     #[input(decode = Twist::decode, handler = on_cmd_vel)]
     cmd_vel: Input<Twist>,

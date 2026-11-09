@@ -97,21 +97,16 @@ TEST_CASE("the session settings become a zenoh config") {
 
 TEST_CASE("publisher qos is read per channel, and unset fields keep defaults") {
     auto qos = parse_channel_qos(nlohmann::json::parse(R"({
-      "/a": {"congestion_control": "block", "locality": "session_local",
-             "reliability": "reliable"},
-      "/b": {"congestion_control": "drop", "locality": "remote",
-             "reliability": "best_effort"},
+      "/a": {"congestion_control": "block", "reliability": "reliable"},
+      "/b": {"congestion_control": "drop", "reliability": "best_effort"},
       "/c": {}
     })"));
     REQUIRE(qos.count("/a") == 1);
     CHECK(qos.at("/a").congestion_control == Z_CONGESTION_CONTROL_BLOCK);
-    CHECK(qos.at("/a").locality == Z_LOCALITY_SESSION_LOCAL);
     CHECK(qos.at("/a").reliability == Z_RELIABILITY_RELIABLE);
     CHECK(qos.at("/b").congestion_control == Z_CONGESTION_CONTROL_DROP);
-    CHECK(qos.at("/b").locality == Z_LOCALITY_REMOTE);
     CHECK(qos.at("/b").reliability == Z_RELIABILITY_BEST_EFFORT);
     CHECK_FALSE(qos.at("/c").congestion_control.has_value());
-    CHECK_FALSE(qos.at("/c").locality.has_value());
     CHECK_FALSE(qos.at("/c").reliability.has_value());
 }
 
@@ -119,11 +114,10 @@ TEST_CASE("a qos field of the wrong type keeps the default rather than throwing"
     // Rust reads these with as_str, so a wrong type is ignored there. Thrown
     // here it would kill the module before a single subscriber was wired.
     auto qos = parse_channel_qos(nlohmann::json::parse(R"({
-      "/a": {"reliability": null, "congestion_control": 7, "locality": ["any"]}
+      "/a": {"reliability": null, "congestion_control": 7}
     })"));
     REQUIRE(qos.count("/a") == 1);
     CHECK_FALSE(qos.at("/a").congestion_control.has_value());
-    CHECK_FALSE(qos.at("/a").locality.has_value());
     CHECK_FALSE(qos.at("/a").reliability.has_value());
 }
 

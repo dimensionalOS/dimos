@@ -51,7 +51,7 @@ const JOB_QUEUE_CAPACITY: usize = 256;
 const SEED_STARVED_WARN_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Module)]
-#[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,

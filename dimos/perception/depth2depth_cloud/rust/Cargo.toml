@@ -15,20 +15,6 @@ path = "src/bin/depth2depth_cloud.rs"
 
 [workspace]
 
-# Module registry entry, cross-checked at compile time by the module macro.
-[package.metadata.dimos.module.depth2depth_cloud]
-path = "dimos_depth2depth_cloud::module::Depth2DepthCloud"
-python = "dimos.perception.depth2depth_cloud.module:Depth2DepthCloud"
-
-[package.metadata.dimos.module.depth2depth_cloud.inputs]
-image = "sensor_msgs.CompressedImage"
-camera_info = "sensor_msgs.CameraInfo"
-lidar = "sensor_msgs.PointCloud2"
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.depth2depth_cloud.outputs]
-depth_cloud = "sensor_msgs.PointCloud2"
-
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

@@ -36,20 +36,6 @@ test-bodies = []
 name = "invariants"
 required-features = ["test-bodies"]
 
-[package.metadata.dimos.module.local_planner]
-path = "dimos_local_planner::module::planner::LocalPlanner"
-python = "dimos.navigation.local_planner.native:LocalPlannerNative"
-threads = 2
-
-[package.metadata.dimos.module.local_planner.inputs]
-local_map = "sensor_msgs.PointCloud2"
-planner_path = "nav_msgs.Path"
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.local_planner.outputs]
-path = "nav_msgs.Path"
-ground_support = "sensor_msgs.PointCloud2"
-
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -116,7 +116,7 @@ struct Shared {
 }
 
 #[derive(Module)]
-#[module(name = "trajectory_follower", setup = spawn_worker, teardown = stop_worker)]
+#[module(setup = spawn_worker, teardown = stop_worker)]
 pub struct TrajectoryFollower {
     #[input(decode = Path::decode, handler = on_path)]
     path: Input<Path>,

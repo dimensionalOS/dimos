@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The python config and the rust struct/registry agree field for field."""
+"""The python config and the rust struct agree field for field."""
 
 import json
 from pathlib import Path
-import sys
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 from dimos.core.native_module import NativeModuleConfig
-from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera, RealSenseCameraConfig
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCameraConfig
 
-_RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
+_RUST_SRC = Path(__file__).parent / "rust" / "src"
 
 
 def _camera_fields() -> set[str]:
@@ -46,21 +40,7 @@ def test_config_dict_is_the_camera_config() -> None:
 
 
 def test_rust_struct_has_every_config_key() -> None:
-    src = (_RUST_MANIFEST.parent / "src" / "main.rs").read_text()
+    src = (_RUST_SRC / "main.rs").read_text()
     struct = src.split("struct Config {", 1)[1].split("}", 1)[0]
     declared = {line.split(":")[0].strip() for line in struct.splitlines() if ": " in line}
     assert declared == _camera_fields()
-
-
-def test_ports_match_registry() -> None:
-    def ports(cls: type) -> set[str]:
-        return {
-            name
-            for name, hint in cls.__annotations__.items()
-            if getattr(hint, "__origin__", None) is not None or "Out[" in str(hint)
-        } - {"config"}
-
-    manifest = tomllib.loads(_RUST_MANIFEST.read_text())
-    registry = manifest["package"]["metadata"]["dimos"]["module"]["realsense"]
-    # The registry files a #[tf] port under inputs, as it subscribes too.
-    assert set(registry["outputs"]) | set(registry["inputs"]) == ports(RealSenseCamera)

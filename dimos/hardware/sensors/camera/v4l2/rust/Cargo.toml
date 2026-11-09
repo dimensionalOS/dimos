@@ -13,13 +13,6 @@ path = "src/lib.rs"
 name = "v4l2_camera"
 path = "src/bin/v4l2_camera.rs"
 
-[package.metadata.dimos.module.v4l2_camera]
-path = "dimos_v4l2_camera::module::V4L2Camera"
-python = "dimos.hardware.sensors.camera.v4l2.module:V4L2Camera"
-
-[package.metadata.dimos.module.v4l2_camera.outputs]
-jpeg_out = "sensor_msgs.CompressedImage"
-
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

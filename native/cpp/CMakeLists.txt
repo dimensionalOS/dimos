@@ -50,8 +50,6 @@ target_link_libraries(dimos_native INTERFACE
 #
 # zenohcxxConfig.cmake only defines its backend target when zenohc::lib already
 # exists, and hard-errors when no backend does, so zenoh-c goes first.
-# Older zenoh-c spells the locality enum ZC_LOCALITY_*, so accepting one trades
-# this version message for a page of compiler errors.
 # pkg-config before the CMake config: nixpkgs splits zenoh-c into out/dev and its
 # zenohcConfig.cmake points the library at the dev output, which has none, while
 # its .pc is right. The upstream release zips ship only the CMake config.

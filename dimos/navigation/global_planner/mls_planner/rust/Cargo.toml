@@ -13,30 +13,6 @@ path = "src/lib.rs"
 name = "mls_planner"
 path = "src/main.rs"
 
-# Module registry entry, cross-checked at compile time by the module macro.
-# threads = 2 so the handle loop keeps dispatching while the planning worker
-# runs block_in_place.
-[package.metadata.dimos.module.mls_planner]
-path = "dimos_mls_planner::module::MlsPlanner"
-python = "dimos.navigation.global_planner.mls_planner.mls_planner_native:MLSPlannerNative"
-threads = 2
-
-[package.metadata.dimos.module.mls_planner.inputs]
-global_map = "sensor_msgs.PointCloud2"
-local_map = "sensor_msgs.PointCloud2"
-region_bounds = "geometry_msgs.PoseStamped"
-seed_map = "sensor_msgs.PointCloud2"
-seed_bounds = "geometry_msgs.PoseStamped"
-goal = "geometry_msgs.PointStamped"
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.mls_planner.outputs]
-surface_map = "sensor_msgs.PointCloud2"
-nodes = "sensor_msgs.PointCloud2"
-node_edges = "nav_msgs.LineSegments3D"
-path = "nav_msgs.Path"
-nav_status = "actionlib_msgs.GoalStatus"
-
 [dependencies]
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "93ca305d24721f49bd30d580a8ec353619560744" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }

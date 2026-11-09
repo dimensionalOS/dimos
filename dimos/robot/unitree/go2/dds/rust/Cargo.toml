@@ -28,31 +28,6 @@ validator = { version = "0.21", features = ["derive"] }
 cdr = "0.2.4"
 serde_json = "1"
 
-[package.metadata.dimos.module.go2_dds]
-path = "dimos_go2_dds::module::Go2Dds"
-python = "dimos.robot.unitree.go2.dds.module:GO2DDS"
-
-[package.metadata.dimos.module.go2_dds.inputs]
-cmd_vel = "geometry_msgs.Twist"
-command = "std_msgs.String"
-tf = "tf2_msgs.TFMessage"
-
-[package.metadata.dimos.module.go2_dds.outputs]
-odometry = "nav_msgs.Odometry"
-lidar = "sensor_msgs.PointCloud2"
-video = "foxglove_msgs.CompressedVideo"
-image = "sensor_msgs.CompressedImage"
-lidar_raw = "sensor_msgs.PointCloud2"
-lidar_imu = "sensor_msgs.Imu"
-joint_state = "sensor_msgs.JointState"
-motor_state = "control_msgs.DynamicJointState"
-joint_command = "control_msgs.DynamicJointState"
-height_map = "sensor_msgs.PointCloud2"
-imu = "sensor_msgs.Imu"
-battery = "sensor_msgs.BatteryState"
-joy = "sensor_msgs.Joy"
-camera_info = "sensor_msgs.CameraInfo"
-
 [profile.release]
 lto = "thin"
 codegen-units = 1

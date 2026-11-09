@@ -34,13 +34,9 @@ use crate::transport::{Dispatch, Transport};
 pub trait NativeConfig {}
 
 /// Trait required by `Module::Config`s to ensure that configurations are
-/// validated correctly. `Send` because a config is parsed on the host's main
-/// thread and handed to the module's own thread.
-pub trait ModuleConfig:
-    DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send
-{
-}
-impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig + Send> ModuleConfig for T {}
+/// validated correctly.
+pub trait ModuleConfig: DeserializeOwned + Serialize + Debug + Validate + NativeConfig {}
+impl<T: DeserializeOwned + Serialize + Debug + Validate + NativeConfig> ModuleConfig for T {}
 
 /// Default config type used by `#[derive(Module)]` when no `#[config]` field
 /// is used. Just a stand in for modules that don't use configurations.
@@ -166,7 +162,7 @@ pub(crate) async fn publish_encoded(
 
 /// Extract `(topics, config)` from an already-parsed config object. `run`
 /// parses the line once and also reads `qos` from it, so this takes the value.
-pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
+fn parse_config_value<C: DeserializeOwned + Serialize>(
     json: &serde_json::Value,
 ) -> io::Result<(HashMap<String, String>, C)> {
     let mut topics = HashMap::new();
@@ -276,7 +272,7 @@ fn format_validation_errors(errors: &validator::ValidationErrors) -> String {
     messages.join("; ")
 }
 
-pub(crate) fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
+fn validate_config<C: Validate>(config: &C) -> io::Result<()> {
     config.validate().map_err(|errs| {
         io::Error::new(
             io::ErrorKind::InvalidData,
@@ -475,7 +471,7 @@ pub(crate) fn spawn_publish_tasks<T: Transport>(
     tasks
 }
 
-pub(crate) fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
+fn propagate_task_failure(name: &str, res: Result<(), tokio::task::JoinError>) {
     match res {
         Ok(()) => error!(task = name, "task exited unexpectedly"),
         Err(e) => {
@@ -510,9 +506,8 @@ where
 }
 
 /// Build, wire and run one module over an already-open transport until it
-/// finishes or `shutdown` flips. Shared by the one-module-per-process `run`
-/// and by the baked host, which drives several of these on one transport.
-pub(crate) async fn run_module_core<M, T>(
+/// finishes or `shutdown` flips.
+async fn run_module_core<M, T>(
     transport: Arc<T>,
     topics: HashMap<String, String>,
     config: M::Config,
@@ -549,16 +544,15 @@ where
     Ok(())
 }
 
-/// Log the resolved wiring of a module, tagged with whatever the operator sees
-/// in `ps`: the executable for a lone module, the module id inside a host.
-pub(crate) fn log_wiring<C: Debug>(exe: &str, topics: &HashMap<String, String>, config: &C) {
+/// Log the resolved wiring of a module, tagged with its executable name.
+fn log_wiring<C: Debug>(exe: &str, topics: &HashMap<String, String>, config: &C) {
     for (port, topic) in topics {
         info!(exe = %exe, port = %port, topic = %topic, "topic mapping");
     }
     info!(exe = %exe, config = ?config, "config loaded");
 }
 
-pub(crate) fn exe_name() -> String {
+fn exe_name() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
