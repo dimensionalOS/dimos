@@ -81,8 +81,6 @@ SERVO_JOINTS = (
     + tuple(f"{side}_{name}_joint" for side in ("left", "right") for name, *_ in _ARM)
 )
 
-# SERVO_JOINTS orders the rows and make_humanoid_joints labels them, so a reorder of _LEG against
-# a new vendor MJCF would mislabel every joint silently. Same guard wholebody_connection has.
 assert len(SERVO_JOINTS) == len(make_humanoid_joints("g1"))
 
 
@@ -135,7 +133,6 @@ class G1Sim(Module):
 
     @property
     def joint_names(self) -> list[str]:
-        """This robot's joints as the wire names them, under its own id."""
         return make_humanoid_joints(self.config.robot_id)
 
     async def handle_motor_command(self, command: MotorCommandArray) -> None:
@@ -204,8 +201,6 @@ class G1Sim(Module):
             index = {name: i for i, name in enumerate(names)}
             missing = [joint for joint in SERVO_JOINTS if joint not in index]
             if missing:
-                # A partial set used to raise KeyError here, which killed the task and left the
-                # robot publishing nothing for the rest of the run.
                 if not self._warned_about_joints:
                     self._warned_about_joints = True
                     logger.warning(
