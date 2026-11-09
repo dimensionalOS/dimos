@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -45,6 +46,7 @@ from dimos.robot.assets.usd import (
     resolve_usd_assets,
     trivialize_usd,
     usd_frame_names,
+    warm_usd,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -137,6 +139,12 @@ class Mount:
 
         if isinstance(value, Mount):
             return value
+        if isinstance(value, Mapping) and "remote_name" in value:
+            # A Mount that has already been normalized once. The config is validated again in
+            # the worker the manager is deployed into, and what arrives there is the plain dict
+            # this one was dumped to -- so without this branch every mount a blueprint actually
+            # deploys is rejected, and mounts only ever work in-process.
+            return cls(**value)
         if isinstance(value, Blueprint):
             return cls._from_blueprint(value)
         if isinstance(value, str):
@@ -258,6 +266,8 @@ class UrdfManager(Module):
         self._usd: str | None = None
         # Its own lock: baking meshes into a USD takes seconds, and self._lock is on the tf path.
         self._usd_lock = RLock()
+        # Serializes scene assembly across the file requests that arrive while it runs.
+        self._scene_build = asyncio.Lock()
         # The last scene get_scene assembled. A renderer wants the whole tree, not just this
         # robot, and only get_scene knows what is mounted.
         self._scene: str | None = None
@@ -477,6 +487,11 @@ class UrdfManager(Module):
         if not mounts:
             self._check_renames_matched(self._matched_own_renames())
             return {}
+        # Before the gather, not inside it: each subtree is read and hashed on its own thread,
+        # and the USD bindings finish loading themselves the first time a layer is read. Several
+        # threads reaching that together deadlock in the import machinery, and this manager then
+        # answers nothing, for ever, without raising.
+        await asyncio.to_thread(warm_usd)
         results = await asyncio.gather(
             *(self._subtree(frame_id, mount, chain) for frame_id, mount in mounts.items())
         )
@@ -594,11 +609,20 @@ class UrdfManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(USD_SUFFIXES):
-            # Off the loop thread: the first request is the one that pays for the import
-            # and the conversion, and it arrives while tf is flowing.
-            usd = self._scene
-            if usd is None:
-                usd = (await asyncio.to_thread(self.get_usd))[USD]
+            async with self._scene_build:
+                usd = self._scene
+                if usd is None and self.config.mounts:
+                    # A manager with mounts answers for the whole tree, and nothing else
+                    # assembles it: get_scene is an rpc for a manager above this one to call,
+                    # and a top-level manager has nobody above it. Falling through to get_usd
+                    # here answered with this robot's own layer alone -- for a manager that is
+                    # only a set of mount points, a stage of empty frames with no geometry in
+                    # it at all, and not an error anywhere to say so.
+                    usd = (await self.get_scene())[USD]
+                if usd is None:
+                    # Off the loop thread: the first request is the one that pays for the import
+                    # and the conversion, and it arrives while tf is flowing.
+                    usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
         # Only files this manager has published: a request is never an arbitrary path into the
