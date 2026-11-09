@@ -14,10 +14,9 @@
 
 """An RGB camera: its own copy of the scene, posed from world_observations and rendered.
 
-It describes itself to nobody. A manager mounts its `get_usd` onto the frame it is bolted to, so
-the composed scene carries the pose; the camera then asks that manager for the scene, builds a
-world of its own out of it, puts a camera at its own frame with its own field of view, and draws
-from the observations the simulation publishes.
+It describes itself to nobody. A manager mounts its `get_usd` onto the frame it is bolted to,
+so the composed scene carries the pose; the camera then asks that manager for the scene and
+draws from the observations the simulation publishes.
 """
 
 import asyncio
@@ -97,9 +96,8 @@ class SimCamera(Module):
     def _open(self, layer: Path) -> WorldView:
         """This camera's world: the scene, with a camera of its own at its own frame.
 
-        Opened on the first frame rather than at start, because the robots in the world are what
-        the world says they are -- the observations announce them -- and the view has to name its
-        bodies the way the observations do.
+        Opened on the first frame rather than at start, because the robots in the world are what the
+        observations announce, and the view has to name its bodies the way they do.
         """
         return open_view(
             layer,
@@ -111,9 +109,8 @@ class SimCamera(Module):
     def _name(self) -> str:
         """What this camera is called in its own world. Its frame will do: there is one of it.
 
-        `self.frame_id`, not `config.frame_id`: in a namespace the frame carries that prefix, and
-        the prefixed name is what the composed scene and the observations both use. Three robots
-        each with a camera is three cameras called `camera_optical` otherwise, mounted at one
-        frame, two of which belong to somebody else.
+        `self.frame_id`, not `config.frame_id`: in a namespace the frame carries that prefix, and the
+        prefixed name is what the composed scene and the observations both use. Otherwise three robots
+        with a camera each are three cameras called `camera_optical`, mounted at one frame.
         """
         return self.frame_id
