@@ -33,7 +33,7 @@ import numpy as np
 from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.backend import Publisher
 from dimos.sim2.spec import Simulated, SimulatedRobot
-from dimos.sim2.usd_layer import usd_layer
+from dimos.sim2.usd_layer import scene_layer, usd_layer
 from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 
@@ -88,9 +88,10 @@ class MujocoBackend:
         self, config: "SimulationConfig", simulated: Mapping[str, Simulated], directory: Path
     ) -> None:
         self._config = config
-        self._scene = config.scene or Path(__file__).with_name("logistics.xml")
+        # The world as a file, which is what MuJoCo opens and what a renderer asks for by name.
+        self._scene_layer = scene_layer(config.scene)
         self._robots = {d.robot_id: d for d in simulated.values() if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(self._scene, simulated.values())
+        self.model = compile_world(self._scene_layer, simulated.values())
         # Robots whose controllers the world steps in lockstep with, and the actions each sent since its last tick.
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)
@@ -107,7 +108,7 @@ class MujocoBackend:
         self._sent: dict[str, np.ndarray] = {}
         self._sent_joints: dict[str, np.ndarray] = {}
         self._refusals: list[tuple[str, str]] = []
-        self._files = _files_named_by(self._scene, None)
+        self._files = _files_named_by(self._scene_layer, None)
         # A robot's layer as a file: the name a renderer asks for it by, and what the files it
         # names are relative to.
         self._layers = {id: usd_layer(r.model) for id, r in self._robots.items()}
@@ -116,10 +117,16 @@ class MujocoBackend:
         self._reset()
 
     def describe(self) -> dict[str, Any]:
-        return {"scene": str(self._scene)}
+        return {"scene": str(self._scene_layer)}
 
     def assets(self) -> Mapping[str, Path | bytes]:
-        return {"world.xml": self._scene.read_bytes(), **self._files}
+        # Under its own name as well as "world.xml": a renderer that has the description knows
+        # the layer's path, and one that only knows it is talking to a world asks for the world.
+        return {
+            "world.xml": self._scene_layer,
+            str(self._scene_layer): self._scene_layer,
+            **self._files,
+        }
 
     def scene_data(self) -> str:
         model = self.model
@@ -166,7 +173,7 @@ class MujocoBackend:
         return json.dumps(
             {
                 "format": "dimos.scene_data.v1",
-                "id": f"{self._scene.stem}-{id(self)}",
+                "id": f"{self._scene_layer.stem}-{id(self)}",
                 "frame": "world",
                 "bodies": bodies,
                 "meshes": meshes,

@@ -64,3 +64,20 @@ def _name_of(model: UsdModel) -> str:
     """Something recognisable in front of the hash: a path a person has to read says whose it is."""
     source = model.source_path
     return source.stem if source is not None else "layer"
+
+
+def scene_layer(scene: UsdModel | Path | str | None) -> Path:
+    """The file an engine opens for the world a config names.
+
+    A world given as USD is materialised like a robot's: written out with its asset paths
+    resolved, because a composed scene exists nowhere until it is. A world given as a file is
+    already one, and is handed over as it stands.
+
+    That second case is how the toy worlds the tests build, and the shipped `logistics.xml`,
+    keep working: they are MJCF, which MuJoCo reads perfectly well and usd-core cannot parse at
+    all. Refusing a world that loads would buy nothing. The robot descriptions are the ones held
+    to USD and nothing else, and the real blueprints hand the scene over as USD too.
+    """
+    if isinstance(scene, UsdModel):
+        return usd_layer(scene)
+    return Path(scene) if scene is not None else Path(__file__).with_name("logistics.xml")

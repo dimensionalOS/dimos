@@ -38,6 +38,7 @@ from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
+from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
@@ -52,7 +53,10 @@ class SimulationSpec(Spec, Protocol):
 
 
 class SimulationConfig(ModuleConfig):
-    scene: Path | None = Field(default_factory=lambda m: m["g"].scene_package)
+    # The world to simulate, as USD: a layer, or a file holding one. A path is read into a
+    # UsdModel rather than handed to the engine, so a backend is only ever given USD -- the one
+    # kind of description everything here agrees on.
+    scene: Path | UsdModel | None = Field(default_factory=lambda m: m["g"].scene_package)
     backend: str = "mujoco"
     # Sim seconds per wall second.
     speed: float = 1.0
