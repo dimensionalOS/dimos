@@ -22,9 +22,9 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.sim2.mujoco.names import resolve
+from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import SimulatedRobot
-from dimos.sim2.usd_names import resolve
-from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import WORLD, Entity, WorldMirror
 from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
 

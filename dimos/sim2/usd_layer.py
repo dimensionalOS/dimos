@@ -16,14 +16,13 @@
 
 A description carries a ``UsdModel``, which may be a layer that exists nowhere: a robot's
 committed layer with its sensor mounts added is new text, and so is a scene composed out of
-several subtrees. MuJoCo opens a *file*, and a layer's references are relative to wherever it
+several subtrees. An engine opens a *file*, and a layer's references are relative to wherever it
 was written, so handing it one means writing the text out with its asset paths resolved first.
 
-Written under a content hash and reused, the way ``mjcf_with_frames`` caches its MJCFs. That
-matters for more than speed: the world is compiled in more than one process -- Simulation steps
-it while a sensor's view draws it -- and each would otherwise write its own copy of the same
-layer and name it something different, which is exactly what a renderer asking for a model by
-name cannot cope with.
+Written under a content hash and reused. That matters for more than speed: the world is compiled
+in more than one process -- Simulation steps it while a sensor's view draws it -- and each would
+otherwise write its own copy of the same layer and name it something different, which is exactly
+what a renderer asking for a model by name cannot cope with.
 """
 
 import hashlib
@@ -73,10 +72,10 @@ def scene_layer(scene: UsdModel | Path | str | None) -> Path:
     resolved, because a composed scene exists nowhere until it is. A world given as a file is
     already one, and is handed over as it stands.
 
-    That second case is how the toy worlds the tests build, and the shipped `logistics.xml`,
-    keep working: they are MJCF, which MuJoCo reads perfectly well and usd-core cannot parse at
-    all. Refusing a world that loads would buy nothing. The robot descriptions are the ones held
-    to USD and nothing else, and the real blueprints hand the scene over as USD too.
+    That second case is deliberate: a file on disk needs nothing done to it, and what formats an
+    engine can open is the engine's business, not this function's. Composing is the only thing
+    that needs the layer parsed, and a world nobody composed does not need composing. The *robot*
+    descriptions are the ones held to USD and nothing else.
     """
     if isinstance(scene, UsdModel):
         return usd_layer(scene)

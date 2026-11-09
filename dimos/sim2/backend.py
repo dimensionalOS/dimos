@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
     from dimos.sim2.module import SimulationConfig
 
-BACKENDS = {"mujoco": "dimos.sim2.mujoco_backend.MujocoBackend"}
+BACKENDS = {"mujoco": "dimos.sim2.mujoco.backend.MujocoBackend"}
 
 
 class Publisher(Protocol):

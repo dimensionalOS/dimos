@@ -16,7 +16,7 @@
 
 These robots used to be described by an MJCF converted at import time, and what was worth
 checking then was that the converter's URDF matched that MJCF (see
-`dimos/sim2/utils/test_mjcf_to_urdf.py`). The description is now one committed `.usda` and these
+`dimos/sim2/mujoco/test_mjcf_to_urdf.py`). The description is now one committed `.usda` and these
 are the properties that replace it: the layer loads, it carries the frames the module advertises
 mounts at, and every file it names is there to be served.
 

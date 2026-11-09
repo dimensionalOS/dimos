@@ -21,8 +21,8 @@ from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
+from dimos.sim2.mujoco.mjcf_frames import mjcf_with_frames
+from dimos.sim2.mujoco.mjcf_to_urdf import mjcf_to_urdf
 
 _ARM = """
 <mujoco model="arm">

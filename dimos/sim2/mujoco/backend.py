@@ -32,9 +32,9 @@ import numpy as np
 
 from dimos.sim2.actions import Action, CborKeyValueCommand, JointCommand
 from dimos.sim2.backend import Publisher
+from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import scene_layer, usd_layer
-from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
 
 if TYPE_CHECKING:

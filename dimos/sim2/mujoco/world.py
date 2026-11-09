@@ -23,9 +23,9 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.names import resolve, resolved, shorten
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, Vector, validate
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.usd_names import resolve, resolved, shorten
 
 # Sites only mark a pose; keep them invisible and negligible.
 _SITE_SIZE = (0.001, 0.001, 0.001)

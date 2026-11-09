@@ -30,7 +30,7 @@ from dimos.sim2.spec import SimulatedSensor
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import Raycaster
 
-RENDERERS = {"mujoco": "dimos.sim2.mujoco_view.MujocoView"}
+RENDERERS = {"mujoco": "dimos.sim2.mujoco.view.MujocoView"}
 
 Vector = NDArray[np.float64]
 

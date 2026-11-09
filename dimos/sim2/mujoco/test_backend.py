@@ -32,10 +32,10 @@ from dimos.robot.assets.model import UsdModel
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.module import Simulation, SimulationConfig
-from dimos.sim2.mujoco_backend import MujocoBackend
+from dimos.sim2.mujoco.backend import MujocoBackend
+from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import Servo, SimulatedRobot, SimulatedSensor, resolve
 from dimos.sim2.usd_layer import usd_layer
-from dimos.sim2.world import compile_world
 from dimos.sim2.world_observations import ACT, WorldMirror
 
 

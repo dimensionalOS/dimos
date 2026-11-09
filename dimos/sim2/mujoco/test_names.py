@@ -16,7 +16,7 @@
 
 import pytest
 
-from dimos.sim2.usd_names import resolve, resolved, shorten
+from dimos.sim2.mujoco.names import resolve, resolved, shorten
 
 USD_NAMES = [
     "world",
