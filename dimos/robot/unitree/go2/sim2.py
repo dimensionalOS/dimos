@@ -75,7 +75,6 @@ def go2_drives() -> dict[str, tuple[float, float, float]]:
 
 class Go2SimConfig(ModuleConfig):
     robot_id: str = "go2"
-    xyz: tuple[float, float, float] = (0.0, 0.0, 0.35)
     policy: Path | None = None
     odom_frame_id: str = "world"
     # Yaw rate commanded per radian of heading error while no turn is commanded.

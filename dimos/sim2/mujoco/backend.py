@@ -20,15 +20,12 @@ what changed -- it owns no streams, publishes nothing, and does not know a contr
 other end of the actions it is given. `MujocoSim` in `sim.py` is the module around it.
 """
 
-import base64
 from collections.abc import Iterable, Mapping, Sequence
-import json
 from pathlib import Path
 import re
 from threading import Lock
 import time
 from typing import TYPE_CHECKING, Any
-import xml.etree.ElementTree as ET
 
 from dimos_lcm.world_msgs import WorldObservations
 import mujoco
@@ -53,34 +50,10 @@ _SINGLE_DOF = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE
 # Less than this since it was last sent is not a change: a resting body's solver jitter is not motion.
 _MOVED = 1e-6
 
-# Geom types a dimos.scene_data.v1 viewer draws (a plane being its own ground grid).
-_SCENE_GEOM_TYPES = {
-    int(mujoco.mjtGeom.mjGEOM_PLANE): "plane",
-    int(mujoco.mjtGeom.mjGEOM_SPHERE): "sphere",
-    int(mujoco.mjtGeom.mjGEOM_CAPSULE): "capsule",
-    int(mujoco.mjtGeom.mjGEOM_ELLIPSOID): "ellipsoid",
-    int(mujoco.mjtGeom.mjGEOM_CYLINDER): "cylinder",
-    int(mujoco.mjtGeom.mjGEOM_BOX): "box",
-    int(mujoco.mjtGeom.mjGEOM_MESH): "mesh",
-}
-
 
 def _xyzw(wxyz: np.ndarray) -> list[float]:
     w, x, y, z = wxyz
     return [float(x), float(y), float(z), float(w)]
-
-
-def _mesh_data(model: mujoco.MjModel, mesh: int) -> dict[str, str]:
-    vertices = model.mesh_vert[
-        model.mesh_vertadr[mesh] : model.mesh_vertadr[mesh] + model.mesh_vertnum[mesh]
-    ]
-    faces = model.mesh_face[
-        model.mesh_faceadr[mesh] : model.mesh_faceadr[mesh] + model.mesh_facenum[mesh]
-    ]
-    return {
-        "vertices": base64.b64encode(vertices.astype("<f4").tobytes()).decode(),
-        "faces": base64.b64encode(faces.astype("<u4").tobytes()).decode(),
-    }
 
 
 class MujocoBackend:
@@ -125,12 +98,12 @@ class MujocoBackend:
         self._started = time.monotonic()
         self._rebase = True
         self._waiting: tuple[str, ...] = ()
-        self._files = _files_named_by(self._scene_layer, None)
+        self._files = _files_named_by_usd(self._scene_layer)
         # A robot's layer as a file: the name a renderer asks for it by, and what the files it
         # names are relative to.
         self._layers = {id: usd_layer(r.model) for id, r in self._robots.items()}
         for layer in self._layers.values():
-            self._files.update(_files_named_by(layer, None))
+            self._files.update(_files_named_by_usd(layer))
         self._reset()
 
     def describe(self) -> dict[str, Any]:
@@ -144,63 +117,6 @@ class MujocoBackend:
             str(self._scene_layer): self._scene_layer,
             **self._files,
         }
-
-    def scene_data(self) -> str:
-        model = self.model
-        robot_roots = {self._roots[robot_id] for robot_id in self._robots}
-        # By the same short names the entities carry, since a viewer matching one against the
-        # other is the point: off a USD layer MuJoCo calls everything by its whole prim path.
-        short = short_names(model.body(body).name or "world" for body in range(model.nbody))
-        bodies, meshes = [], {}
-        for body in range(model.nbody):
-            if model.body_rootid[body] in robot_roots:
-                continue
-            geoms = []
-            for geom in range(
-                model.body_geomadr[body], model.body_geomadr[body] + model.body_geomnum[body]
-            ):
-                # Group 3 and up hold collision-only geoms, drawn by nothing.
-                kind = _SCENE_GEOM_TYPES.get(int(model.geom_type[geom]))
-                if kind is None or model.geom_group[geom] >= 3:
-                    continue
-                material = model.geom_matid[geom]
-                rgba = model.mat_rgba[material] if material >= 0 else model.geom_rgba[geom]
-                entry = {
-                    "name": model.geom(geom).name or f"geom{geom}",
-                    "type": kind,
-                    "size": model.geom_size[geom].tolist(),
-                    "pos": model.geom_pos[geom].tolist(),
-                    "quat": _xyzw(model.geom_quat[geom]),
-                    "rgba": rgba.tolist(),
-                }
-                if kind == "mesh":
-                    mesh = int(model.geom_dataid[geom])
-                    entry["mesh"] = name = model.mesh(mesh).name or f"mesh{mesh}"
-                    meshes.setdefault(name, _mesh_data(model, mesh))
-                geoms.append(entry)
-            if geoms:
-                bodies.append(
-                    {
-                        "name": short[model.body(body).name or "world"],
-                        "label": short[model.body(body).name or "world"],
-                        "pos": self.data.xpos[body].tolist(),
-                        "quat": _xyzw(self.data.xquat[body]),
-                        "mocap": bool(model.body_mocapid[body] >= 0),
-                        "geoms": geoms,
-                        "lights": [],
-                    }
-                )
-        return json.dumps(
-            {
-                "format": "dimos.scene_data.v1",
-                "id": f"{self._scene_layer.stem}-{id(self)}",
-                "frame": "world",
-                "bodies": bodies,
-                "meshes": meshes,
-                "hfields": {},
-                "textures": {},
-            }
-        )
 
     def step(self, actions: Sequence[Action] = ()) -> tuple[float, WorldObservations]:
         """Advance the world to the clock and say what moved: the sim time reached, and a frame.
@@ -376,9 +292,6 @@ class MujocoBackend:
     def _joint_name(self, entity: str, name: str) -> str:
         return f"{entity}/{name}" if entity in self._robots else name
 
-    def _body_name(self, entity: str, name: str) -> str:
-        return f"{entity}/{name}" if entity in self._robots else name
-
     def _entity_roots(self) -> dict[str, int]:
         """Each robot's root body, and each movable object: a world child with joints, outside any robot."""
         model = self.model
@@ -467,22 +380,21 @@ def _actuator_kind(model: mujoco.MjModel, actuator: int) -> str:
     return "position" if model.actuator_biasprm[actuator][1] != 0 else "velocity"
 
 
-# USD suffixes a scene may arrive as, which are not XML and must not be parsed as such.
-_USD_SUFFIXES = frozenset({".usd", ".usda", ".usdc", ".usdz"})
 # A USD layer names an asset between @ signs: `prepend references = @meshes/desk.usdc@`.
 _USD_ASSET = re.compile(r"@([^@\n]+)@")
 
 
 def _files_named_by_usd(layer: Path) -> dict[str, Path]:
-    """The same, for a scene that is a USD layer rather than an MJCF.
+    """The layer and every file it names, by full path, read out of the layer's own text.
 
-    A USD is not XML, and handing one to an XML parser gets "syntax error: line 1, column 0" --
-    which reads like a corrupt model and is really a file in the wrong language. A layer names
-    its assets between @ signs, relative to itself, so they are read the same way the XML
-    branch reads `file=` attributes.
+    A layer names its assets between @ signs and relative to itself:
+    `prepend references = @meshes/desk.usdc@`. Only the text form can be read this way; a
+    binary .usdc names its assets inside the crate, so this would find the layer alone and
+    whatever asked for a mesh would be told no.
 
-    Only the text form can be scanned like this; a binary .usdc scene names its assets inside
-    the crate, so this finds the layer alone and whatever asks for a mesh gets told no.
+    There used to be an MJCF branch beside this, with the compiler's meshdir and assetdir. It
+    has been unreachable since a world became a layer: both callers get their path from
+    `usd_layer`, which always writes a `.usda`.
     """
     files = {str(layer): layer}
     try:
@@ -491,30 +403,6 @@ def _files_named_by_usd(layer: Path) -> dict[str, Path]:
         return files
     for name in _USD_ASSET.findall(text):
         path = (layer.parent / name).resolve()
-        if path.is_file():
-            files[str(path)] = path
-    return files
-
-
-def _files_named_by(mjcf: Path, assets: Path | None) -> dict[str, Path]:
-    """The model and every file it names (meshes, textures, ...), by full path; a robot's assets hold its own."""
-    if mjcf.suffix.lower() in _USD_SUFFIXES:
-        return _files_named_by_usd(mjcf)
-    root = ET.parse(mjcf).getroot()
-    compiler = root.find("compiler")
-    directories = {
-        kind: mjcf.parent / (compiler.get(f"{kind}dir") or compiler.get("assetdir") or "")
-        if compiler is not None
-        else mjcf.parent
-        for kind in ("mesh", "texture")
-    }
-    files = {str(mjcf): mjcf}
-    for element in root.iter():
-        name = element.get("file")
-        if name is None:
-            continue
-        directory = directories["texture" if element.tag in ("texture", "hfield") else "mesh"]
-        path = assets / Path(name).name if assets is not None else directory / name
         if path.is_file():
             files[str(path)] = path
     return files
