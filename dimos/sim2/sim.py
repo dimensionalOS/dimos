@@ -38,7 +38,7 @@ from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import resolve_usd_assets
+from dimos.robot.assets.usd_assets import resolve_usd_assets
 from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import scene_as_files

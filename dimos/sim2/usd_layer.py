@@ -45,7 +45,7 @@ def usd_layer(model: UsdModel) -> Path:
     not change. The same layer always lands at the same path, so two processes compiling one world
     agree on what to call the robot they are drawing.
     """
-    from dimos.robot.assets.usd import resolve_usd_assets
+    from dimos.robot.assets.usd_assets import resolve_usd_assets
 
     source = model.source_path
     # A layer read from a file names its meshes relative to that file; one converted or composed
@@ -90,10 +90,11 @@ def scene_as_files(usd: str, fetch: Callable[[str], bytes]) -> Path:
 
     Fetched once per machine, keyed by **content**. ``fetch`` is how a name becomes bytes.
     """
-    from dimos.robot.assets.usd import _layer_from, _pxr, asset_attributes
+    from dimos.robot.assets.usd import layer_from, load_pxr
+    from dimos.robot.assets.usd_assets import asset_attributes
 
-    pxr = _pxr()
-    layer = _layer_from(pxr, usd, "a scene")
+    pxr = load_pxr()
+    layer = layer_from(pxr, usd, "a scene")
     _ASSETS.mkdir(parents=True, exist_ok=True)
     here: dict[str, str] = {}
     stack, rewritten = [layer.pseudoRoot], 0
@@ -140,7 +141,7 @@ def _cached(name: str, digest: str | None, fetch: Callable[[str], bytes]) -> Pat
         if promised.exists():
             return promised
     data = fetch(name)
-    from dimos.robot.assets.usd import asset_hash
+    from dimos.robot.assets.usd_assets import asset_hash
 
     out = _ASSETS / f"{asset_hash(data)}{suffix}"
     if not out.exists():
