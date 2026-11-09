@@ -69,6 +69,7 @@ all_blueprints = {
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-makermods-metal-planner-coordinator": "dimos.robot.manipulators.dual_makermods_metal.blueprints.basic:dual_makermods_metal_planner_coordinator",
+    "dual-makermods-metal-policy-fake": "dimos.robot.manipulators.dual_makermods_metal.blueprints.policy:dual_makermods_metal_policy_fake",
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",
     "dual-xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner_coordinator",
     "go2-dds": "dimos.robot.unitree.go2.dds.blueprints:go2_dds",

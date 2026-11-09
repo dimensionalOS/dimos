@@ -174,6 +174,11 @@ class MetalArmPolicyRuntime:
         return self._decoder
 
     @property
+    def kinematics(self) -> Any:
+        """Station FK used for the observation's current-TCP slots."""
+        return self._kinematics
+
+    @property
     def history_length(self) -> int:
         return len(self._frames)
 
