@@ -59,11 +59,13 @@ Handlers run one at a time on the module's task. `handle()` is one `select!` loo
 
 Each input holds a buffer of eight messages. When it is full, the transport's receive path stalls in delivery until the handler takes one out. That stalls every topic it carries and pushes the congestion back to the publisher, whose declared QoS resolves it: `block` holds the publisher's `publish()`, `drop` discards at the publisher. The SDK itself never drops a message.
 
+`publish()` runs on the handler task and hands the message straight to the transport. Under `block` QoS a stalled put parks the handler, and with it every other output of the module, until the transport takes the message. Under `drop` a put never stalls.
+
 Keep handlers short: decode, update state, publish. Long work belongs on a worker task fed from the handler through its own channel, as the ray tracer, the MLS planner and the local planner do. A handler that never returns holds the transport until the module stops.
 
 ## Transport
 
-Every transport is compiled into the binary. `run_with_transport` opens the one named by the `DIMOS_TRANSPORT` env var (`lcm` or `zenoh`), which the Python coordinator sets from `global_config.transport` (the `--transport` flag). The module never names a transport, so the same binary runs over either.
+Every transport is compiled into the binary. `transport::open_transport` opens the one named by the `DIMOS_TRANSPORT` env var (`lcm` or `zenoh`), which the Python coordinator sets from `global_config.transport` (the `--transport` flag), and returns it as an `Arc<dyn Transport>`. It calls `LcmTransport::from_launch` or `ZenohTransport::from_launch`, each reading its own `session` and `qos` blocks from the launch line. The module never names a transport, so the same binary runs over either, and a baked host opens one the same way and shares it across its modules.
 
 ## Attributes
 
@@ -88,7 +90,7 @@ It injects `#[derive(Debug, Deserialize, Serialize, Validate)]` and `#[serde(den
 
 A type alias to `Option` slips past the compile-time check, but the runtime check below still rejects it.
 
-Field-level `#[validate(...)]` and a container `#[validate(schema(function = "..."))]` (from the [`validator`](https://docs.rs/validator) crate) pass through for value and cross-field validation. `run()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure.
+Field-level `#[validate(...)]` and a container `#[validate(schema(function = "..."))]` (from the [`validator`](https://docs.rs/validator) crate) pass through for value and cross-field validation. `run_with_transport()` calls `config.validate()` after deserializing and bails with an `io::Error` on failure.
 
 ```rust
 use dimos_module::native_config;
@@ -112,7 +114,7 @@ fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
 }
 ```
 
-At runtime `run()` enforces the mapping on the Python payload: deserialization rejects an unknown field, and a key-set check rejects any field whose JSON key is absent, even an `Option` or a type alias to `Option` that serde would otherwise accept as `None`.
+At runtime `run_with_transport()` enforces the mapping on the Python payload: deserialization rejects an unknown field, and a key-set check rejects any field whose JSON key is absent, even an `Option` or a type alias to `Option` that serde would otherwise accept as `None`.
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
 
@@ -204,13 +206,14 @@ impl ::dimos_module::Module for MyModule {
 }
 ```
 
-`builder.input` registers a route from the resolved topic into the bounded channel that backs `Input<T>` (see [Handlers](#handlers)). `builder.output` hands back an `Output<T>` carrying a sender into its own per-channel publish queue.
+`builder.input` registers a route from the resolved topic into the bounded channel that backs `Input<T>` (see [Handlers](#handlers)). `builder.output` hands back an `Output<T>` that publishes on the resolved topic straight to the transport.
 
-## Lifecycle inside `run()`
+## Lifecycle inside `run_with_transport()`
 
-1. Read one JSON line from stdin, parse into topics, config, and per-channel publisher QoS.
-2. `M::build(&mut builder, config)`: macro-generated, populates each field.
-3. Subscribe each input channel on the transport (push callbacks into the input channels, blocking the transport while one is full), and spawn one publish worker per output channel, each draining its queue into `transport.publish()`. Receive and publish run independently, and a stalled publish on one channel can't block the others.
-4. `module.setup().await`.
-5. `module.handle().await`, racing ctrl-c.
-6. `module.teardown().await`.
+1. Read one JSON line from stdin: topics, config, and the transport's `session` and `qos` blocks.
+2. Open the transport `DIMOS_TRANSPORT` names, which reads its own blocks from that line.
+3. `M::build(&mut builder, config)`: macro-generated, populates each field.
+4. Subscribe each input port on the transport. Delivery pushes into the port's bounded channel and blocks the transport while it is full.
+5. `module.setup().await`.
+6. `module.handle().await`, racing SIGINT and SIGTERM.
+7. `module.teardown().await`.
