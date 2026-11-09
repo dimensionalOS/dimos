@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import av
+from dimos_cdrgen.registry import encode, schema
 from dimos_lerobot.dataprep import inspect_dataset, write
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -41,7 +42,6 @@ from dimos.imitation.dataprep.schema import (
     RecordingSchema,
     SyncConfig,
 )
-from dimos_cdrgen.registry import encode, schema
 from dimos.message_utils import image, joint_state, time as message_time
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import Header, String

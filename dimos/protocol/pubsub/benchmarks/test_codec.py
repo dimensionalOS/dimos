@@ -20,8 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.message_utils import image as image_utils
-from dimos.message_utils import time as message_time
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
@@ -59,7 +58,13 @@ def test_roundtrip_over_lcm(retry_until, collector) -> None:
         img = collector.received[0]
         assert isinstance(img, Image)
         assert img.header.frame_id == "cam"
-        assert abs(message_time.to_seconds(img.header.stamp) - message_time.to_seconds(src.header.stamp)) < 1e-6
+        assert (
+            abs(
+                message_time.to_seconds(img.header.stamp)
+                - message_time.to_seconds(src.header.stamp)
+            )
+            < 1e-6
+        )
         assert image_utils.view(img).shape == image_utils.view(src).shape
 
 

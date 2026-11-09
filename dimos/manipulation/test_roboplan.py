@@ -843,9 +843,7 @@ def test_octree_obstacle_survives_the_deepcopy_and_equality_the_world_does(
         obstacle_type=ObstacleType.OCTREE,
         pose=PoseStamped(
             header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
-            pose=Pose(
-                position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
-            ),
+            pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
         ),
         points=((0.0, 0.0, 1.0),),
         octree_resolution=0.05,

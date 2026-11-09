@@ -25,8 +25,7 @@ import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.message_utils import joint_state as joint_state_utils
-from dimos.message_utils import time as message_time
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import (
     Point,
     Pose,

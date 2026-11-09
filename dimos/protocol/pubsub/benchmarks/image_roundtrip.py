@@ -22,13 +22,11 @@ import threading
 import time
 from typing import Any
 
+from dimos_cdrgen.registry import encode
 import numpy as np
 
-from dimos_cdrgen.registry import encode
-
 from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
-from dimos.message_utils import image as image_utils
-from dimos.message_utils import time as message_time
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec

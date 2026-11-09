@@ -39,6 +39,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.harness.runtime import load as runtime_load
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager, _Record
+from dimos.agents.harness.runtime.events import AgentStep
 from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
 from dimos.agents.skill_result import SkillResult
@@ -52,7 +53,6 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.agents.harness.runtime.events import AgentStep
 from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import Vector3
 from dimos.messages.sensor_msgs.msg import Image

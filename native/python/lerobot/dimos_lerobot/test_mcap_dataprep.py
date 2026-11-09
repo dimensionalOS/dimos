@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
+from dimos_cdrgen.registry import encode, schema
 from dimos_lerobot.dataprep import write
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from mcap.writer import Writer as McapWriter
@@ -30,9 +31,8 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
-from dimos_cdrgen.registry import encode, schema
-from dimos.message_utils import image, joint_state, time as message_time
 from dimos.memory.codecs.cdrjpeg import CdrjpegCodec
+from dimos.message_utils import image, joint_state, time as message_time
 from dimos.messages.sensor_msgs.msg import CompressedImage, Image, JointState
 from dimos.messages.std_msgs.msg import Header, String
 

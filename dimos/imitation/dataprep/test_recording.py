@@ -15,6 +15,7 @@
 
 from contextlib import contextmanager
 
+from dimos_cdrgen.registry import encode, schema
 import h5py
 from mcap.writer import Writer as McapWriter
 import numpy as np
@@ -24,9 +25,8 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema, SyncConfig
-from dimos_cdrgen.registry import encode, schema
-from dimos.message_utils import image, joint_state, time as message_time
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.message_utils import image, joint_state, time as message_time
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import Header, String
 

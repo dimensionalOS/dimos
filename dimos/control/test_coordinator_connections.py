@@ -61,8 +61,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.message_utils import joint_state as joint_state_utils
-from dimos.message_utils import time as message_time
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
 from dimos.messages.geometry_msgs.msg import PoseStamped, Quaternion, Twist, Vector3
 from dimos.messages.sensor_msgs.msg import Imu, JointState
 from dimos.messages.std_msgs.msg import Header

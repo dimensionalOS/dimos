@@ -27,15 +27,14 @@ from dimos.messages.std_msgs.msg import Header
 def test_general_algorithm_accepts_base_config_dict() -> None:
     config = Config(algo="general", config={"resolution": 1.0})
     cloud = pointcloud.from_xyz(
-        np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.5]]), header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map")
+        np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.5]]),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
     )
 
     grid = general_occupancy(cloud, **asdict(config.config))
 
     assert grid.info.resolution == 1.0
-    np.testing.assert_array_equal(
-        occupancy.view(grid), [[-1, 0, -1], [0, 0, 0], [-1, 0, 100]]
-    )
+    np.testing.assert_array_equal(occupancy.view(grid), [[-1, 0, -1], [0, 0, 0], [-1, 0, 100]])
 
 
 @pytest.mark.parametrize("serialized", [False, True])

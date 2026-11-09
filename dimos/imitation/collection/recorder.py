@@ -29,13 +29,13 @@ from dimos.core.coordination.blueprints import Blueprint, StreamRef
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
-    is_registered_message,
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
     RustStreamSpec,
+    is_registered_message,
 )
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile

@@ -32,8 +32,7 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.core import extract_episodes
 from dimos.imitation.dataprep.schema import EpisodeExtractor
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.message_utils import image as message_image
-from dimos.message_utils import time as message_time
+from dimos.message_utils import image as message_image, time as message_time
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import Header, String
 from dimos.messages.tf2_msgs.msg import TFMessage

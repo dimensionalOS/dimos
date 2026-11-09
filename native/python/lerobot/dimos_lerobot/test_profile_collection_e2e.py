@@ -29,8 +29,8 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
-from dimos.message_utils import image, joint_state, time as message_time
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.message_utils import image, joint_state, time as message_time
 from dimos.messages.sensor_msgs.msg import Image, JointState
 from dimos.messages.std_msgs.msg import Header, String
 

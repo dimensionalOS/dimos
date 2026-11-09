@@ -27,6 +27,7 @@ import time
 from typing import cast
 import uuid
 
+from dimos_cdrgen.registry import encode
 from mcap.reader import make_reader
 import numpy as np
 import pytest
@@ -54,10 +55,9 @@ from dimos.memory.cli.app import mem_app
 from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.replay_module import ReplayModule
 from dimos.memory.store.mcap import McapStore
-from dimos_cdrgen.registry import encode
-from dimos.message_utils import image, time as message_time
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
+from dimos.message_utils import image, time as message_time
 from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image, Imu
 from dimos.messages.std_msgs.msg import Header, String

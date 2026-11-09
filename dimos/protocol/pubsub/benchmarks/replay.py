@@ -47,8 +47,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
-from dimos.message_utils import image as image_utils
-from dimos.message_utils import time as message_time
+from dimos.message_utils import image as image_utils, time as message_time
 from dimos.messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
 from dimos.robot.get_all_blueprints import get_blueprint_by_name

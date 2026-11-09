@@ -15,7 +15,6 @@
 import threading
 from typing import Any
 
-from dimos.messages.std_msgs.msg import Bool
 from langchain_core.messages import HumanMessage
 import pytest
 
@@ -25,6 +24,7 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
 from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Bool
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec

@@ -277,18 +277,14 @@ class PickAndPlaceModule(Module):
         scene = self._scene.get_full_scene_pointcloud(exclude_object_id=object_id)
         if (
             scene is None
-            or not scene.header.frame_id
-            == pointcloud.header.frame_id
-            == candidates.header.frame_id
+            or not scene.header.frame_id == pointcloud.header.frame_id == candidates.header.frame_id
         ):
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"
             }
         states = self._manipulation.get_state().groups.values()
         tips = [
-            s.end_effector_pose.pose.position
-            for s in states
-            if s.end_effector_pose is not None
+            s.end_effector_pose.pose.position for s in states if s.end_effector_pose is not None
         ]
         joints = {
             name: position
@@ -342,9 +338,7 @@ class PickAndPlaceModule(Module):
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
             grasp = PoseStamped(
                 header=deepcopy(candidates.header),
-                pose=Pose(
-                    position=candidate.pose.position, orientation=candidate.pose.orientation
-                ),
+                pose=Pose(position=candidate.pose.position, orientation=candidate.pose.orientation),
             )
             pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
             blocked = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)

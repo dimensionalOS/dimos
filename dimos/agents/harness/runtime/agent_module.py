@@ -25,10 +25,10 @@ from typing import Any, ClassVar, TypeVar
 from reactivex.disposable import Disposable
 
 from dimos.agents.harness.runtime.constants import AGENT_MODULE_PATH, METACLASS_NAMES
+from dimos.agents.harness.runtime.events import AgentNotice
 from dimos.agents.harness.runtime.lib.exports import replace_exports
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.agents.harness.runtime.events import AgentNotice
 from dimos.utils.logging_config import setup_logger
 
 T = TypeVar("T")

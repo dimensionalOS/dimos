@@ -38,7 +38,6 @@ import numpy as np
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.message_utils import geometry, image, pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
 from dimos.messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -591,9 +590,7 @@ def _finalize(
                 last_seen_timestamp=hi,
                 point_cloud=pointcloud.from_xyz(
                     group.clouds[i],
-                    header=Header(
-                        stamp=message_time.time_from_seconds(hi), frame_id=world_frame
-                    ),
+                    header=Header(stamp=message_time.time_from_seconds(hi), frame_id=world_frame),
                 ),
                 n_views=views[i],
             )
