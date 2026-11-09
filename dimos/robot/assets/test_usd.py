@@ -392,6 +392,27 @@ def test_a_frame_added_to_something_that_is_not_a_link_is_not_welded(toy: Any) -
     ], "nothing holds the frame: it is nested under static geometry, which is static too"
 
 
+def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
+    """A rig's mounts describe each other: the Go2's Mid-360 sits on its front camera.
+
+    Reading the layer's links once before adding any made that "the layer has no frame
+    'front_camera'", which is true of the file and not of the stage being built into it.
+    """
+    stage = _stage(
+        usd_with_frames(
+            urdf_to_usd(toy),
+            {
+                "front_camera": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
+                "lidar": ("front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
+            },
+        )
+    )
+
+    camera = _prim_by_link(stage, "front_camera")
+    assert camera
+    assert stage.GetPrimAtPath(camera.GetPath().AppendChild("lidar")), "the lidar is on the camera"
+
+
 def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="is taken"):
         usd_with_frames(
