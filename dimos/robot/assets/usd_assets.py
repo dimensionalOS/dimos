@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The files a layer names: hashing them, publishing them by hash, and resolving them back.
-
-A layer travels as text and the files it refers to do not travel with it, so a consumer gets
-asset paths it cannot open. Here they are rewritten to content-addressed names that a receiver
-can ask for one at a time and resolve against its own copy.
-"""
 
 from __future__ import annotations
 
@@ -33,20 +27,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-# The algorithm is inside the value, so it can change without the old ones becoming unreadable.
 _HASH_ALGORITHM = "sha256"
-# Not paths on any disk: names the manager that assembled the scene answers for.
 _ASSET_ROOT_PREFIX = "/dimos/assets/"
 
 
 def resolve_usd_assets(usd: str, root: str) -> str:
-    """``usd`` with every relative asset path rewritten to sit under ``root``.
-
-    Only the module that answered for a layer knows what its mesh paths are relative to, so a
-    subtree is rebased as it arrives. Absolute paths, and everything when ``root`` is empty, are
-    left alone. The layer is read *under* that root too, so USD resolves while composing instead
-    of warning once per mesh prim.
-    """
     if not root:
         return usd
     pxr = load_pxr()
@@ -70,14 +55,10 @@ def resolve_usd_assets(usd: str, root: str) -> str:
                 spec.referenceList.explicitItems = rebased
             else:
                 spec.referenceList.prependedItems = rebased
-        # assetInfo names the same file, so it moves with it or the two disagree.
         identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
         if identifier is not None and not Path(str(identifier.path)).is_absolute():
-            # assetInfo is a proxy, not a dict: set the key on it rather than assigning a copy.
             spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
             changed = True
-        # A texture names its image in an ordinary asset attribute, neither a reference nor assetInfo.
-        # Rebasing only those two left every texture relative to a directory that no longer figures.
         for attribute, value in asset_attributes(spec):
             if not Path(str(value.path)).is_absolute():
                 attribute.default = pxr.Sdf.AssetPath(str(base / str(value.path)))
@@ -87,13 +68,6 @@ def resolve_usd_assets(usd: str, root: str) -> str:
 
 
 def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
-    """``usd`` with every asset path replaced by a stable public one, and ``{public: real}``.
-
-    The paths a scene is built with are absolute on the machine that assembled it, which says
-    nothing to whoever asks for the file. A name comes from where the asset first appears -- its
-    prim path -- so it is stable across runs; later references reuse it, because two copies of one
-    arm are one mesh.
-    """
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a scene")
     public: dict[str, str] = {}
@@ -102,7 +76,7 @@ def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
 
     stack = [layer.pseudoRoot]
     while stack:
-        spec = stack.pop(0)  # breadth-first, so "first" means nearest the root
+        spec = stack.pop(0)
         for real in _asset_paths_of(spec):
             if real not in public:
                 public[real] = _public_asset_path(str(spec.path), real, taken)
@@ -116,7 +90,6 @@ def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
 
 
 def _asset_paths_of(spec: Spec) -> list[str]:
-    """Every asset path this prim spec names: a reference, assetInfo, or an asset attribute."""
     items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
     paths = [ref.assetPath for ref in items if ref.assetPath]
     identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
@@ -127,12 +100,6 @@ def _asset_paths_of(spec: Spec) -> list[str]:
 
 
 def asset_attributes(spec: Spec) -> list[tuple[Any, Any]]:
-    """This prim spec's asset-valued attributes, with their paths.
-
-    A texture is neither a reference nor a mesh: a `UsdUVTexture` names its image in
-    `inputs:file`, an ordinary attribute of type `asset`. Walking only arcs and assetInfo left
-    every texture unpublished and unhashed, and silently so.
-    """
     found = []
     for attribute in spec.attributes:
         value = attribute.default
@@ -142,11 +109,6 @@ def asset_attributes(spec: Spec) -> list[tuple[Any, Any]]:
 
 
 def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
-    """A path under the fictional root, from where this asset first appears.
-
-    The prim path is unique within a scene, so two assets collide only on one prim -- a link with
-    two meshes. The suffix counts rather than hashes, to stay readable.
-    """
     stem = f"{_ASSET_ROOT_PREFIX}{prim_path.lstrip('/')}/{Path(real).name}"
     if stem not in taken:
         return stem
@@ -183,12 +145,10 @@ def _rewrite_assets(pxr: Pxr, spec: Spec, public: Mapping[str, str]) -> bool:
 
 
 def asset_hash(data: bytes) -> str:
-    """The hash an asset is identified by, in the form assetInfo["version"] carries."""
     return f"{_HASH_ALGORITHM}:{hashlib.new(_HASH_ALGORITHM, data).hexdigest()}"
 
 
 def hash_of_file(path: str, base_dir: Path | None = None) -> str | None:
-    """``path``'s asset hash, or None when it cannot be read from here."""
     resolved = Path(path)
     if not resolved.is_absolute() and base_dir is not None:
         resolved = base_dir / resolved
@@ -199,20 +159,15 @@ def hash_of_file(path: str, base_dir: Path | None = None) -> str | None:
 
 
 def write_asset_info(pxr: Pxr, prim: Prim, filename: str, base_dir: Path | None) -> None:
-    """Identify the asset this prim references, and hash it if it can be read. assetInfo is USD's
-    own metadata for this, so a consumer can check what it fetched against what was meant.
-    """
     prim.SetAssetInfoByKey("identifier", pxr.Sdf.AssetPath(filename))
     digest = hash_of_file(filename, base_dir)
     if digest is None:
-        # The converter runs where the description lives, so this is worth saying out loud.
         logger.warning(f"cannot hash {filename!r}: not readable from here, so it gets no hash")
         return
     prim.SetAssetInfoByKey("version", digest)
 
 
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
-    """Every asset path ``usd`` names, as authored. What a renderer may ask to be served."""
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a layer", root)
     found: set[str] = set()
@@ -225,7 +180,6 @@ def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]
 
 
 def unhashed_assets(usd: str) -> dict[str, str]:
-    """Every asset ``usd`` references without a hash, mapped to the prim path carrying it."""
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer"))
     missing: dict[str, str] = {}
@@ -238,12 +192,6 @@ def unhashed_assets(usd: str) -> dict[str, str]:
 
 
 def _referenced_assets(pxr: Pxr, prim: Prim) -> list[str]:
-    """The asset paths this prim names, as authored.
-
-    Three ways a prim can name one: a reference arc, assetInfo (a mesh's file) and an asset-valued
-    attribute (a texture's image). Only arcs made the hash check pass vacuously on every mesh;
-    only those two passed over every texture.
-    """
     assets = []
     for spec in prim.GetPrimStack():
         items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
@@ -252,14 +200,11 @@ def _referenced_assets(pxr: Pxr, prim: Prim) -> list[str]:
     identifier = (prim.GetAssetInfo() or {}).get("identifier")
     if identifier is not None and str(identifier.path):
         assets.append(str(identifier.path))
-    assert pxr  # the pxr bundle is what opened the stage these specs came from
+    assert pxr
     return assets
 
 
 def require_asset_hashes(usd: str, *, what: str) -> None:
-    """Refuse a layer whose assets are not identified by content. The error carries the hash each
-    one should have had, computed wherever the file can still be read.
-    """
     missing = unhashed_assets(usd)
     if not missing:
         return
