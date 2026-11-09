@@ -12,34 +12,67 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The sim2 Go2 with a Mid-360 on the real rig's mount, its fitted pattern and mount occlusion."""
+"""The sim2 Go2 with a Mid-360 on the real rig's mount, its fitted pattern and mount occlusion.
+
+The same shape as `unitree_go2_sim2_l1`, with the head L1 swapped for the Mid-360 the rig
+actually carries: two managers, the inner one answering for the robot and the outer one for the
+world, and what the outer one composes is what the physics runs and what each sensor renders
+from.
+"""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.robot.assets.model import UsdModel
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.sim2 import Go2Sim
 from dimos.robot.usd_manager import UsdManager
+from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.camera import SimCamera
 from dimos.sim2.livox import LivoxSim
-from dimos.sim2.module import Simulation
+from dimos.sim2.sim import sim_module
+from dimos.sim2.spec import SimulatedRobot
+from dimos.simulation.go2_legged.robot import CONTROL_DT
 from dimos.visualization.vis_module import vis_module
+
+ROBOT = "go2"
+SPOT = (0.0, 0.0, 0.35)
+SCENE = "scene"
+SCENE_MANAGER = f"{SCENE}/{UsdManager.name}"
+
+_room = UsdModel.from_file(LOGISTICS).with_frames({ROBOT: ("logistics", SPOT, (0.0, 0.0, 0.0))})
 
 # The sensors as their own blueprints, because the manager mounts them by the instance each one
 # deploys: a frame_id alone would name a module the manager cannot address.
-_lidar = LivoxSim.blueprint(frame_id=Go2Sim.lidar_mount_frame, go2_occlusion=True)
-_camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame)
+_lidar = LivoxSim.blueprint(
+    frame_id=Go2Sim.lidar_mount_frame, go2_occlusion=True, scene_manager=SCENE_MANAGER
+)
+_camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame, scene_manager=SCENE_MANAGER)
+
+# One manager holding the whole robot: the Go2's own layer, with each sensor grafted onto the
+# frame it is bolted to. Without the mounts it answers for the robot alone, so the lidar and the
+# camera are nowhere in the stage a viewer draws -- the sensors publish, and nothing on screen
+# shows what is doing the sensing.
+_robot = UsdManager.blueprint(
+    model=Go2Sim.usd,
+    mounts={Go2Sim.lidar_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera},
+).remappings([(UsdManager, "coordinator_joint_state", "joint_state")])
+
+_scene = UsdManager.blueprint(
+    model=_room,
+    mounts={ROBOT: _robot},
+    frame_id_prefix="",
+    tf_renames={"logistics": "world"},
+).namespace(SCENE, expose={"render_file_request", "file_info", "tf"})
 
 unitree_go2_sim2_mid360 = autoconnect(
-    Simulation.blueprint(),
+    sim_module(
+        scene_manager=SCENE_MANAGER,
+        robots=[SimulatedRobot(ROBOT, Go2Sim.usd, control_period=CONTROL_DT)],
+    ),
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
-    Go2Sim.blueprint(),
-    # One manager holding the whole robot: the Go2's own layer, with each sensor grafted onto the
-    # frame it is bolted to. Without the mounts it answered for the robot alone, so the lidar and
-    # the camera were nowhere in the stage a viewer draws -- the sensors published, and nothing
-    # showed what was doing the sensing.
-    UsdManager.blueprint(
-        mounts={Go2Sim.lidar_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera}
-    ).remappings([(UsdManager, "coordinator_joint_state", "joint_state")]),
+    Go2Sim.blueprint(robot_id=ROBOT),
+    _scene,
+    _robot,
     _lidar,
     _camera,
-).global_config(n_workers=4, robot_model="unitree_go2")
+).global_config(n_workers=8, robot_model="unitree_go2")
