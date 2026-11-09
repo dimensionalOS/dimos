@@ -650,3 +650,72 @@ def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
     texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
 
     assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
+
+
+def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:
+    """Without this a reader falls back to a density over the visual meshes.
+
+    MuJoCo says so out loud -- "has only visual gprims and no colliders or explicit inertia;
+    falling back to default density" -- and a G1 whose every link weighs the wrong amount loads
+    fine and cannot stand up. The URDF's <inertial> was being passed through as text nothing reads.
+    """
+    from pxr import UsdPhysics
+
+    urdf = tmp_path / "weighed.urdf"
+    urdf.write_text(
+        """<?xml version="1.0"?>
+<robot name="weighed">
+  <link name="base">
+    <inertial>
+      <origin xyz="0 0 -0.076" rpy="0 0 0"/>
+      <mass value="3.813"/>
+      <inertia ixx="0.010549" iyy="0.0093089" izz="0.0079184" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <link name="frame_only"/>
+  <joint name="base_to_frame" type="fixed">
+    <parent link="base"/><child link="frame_only"/>
+  </joint>
+</robot>
+"""
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="weighed"))
+
+    base = _prim_by_link(stage, "base")
+    assert base.HasAPI(UsdPhysics.MassAPI)
+    mass = UsdPhysics.MassAPI(base)
+    assert mass.GetMassAttr().Get() == pytest.approx(3.813)
+    assert tuple(mass.GetCenterOfMassAttr().Get()) == pytest.approx((0.0, 0.0, -0.076))
+    # already diagonal, so the principal moments are the tensor's own, smallest first
+    assert tuple(mass.GetDiagonalInertiaAttr().Get()) == pytest.approx(
+        (0.0079184, 0.0093089, 0.010549), rel=1e-5
+    )
+
+    # a link with no <inertial> is a frame -- an IMU mount, a foot contact -- and stays massless
+    assert not _prim_by_link(stage, "frame_only").HasAPI(UsdPhysics.MassAPI)
+
+
+def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: Path) -> None:
+    from pxr import UsdPhysics
+
+    urdf = tmp_path / "tilted.urdf"
+    urdf.write_text(
+        """<?xml version="1.0"?>
+<robot name="tilted">
+  <link name="base">
+    <inertial>
+      <mass value="2"/>
+      <inertia ixx="0.02" iyy="0.03" izz="0.04" ixy="0.005" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+</robot>
+"""
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(urdf).load(), name="tilted"))
+    mass = UsdPhysics.MassAPI(_prim_by_link(stage, "base"))
+    moments = tuple(mass.GetDiagonalInertiaAttr().Get())
+    # the trace is invariant under the rotation onto the principal axes
+    assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
+    # and the axes are a rotation, not a reflection
+    axes = mass.GetPrincipalAxesAttr().Get()
+    assert axes is not None

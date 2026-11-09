@@ -154,6 +154,7 @@ def urdf_to_usd(
         paths=paths,
         extras=link_extras,
         base_dir=Path(model.source_path).parent if model.source_path else None,
+        inertials=_inertial_of(model.xml),
     )
     _write_joints(
         pxr,
@@ -325,6 +326,64 @@ def _link_prim_paths(stage: Any) -> dict[str, str]:
     return paths
 
 
+def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
+    """Each link's mass, centre of mass and inertia tensor, from its ``<inertial>``.
+
+    A link without one is left out: in a converted MJCF that is a frame -- an IMU mount, a foot
+    contact point, a lidar mount -- which is massless on purpose.
+    """
+    found: dict[str, tuple[float, np.ndarray, np.ndarray]] = {}
+    for link in ET.fromstring(xml).iter("link"):
+        name, inertial = link.get("name"), link.find("inertial")
+        if name is None or inertial is None:
+            continue
+        mass_element, tensor = inertial.find("mass"), inertial.find("inertia")
+        if mass_element is None or tensor is None:
+            continue
+        origin = inertial.find("origin")
+        zero = (0.0, 0.0, 0.0)
+        xyz = np.array(_floats(origin.get("xyz") if origin is not None else None, 3, zero))
+        rpy = np.array(_floats(origin.get("rpy") if origin is not None else None, 3, zero))
+        read = {
+            key: float(tensor.get(key, 0.0)) for key in ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
+        }
+        matrix = np.array(
+            [
+                [read["ixx"], read["ixy"], read["ixz"]],
+                [read["ixy"], read["iyy"], read["iyz"]],
+                [read["ixz"], read["iyz"], read["izz"]],
+            ]
+        )
+        # the tensor is about the centre of mass in the frame the origin's rpy names, so carry
+        # that rotation into the axes rather than dropping it
+        rotation = Rotation.from_euler("xyz", rpy).as_matrix()
+        found[name] = (float(mass_element.get("value", 0.0)), xyz, rotation @ matrix @ rotation.T)
+    return found
+
+
+def _write_mass(pxr: Any, prim: Any, mass: float, centre: np.ndarray, tensor: np.ndarray) -> None:
+    """Say the link's mass in the way a physics engine reading this layer looks for it.
+
+    The URDF's tensor is a full symmetric matrix; UsdPhysics wants principal moments and the
+    rotation onto them, so it is diagonalised. Without this a reader falls back to a default
+    density over the visual meshes, which for a G1 means a robot whose every link weighs the wrong
+    amount -- it loads, and it cannot stand up.
+    """
+    moments, axes = np.linalg.eigh(tensor)
+    if np.linalg.det(axes) < 0:
+        axes[:, 0] = -axes[:, 0]  # a reflection is not a rotation
+    api = pxr.UsdPhysics.MassAPI.Apply(prim)
+    api.CreateMassAttr(float(mass))
+    api.CreateCenterOfMassAttr(pxr.Gf.Vec3f(*(float(value) for value in centre)))
+    api.CreateDiagonalInertiaAttr(pxr.Gf.Vec3f(*(float(max(value, 0.0)) for value in moments)))
+    quaternion = Rotation.from_matrix(axes).as_quat()
+    api.CreatePrincipalAxesAttr(
+        pxr.Gf.Quatf(
+            float(quaternion[3]), float(quaternion[0]), float(quaternion[1]), float(quaternion[2])
+        )
+    )
+
+
 def _write_link_tree(
     pxr: Any,
     stage: Any,
@@ -336,6 +395,7 @@ def _write_link_tree(
     paths: dict[str, str],
     extras: Mapping[str, Sequence[str]],
     base_dir: Path | None,
+    inertials: Mapping[str, tuple[float, np.ndarray, np.ndarray]] | None = None,
     joint: JointDescription | None = None,
 ) -> None:
     """Define the prim for ``link`` under ``parent_path``, then recurse into its children."""
@@ -350,6 +410,9 @@ def _write_link_tree(
     prim.SetDisplayName(link)
     _set_passthrough(pxr, prim, extras.get(link))
     pxr.UsdPhysics.RigidBodyAPI.Apply(prim)
+    inertial = (inertials or {}).get(link)
+    if inertial is not None:
+        _write_mass(pxr, prim, *inertial)
     if joint is not None:
         xform.AddTransformOp().Set(_matrix(pxr, _zero_pose(joint)))
 
@@ -373,6 +436,7 @@ def _write_link_tree(
             paths=paths,
             extras=extras,
             base_dir=base_dir,
+            inertials=inertials,
             joint=child_joint,
         )
 
