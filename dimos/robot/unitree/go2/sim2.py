@@ -110,8 +110,6 @@ class Go2Sim(Module):
 
     async def handle_cmd_vel(self, twist: Twist) -> None:
         self._desired = np.array([twist.linear.x, twist.linear.y, twist.angular.z])
-        # Sim time, like every other rate here: on wall time a command expires in a quarter of
-        # its intended interval at speed=4, and the robot forgets what it was told.
         self._desired_expires = self._world.stamp() + CMD_VEL_TIMEOUT
 
     def _act(self) -> None:

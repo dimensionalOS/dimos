@@ -46,10 +46,6 @@ class SimL1Config(SceneConfig):
     cell: float = 0.05
     half_width_cells: int = 64
     z_range: tuple[float, float] = (-0.6, 1.3)
-    # 0 and 3 as the Livox has it: group 0 alone is the old default, and it made the beam pass
-    # through every desk, chair and robot. A converted scene puts collision geometry in 3 --
-    # office_555 has no group-0 geoms at all, so an L1 looking only at 0 maps nothing, forever,
-    # without an error.
     geom_groups: tuple[int, ...] = (0, 3)
     seed: int = 0
 
