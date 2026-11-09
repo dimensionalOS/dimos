@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
 
 import mujoco
 import numpy as np
@@ -28,8 +27,8 @@ _SAMPLES = 16
 
 
 def occlusion_grid(
-    model: Any,
-    data: Any,
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
     site: str,
     *,
     az_edges: NDArray[np.float64],
@@ -83,7 +82,12 @@ def occlusion_grid(
     return grid
 
 
-def write_occlusion(path: Path, grid: NDArray[np.float32], az_edges, el_edges) -> None:
+def write_occlusion(
+    path: Path,
+    grid: NDArray[np.float32],
+    az_edges: NDArray[np.float64],
+    el_edges: NDArray[np.float64],
+) -> None:
     np.savez_compressed(
         path,
         probability=grid.astype(np.float32),

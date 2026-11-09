@@ -93,4 +93,5 @@ def sim_module(backend: str = "mujoco", **config: Any) -> Blueprint:
     if backend not in BACKENDS:
         raise ValueError(f"unknown simulation backend {backend!r}; one of {sorted(BACKENDS)}")
     module, _, name = BACKENDS[backend].rpartition(".")
-    return cast("Any", getattr(import_module(module), name)).blueprint(**config)
+    engine = getattr(import_module(module), name)
+    return cast("Blueprint", engine.blueprint(**config))

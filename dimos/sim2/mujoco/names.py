@@ -92,7 +92,7 @@ def _follow(spec: Any, renames: Mapping[str, str]) -> None:
         for element in getattr(spec, kind, ()):
             for field in fields:
                 referred = getattr(element, field, None)
-                if referred in renames:
+                if isinstance(referred, str) and referred in renames:
                     setattr(element, field, renames[referred])
 
 

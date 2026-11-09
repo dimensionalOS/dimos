@@ -48,15 +48,15 @@ class MujocoSim(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._backend: MujocoBackend | None = None
+        self._publisher: _LatestPublisher | None = None
+        self._all_started = Event()
         try:
             validate(self.config.robots)
         except Exception:
             self.stop()
             raise
         self.simulated = self.config.robots
-        self._backend: MujocoBackend | None = None
-        self._publisher: _LatestPublisher | None = None
-        self._all_started = Event()
 
     async def main(self) -> AsyncIterator[None]:
         self.actions.subscribe(self._on_actions)
@@ -172,3 +172,5 @@ class _LatestPublisher:
             except Exception:
                 logger.exception("sim2: publishing a frame failed")
             self._wake.clear()
+            if self._closed:
+                return
