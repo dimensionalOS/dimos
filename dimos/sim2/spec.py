@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a robot sends a world, as {"simulated": ...} from a @shared_config(SimulatedWorld) method.
+"""What the blueprint tells a world about each robot in it, as `sim_module(robots=[...])`.
 
-A robot and nothing else, and very little of that. A *sensor* used to describe itself here too,
-saying what kind of thing it was and how wide its field of view -- which made core's business
+A robot and nothing else, and very little of that. A *sensor* used to be in here too, saying
+what kind of thing it was and how wide its field of view -- which made core's business
 include the difference between a camera and a lidar, and left an engine deciding what to build
 for each. A sensor now builds its own world out of the scene and renders from it, so what it is
 stays between the sensor and whatever it renders with.
