@@ -187,7 +187,7 @@ class Mount:
         return SCENE_RPC if SCENE_RPC in module.rpcs else SUBTREE_RPC
 
 
-class UsdManagerConfig(ModuleConfig):
+class UrdfManagerConfig(ModuleConfig):
     # The robot this manager answers for: a URDF to convert, or a USD layer to serve as it is
     # (a simulated world, say, which is already USD). None gives a single link called "world"
     # and nothing else, which is a scene with no robot of its own -- useful when all this
@@ -231,12 +231,12 @@ class UsdManagerConfig(ModuleConfig):
         return {frame: Mount.of(v) for frame, v in value.items()}
 
 
-class UsdManager(Module):
+class UrdfManager(Module):
     """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
-    config: UsdManagerConfig
+    config: UrdfManagerConfig
 
-    # IO: the joints it poses are published on it (and UsdManagerPointClearing reads a cloud's mount from it).
+    # IO: the joints it poses are published on it (and UrdfManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
     # A request for a *.usd or *.usda gets the scene as a USD layer; one for a file that layer
@@ -346,7 +346,7 @@ class UsdManager(Module):
     def get_usd(self) -> list[str]:
         """``[asset_root, usd]``: this robot's own URDF as a USD layer, nothing attached.
 
-        Anything mountable answers this, UsdManager included, so a robot on a robot is no
+        Anything mountable answers this, UrdfManager included, so a robot on a robot is no
         special case. The root is the URDF's own directory: a mounted module whose asset paths
         are relative needs one, and the asker cannot tell which kind it got.
         """

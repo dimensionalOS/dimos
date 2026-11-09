@@ -24,7 +24,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
 )
 from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
-from dimos.robot.usd_manager import UsdManager
+from dimos.robot.urdf_manager import UrdfManager
 
 _MODEL = openarm_bimanual_model_config(robot="arm")
 # Each jaw's task name, its finger joint, its command stream and its open end.
@@ -59,7 +59,7 @@ def openarm_connection_control_blueprint() -> Blueprint:
             zero_stiffness_joints=[],
         ),
         arm_connection(OpenArmConnection),
-        UsdManager.blueprint(model=_MODEL.model),
+        UrdfManager.blueprint(model=_MODEL.model),
     ).remappings(arm_remaps(OpenArmConnection, DamiaoCoordinator))
 
 

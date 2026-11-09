@@ -15,7 +15,7 @@
 """URDF to USD: one robot as a USD stage, and the grafting that joins subtrees onto it.
 
 A converted stage is a string (a ``.usda`` layer), never a file: a description already travels
-as one through ``UsdManager.file_info``.
+as one through ``UrdfManager.file_info``.
 """
 
 from __future__ import annotations

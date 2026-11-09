@@ -168,37 +168,7 @@ def _dress(spec: mujoco.MjSpec) -> None:
     spec.visual.headlight.diffuse = (0.3, 0.3, 0.3)
 
 
-def light_indoors(spec: mujoco.MjSpec) -> None:
-    """Three lights for a room with a ceiling, since a converted scene arrives with none.
-
-    A generated scene gets `_dress`'s single sun, which is right for somewhere with a sky. A
-    room is not that: one directional light leaves every surface facing away from it black, and
-    office_555 is mostly vertical surfaces. So a key from above and in front, a dimmer fill
-    from behind it with no shadows of its own, and a weak bounce from below for the undersides
-    of the desks -- which is what a floor does in a real room and what nothing else here
-    models.
-
-    Values are for a renderer doing plain diffuse shading, not a physical one: the three sum to
-    about 1.0 so a surface facing the key is near white and nothing is ever fully black.
-    """
-    for direction, diffuse, shadows in (
-        ((0.3, 0.2, -1.0), (0.55, 0.54, 0.52), True),
-        ((-0.5, -0.4, -0.7), (0.3, 0.3, 0.33), False),
-        ((0.0, 0.0, 1.0), (0.12, 0.12, 0.13), False),
-    ):
-        light = spec.worldbody.add_light()
-        light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
-        light.pos = (0.0, 0.0, 6.0)
-        light.dir = direction
-        light.diffuse = diffuse
-        light.specular = (0.05, 0.05, 0.05)
-        light.castshadow = shadows
-    spec.visual.headlight.ambient = (0.25, 0.25, 0.27)
-    spec.visual.headlight.diffuse = (0.15, 0.15, 0.15)
-
-
-def with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
-    """The scene's boxes, lights and materials added to whatever spec is given."""
+def _with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
     _dress(spec)
     add_boxes(spec, scene)
     for i, box in enumerate(scene.boxes):
@@ -212,7 +182,7 @@ def with_scene(spec: mujoco.MjSpec, scene: Scene) -> mujoco.MjSpec:
 
 def scene_model(scene: Scene, robot: mujoco.MjSpec) -> mujoco.MjModel:
     """The scene's boxes and a robot spec, in one model for drawing."""
-    model: mujoco.MjModel = with_scene(robot, scene).compile()
+    model: mujoco.MjModel = _with_scene(robot, scene).compile()
     return model
 
 
@@ -234,27 +204,18 @@ def load_display_spec(path: Path) -> mujoco.MjSpec:
     return spec
 
 
-def add_housings(spec: mujoco.MjSpec, rig: Rig, prefix: str = "") -> None:
-    """Each lidar on the robot's base as a contact box, so its mount bumps into the world.
-
-    A robot attached into a scene takes a prefix on every name, so the names this looks up and
-    the names it writes take the same one.
-    """
+def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
+    """The scene's boxes, the robot and each lidar housing as a contact box, in one model."""
+    spec = _with_scene(rig.spec(), scene)
     for sensor in rig.sensors:
-        housing = spec.body(f"{prefix}{rig.base_body}").add_geom()
-        housing.name = f"{prefix}{sensor.name}"
+        housing = spec.body(rig.base_body).add_geom()
+        housing.name = sensor.name
         housing.type = mujoco.mjtGeom.mjGEOM_BOX
         housing.size = sensor.housing_half_extents
         housing.pos = sensor.mount_xyz
         q = Rotation.from_matrix(sensor.mount_r).as_quat()
         housing.quat = (q[3], q[0], q[1], q[2])
         housing.group = COLLISION_GROUP
-
-
-def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
-    """The scene's boxes, the robot and each lidar housing as a contact box, in one model."""
-    spec = with_scene(rig.spec(), scene)
-    add_housings(spec, rig)
     model = spec.compile()
     if rig.tune is not None:
         rig.tune(model)
@@ -299,15 +260,7 @@ class Sim:
         self.model = build_model(scene, rig)
         self.data = mujoco.MjData(self.model)
         self.robot = body(self.model, self.data)
-        # The body whose shell each lens looks out of, which its cast skips: the rig's base
-        # unless the sensor names another (the G1's Mid-360 looks out of its head, which is a
-        # geom on torso_link).
-        housings = {
-            sensor.name: mujoco.mj_name2id(
-                self.model, mujoco.mjtObj.mjOBJ_BODY, sensor.housing_body or rig.base_body
-            )
-            for sensor in rig.sensors
-        }
+        base = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, rig.base_body)
         self.lidar_groups = np.isin(np.arange(6), (SCENE_GROUP, rig.lidar_group)).astype(np.uint8)
         self.lidars = [
             sensor.lidar(
@@ -315,7 +268,7 @@ class Sim:
                     self.model,
                     self.data,
                     self.lidar_groups,
-                    NO_BODY_EXCLUDED if sensor.sees_base else housings[sensor.name],
+                    NO_BODY_EXCLUDED if sensor.sees_base else base,
                 ),
                 seed + i,
             )
@@ -336,9 +289,6 @@ class Sim:
         self._housings = {mujoco.mj_name2id(self.model, geom, s.name) for s in rig.sensors}
 
     def reset(self, x: float, y: float, z_feet: float, yaw: float) -> None:
-        # Clearing the whole model is the world's call, not the robot's: a robot only places
-        # itself, so that one of several in a model can be reset without moving the others.
-        mujoco.mj_resetData(self.model, self.data)  # type: ignore[attr-defined]
         self.robot.reset(x, y, z_feet, yaw)
         self.t = 0.0
         self._tick = 0

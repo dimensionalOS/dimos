@@ -24,7 +24,7 @@ from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 from dimos.robot.deeprobotics.m20.connection import M20Connection
 from dimos.robot.deeprobotics.m20.model import M20_MODEL, M20StandingJointState
 from dimos.robot.deeprobotics.m20.rerun import m20_rerun_config
-from dimos.robot.usd_manager import UsdManager
+from dimos.robot.urdf_manager import UrdfManager
 from dimos.visualization.vis_module import vis_module
 
 m20 = (
@@ -34,7 +34,7 @@ m20 = (
         M20Connection.blueprint(auto_stand=True).remappings(
             [(M20Connection, "odometry", "slam_odom")]
         ),
-        UsdManager.blueprint(model=M20_MODEL),
+        UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
         m20_nav_stack(),
     )

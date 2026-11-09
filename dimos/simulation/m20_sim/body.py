@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The vendored M20 USD in MuJoCo, walking and rolling under its locomotion policy."""
+"""The vendor M20 model in MuJoCo, walking and rolling under its locomotion policy."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.msgs.sim_msgs.Contacts import Part
-from dimos.robot.deeprobotics.m20.model import M20_USD
+from dimos.robot.deeprobotics.m20.model import M20_MJCF
 from dimos.simulation.go2_legged.policy import Proprioception
 from dimos.simulation.go2_legged.robot import (
     BASE_ANGULAR_VELOCITY,
@@ -33,7 +34,6 @@ from dimos.simulation.go2_legged.robot import (
     yaw_of,
 )
 from dimos.simulation.m20_sim.policy import LEG_JOINTS, LEGS, M20Policy
-from dimos.simulation.usd_spec import load_usd_spec
 
 # the policy acts at 50 Hz
 CONTROL_DT = 0.02
@@ -42,8 +42,9 @@ COLLISION_GROUP = 1
 
 
 def m20_spec() -> mujoco.MjSpec:
-    """An editable spec of the M20, read from the one USD M20_MODEL is, its demo floor and light removed."""
-    spec = load_usd_spec(M20_USD)
+    """An editable spec of the vendor M20 MJCF (the model M20_MODEL is derived from), its demo floor and light removed."""
+    spec = mujoco.MjSpec.from_file(str(M20_MJCF))
+    spec.meshdir = str(Path(spec.modelfiledir) / spec.meshdir)
     world = spec.worldbody
     for element in [*world.geoms, *world.lights]:
         spec.delete(element)

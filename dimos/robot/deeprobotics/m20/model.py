@@ -12,33 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The M20's model, as the USD vendored beside it, and its standing pose for robots that do not report joint angles."""
+"""The M20's model, from the vendor's MJCF, and its standing pose for robots that do not report joint angles."""
 
-from pathlib import Path
 import threading
 import time
 from typing import Any
+
+import mujoco
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.mjcf import mjcf_to_urdf
 from dimos.robot.deeprobotics.m20.assets.description import SparseDescriptionSource
 
 _SDK = "src/M20_sdk_deploy"
-# The vendor's deploy repo, for the walking policy alone. The robot itself is vendored as USD
-# beside this file -- see scripts/mjcf_to_usd.py for how, and why it is converted once by hand.
+_MJCF_DIR = f"{_SDK}/M20_description/m20_mjcf"
+# The vendor's deploy repo: its MJCF (what the walking policy runs with), its meshes and the policy itself.
 M20_SDK_SOURCE = SparseDescriptionSource(
     url="https://github.com/DeepRoboticsLab/sdk_deploy",
     ref="2367375f922f2a739f7b578849ae2affd4d8660d",
-    sparse_paths=(f"{_SDK}/policy/policy.onnx",),
+    sparse_paths=(
+        f"{_MJCF_DIR}/mjcf/M20.xml",
+        f"{_MJCF_DIR}/meshes/*.STL",
+        f"{_SDK}/policy/policy.onnx",
+    ),
 )
+M20_MJCF = M20_SDK_SOURCE / _MJCF_DIR / "mjcf" / "M20.xml"
 M20_POLICY = M20_SDK_SOURCE / _SDK / "policy" / "policy.onnx"
-# The one description: dimos poses tf from it, dim-controller draws it, and MuJoCo simulates it.
-M20_USD = Path(__file__).parent / "assets" / "m20.usda"
-M20_MODEL = UsdModel.from_file(M20_USD)
+# The URDF the real robot and the sim show, derived from the same MJCF the sim steps.
+M20_MODEL = mjcf_to_urdf(mujoco.MjSpec.from_file(str(M20_MJCF)))
 
 # Hip pitch and knee of the vendor SDK's standing pose; front knees fold back, hind knees forward.
 STAND_JOINT_POSITIONS = {

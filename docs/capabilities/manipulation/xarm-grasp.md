@@ -57,7 +57,7 @@ the registered objects:
 
 ```
 camera pointcloud
-  -> UsdManager                   drops robot surface returns using RoboPlan
+  -> UrdfManager                   drops robot surface returns using RoboPlan
   -> RayTracingVoxelMap             accumulates occupied cells in the world frame
   -> PointCloudBoxFilter            leaves out the cells inside named boxes
   -> ManipulationModule.voxel_map   rebuilt as the "mapping/voxel-map" obstacle
@@ -191,7 +191,7 @@ A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset
 does not respawn them. Restart the blueprint between pick attempts that need a
 pristine scene.
 
-The xArm blueprint uses `UsdManager`'s self filter (its `self_filter` option, on by
+The xArm blueprint uses `UrdfManager`'s self filter (its `self_filter` option, on by
 default; its joint tf off, since `ManipulationModule` owns those frames), which delegates
 geometry loading, kinematics, mimic joints and Narrowphase surface classification to RoboPlan 0.7. dimOS matches
 joint state and TF to the capture timestamp, preserves point fields, and drops

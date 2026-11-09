@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The G1's model, as the USD vendored beside it."""
+
+"""A MuJoCo MJCF robot as a URDF, so one MJCF is the source for both the simulator and RobotModel users."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from mjcf_to_urdf import mjcf_spec_to_urdf
+import mujoco
 
-from dimos.robot.assets.model import UsdModel
+from dimos.robot.assets.model import RobotModel
 
-# The one description: dimos poses tf from it, dim-controller draws it, and MuJoCo simulates it.
-# Converted once from the menagerie MJCF -- see scripts/mjcf_to_usd.py for how, and why by hand.
-G1_USD = Path(__file__).parent / "assets" / "g1.usda"
-G1_MODEL = UsdModel.from_file(G1_USD)
+
+def mjcf_to_urdf(spec: mujoco.MjSpec) -> RobotModel:
+    """The robot in an MJCF as a RobotModel; mesh paths stay relative to the MJCF's folder, as MuJoCo resolves them."""
+    return RobotModel.from_urdf_string(mjcf_spec_to_urdf(spec), asset_dir=spec.modelfiledir)
