@@ -136,12 +136,15 @@ def _packaged_native_root() -> Path:
     """Stage bundled Rust inputs in a writable cache, keeping sibling crate paths."""
     inputs: set[Path] = set()
     for directory, dirs, files in os.walk(DIMOS_PROJECT_ROOT / "dimos"):
+        relative = Path(directory).relative_to(DIMOS_PROJECT_ROOT)
         dirs[:] = [
             name
             for name in dirs
-            if name not in {"target", "build", "__pycache__"} and not name.startswith("result")
+            if name not in {"target", "build", "__pycache__"}
+            and not name.startswith("result")
+            # Runtime data owns the fallback checkout; crate-local data is still an input.
+            and relative / name != Path("dimos/data")
         ]
-        relative = Path(directory).relative_to(DIMOS_PROJECT_ROOT)
         if "rust" in relative.parts:
             inputs.update(
                 relative / name

@@ -669,6 +669,9 @@ def test_packaged_build_cache_preserves_inputs_and_changes_with_sources(tmp_path
     cargo_config = source / ".cargo/config.toml"
     cargo_config.parent.mkdir()
     cargo_config.write_text("[build]")
+    resource = source / "nested/data/sample.cdr"
+    resource.parent.mkdir(parents=True)
+    resource.write_bytes(b"native resource")
     artifact = source / "nested/target/debug/build.rs"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("generated")
@@ -686,6 +689,7 @@ def test_packaged_build_cache_preserves_inputs_and_changes_with_sources(tmp_path
         assert staged.is_relative_to(cache)
         assert (staged / "../../../local_planner/rust/src/lib.rs").read_text() == "planner"
         assert (staged / ".cargo/config.toml").read_text() == "[build]"
+        assert (staged / "nested/data/sample.cdr").read_bytes() == b"native resource"
         assert not (staged / "nested/target").exists()
         Path(executable).parent.mkdir(parents=True)
         Path(executable).touch()
@@ -695,10 +699,18 @@ def test_packaged_build_cache_preserves_inputs_and_changes_with_sources(tmp_path
         source.chmod(0o755)
         manifest.chmod(0o644)
 
+    runtime_source = package_root / "dimos/data/repo" / source_dir / "src/lib.rs"
+    runtime_source.parent.mkdir(parents=True)
+    for content in ("runtime checkout", "updated runtime checkout"):
+        runtime_source.write_text(content)
+        assert config.resolve_paths() == (cwd, executable)
+        assert not (staged / "../../../../data").exists()
+
     sibling.write_text("updated planner")
     new_cwd, new_executable = config.resolve_paths()
     assert new_cwd != cwd
     assert not Path(new_executable).exists()
+    assert not (Path(new_cwd) / "../../../../data").exists()
     fetch.assert_not_called()
 
     # Editable worktrees keep their sources and resource paths in place.
