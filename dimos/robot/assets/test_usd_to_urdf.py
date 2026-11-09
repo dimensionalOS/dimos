@@ -81,9 +81,7 @@ def _round_trip(loaded: Any, tmp_path: Path) -> Any:
 
 
 def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path) -> None:
-    """The whole point: a URDF through USD and back describes the same kinematics.
-
-    Covers the conversions that are easy to get backwards -- an axis folded into the local
+    """Covers the conversions that are easy to get backwards: an axis folded into the local
     rotations, and a revolute limit that is degrees in USD and radians in URDF.
     """
     back = _round_trip(probe, tmp_path)
@@ -97,9 +95,8 @@ def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path)
             original.parent_link,
             original.child_link,
         )
-        # 1e-6, not exact: UsdPhysics declares localPos as point3f and localRot as quatf, so
-        # a joint's placement goes through single precision on the way out. The loss is
-        # ~2e-8 on a metre, which is nothing next to the padding a self-filter uses.
+        # 1e-6, not exact: UsdPhysics declares localPos as point3f and localRot as quatf, so a joint's
+        # placement goes through single precision (~2e-8 on a metre).
         np.testing.assert_allclose(got.origin_xyz, original.origin_xyz, atol=1e-6)
         np.testing.assert_allclose(got.origin_rpy, original.origin_rpy, atol=1e-6)
         np.testing.assert_allclose(got.axis, original.axis, atol=1e-6)
@@ -114,7 +111,6 @@ def test_the_kinematic_tree_comes_back_the_same(probe: Any, tmp_path: Path) -> N
 
 
 def test_the_forward_kinematics_agree(probe: Any, tmp_path: Path) -> None:
-    """Comparing the matrices, not just the fields they were written from."""
     back = _round_trip(probe, tmp_path)
 
     for original in probe.joints:
@@ -127,7 +123,6 @@ def test_the_forward_kinematics_agree(probe: Any, tmp_path: Path) -> None:
 
 
 def test_collision_geometry_comes_back_as_collision(probe: Any) -> None:
-    """RoboPlan reads the collision half, so that is the half that has to survive."""
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
     links = {link.get("name"): link for link in root.findall("link")}
 
@@ -175,7 +170,6 @@ def test_a_visual_mesh_keeps_the_path_the_urdf_named(probe: Any) -> None:
 
 
 def test_what_the_conversion_could_not_express_comes_back(probe: Any) -> None:
-    """<inertial> is passed through to USD's customData, so it returns verbatim."""
     root = ET.fromstring(usd_to_urdf(urdf_to_usd(probe)))
     base = next(link for link in root.findall("link") if link.get("name") == "base")
 
@@ -185,7 +179,6 @@ def test_what_the_conversion_could_not_express_comes_back(probe: Any) -> None:
 
 
 def test_a_continuous_joint_round_trips_as_continuous(tmp_path: Path) -> None:
-    """It is written as a revolute with no limits at all, so it has to be read back by that."""
     source = tmp_path / "spin.urdf"
     source.write_text(
         '<robot name="spin"><link name="a"/><link name="b"/>'
@@ -207,7 +200,6 @@ def test_the_robot_name_can_be_overridden(probe: Any) -> None:
 
 
 def test_a_layer_with_no_joints_is_still_a_robot(tmp_path: Path) -> None:
-    """The world root a manager stands on when it was given no model."""
     source = tmp_path / "world.urdf"
     source.write_text('<robot name="world"><link name="world"/></robot>')
     loaded = RobotModel.from_file(source).load()
@@ -221,7 +213,6 @@ def test_a_layer_with_no_joints_is_still_a_robot(tmp_path: Path) -> None:
 def test_the_root_link_is_found_in_the_layer_not_taken_from_the_default_prim(
     probe: Any, tmp_path: Path
 ) -> None:
-    """The defaultPrim is the robot, not a link, so a tf lookup on it finds nothing."""
     from dimos.robot.assets.usd_to_urdf import usd_root_link
 
     usd = urdf_to_usd(probe)
@@ -286,11 +277,9 @@ def Xform "leg"
 
 
 def test_a_capsule_becomes_a_cylinder_that_covers_it() -> None:
-    """URDF has no capsule, and dropping one leaves the link with no collision volume at all.
-
-    The G1's thighs, shins and hand collision volumes are capsules, so the consumers of this --
-    body masking, RoboPlan -- would otherwise plan against a robot with bare legs. A cylinder
-    spanning the capsule's full length, caps included, is the usual stand-in.
+    """URDF has no capsule, and dropping one leaves the link with no collision volume at all: the
+    G1's thighs, shins and hands are capsules. A cylinder spanning the full length, caps
+    included, is the usual stand-in.
     """
     root = ET.fromstring(usd_to_urdf(_CAPSULE_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
@@ -330,12 +319,8 @@ def Xform "leg"
 
 
 def test_a_layer_that_marks_no_collision_falls_back_to_mujocos_grouping() -> None:
-    """An MJCF that switches collision off wholesale still says which shapes are the hard ones.
-
-    The G1's default class is `contype="0" conaffinity="0"` -- its policy does not need
-    self-collision -- so the converted layer carries no CollisionAPI anywhere and RoboPlan would
-    get a humanoid with no collision scene at all. Those models still put their collision geoms
-    in MuJoCo's group 3.
+    """The G1's default class is `contype="0" conaffinity="0"`, so the converted layer carries no
+    CollisionAPI anywhere; such models still put their collision geoms in MuJoCo's group 3.
     """
     root = ET.fromstring(usd_to_urdf(_MJC_GROUPED_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
@@ -374,10 +359,8 @@ def Xform "leg"
 
 
 def test_a_layer_that_marks_collision_is_not_second_guessed() -> None:
-    """The group number is per-model -- the M20's vendor MJCF collides on group 1, not 3.
-
-    So the fallback must stay a fallback. Here the layer says outright which shape is hard, and
-    a second shape happens to sit in group 3; reading the group anyway would make it collide.
+    """The group number is per-model -- the M20's vendor MJCF collides on group 1, not 3 -- so the
+    fallback must stay a fallback.
     """
     root = ET.fromstring(usd_to_urdf(_MARKED_AND_GROUPED_USDA))
     (link,) = [link for link in root.findall("link") if link.get("name") == "thigh"]
@@ -422,12 +405,9 @@ def Xform "room"
 
 
 def test_a_scene_is_rooted_at_the_prim_every_joint_hangs_off() -> None:
-    """An MJCF worldbody is not a rigid body, so a converted scene has no link that is a root.
-
-    Every item is some weld's child, so the search for "the link no joint claims" comes back
-    empty and the fallback took whichever link happened to be first -- office_555 rooted its 448
-    pieces of furniture at `box_1`, a cardboard box. The prim all the welds name is the root,
-    whether or not it is itself a link.
+    """An MJCF worldbody is not a rigid body, so every item is some weld's child and "the link no
+    joint claims" comes back empty: the fallback rooted office_555's 448 pieces of furniture at a
+    cardboard box. The prim all the welds name is the root, link or not.
     """
     from dimos.robot.assets.usd_to_urdf import usd_root_link
 
@@ -445,24 +425,17 @@ _TWO_PARENTS_USDA = _SCENE_USDA.replace(
 
 
 def test_two_candidate_roots_are_not_guessed_between() -> None:
-    """The rule only holds when one prim really is what everything hangs off.
-
-    Two different parents means the layer is not a flat scene, and picking either would be a
-    guess dressed up as a root. It falls back to the old behaviour instead, which at least does
-    not invent a hierarchy.
+    """Two different parents means the layer is not a flat scene, and picking either would be a
+    guess dressed up as a root.
     """
     from dimos.robot.assets.usd_to_urdf import usd_root_link
 
-    # It falls back to a link, as it always did. What it must not do is hand back a non-link
-    # parent it picked between -- that would be a guess dressed up as a root.
     assert usd_root_link(_TWO_PARENTS_USDA) in {"desk", "chair"}
 
 
 def test_a_nested_link_with_no_joint_becomes_a_fixed_joint() -> None:
-    """USD conveys the tree by nesting; a URDF with two unconnected links will not load.
-
-    A hand-written layer often states only the hierarchy, so the weld has to be inferred or
-    nothing downstream can read the result.
+    """USD conveys the tree by nesting and a URDF with two unconnected links will not load, so a
+    hand-written layer that states only the hierarchy needs the weld inferred.
     """
     root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
 
@@ -519,11 +492,9 @@ def walker(tmp_path: Path) -> Any:
 
 
 def test_a_floating_base_does_not_come_back_welded(walker: Any, tmp_path: Path) -> None:
-    """A floating joint is written as no joint prim, since a USD body with no joint is free.
-
-    That makes it indistinguishable from a nested, welded body, so the joint left out is
-    recorded on the child. Without that a walking robot's base comes back fixed at whatever
-    pose it was authored at, and anything posing it from odometry would be ignored.
+    """A floating joint is written as no joint prim, which is indistinguishable from a nested,
+    welded body, so the joint left out is recorded on the child. Without that a walking robot's
+    base comes back fixed and anything posing it from odometry is ignored.
     """
     back = _round_trip(walker, tmp_path)
 
@@ -551,7 +522,6 @@ def test_a_planar_joint_round_trips_too(tmp_path: Path) -> None:
 
 
 def test_a_nested_link_with_no_record_is_still_read_as_welded() -> None:
-    """A layer this converter did not write carries no record, and USD cannot say which."""
     root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
 
     assert [joint.get("type") for joint in root.findall("joint")] == ["fixed"]
