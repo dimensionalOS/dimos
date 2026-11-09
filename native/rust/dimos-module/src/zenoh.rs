@@ -265,12 +265,16 @@ impl ZenohTransport {
         Ok(Self::wrap(session))
     }
 
-    fn wrap(session: Session) -> Self {
+    pub(crate) fn wrap(session: Session) -> Self {
         Self {
             session,
             qos: OnceLock::new(),
             publishers: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(crate) fn session(&self) -> &Session {
+        &self.session
     }
 
     async fn declare_publisher(&self, channel: &str) -> io::Result<Publisher<'static>> {
@@ -327,7 +331,7 @@ impl Transport for ZenohTransport {
     }
 }
 
-fn to_io(e: ::zenoh::Error) -> io::Error {
+pub(crate) fn to_io(e: ::zenoh::Error) -> io::Error {
     io::Error::other(e)
 }
 
