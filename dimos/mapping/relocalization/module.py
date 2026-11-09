@@ -25,21 +25,29 @@ Named locations live here too, kept in the ``map`` frame so every new fix moves 
 with the old map. Each is also a tf frame under ``map``. Wire contract:
 
 - ``named_locations`` (in and out): the whole list, as an ``InteractiveMarkerUpdate`` whose
-  ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}, and whose
-  ``server_id``/``seq_num`` name the module run and the revision of the list. Anyone may
-  publish it; adding, moving, renaming and deleting are all a new whole list, carrying the
-  ``server_id``/``seq_num`` of the list it was edited from. The module adopts it only when that
-  is its current revision, then publishes the result as the next revision; a list edited from
-  an older revision, or from another run, is dropped and the current list republished, so a
-  stale cache can never bring back a renamed or deleted location. A viewer replaces its cache
-  with every list the module publishes, and sends ``named_locations_request`` when it connects.
+  ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
+  publish it, and anyone who publishes it also listens to it; adding, moving, renaming and
+  deleting are all the same operation, a new whole list. **An update that is not a no-op is
+  applied**: the module takes it, publishes the result as the next revision, and every listener
+  replaces its cache with what comes back, so the browser page, this module and the Controller's
+  own backend converge on one list by hearing each other. ``server_id``/``seq_num`` name the run
+  and the revision so a listener can ignore an echo that arrives out of order; they are not a
+  gate on applying an edit. Last writer wins, which means a publisher that has not yet heard a
+  deletion can bring that location back for one propagation delay -- it then hears the list it
+  caused and agrees. The module publishes its list once at ``start()`` (a client that connected
+  first would otherwise never learn it exists) and on every ``named_locations_request``.
 - Going to a location is the viewer's job: it sends the location's pose on the planner's
   ``goal`` as a ``PointStamped`` in ``map_frame``, which the planner re-expresses through tf on
   every replan, so the goal follows a later fix.
 
 The locations are seeded from the last ``locations_stream`` snapshot of the ``map_file``
-recording; a recording of ``named_locations`` keeps them for the next run. With no map and ``new_map`` set, this run's world frame is the map:
-the module submits an identity ``world -> map`` fix itself.
+recording -- the premap is where they live, and there is no store of them anywhere else. A
+recording of ``named_locations`` keeps them for the next run, so **an edit made with no recording
+running is for this session only**. With no map and ``new_map`` set, this run's world frame is the
+map: the module submits an identity ``world -> map`` fix itself.
+
+Each location is also a tf frame ``location_<name>`` under ``map``. tf has no deletion, so a
+renamed or deleted location leaves its old frame hanging off ``map`` until the process restarts.
 """
 
 from __future__ import annotations
@@ -171,6 +179,9 @@ class PremapModule(Module):
             fix_stream(self.fixes, self.config.tf_interval).subscribe(lambda _: self.publish_tf())
         )
         self.open_locations()
+        # Clients cache the list they hear and only ask for it when they connect, so one that connected before
+        # this module came up would never learn it exists: say so once, up front, whatever else this run does.
+        self.named_locations.publish(self.locations_snapshot())
         if not self.config.map_file:
             if self.config.new_map:
                 logger.info("Relocalization: new map, this run's world frame is the map frame")
@@ -259,28 +270,21 @@ class PremapModule(Module):
         for named in published.poses:
             pose = self.reexpress(pose_of(named), self.config.map_frame)
             if pose is None:
+                # The publisher is waiting on an echo that says what the list is; it gets the truth instead of
+                # nothing, so it can put its point in a frame this module can place and try again.
                 logger.warning(
                     f"named locations ignored: no transform from {named.header.frame_id!r} to {self.config.map_frame!r}"
                 )
+                self.named_locations.publish(self.locations_snapshot())
                 return
             locations[named.name] = pose
         with self._lock:
             if same_locations(locations, self._locations):
                 return
-            edited_from = (published.server_id, published.seq_num)
-            current = (self._server_id, self._revision)
-            if edited_from == current:
-                self._locations = locations
-                self._revision += 1
-        if edited_from != current:
-            logger.warning(
-                f"named locations dropped: edited from revision {edited_from}, current is {current}"
-            )
-            self.named_locations.publish(self.locations_snapshot())
-            return
+            self._locations = locations
+            self._revision += 1
         logger.info(f"named locations: {list(locations)}")
-        snapshot = self.locations_snapshot()
-        self.named_locations.publish(snapshot)
+        self.named_locations.publish(self.locations_snapshot())
         self.publish_tf()
 
     async def handle_named_locations_request(self, _: String) -> None:

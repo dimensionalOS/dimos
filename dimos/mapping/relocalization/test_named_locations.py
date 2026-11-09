@@ -66,6 +66,7 @@ def make(monkeypatch: pytest.MonkeyPatch):
 def begin(module: PremapModule) -> None:
     """What start() does for named locations once its ports are bound."""
     module.open_locations()
+    module.named_locations.publish(module.locations_snapshot())
     if module.config.new_map:
         module.submit(module._identity(), "new map")
 
@@ -80,18 +81,18 @@ def at(x: float, y: float, frame_id: str, yaw: float = 0.0) -> PoseStamped:
 
 
 def listing(
-    poses: dict[str, PoseStamped], edited_from: InteractiveMarkerUpdate
+    poses: dict[str, PoseStamped], heard: InteractiveMarkerUpdate
 ) -> InteractiveMarkerUpdate:
-    """A whole list of named locations, as a viewer publishes it after editing *edited_from*."""
+    """A whole list of named locations, as a publisher sends it carrying the revision it last *heard*."""
     return InteractiveMarkerUpdate(
         [named_pose(name, pose) for name, pose in poses.items()],
-        server_id=edited_from.server_id,
-        seq_num=edited_from.seq_num,
+        server_id=heard.server_id,
+        seq_num=heard.seq_num,
     )
 
 
 def publish(module: PremapModule, poses: dict[str, PoseStamped]) -> None:
-    """A viewer that is up to date edits the module's current list."""
+    """A publisher that is up to date sends a new whole list."""
     asyncio.run(module.handle_named_locations(listing(poses, module.locations_snapshot())))
 
 
@@ -116,9 +117,10 @@ def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revisi
     publish(module, {"charger": at(1, 2, "map")})
     assert names(module.locations_snapshot()) == ["charger"]
 
-    # every adopted list goes out, one revision on, so every viewer's cache follows
-    assert [names(p) for p in published] == [["dock", "desk"], ["charger", "desk"], ["charger"]]
-    assert [p.seq_num for p in published] == [1, 2, 3]
+    # start() says what the list is, then every applied list goes out one revision on, so every
+    # listener's cache follows
+    assert [names(p) for p in published] == [[], ["dock", "desk"], ["charger", "desk"], ["charger"]]
+    assert [p.seq_num for p in published] == [0, 1, 2, 3]
 
 
 def test_its_own_list_coming_back_changes_nothing(make):
@@ -127,11 +129,11 @@ def test_its_own_list_coming_back_changes_nothing(make):
     publish(module, {"dock": at(1, 2, "map", yaw=0.3)})
 
     asyncio.run(module.handle_named_locations(published[-1]))
-    assert len(published) == 1
+    assert len(published) == 2, "start()'s snapshot and the one edit, and nothing for the echo"
 
 
-def test_a_stale_cache_cannot_bring_back_a_renamed_location(make):
-    """Two viewers edit the same revision: the second is dropped and resynced, no duplicate."""
+def test_the_last_writer_wins_whatever_revision_it_saw(make):
+    """No gate: a publisher that missed a rename still has its list applied, and hears the result."""
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map")})
@@ -141,14 +143,15 @@ def test_a_stale_cache_cannot_bring_back_a_renamed_location(make):
     stale = listing({"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}, both_saw)
     asyncio.run(module.handle_named_locations(stale))
 
-    assert names(module.locations_snapshot()) == ["charger"]
-    # the stale viewer gets the current list back to replace its cache with
-    assert names(published[-1]) == ["charger"]
-    assert published[-1].seq_num == 2
+    # the second publisher wrote last, so its list is the list -- "dock" is back, by design
+    assert names(module.locations_snapshot()) == ["dock", "desk"]
+    # and it goes out, so the one that renamed hears it and agrees
+    assert names(published[-1]) == ["dock", "desk"]
+    assert published[-1].seq_num == 3
 
 
-def test_a_list_from_another_run_is_dropped(make):
-    """A viewer that outlived a restart holds the old run's revisions, which never match."""
+def test_a_list_from_another_run_is_applied_too(make):
+    """A publisher that outlived a restart carries the old run's server_id; it is not a gate."""
     old_run, _ = make()
     begin(old_run)
     publish(old_run, {"dock": at(1, 2, "map")})
@@ -159,8 +162,9 @@ def test_a_list_from_another_run_is_dropped(make):
         {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}, old_run.locations_snapshot()
     )
     asyncio.run(module.handle_named_locations(cached))
-    assert names(module.locations_snapshot()) == []
-    assert names(published[-1]) == []
+    assert names(module.locations_snapshot()) == ["dock", "desk"]
+    assert names(published[-1]) == ["dock", "desk"]
+    assert published[-1].server_id == module.locations_snapshot().server_id
 
 
 def test_a_request_resends_every_location(make):
@@ -185,10 +189,12 @@ def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
     assert positions(module.locations_snapshot()) == {"door": (1, 0)}
 
 
-def test_a_list_without_a_map_transform_is_ignored(make):
-    module, _ = make()
+def test_a_list_without_a_map_transform_is_ignored_and_the_truth_resent(make):
+    module, published = make()
     publish(module, {"door": at(10, 1, "world")})
     assert names(module.locations_snapshot()) == []
+    # the publisher is waiting on an echo: it gets the current list, not silence
+    assert len(published) == 1 and names(published[-1]) == []
 
 
 def test_a_new_map_is_the_world_frame(make):
@@ -217,9 +223,11 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
 
     second, published = make(map_file=run1)
     begin(second)
-    assert published == []
-    asyncio.run(second.handle_named_locations_request(String("")))
+    # start() publishes the seeded list, so a client that connected before this module hears it
+    # without having to ask
     assert positions(published[0]) == {"dock": (1, 2)}
+    asyncio.run(second.handle_named_locations_request(String("")))
+    assert positions(published[-1]) == {"dock": (1, 2)}
     loaded = published[0].poses[0]
     assert loaded.header.frame_id == "map"
     assert (
