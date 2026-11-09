@@ -25,9 +25,14 @@ from dimos.robot.assets.usd import (
     PASSTHROUGH_KEY,
     asset_hash,
     graft_usd,
+    prefix_usd_frames,
+    rename_usd_frames,
     require_asset_hashes,
+    trivialize_usd,
     unhashed_assets,
     urdf_to_usd,
+    usd_frame_names,
+    usd_with_frames,
 )
 
 # usd-core is an optional extra, unavailable on aarch64 before Python 3.11 (see assets/usd.py).
@@ -321,6 +326,132 @@ def test_the_mount_joint_adds_no_offset_of_its_own(toy: Any) -> None:
         assert joint.GetAttribute(attribute).Get() == Gf.Quatf(1.0, 0.0, 0.0, 0.0)
 
 
+def test_a_frame_can_be_added_to_a_scene_and_mounted_at(toy: Any) -> None:
+    """A converted room arrives with frames for its own furniture and none for its visitors.
+
+    Three robots standing in one need three frames, because grafting two subtrees at one frame
+    is refused, so the scene has to be able to grow them.
+    """
+    root = urdf_to_usd(toy)
+
+    grown = usd_with_frames(root, {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))})
+    stage = _stage(graft_usd(grown, {"spot": urdf_to_usd(toy, name="arm_sub")}))
+
+    assert _prim_by_link(stage, "spot"), "the frame is a link, so graft_usd can match it"
+    assert stage.GetPrimAtPath("/toy/base_link/spot/arm_sub/base_link")
+
+
+def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
+    """A mount bolted to a link is not free to move, and has to say so.
+
+    Nesting places a frame but does not say how it is held, so a physics engine decides. MuJoCo
+    decides "free in all six degrees", and a frame carries no mass, so the G1's lidar mount made
+    the whole robot refuse to compile: "mass and inertia of moving bodies must be larger than
+    mjMINVAL". The weld costs no degree of freedom -- a welded massless body folds into its
+    parent -- and it is what was true all along.
+    """
+    from pxr import UsdPhysics
+
+    grown = usd_with_frames(
+        urdf_to_usd(toy), {"spot": ("base_link", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
+    )
+    stage = _stage(grown)
+
+    frame = _prim_by_link(stage, "spot")
+    assert frame, "the frame is still a link"
+    welds = [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ]
+    assert len(welds) == 1, "the frame is held by exactly one weld"
+    base = _prim_by_link(stage, "base_link")
+    assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
+
+
+def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(toy: Any) -> None:
+    """A converted room hangs its visitors' frames off its own root, which is an Xform.
+
+    Welding to that is not a statement USD can make, so the frame is welded to the *world*
+    instead -- a FixedJoint naming only body1. Nesting under static geometry is not enough: the
+    frame is a rigid body, because that is what makes an engine give it a body at all, and an
+    unheld rigid body with no mass is "mass and inertia of moving bodies must be larger than
+    mjMINVAL" -- the same complaint a robot's lidar mount made, now from a room.
+    """
+    from pxr import UsdPhysics
+
+    stage = _stage(
+        usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    )
+
+    frame = _prim_by_link(stage, "spot")
+    assert frame, "the frame is a link"
+    welds = [
+        prim
+        for prim in stage.Traverse()
+        if prim.IsA(UsdPhysics.FixedJoint)
+        and prim.GetRelationship("physics:body1").GetTargets() == [frame.GetPath()]
+    ]
+    assert len(welds) == 1, "the frame is held by exactly one weld"
+    # No body0: that is how USD says "to the world".
+    assert welds[0].GetRelationship("physics:body0").GetTargets() == []
+
+
+def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:
+    """A rig's mounts describe each other: the Go2's Mid-360 sits on its front camera.
+
+    Reading the layer's links once before adding any made that "the layer has no frame
+    'front_camera'", which is true of the file and not of the stage being built into it.
+    """
+    stage = _stage(
+        usd_with_frames(
+            urdf_to_usd(toy),
+            {
+                "front_camera": ("base_link", (0.1, 0.0, 0.2), (0.0, 0.0, 0.0)),
+                "lidar": ("front_camera", (0.0, 0.0, 0.05), (0.0, 0.0, 0.0)),
+            },
+        )
+    )
+
+    camera = _prim_by_link(stage, "front_camera")
+    assert camera
+    assert stage.GetPrimAtPath(camera.GetPath().AppendChild("lidar")), "the lidar is on the camera"
+
+
+def test_a_frame_added_where_one_already_lives_is_an_error(toy: Any) -> None:
+    with pytest.raises(ValueError, match="is taken"):
+        usd_with_frames(
+            urdf_to_usd(toy), {"mount": ("base_link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))}
+        )
+
+
+def test_a_frame_hung_off_a_frame_the_scene_does_not_have_is_an_error(toy: Any) -> None:
+    with pytest.raises(ValueError, match="no frame 'nowhere'"):
+        usd_with_frames(urdf_to_usd(toy), {"spot": ("nowhere", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+
+
+def test_trivializing_keeps_the_lights_and_drops_the_shapes(toy: Any) -> None:
+    """A light is not a shape.
+
+    It is how the scene looks, and the one thing a viewer cannot work out for itself: told
+    none, it has to invent some, and a room that says what its sky is gets lit by a guess.
+    Dropping them with the geometry meant a scene could not hand over its lighting without
+    handing over its meshes too.
+    """
+    lit = urdf_to_usd(toy).replace(
+        'def Xform "toy"\n{',
+        'def Xform "toy"\n{\n    def DomeLight "sky"\n    {\n'
+        "        color3f inputs:color = (0.4, 0.6, 0.9)\n    }\n",
+    )
+    assert 'def DomeLight "sky"' in lit, "the fixture has to actually carry a light"
+
+    lean = trivialize_usd(lit)
+
+    assert 'def DomeLight "sky"' in lean, "the sky survives"
+    assert "def Mesh " not in lean and "def Cube " not in lean, "the shapes do not"
+
+
 def test_grafting_at_a_frame_the_root_does_not_have_is_an_error(toy: Any) -> None:
     with pytest.raises(ValueError, match="no prim for that frame"):
         graft_usd(urdf_to_usd(toy), {"nope": urdf_to_usd(toy, name="arm_sub")})
@@ -363,6 +494,17 @@ def test_a_link_still_wins_a_name_the_root_shares(toy: Any) -> None:
     assert stage.GetPrimAtPath("/base_link/base_link/arm_sub/base_link"), (
         "the subtree went to the root rather than to the link of that name"
     )
+
+
+def test_a_prefix_moves_the_root_with_everything_under_it(toy: Any) -> None:
+    """Two namespaced copies of one scene must share no frame name, the root included."""
+    scene = urdf_to_usd(toy, name="room")
+
+    left = usd_frame_names(prefix_usd_frames(scene, "left"))
+    right = usd_frame_names(prefix_usd_frames(scene, "right"))
+
+    assert left & right == set(), f"both copies still answer to {sorted(left & right)}"
+    assert "left/room" in left, sorted(left)
 
 
 def test_grafting_nothing_leaves_the_root_alone(toy: Any) -> None:
@@ -650,6 +792,22 @@ def test_a_hashed_texture_satisfies_the_check(tmp_path: Any) -> None:
     texture.GetPrim().SetAssetInfo({"version": asset_hash(image.read_bytes())})
 
     assert unhashed_assets(stage.GetRootLayer().ExportToString()) == {}
+
+
+def test_a_scene_can_rename_the_root_everything_hangs_off(toy: Any) -> None:
+    """A converted room's root is a plain Xform, not a link, and it is still a frame.
+
+    It is the one everything in the room hangs off, so if tf calls that frame something else
+    -- "world", where the robots stand -- the rename has to reach it. Validating the name and
+    then quietly not applying it is the worst of the three options.
+    """
+    scene = urdf_to_usd(toy, name="office")
+
+    assert "office" in usd_frame_names(scene)
+    renamed = rename_usd_frames(scene, {"office": "world"})
+
+    assert 'displayName = "world"' in renamed
+    assert "world" in usd_frame_names(renamed)
 
 
 def test_a_link_carries_its_mass_where_a_physics_engine_looks_for_it(tmp_path: Path) -> None:

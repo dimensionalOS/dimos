@@ -38,6 +38,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+# An xyz or an rpy triple. Spelled out here rather than imported from assets/usd.py, which
+# needs usd-core: pydantic resolves this annotation by name when it builds a model around
+# UsdModel, and a name it cannot reach is a model that will not finish defining itself.
+Vector = tuple[float, float, float]
+
 
 @dataclass(frozen=True)
 class JointDescription:
@@ -138,6 +143,8 @@ class UsdModel:
     _urdf: LoadedRobotModel | None = None
     # A layer given outright, rather than read or converted.
     _text: str | None = None
+    # Frames to add to the layer when it is read; see ``with_frames``.
+    _added_frames: tuple[tuple[str, str, Vector, Vector], ...] = ()
 
     @classmethod
     def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
@@ -152,6 +159,16 @@ class UsdModel:
                 f"a URDF or Xacro source is RobotModel.from_file"
             )
         return cls(source_path)
+
+    def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
+        """This model with extra frames, added when its layer is first read.
+
+        A converted room arrives with frames for its own furniture and none for its visitors,
+        so anything standing in it needs one adding. Lazy like the rest of this class: adding
+        a frame needs usd-core, and a blueprint is built wherever it is imported.
+        """
+        added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in frames.items())
+        return replace(self, _added_frames=self._added_frames + added)
 
     @classmethod
     def from_layer(cls, usd: str) -> UsdModel:
@@ -178,6 +195,18 @@ class UsdModel:
     @cached_property
     def usd(self) -> str:
         """The layer. Converted from the URDF, or read from the file, the first time it is asked."""
+        return self._with_added_frames(self._layer())
+
+    def _with_added_frames(self, layer: str) -> str:
+        if not self._added_frames:
+            return layer
+        from dimos.robot.assets.usd import usd_with_frames
+
+        return usd_with_frames(
+            layer, {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames}
+        )
+
+    def _layer(self) -> str:
         if self._text is not None:
             return self._text
         if self._urdf is not None:
@@ -244,6 +273,28 @@ class UsdModel:
     def get_joint(self, name: str) -> JointDescription | None:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
+
+    def urdf(self) -> LoadedRobotModel | None:
+        """The description this was converted from, for the one consumer that needs URDF.
+
+        None for a layer read off disk: there was never a URDF behind it, so a caller that
+        needs one has to convert (see usd_to_urdf).
+        """
+        return self._urdf
+
+    def frame_names(self) -> set[str]:
+        """Every link and joint name, by the name it travels under.
+
+        Off the URDF where there is one, so a robot that never needs a layer never builds one.
+        """
+        if self._urdf is None:
+            from dimos.robot.assets.usd import usd_frame_names
+
+            return usd_frame_names(self.usd)
+        names = {self._urdf.root_link}
+        for joint in self._urdf.joints:
+            names |= {joint.name, joint.parent_link, joint.child_link}
+        return names
 
     def referenced_files(self) -> set[str]:
         """Every file this names, which is what a renderer may ask to be served.

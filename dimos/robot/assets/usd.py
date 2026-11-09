@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
+import itertools
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
 
     from dimos.robot.assets.model import JointDescription, LoadedRobotModel
 
+Vector = tuple[float, float, float]
+
 logger = setup_logger()
 
 # No single position, and no UsdPhysics equivalent: their pose comes from odometry.
@@ -48,6 +51,10 @@ _OUT_OF_PLANE = ("transZ", "rotX", "rotY")
 
 # The algorithm is inside the value, so it can change without the old ones becoming unreadable.
 HASH_ALGORITHM = "sha256"
+
+# Asset paths a scene leaves with are not paths on any disk: they are names the manager that
+# assembled the scene answers for, under a root nothing can collide with.
+ASSET_ROOT_PREFIX = "/dimos/assets/"
 
 # customData holding the URDF this converter does not read. Standard field, not an attribute.
 PASSTHROUGH_KEY = "urdf:unconverted"
@@ -233,6 +240,389 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str]) -> str:
         _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
 
     return str(root_layer.ExportToString())
+
+
+def usd_with_frames(usd: str, frames: Mapping[str, tuple[str, Vector, Vector]]) -> str:
+    """``usd`` with each named frame added as a link on the frame it hangs off.
+
+    The USD counterpart of ``mjcf_with_frames``. A scene needs somewhere to mount things that
+    are not part of it -- three robots standing in a room need three frames, because grafting
+    two subtrees at one frame is refused and rightly so -- and a converted room arrives with
+    frames for its own furniture and none for its visitors.
+
+    Each value is ``(parent frame, xyz, rpy)``. The frame becomes a prim carrying
+    RigidBodyAPI, which is what makes it a link to everything that reads this layer: graft_usd
+    matches a mount frame on it, and the viewer places it from tf like any other.
+    """
+    if not frames:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a scene")
+    stage = pxr.Usd.Stage.Open(layer)
+    for name, (parent, xyz, rpy) in frames.items():
+        # Read afresh each time, because a frame may hang off one added a moment ago: the Go2's
+        # Mid-360 sits on its front camera, which is itself a frame the rig adds. Reading the
+        # layer's links once before the loop made that "the layer has no frame 'front_camera'",
+        # which is true of the file and not of the stage it is being built into.
+        by_link = _link_prim_paths(stage)
+        parent_path = by_link.get(parent)
+        if parent_path is None:
+            raise ValueError(
+                f"cannot add the frame {name!r}: the layer has no frame {parent!r} to hang it "
+                f"off (it has {sorted(by_link)[:8]}...)"
+            )
+        path = pxr.Sdf.Path(parent_path).AppendChild(_identifier(pxr, name))
+        if stage.GetPrimAtPath(path):
+            raise ValueError(f"cannot add the frame {name!r}: {path} is taken")
+        prim = pxr.UsdGeom.Xform.Define(stage, path)
+        pxr.UsdPhysics.RigidBodyAPI.Apply(prim.GetPrim())
+        prim.GetPrim().SetDisplayName(name)
+        transform = np.eye(4)
+        transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
+        transform[:3, 3] = xyz
+        prim.AddTransformOp().Set(_matrix(pxr, transform))
+        _weld_frame(pxr, stage, parent_path, str(path), name)
+    return str(layer.ExportToString())
+
+
+def _weld_frame(pxr: Any, stage: Any, parent_path: str, path: str, name: str) -> None:
+    """Say what holds the frame: the link it hangs off, or the world where that is not a link.
+
+    Nesting places a frame but says nothing about how it is held, and a physics engine has to
+    decide. MuJoCo's guess is the most permissive one -- a body free in all six degrees -- and a
+    frame carries no mass, so the G1's lidar mount came back as "mass and inertia of moving
+    bodies must be larger than mjMINVAL" and the robot would not compile at all. A weld is the
+    honest statement (a mount bolted to the torso is not free to move) and it costs no degree of
+    freedom: MuJoCo folds a welded massless body into its parent.
+
+    Where the parent is *not* a link the frame is welded to the world instead, which is what a
+    FixedJoint naming only body1 means. That is the case for a converted room, whose root is an
+    Xform and not a rigid body: a stand frame hanging off it is a body with no mass and nothing
+    holding it, and the room came back with the same mjMINVAL complaint as the lidar mount did.
+    Leaving the weld out instead does not work either -- a frame is a rigid body because that is
+    what makes MuJoCo give it a body at all, and a prim that is only an Xform is a mount point
+    no engine can find.
+    """
+    parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
+    joint = pxr.UsdPhysics.FixedJoint.Define(
+        stage, pxr.Sdf.Path(path).AppendChild(_identifier(pxr, f"{name}_joint"))
+    )
+    if parent and parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
+        joint.CreateBody0Rel().SetTargets([parent.GetPath()])
+    joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
+    # The nesting already placed the frame, so the joint adds no offset of its own.
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
+    joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    joint.GetPrim().SetDisplayName(f"{name}_joint")
+
+
+def prefix_usd_frames(usd: str, prefix: str) -> str:
+    """``usd`` with every link and joint name it carries moved under ``prefix``.
+
+    A description's link names are its tf frame_ids, and they come from the URDF, so every copy
+    of one arm names the same frames. Two of that arm on one robot therefore need one of them
+    renamed, and the namespace it is deployed under ("left" out of "left/xarm") is the name that
+    is already unique. Joint names move with the links: they are what a JointState keys on, and
+    two arms answering to one joint name is the same collision one layer down.
+
+    Only ``displayName`` changes. Prim names cannot hold a "/" and prim paths are already unique
+    by nesting, so neither needs to move. A prim with no displayName of its own is given one
+    from its prim name, because the prefixed name is exactly the case the prim name cannot hold.
+
+    The defaultPrim moves too, the same way it does in ``usd_frame_names`` and
+    ``rename_usd_frames``. A converted room is a plain Xform holding its furniture, so that root
+    is a frame without being a link, and it is the one frame every copy of the layer names the
+    same. Leaving it behind is what the prefix exists to prevent: two namespaced copies would
+    publish "left/desk" and "right/desk" under a single shared "room", their subtrees would
+    merge there, and whichever copy published its root's pose last would move both.
+    """
+    if not prefix:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    stage = pxr.Usd.Stage.Open(layer)
+    root = stage.GetDefaultPrim()
+    for prim in stage.Traverse():
+        carries_a_frame = prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+        if carries_a_frame or (root and prim == root):
+            prim.SetDisplayName(f"{prefix}/{prim.GetDisplayName() or prim.GetName()}")
+    return str(layer.ExportToString())
+
+
+def usd_frame_names(usd: str) -> set[str]:
+    """Every link and joint name ``usd`` carries, under the names they travel as.
+
+    The defaultPrim counts, the same way it does in ``_link_prim_paths`` and for the same
+    reason: a converted room is a plain Xform holding its furniture, so the frame everything
+    in it hangs off is that root and not a link at all. Leaving it out means nothing can
+    rename it, and a scene whose root is named something tf never publishes -- "office_555"
+    where the robots stand in "world" -- cannot be placed and so is not drawn.
+
+    Last, and only under a name no link has taken, so a real link still wins any clash.
+    """
+    pxr = _pxr()
+    stage = pxr.Usd.Stage.Open(_layer_from(pxr, usd, "a layer"))
+    names = {
+        prim.GetDisplayName() or prim.GetName()
+        for prim in stage.Traverse()
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+    }
+    root = stage.GetDefaultPrim()
+    if root:
+        names.add(root.GetDisplayName() or root.GetName())
+    return names
+
+
+def trivialize_usd(usd: str) -> str:
+    """``usd`` with every link, joint and light kept, and the shapes they carry dropped.
+
+    The same description serves a robot on real hardware and a simulated one, but only the sim
+    needs the shapes: on a real robot the geometry is the world itself. So this keeps the
+    skeleton -- the links, the joints between them and their poses, which is what tf and a
+    mount point are -- and removes the visuals, the collision shapes and the meshes they
+    reference. The frames come out identical either way, so one description can be the only
+    one rather than a trivial second copy that drifts from it.
+
+    Lights stay. A light is not a shape: it is how the scene looks, and it is the one thing a
+    viewer cannot work out for itself -- told none, it has to invent some, and a room that said
+    what its sky and its eighteen ceiling fittings are gets lit by a guess instead. Keeping them
+    is what lets a scene hand over its lighting without handing over its geometry twice.
+    """
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a layer")
+    stage = pxr.Usd.Stage.Open(layer)
+    # Whatever holds a frame stays, which keeps the robot prim and the Scope the joints sit in
+    # without naming either: it is the prims holding no frame at all that are geometry.
+    doomed = []
+    stack = list(stage.GetPseudoRoot().GetChildren())
+    while stack:
+        prim = stack.pop()
+        if _holds_a_frame(pxr, prim):
+            stack.extend(prim.GetChildren())
+        else:
+            doomed.append(prim.GetPath())
+    if not doomed:
+        return usd
+    for path in doomed:
+        spec = layer.GetPrimAtPath(path)
+        # A prim at the layer's own root has no nameParent to be removed from -- a converted
+        # scene keeps its materials and its render settings up there beside the room. Those are
+        # not geometry hanging off a frame, and removing one is the layer's business, not ours.
+        if spec is not None and spec.nameParent is not None:
+            del spec.nameParent.nameChildren[spec.name]
+    return str(layer.ExportToString())
+
+
+def _holds_a_frame(pxr: Any, prim: Any) -> bool:
+    """True when ``prim`` or anything under it is a link, a joint, or a light."""
+    if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint):
+        return True
+    # By type name rather than UsdLux.LightAPI, which _pxr does not carry: this is the same test
+    # the viewer makes, and it covers DomeLight, DistantLight, SphereLight, DiskLight and RectLight
+    # without naming each one.
+    if str(prim.GetTypeName()).endswith("Light"):
+        return True
+    return any(_holds_a_frame(pxr, child) for child in prim.GetChildren())
+
+
+def rename_usd_frames(usd: str, renames: Mapping[str, str]) -> str:
+    """``usd`` with the named links and joints renamed; names it does not carry are ignored.
+
+    A vendor description names its frames whatever it names them, which is rarely what the robot
+    they are bolted to calls them. This is the hook for saying so.
+
+    Renames are applied simultaneously, so swapping a pair of names does what it looks like
+    rather than collapsing both onto one. A name this layer does not have is skipped rather
+    than refused, because one mapping is applied to every subtree of a scene and most keys are
+    meant for exactly one of them; whether a key matched *anywhere* is the caller's to check
+    (see usd_frame_names).
+    """
+    if not renames:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    stage = pxr.Usd.Stage.Open(layer)
+    frames = [
+        prim
+        for prim in stage.Traverse()
+        if prim.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or prim.IsA(pxr.UsdPhysics.Joint)
+    ]
+    # The defaultPrim is a frame too, the same way usd_frame_names and _link_prim_paths count
+    # it: a converted room is a plain Xform holding its furniture, so the frame everything in
+    # it hangs off is that root. Leaving it out here means a rename validates and then quietly
+    # does nothing, which is worse than refusing it.
+    root = stage.GetDefaultPrim()
+    if root and root not in frames:
+        frames.append(root)
+    # Read every name before writing any, so a -> b alongside b -> a is a swap.
+    named = [(prim, prim.GetDisplayName() or prim.GetName()) for prim in frames]
+    changed = False
+    for prim, name in named:
+        if name in renames:
+            prim.SetDisplayName(renames[name])
+            changed = True
+    return str(layer.ExportToString()) if changed else usd
+
+
+def resolve_usd_assets(usd: str, root: str) -> str:
+    """``usd`` with every relative asset path rewritten to sit under ``root``.
+
+    A layer only says where its meshes are relative to something; the module that answered for
+    it is the only thing that knows what. So a subtree is rebased as it arrives, before it joins
+    a scene whose other subtrees were rooted somewhere else entirely.
+
+    An absolute path is left alone, and so is everything when ``root`` is empty.
+    """
+    if not root:
+        return usd
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a subtree")
+    base = Path(root)
+    changed = False
+    stack = [layer.pseudoRoot]
+    while stack:
+        spec = stack.pop()
+        items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+        rebased = []
+        for ref in items:
+            asset = ref.assetPath
+            if asset and not Path(asset).is_absolute():
+                rebased.append(pxr.Sdf.Reference(str(base / asset), ref.primPath))
+                changed = True
+            else:
+                rebased.append(ref)
+        if rebased and changed:
+            if spec.referenceList.explicitItems:
+                spec.referenceList.explicitItems = rebased
+            else:
+                spec.referenceList.prependedItems = rebased
+        # assetInfo names the same file, so it moves with it or the two disagree.
+        identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+        if identifier is not None and not Path(str(identifier.path)).is_absolute():
+            # assetInfo is a proxy, not a dict: set the key on it rather than assigning a copy.
+            spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(str(base / str(identifier.path)))
+            changed = True
+        # A texture names its image in an ordinary asset attribute, which is neither a reference
+        # nor assetInfo. Rebasing only those two left every texture pointing at a path relative
+        # to a directory that no longer figures anywhere, so it resolved against nothing.
+        for attribute, value in asset_attributes(spec):
+            if not Path(str(value.path)).is_absolute():
+                attribute.default = pxr.Sdf.AssetPath(str(base / str(value.path)))
+                changed = True
+        stack.extend(spec.nameChildren)
+    return str(layer.ExportToString()) if changed else usd
+
+
+def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
+    """``usd`` with every asset path replaced by a stable public one, and the map back.
+
+    The paths a scene is built with are absolute on whichever machine assembled it, which says
+    nothing to whoever asks for the file. So before a scene leaves, every asset is renamed to a
+    path under one fictional root, and the manager keeps the mapping so it can answer for them.
+
+    A name is taken from where the asset first appears in the scene -- its prim path, which is
+    the mount point it hangs from -- so it is stable across runs of the same scene rather than
+    being an opaque number. The *first* appearance wins and every later reference to the same
+    file reuses it: two copies of one arm are two mount points but one mesh, and the asset is
+    the same asset regardless of how many times the thing carrying it was duplicated.
+
+    Returns the rewritten layer and ``{public path: real path}``.
+    """
+    pxr = _pxr()
+    layer = _layer_from(pxr, usd, "a scene")
+    public: dict[str, str] = {}
+    taken: set[str] = set()
+    changed = False
+
+    stack = [layer.pseudoRoot]
+    while stack:
+        spec = stack.pop(0)  # breadth-first, so "first" means nearest the root
+        for real in _asset_paths_of(spec):
+            if real not in public:
+                public[real] = _public_asset_path(str(spec.path), real, taken)
+                taken.add(public[real])
+        if _rewrite_assets(pxr, spec, public):
+            changed = True
+        stack.extend(spec.nameChildren)
+
+    rewritten = str(layer.ExportToString()) if changed else usd
+    return rewritten, {name: real for real, name in public.items()}
+
+
+def _asset_paths_of(spec: Any) -> list[str]:
+    """Every asset path this prim spec names: a reference, assetInfo, or an asset attribute."""
+    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+    paths = [ref.assetPath for ref in items if ref.assetPath]
+    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+    if identifier is not None and str(identifier.path):
+        paths.append(str(identifier.path))
+    paths += [str(value.path) for _, value in asset_attributes(spec)]
+    return paths
+
+
+def asset_attributes(spec: Any) -> list[tuple[Any, Any]]:
+    """This prim spec's asset-valued attributes, with their paths.
+
+    A texture is neither a reference nor a mesh: a `UsdUVTexture` names its image in
+    `inputs:file`, an ordinary attribute of type `asset`. Walking only arcs and assetInfo left
+    every texture unseen -- unpublished, so nothing could fetch it, and unhashed, so the check
+    that exists to refuse an unidentified asset passed over it in silence.
+
+    Anything else that names a file this way is seen for the same reason: a splat, a volume,
+    whatever comes next. Seen is not hashed -- whoever authors it still has to say the hash --
+    but it is refused loudly rather than shipped unidentified.
+    """
+    found = []
+    for attribute in spec.attributes:
+        value = attribute.default
+        if value is not None and type(value).__name__ == "AssetPath" and str(value.path):
+            found.append((attribute, value))
+    return found
+
+
+def _public_asset_path(prim_path: str, real: str, taken: set[str]) -> str:
+    """A path under the fictional root, from where this asset first appears.
+
+    The prim path is already unique within a scene, so the only way two assets collide is by
+    being on one prim -- a link with two meshes. The suffix is for exactly that, and it counts
+    rather than hashes so the names stay readable.
+    """
+    stem = f"{ASSET_ROOT_PREFIX}{prim_path.lstrip('/')}/{Path(real).name}"
+    if stem not in taken:
+        return stem
+    base, dot, extension = stem.rpartition(".")
+    for index in itertools.count(2):
+        candidate = f"{base}_{index}{dot}{extension}" if dot else f"{stem}_{index}"
+        if candidate not in taken:
+            return candidate
+    raise AssertionError("unreachable")
+
+
+def _rewrite_assets(pxr: Any, spec: Any, public: Mapping[str, str]) -> bool:
+    """Point this prim spec's asset paths at their public names."""
+    changed = False
+    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
+    rebased = [
+        pxr.Sdf.Reference(public[ref.assetPath], ref.primPath) if ref.assetPath in public else ref
+        for ref in items
+    ]
+    if rebased and rebased != list(items):
+        if spec.referenceList.explicitItems:
+            spec.referenceList.explicitItems = rebased
+        else:
+            spec.referenceList.prependedItems = rebased
+        changed = True
+    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
+    if identifier is not None and str(identifier.path) in public:
+        spec.assetInfo["identifier"] = pxr.Sdf.AssetPath(public[str(identifier.path)])
+        changed = True
+    for attribute, value in asset_attributes(spec):
+        if str(value.path) in public:
+            attribute.default = pxr.Sdf.AssetPath(public[str(value.path)])
+            changed = True
+    return changed
 
 
 def _mount_joint(pxr: Any, stage: Any, mount_path: str, subtree_path: str, frame_id: str) -> None:
@@ -762,33 +1152,6 @@ def referenced_asset_paths(usd: str) -> set[str]:
         spec = stack.pop()
         found.update(_asset_paths_of(spec))
         stack.extend(spec.nameChildren)
-    return found
-
-
-def _asset_paths_of(spec: Any) -> list[str]:
-    """Every asset path this prim spec names: a reference, assetInfo, or an asset attribute."""
-    items = spec.referenceList.explicitItems or spec.referenceList.prependedItems
-    paths = [ref.assetPath for ref in items if ref.assetPath]
-    identifier = spec.assetInfo.get("identifier") if spec.assetInfo else None
-    if identifier is not None and str(identifier.path):
-        paths.append(str(identifier.path))
-    paths += [str(value.path) for _, value in asset_attributes(spec)]
-    return paths
-
-
-def asset_attributes(spec: Any) -> list[tuple[Any, Any]]:
-    """This prim spec's asset-valued attributes, with their paths.
-
-    A texture is neither a reference nor a mesh: a `UsdUVTexture` names its image in
-    `inputs:file`, an ordinary attribute of type `asset`. Walking only arcs and assetInfo left
-    every texture unseen -- and unhashed, so the check that exists to refuse an unidentified
-    asset passed over it in silence.
-    """
-    found = []
-    for attribute in spec.attributes:
-        value = attribute.default
-        if value is not None and type(value).__name__ == "AssetPath" and str(value.path):
-            found.append((attribute, value))
     return found
 
 
