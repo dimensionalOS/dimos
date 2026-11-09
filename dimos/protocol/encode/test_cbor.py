@@ -31,9 +31,16 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 import pytest
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point as MessagePoint,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Vector3,
+)
+from dimos.messages.sensor_msgs.msg import Image
+from dimos.messages.std_msgs.msg import Header
 from dimos.protocol.encode.cbor import (
     TAG_CLASS,
     TAG_DATACLASS,
@@ -252,7 +259,13 @@ class Plain:
         Frozen(1, (2, 3)),
         Slotted(1.5, ["t"]),
         Vector3(1, 2, 3),
-        PoseStamped(ts=1.5, frame_id="odom", position=[1, 2, 3]),
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.5), frame_id="odom"),
+            pose=Pose(
+                position=MessagePoint(x=1.0, y=2.0, z=3.0),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        ),
     ],
 )
 def test_roundtrip_preserves_value_and_type(value: Any) -> None:
@@ -341,24 +354,41 @@ def test_global_config_roundtrip() -> None:
     assert out.model_dump() == config.model_dump()
 
 
+def image_message(pixels: Any, encoding: str) -> Image:
+    """A stamped Image holding ``pixels`` exactly as given.
+
+    This suite tests the codec, not image validation, so the fields are set
+    directly: what matters is that encode/decode hands back the same dtype,
+    encoding and bytes.
+    """
+    channels = 1 if pixels.ndim == 2 else pixels.shape[2]
+    return Image(
+        header=Header(stamp=message_time.time_from_seconds(1.5), frame_id="cam"),
+        height=pixels.shape[0],
+        width=pixels.shape[1],
+        encoding=encoding,
+        is_bigendian=0,
+        step=pixels.shape[1] * channels * pixels.dtype.itemsize,
+        data=pixels,
+    )
+
+
 @pytest.mark.parametrize(
     "image",
     [
-        Image(data=np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3), format=ImageFormat.RGB),
-        Image(data=np.full((2, 3), 700, dtype=np.uint16), format=ImageFormat.DEPTH16),
-        Image(data=np.full((2, 3), 0.25, dtype=np.float32), format=ImageFormat.DEPTH),
+        image_message(np.arange(4 * 6 * 3, dtype=np.uint8).reshape(4, 6, 3), "rgb8"),
+        image_message(np.full((2, 3), 700, dtype=np.uint16), "mono16"),
+        image_message(np.full((2, 3), 0.25, dtype=np.float32), "32FC1"),
         # The LCM form would label this rgb8 and decode it as uint8.
-        Image(data=np.full((2, 3, 3), 0.5, dtype=np.float32), format=ImageFormat.RGB),
+        image_message(np.full((2, 3, 3), 0.5, dtype=np.float32), "rgb8"),
     ],
 )
 def test_image_roundtrip(image: Image) -> None:
-    image.frame_id = "cam"
-    image.ts = 1.5
     out = roundtrip(image)
     assert type(out) is Image
-    assert out.format == image.format
-    assert out.frame_id == "cam"
-    assert out.ts == 1.5
+    assert out.encoding == image.encoding
+    assert out.header.frame_id == "cam"
+    assert message_time.to_seconds(out.header.stamp) == 1.5
     assert out.data.dtype == image.data.dtype
     assert np.array_equal(out.data, image.data)
     assert out.data.flags.writeable

@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
-from typing import Any, cast
+from typing import Any
 import uuid
 
 import numpy as np
@@ -32,11 +32,11 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.dataprep.core import extract_episodes
 from dimos.imitation.dataprep.schema import EpisodeExtractor
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.protocol import DimosMsg
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import image as message_image
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, String
+from dimos.messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import (
     openyam_quest_collection,
@@ -105,7 +105,7 @@ def test_native_collection_records_typed_zenoh_streams(
         transport = ZenohTransport(
             Topic(
                 f"{topic_prefix}/{name}",
-                cast("type[DimosMsg]", payload_type),
+                payload_type,
                 qos=QOS_NEVER_DROP,
             )
         )
@@ -114,7 +114,7 @@ def test_native_collection_records_typed_zenoh_streams(
 
     def publish(name: str, message: Any) -> None:
         publishers[name].broadcast(
-            None, String(message.to_json()) if isinstance(message, EpisodeStatus) else message
+            None, String(data=message.to_json()) if isinstance(message, EpisodeStatus) else message
         )
 
     try:
@@ -146,33 +146,39 @@ def test_native_collection_records_typed_zenoh_streams(
         )
         publish(
             "wrist_image",
-            Image(
-                ts=10.0,
-                frame_id="wrist_camera_link",
-                format=ImageFormat.RGB,
-                data=np.full((16, 16, 3), 127, dtype=np.uint8),
+            message_image.from_array(
+                np.full((16, 16, 3), 127, dtype=np.uint8),
+                encoding="rgb8",
+                header=Header(
+                    stamp=message_time.time_from_seconds(10.0),
+                    frame_id="wrist_camera_link",
+                ),
             ),
         )
         publish(
             "coordinator_joint_state",
             JointState(
-                ts=10.0,
-                frame_id="coordinator",
+                header=Header(
+                    stamp=message_time.time_from_seconds(10.0),
+                    frame_id="coordinator",
+                ),
                 name=["shoulder", "wrist"],
-                position=[0.25, -0.5],
-                velocity=[0.0, 0.0],
-                effort=[0.0, 0.0],
+                position=np.asarray([0.25, -0.5], dtype=np.float64),
+                velocity=np.asarray([0.0, 0.0], dtype=np.float64),
+                effort=np.asarray([0.0, 0.0], dtype=np.float64),
             ),
         )
         publish(
             "coordinator_joint_command",
             JointState(
-                ts=10.0,
-                frame_id="coordinator",
+                header=Header(
+                    stamp=message_time.time_from_seconds(10.0),
+                    frame_id="coordinator",
+                ),
                 name=["shoulder", "wrist"],
-                position=[0.3, -0.4],
-                velocity=[],
-                effort=[],
+                position=np.asarray([0.3, -0.4], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             ),
         )
         publish(
@@ -220,11 +226,11 @@ def test_native_collection_records_typed_zenoh_streams(
         episodes = extract_episodes(store, EpisodeExtractor(status_stream="status"))
 
     assert image_ts == 10.0
-    assert image.frame_id == "wrist_camera_link"
-    assert image.data.shape == (16, 16, 3)
+    assert image.header.frame_id == "wrist_camera_link"
+    assert message_image.view(image).shape == (16, 16, 3)
     assert joint_ts == 10.0
-    assert joints.position == [0.25, -0.5]
-    assert action.position == [0.3, -0.4]
+    assert list(joints.position) == [0.25, -0.5]
+    assert list(action.position) == [0.3, -0.4]
     assert statuses[-2:] == [
         (10.0, "start"),
         (11.0, "save"),

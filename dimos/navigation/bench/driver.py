@@ -33,12 +33,17 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as PathMsg
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import geometry, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+)
+from dimos.messages.nav_msgs.msg import Path as PathMsg
+from dimos.messages.std_msgs.msg import Bool, Header, String
 from dimos.navigation.bench.ground_truth import Envelope, GroundTruth
 from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest
@@ -109,17 +114,21 @@ class EpisodeDriver(Module):
         super().stop()
 
     def _on_pose(self, msg: PoseStamped) -> None:
-        xyz = np.array(tuple(msg.position), dtype=np.float64)
-        rpy = np.array(tuple(msg.orientation.to_euler()), dtype=np.float64)
-        self._frame = msg.frame_id
-        self._pose = (msg.ts, xyz, rpy)
+        stamp = message_time.to_seconds(msg.header.stamp)
+        xyz = geometry.vector_array(msg.pose.position)
+        rpy = np.array(geometry.quaternion_euler(msg.pose.orientation), dtype=np.float64)
+        self._frame = msg.header.frame_id
+        self._pose = (stamp, xyz, rpy)
         self._recent.append(self._pose)
-        while self._recent and self._recent[0][0] < msg.ts - self._rules.stuck_s:
+        while self._recent and self._recent[0][0] < stamp - self._rules.stuck_s:
             self._recent.popleft()
 
     def _on_goal(self, msg: PointStamped) -> None:
-        if np.linalg.norm(np.subtract((msg.x, msg.y, msg.z), self._case.goal)) <= GOAL_ECHO_M:
-            self._echo = self._echo if self._echo is not None else msg.ts
+        point = msg.point
+        if np.linalg.norm(np.subtract((point.x, point.y, point.z), self._case.goal)) <= GOAL_ECHO_M:
+            self._echo = (
+                self._echo if self._echo is not None else message_time.to_seconds(msg.header.stamp)
+            )
 
     def _on_reached(self, msg: Bool) -> None:
         if msg.data and self._echo is not None and self._arrival is None:
@@ -185,7 +194,12 @@ class EpisodeDriver(Module):
         deadline = time.time() + self.config.goal_wait_s
         while self._echo is None and time.time() < deadline and not self._stop_event.is_set():
             self.clicked_point.publish(
-                PointStamped(*self._case.goal, ts=time.time(), frame_id=self._frame)
+                PointStamped(
+                    header=Header(
+                        stamp=message_time.time_from_seconds(time.time()), frame_id=self._frame
+                    ),
+                    point=Point(*self._case.goal),
+                )
             )
             self._wait(lambda: self._echo is not None, self.config.goal_resend_s)
         return self._echo
@@ -242,8 +256,13 @@ class EpisodeDriver(Module):
 
 def _path(points: NDArray[np.float64], frame: str) -> PathMsg:
     now = time.time()
+    poses = [
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(now), frame_id=frame),
+            pose=Pose(position=Point(*map(float, p)), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
+        for p in points
+    ]
     return PathMsg(
-        ts=now,
-        frame_id=frame,
-        poses=[PoseStamped(*map(float, p), ts=now, frame_id=frame) for p in points],
+        header=Header(stamp=message_time.time_from_seconds(now), frame_id=frame), poses=poses
     )

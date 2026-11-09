@@ -27,7 +27,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
@@ -126,8 +127,11 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
         halfway = sum(robot.gripper_travel()[jaw.joint]) / 2.0
         commands.publish(
             JointState(
+                header=message_time.header_now(),
                 name=[f"arm/{target}", f"arm/{jaw.joint}"],
-                position=[float(pose[0]), halfway],
+                position=np.asarray([float(pose[0]), halfway], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
             )
         )
         first_bus = robot.buses[0]
@@ -164,14 +168,26 @@ def test_fake_feedback_fault_disables_each_arm(connection_type, ports, boundary,
         module.start()
         native.refresh_error = RuntimeError("adapter unplugged")
         commands.publish(
-            JointState(name=[f"arm/{connection_type.robot.arm_joint_names[0]}"], position=[0.0])
+            JointState(
+                header=message_time.header_now(),
+                name=[f"arm/{connection_type.robot.arm_joint_names[0]}"],
+                position=np.asarray([0.0], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
         )
         wait_until(lambda: module._fault is not None, timeout=2)
         assert "feedback failed" in module._fault
         assert "disable" in native.events
         sent = sum(len(getattr(group, "commands", [])) for group in native.groups.values())
         commands.publish(
-            JointState(name=[f"arm/{connection_type.robot.arm_joint_names[0]}"], position=[0.1])
+            JointState(
+                header=message_time.header_now(),
+                name=[f"arm/{connection_type.robot.arm_joint_names[0]}"],
+                position=np.asarray([0.1], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
         )
         assert sum(len(getattr(group, "commands", [])) for group in native.groups.values()) == sent
     finally:

@@ -16,8 +16,7 @@ import threading
 
 import pytest
 
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.messages.geometry_msgs.msg import Twist, Vector3
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 
 
@@ -42,7 +41,7 @@ def connection(mocker):
 
 def test_robot_side_watchdog_stops_after_command_source_disappears(connection):
     robot, commands, stopped = connection
-    robot._on_cmd_vel(Twist(linear=Vector3(0.4, 0, 0)))
+    robot._on_cmd_vel(Twist(linear=Vector3(0.4, 0, 0), angular=Vector3(0, 0, 0)))
 
     assert stopped.wait(timeout=1)
     assert [command.linear.x for command in commands] == [0.4, 0.0]
@@ -51,10 +50,10 @@ def test_robot_side_watchdog_stops_after_command_source_disappears(connection):
 
 def test_shutdown_stops_once_and_late_callbacks_cannot_restart_motion(connection):
     robot, commands, stopped = connection
-    robot._on_cmd_vel(Twist(linear=Vector3(0.4, 0, 0)))
+    robot._on_cmd_vel(Twist(linear=Vector3(0.4, 0, 0), angular=Vector3(0, 0, 0)))
     robot._stop_cmd_vel_watchdog()
     robot._stop_cmd_vel_watchdog()
-    robot._on_cmd_vel(Twist(linear=Vector3(0.9, 0, 0)))
+    robot._on_cmd_vel(Twist(linear=Vector3(0.9, 0, 0), angular=Vector3(0, 0, 0)))
 
     assert [command.linear.x for command in commands] == [0.4, 0.0]
     assert stopped.is_set()
@@ -62,10 +61,10 @@ def test_shutdown_stops_once_and_late_callbacks_cannot_restart_motion(connection
 
 def test_a_new_command_after_expiry_gets_its_own_watchdog(connection):
     robot, commands, stopped = connection
-    robot._on_cmd_vel(Twist(linear=Vector3(0.2, 0, 0)))
+    robot._on_cmd_vel(Twist(linear=Vector3(0.2, 0, 0), angular=Vector3(0, 0, 0)))
     assert stopped.wait(timeout=1)
     stopped.clear()
-    robot._on_cmd_vel(Twist(linear=Vector3(0.4, 0, 0)))
+    robot._on_cmd_vel(Twist(linear=Vector3(0.4, 0, 0), angular=Vector3(0, 0, 0)))
 
     assert stopped.wait(timeout=1)
     assert [command.linear.x for command in commands] == [0.2, 0.0, 0.4, 0.0]

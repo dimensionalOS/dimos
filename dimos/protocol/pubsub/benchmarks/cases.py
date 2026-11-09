@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any, Generic
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image as image_utils
+from dimos.messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.rospubsub import (
@@ -84,7 +85,7 @@ def make_data_image(size: int) -> Image:
     height = max(1, int(pixels**0.5))
     width = pixels // height
     data = padded_data[: height * width * 3].reshape(height, width, 3)
-    return Image(data=data, format=ImageFormat.RGB)
+    return image_utils.from_array(data, encoding="rgb8")
 
 
 cases: list[Case[Any, Any]] = []

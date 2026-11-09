@@ -24,10 +24,21 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.build import inspect_recording, run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema, SyncConfig
+from dimos_cdrgen.registry import encode, schema
+from dimos.message_utils import image, joint_state, time as message_time
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import Header, String
+
+
+def _timestamp(message) -> float:
+    """Nanosecond timestamp, shared by generated headers and JSON status events."""
+    value = (
+        message.ts
+        if isinstance(message, EpisodeStatus)
+        else message_time.to_seconds(message.header.stamp)
+    )
+    return message_time.to_seconds(message_time.time_from_seconds(value))
 
 
 @contextmanager
@@ -35,13 +46,17 @@ def _raw_writer(path, types):
     if path.suffix == ".db":
         with SqliteStore(path=str(path)) as store:
             streams = {
-                name: store.stream(name, kind, codec="json" if kind is String else "lcm")
+                name: store.stream(name, kind, codec="json" if kind is String else "cdr")
                 for name, kind in types.items()
             }
 
             def append(name, message):
-                ts = message.ts
-                value = String(message.to_json()) if isinstance(message, EpisodeStatus) else message
+                if isinstance(message, EpisodeStatus):
+                    ts = _timestamp(message)
+                    value = String(message.model_copy(update={"ts": ts}).to_json())
+                else:
+                    ts = message_time.to_seconds(message.header.stamp)
+                    value = message
                 streams[name].append(value, ts=ts)
 
             yield append
@@ -52,8 +67,16 @@ def _raw_writer(path, types):
             channels = {
                 name: writer.register_channel(
                     topic=name,
-                    message_encoding="json" if kind is String else "lcm",
-                    schema_id=0,
+                    message_encoding="json" if kind is String else "cdr",
+                    schema_id=(
+                        0
+                        if kind is String
+                        else writer.register_schema(
+                            name=kind.__msgtype__,
+                            encoding="ros2msg",
+                            data=schema(kind.__msgtype__).encode(),
+                        )
+                    ),
                     metadata={
                         "dimos.payload_type": f"{kind.__module__}.{kind.__qualname__}",
                         "dimos.observation_time": "publish_time",
@@ -63,14 +86,18 @@ def _raw_writer(path, types):
             }
 
             def append(name, message):
-                stamp = round(message.ts * 1_000_000_000)
+                if isinstance(message, EpisodeStatus):
+                    ts = _timestamp(message)
+                    data = message.model_copy(update={"ts": ts}).to_json().encode("utf-8")
+                else:
+                    ts = message_time.to_seconds(message.header.stamp)
+                    data = encode(message)
+                stamp = round(ts * 1_000_000_000)
                 writer.add_message(
                     channel_id=channels[name],
                     log_time=stamp,
                     publish_time=stamp,
-                    data=message.to_json().encode("utf-8")
-                    if isinstance(message, EpisodeStatus)
-                    else message.lcm_encode(),
+                    data=data,
                 )
 
             try:
@@ -129,13 +156,17 @@ def test_moved_recording_directory_prepares_saved_episodes(format, camera_count,
                 ts = start + index / 30
                 append(
                     "measured",
-                    JointState(ts=ts, name=["left", "right"], position=[index, index + 10]),
+                    joint_state.from_mapping(
+                        {"ts": ts, "name": ["left", "right"], "position": [index, index + 10]}
+                    ),
                 )
                 for camera in cameras.values():
                     append(
                         camera.stream,
-                        Image(
-                            ts=ts, format=ImageFormat.RGB, data=np.zeros((8, 8, 3), dtype=np.uint8)
+                        image.from_array(
+                            np.zeros((8, 8, 3), dtype=np.uint8),
+                            encoding="rgb8",
+                            header=Header(stamp=message_time.time_from_seconds(ts), frame_id=""),
                         ),
                     )
             if event is not None:
@@ -205,9 +236,18 @@ def test_sparse_actions_inspect_and_convert_with_recording_history(format, tmp_p
         },
     ) as append:
         # Deliberately insert updates out of timestamp order.
-        append("commands", JointState(ts=2, name=["gripper"], position=[0]))
-        append("commands", JointState(ts=1, name=["right", "left"], position=[2, 1]))
-        append("commands", JointState(ts=11, name=["gripper"], position=[1]))
+        append(
+            "commands",
+            joint_state.from_mapping({"ts": 2, "name": ["gripper"], "position": [0]}),
+        )
+        append(
+            "commands",
+            joint_state.from_mapping({"ts": 1, "name": ["right", "left"], "position": [2, 1]}),
+        )
+        append(
+            "commands",
+            joint_state.from_mapping({"ts": 11, "name": ["gripper"], "position": [1]}),
+        )
         for index, start in enumerate([10, 20]):
             append(
                 "status",
@@ -223,10 +263,12 @@ def test_sparse_actions_inspect_and_convert_with_recording_history(format, tmp_p
             for ts in [start, start + 1]:
                 append(
                     "measured",
-                    JointState(
-                        ts=ts,
-                        name=["left", "right", "gripper"],
-                        position=[0, 0, 0],
+                    joint_state.from_mapping(
+                        {
+                            "ts": ts,
+                            "name": ["left", "right", "gripper"],
+                            "position": [0, 0, 0],
+                        }
                     ),
                 )
             append(

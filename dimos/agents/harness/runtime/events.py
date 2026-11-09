@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A notice from an agent module, carried as JSON in an LCM String."""
+"""Agent harness events carried as JSON in an LCM String.
+
+These are notify/conversation payloads, not typed robotics messages, so they
+stay self-describing JSON rather than generated CDR classes.
+"""
 
 from __future__ import annotations
 
@@ -67,5 +71,42 @@ class AgentNotice(Timestamped):
             payload["data"],
             payload["exports"],
             payload["suppressed"],
+            payload["ts"],
+        )
+
+
+class AgentStep(Timestamped):
+    """One entry of an agent conversation, republished so a recording holds what the agent did."""
+
+    msg_name = "agent_msgs.AgentStep"
+
+    def __init__(self, conversation: int, entry: str, kind: str, text: str, ts: float) -> None:
+        super().__init__(ts)
+        self.conversation = conversation
+        """The conversation id supplied by the client."""
+        self.entry = entry
+        """The entry's id in the conversation store."""
+        self.kind = kind
+        """The entry's kind in the conversation store, e.g. a user input or a tool call."""
+        self.text = text
+
+    def lcm_encode(self) -> bytes:
+        payload = {
+            "conversation": self.conversation,
+            "entry": self.entry,
+            "kind": self.kind,
+            "text": self.text,
+            "ts": self.ts,
+        }
+        return LCMString(data=json.dumps(payload)).lcm_encode()  # type: ignore[no-any-return]
+
+    @classmethod
+    def lcm_decode(cls, data: bytes) -> AgentStep:
+        payload = json.loads(LCMString.lcm_decode(data).data)
+        return cls(
+            payload["conversation"],
+            payload["entry"],
+            payload["kind"],
+            payload["text"],
             payload["ts"],
         )

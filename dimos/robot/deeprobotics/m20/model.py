@@ -15,16 +15,17 @@
 """The M20's model, from the vendor's MJCF, and its standing pose for robots that do not report joint angles."""
 
 import threading
-import time
 from typing import Any
 
 import mujoco
+import numpy as np
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.mjcf import mjcf_to_urdf
 from dimos.robot.deeprobotics.m20.assets.description import SparseDescriptionSource
 
@@ -78,9 +79,11 @@ class M20StandingJointState(Module):
         while not self._stop_event.is_set():
             self.coordinator_joint_state.publish(
                 JointState(
-                    ts=time.time(),
+                    header=message_time.header_now(),
                     name=list(STAND_JOINT_POSITIONS),
-                    position=list(STAND_JOINT_POSITIONS.values()),
+                    position=np.asarray(list(STAND_JOINT_POSITIONS.values()), dtype=np.float64),
+                    velocity=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
                 )
             )
             self._stop_event.wait(1.0)

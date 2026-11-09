@@ -28,9 +28,8 @@ from dimos.imitation.collection import recorder as recorder_module
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import CollectionModuleConfig, collect
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos.messages.std_msgs.msg import String
 from dimos.robot.get_all_blueprints import get_by_name
 
 
@@ -361,7 +360,7 @@ def test_external_package_uses_standard_blueprint_entrypoint(tmp_path, monkeypat
         "from dimos.imitation.collection.recorder import CollectionModuleConfig, collect\n"
         "from dimos.imitation.collection.profile import CollectionProfile\nfrom dimos.imitation.dataprep.schema import FeatureSpec\n"
         "from dimos.imitation.dataprep.core import SyncConfig\n"
-        "from dimos.msgs.sensor_msgs.JointState import JointState\n"
+        "from dimos.messages.sensor_msgs.msg import JointState\n"
         "feature = FeatureSpec(stream='joints', message_type=JointState, field='position', dtype='float32', shape=(1,), names=['joint'])\n"
         "profile = CollectionProfile(metadata={'robot_type': 'vendor'}, observations={'state': feature}, actions={'action': feature})\n"
         "collect = autoconnect(collect(profile=profile))\n"

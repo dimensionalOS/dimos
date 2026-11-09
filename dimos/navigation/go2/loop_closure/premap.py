@@ -33,10 +33,19 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos.messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseWithCovariance,
+    Quaternion,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos.messages.nav_msgs.msg import Odometry
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
@@ -71,7 +80,7 @@ def pose_matrix(pose: Pose) -> NDArray[np.float64]:
 
 def matrix_pose(m: NDArray[np.float64]) -> Pose:
     q = Rotation.from_matrix(m[:3, :3]).as_quat()
-    return Pose(*m[:3, 3], *q)
+    return Pose(position=Point(*m[:3, 3]), orientation=Quaternion(*q))
 
 
 def apply(m: NDArray[np.float64], pts: NDArray[np.floating]) -> NDArray[np.float64]:
@@ -161,8 +170,11 @@ class Premap:
         """Every scan placed at its keyframe, in ``map``."""
         pts = [apply(m, s) for m, s in zip(self.poses, self.scans, strict=True) if len(s)]
         merged = np.concatenate(pts) if pts else np.empty((0, 3))
-        cloud = PointCloud2.from_numpy(merged.astype(np.float32), frame_id=MAP_FRAME)
-        return cloud if voxel_size is None else cloud.voxel_downsample(voxel_size)
+        cloud = pointcloud.from_xyz(
+            merged.astype(np.float32),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=MAP_FRAME),
+        )
+        return cloud if voxel_size is None else pointcloud.voxel_downsample(cloud, voxel_size)
 
     def pruned(
         self, radius_m: float = PRUNE_RADIUS_M, min_gap_s: float = PRUNE_MIN_GAP_S
@@ -220,7 +232,13 @@ class Premap:
             for i, (ts, m, scan) in enumerate(
                 zip(self.stamps, self.poses, self.scans, strict=True)
             ):
-                cloud = PointCloud2.from_numpy(scan, frame_id=keyframe_frame(i), timestamp=ts)
+                cloud = pointcloud.from_xyz(
+                    scan,
+                    header=Header(
+                        stamp=message_time.time_from_seconds(float(ts)),
+                        frame_id=keyframe_frame(i),
+                    ),
+                )
                 keyframes.append(cloud, ts=float(ts), pose=matrix_pose(m))
             edges = store.stream(EDGES, Odometry)
             for (a, b), m, cov in zip(
@@ -228,10 +246,16 @@ class Premap:
             ):
                 ts = float(self.stamps[b])
                 edge = Odometry(
-                    ts=ts,
-                    frame_id=keyframe_frame(int(a)),
+                    header=Header(
+                        stamp=message_time.time_from_seconds(ts),
+                        frame_id=keyframe_frame(int(a)),
+                    ),
                     child_frame_id=keyframe_frame(int(b)),
-                    pose=PoseWithCovariance(matrix_pose(m), cov.reshape(-1)),
+                    pose=PoseWithCovariance(pose=matrix_pose(m), covariance=cov.reshape(-1)),
+                    twist=TwistWithCovariance(
+                        twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0)),
+                        covariance=np.zeros(36, dtype=np.float64),
+                    ),
                 )
                 edges.append(edge, ts=ts, pose=None)
         os.replace(tmp, path)
@@ -242,9 +266,9 @@ class Premap:
         with SqliteStore(path=str(resolve_named_path(name, MAP_SUFFIX)), must_exist=True) as store:
             # by keyframe index, not stamp: a joint map's sessions can interleave in time
             loaded = [(o, o.data) for o in store.stream(KEYFRAMES, PointCloud2)]
-            loaded.sort(key=lambda pair: _keyframe_index(pair[1].frame_id))
+            loaded.sort(key=lambda pair: _keyframe_index(pair[1].header.frame_id))
             kfs = [o for o, _ in loaded]
-            scans = tuple(cloud.points_f32() for _, cloud in loaded)
+            scans = tuple(pointcloud.xyz(cloud) for _, cloud in loaded)
             odom = (
                 [o.data for o in store.stream(EDGES, Odometry)]
                 if EDGES in store.list_streams()
@@ -257,7 +281,10 @@ class Premap:
             poses=np.array(poses).reshape(-1, 4, 4),
             scans=scans,
             edges=np.array(
-                [(_keyframe_index(e.frame_id), _keyframe_index(e.child_frame_id)) for e in odom],
+                [
+                    (_keyframe_index(e.header.frame_id), _keyframe_index(e.child_frame_id))
+                    for e in odom
+                ],
                 dtype=np.int64,
             ).reshape(-1, 2),
             edge_poses=np.array([pose_matrix(e.pose.pose) for e in odom]).reshape(-1, 4, 4),

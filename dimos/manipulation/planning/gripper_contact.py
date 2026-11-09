@@ -52,17 +52,15 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import geometry, joint_state, pointcloud, time as message_time
+from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos.messages.sensor_msgs.msg import JointState
 from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.messages.sensor_msgs.msg import PointCloud2
 
 # How far (metres) beyond the object's points scene points are kept: farther
 # than any part of the gripper reaches from a grasp on the object.
@@ -249,7 +247,8 @@ class GraspContactChecker:
         from run to run, and slow the check.
         """
         target = PoseStamped(
-            frame_id=frame_id, position=grasp.position, orientation=grasp.orientation
+            header=message_time.header_now(frame_id),
+            pose=Pose(position=grasp.position, orientation=grasp.orientation),
         )
         result = self._kinematics.solve_pose_targets(
             self._world,
@@ -263,8 +262,11 @@ class GraspContactChecker:
         return dict(zip(result.joint_state.name, result.joint_state.position, strict=True))
 
     def _state(self, positions: dict[str, float]) -> JointState:
-        return JointState(
-            name=self._joint_names, position=[positions[name] for name in self._joint_names]
+        return joint_state.from_mapping(
+            {
+                "name": self._joint_names,
+                "position": [positions[name] for name in self._joint_names],
+            }
         )
 
 
@@ -289,7 +291,7 @@ def scene_obstacles(
         low, high = own.min(axis=0) - _REACH, own.max(axis=0) + _REACH
         keep = np.all((points >= low) & (points <= high), axis=1)
     for tip in tips:
-        keep &= np.linalg.norm(points - tip.to_numpy(), axis=1) > _GRIPPER_SELF_RADIUS
+        keep &= np.linalg.norm(points - geometry.vector_array(tip), axis=1) > _GRIPPER_SELF_RADIUS
     points = points[keep]
     if len(own) and len(points):
         distance, _ = cKDTree(own).query(points)
@@ -302,8 +304,11 @@ def _slid(candidate: GraspCandidate, shift: float) -> GraspCandidate:
     if shift == 0.0:
         return candidate
     pose = candidate.pose
-    position = pose.position.to_numpy() + shift * pose_to_matrix(pose)[:3, 2]
-    return GraspCandidate(Pose(Vector3(*position), pose.orientation), candidate.score)
+    position = geometry.vector_array(pose.position) + shift * pose_to_matrix(pose)[:3, 2]
+    return GraspCandidate(
+        pose=Pose(position=Vector3(*position), orientation=pose.orientation),
+        score=candidate.score,
+    )
 
 
 def _octree(
@@ -324,7 +329,10 @@ def _octree(
     return Obstacle(
         name=name,
         obstacle_type=ObstacleType.OCTREE,
-        pose=PoseStamped(frame_id=frame_id),
+        pose=PoseStamped(
+            header=message_time.header_now(frame_id),
+            pose=Pose(position=Point(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        ),
         points=finite,
         octree_resolution=cell,
         touch_links=touch_links,
@@ -332,5 +340,5 @@ def _octree(
 
 
 def _xyz(cloud: PointCloud2) -> NDArray[np.float64]:
-    points = np.asarray(cloud.points_f32(), dtype=np.float64).reshape((-1, 3))
+    points = pointcloud.xyz(cloud).reshape((-1, 3))
     return points[np.all(np.isfinite(points), axis=1)]

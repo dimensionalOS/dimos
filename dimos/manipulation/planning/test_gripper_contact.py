@@ -26,12 +26,11 @@ import pytest
 
 from dimos.manipulation.planning.gripper_contact import GraspContactChecker, scene_obstacles
 from dimos.manipulation.planning.spec.gripper import GripperConfig
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
-from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.std_msgs.Header import Header
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos.messages.geometry_msgs.msg import Pose, Vector3
+from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos.messages.std_msgs.msg import Header
 from dimos.utils.transform_utils import matrix_to_pose
 
 CONTACT_MARGIN = 0.005
@@ -181,7 +180,10 @@ def test_xarm_rejects_the_table_and_a_neighbour(
 @pytest.mark.self_hosted
 def test_xarm_depth_search_slides_a_grasp_down_onto_the_box(xarm: GraspContactChecker) -> None:
     # The fingertips 2 cm above the box's top: the fingers close on nothing.
-    high = GraspCandidateArray(Header("world"), [GraspCandidate(_top_down(0.0, 0.0, 0.07))])
+    high = GraspCandidateArray(
+        Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"),
+        [GraspCandidate(pose=_top_down(0.0, 0.0, 0.07))],
+    )
     target, table = _cloud(*BOX), _cloud(*BOX_TABLE)
 
     def kept(depth_search: float) -> list[GraspCandidate]:
@@ -192,8 +194,8 @@ def test_xarm_depth_search_slides_a_grasp_down_onto_the_box(xarm: GraspContactCh
     assert kept(0.0) == []
     [slid] = kept(0.05)
     assert 0.03 <= slid.pose.position.z < 0.07
-    assert slid.pose.orientation.to_numpy() == pytest.approx(
-        high.candidates[0].pose.orientation.to_numpy()
+    assert geometry.quaternion_array(slid.pose.orientation) == pytest.approx(
+        geometry.quaternion_array(high.candidates[0].pose.orientation)
     )
 
 
@@ -206,8 +208,9 @@ def test_gripper_config_steps_from_open_to_closed() -> None:
 
 
 def _cloud(*points: tuple[float, float, float]) -> PointCloud2:
-    return PointCloud2.from_numpy(
-        np.asarray(points, dtype=np.float32).reshape((-1, 3)), frame_id="world", timestamp=1.0
+    return pointcloud.from_xyz(
+        np.asarray(points, dtype=np.float32).reshape((-1, 3)),
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="world"),
     )
 
 

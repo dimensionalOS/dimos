@@ -47,8 +47,9 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils
+from dimos.message_utils import time as message_time
+from dimos.messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 from dimos.utils.logging_config import setup_logger
@@ -84,14 +85,14 @@ class _BenchSink(Module):
         now = time.time()
         self._count += 1
         # Replay preserves recording timestamps, so now - msg.ts is not transport latency.
-        rec = {"t": now, "ts": msg.ts, "i": self._count}
+        rec = {"t": now, "ts": message_time.to_seconds(msg.header.stamp), "i": self._count}
         if self._work_ms > 0:
             # Load the heavy OpenCV dependency only for synthetic image processing.
             import cv2
 
             deadline = time.perf_counter() + self._work_ms / 1000
             while time.perf_counter() < deadline:
-                cv2.GaussianBlur(msg.data, (31, 31), 5)
+                cv2.GaussianBlur(image_utils.view(msg), (31, 31), 5)
         rec["done_t"] = time.time()
         with self._lock:
             self._buf.append(json.dumps(rec))

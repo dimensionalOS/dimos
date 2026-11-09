@@ -29,6 +29,7 @@ from dimos.core.coordination.blueprints import Blueprint, StreamRef
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
+    is_registered_message,
     RustMcapStoreConfig,
     RustRecorder,
     RustRecorderConfig,
@@ -194,10 +195,8 @@ def collect(
             or getattr(sys.modules.get(kind.__module__), kind.__name__, None) is not kind
         ):
             raise ValueError(f"Message type {kind!r} must be importable at module level")
-        if not callable(getattr(kind, "lcm_encode", None)) or not callable(
-            getattr(kind, "lcm_decode", None)
-        ):
-            raise TypeError(f"Message type {kind!r} does not support native recording")
+        if not is_registered_message(kind):
+            raise TypeError(f"Message type {kind!r} is not a registered generated message")
     return CollectionModule.blueprint(
         input_types=inputs,
         recording_schema=profile.to_schema(),

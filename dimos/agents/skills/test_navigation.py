@@ -15,7 +15,7 @@
 import threading
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos.messages.std_msgs.msg import Bool
 from langchain_core.messages import HumanMessage
 import pytest
 

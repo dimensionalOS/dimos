@@ -23,7 +23,6 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sim_msgs.Contacts import Part
 from dimos.robot.deeprobotics.m20.model import M20_MJCF
 from dimos.simulation.go2_legged.policy import Proprioception
 from dimos.simulation.go2_legged.robot import (
@@ -141,7 +140,7 @@ class LeggedM20:
             BASE_ANGULAR_VELOCITY
         ].copy()
 
-    def part(self, geom: int) -> Part:
+    def part(self, geom: int) -> str:
         if geom in self.wheels:
             return "wheel"
         if self.model.geom_bodyid[geom] == self.trunk:
