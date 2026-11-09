@@ -64,19 +64,7 @@ class MujocoSim(SimulatedWorld):
         self._publisher: _LatestPublisher | None = None
         self._all_started = Event()
 
-    @rpc
-    def build(self) -> None:
-        super().build()
-        usd = self.world()
-        if usd is None:
-            raise ValueError(
-                "nothing says what this world is: pass scene= a USD layer or a file holding one,"
-                " or scene_manager= the UsdManager that composes it"
-            )
-        self._backend = MujocoBackend(usd, simulated=self.simulated, speed=self.config.speed)
-
     async def main(self) -> AsyncIterator[None]:
-        assert self._backend is not None
         # Every action is applied: one dropped while busy would be a lost motor command.
         self.actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
@@ -86,14 +74,30 @@ class MujocoSim(SimulatedWorld):
         announcing.cancel()
         running.cancel()
 
+    def _engine(self) -> MujocoBackend:
+        usd = self.world()
+        if usd is None:
+            raise ValueError(
+                "nothing says what this world is: pass scene= a USD layer or a file holding one,"
+                " or scene_manager= the UsdManager that composes it"
+            )
+        return MujocoBackend(usd, simulated=self.simulated, speed=self.config.speed)
+
     @rpc
     def on_system_modules(self, _modules: list[Any]) -> None:
         self._all_started.set()
 
     async def _run(self) -> None:
-        """Step, publish, and at a controller's tick wait for its actions before stepping on."""
-        backend, publisher = self._backend, self._publisher
-        assert backend is not None and publisher is not None
+        """Build the world, then step it, publishing what moved and holding at each tick.
+
+        Built here rather than in `build()`, because building it means asking the manager for the
+        scene and a manager that is not constructed yet cannot be asked. By the time a module is
+        running, every module exists. On a thread, since the ask is blocking and fetching a
+        room's worth of meshes should not stop this module answering anything else.
+        """
+        backend = self._backend = await asyncio.to_thread(self._engine)
+        publisher = self._publisher
+        assert publisher is not None
         await asyncio.to_thread(self._all_started.wait)
         while True:
             _when, frame = backend.step()
