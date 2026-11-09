@@ -454,27 +454,28 @@ class UsdManager(SharedConfigModule):
         return ["", published]
 
     @rpc
-    async def get_scene_on_disk(self, visited: list[str] | None = None) -> list[str]:
-        """``[asset_root, usd]``: the same scene, still naming the files it was composed from.
+    async def get_asset(self, name: str) -> bytes:
+        """The bytes of one asset the scene this manager published names.
 
-        For a consumer that opens files rather than asking for them: a physics engine reads a
-        layer off the disk, and `get_scene` hands out content names it serves over
-        `render_file_request` instead, which is right for a viewer across a bus and unusable to
-        MuJoCo. "at least 4 vertices required" on the first piece of furniture is what asking the
-        wrong one of these looks like.
+        `get_scene` hands out names, not paths: a scene travels as a string and its meshes are
+        fetched, which is what lets a consumer anywhere read it. This is that fetch, as an rpc
+        rather than a round trip over `render_file_request`, because a consumer that has to open
+        the scene needs every mesh before it can start, synchronously, and wants an error rather
+        than a message that never comes. A viewer drawing lazily is better served by the topic,
+        and still is.
 
-        Resolve it against the root this answers with before reading it: the mounted subtrees
-        already carry absolute paths, having each been rebased as it arrived, and what is left
-        relative is this manager's own layer -- relative to its own directory, which is the root.
-
-        Same machine only, and deliberately so. A backend somewhere else has to be handed the
-        bytes, not a path, and that is `get_scene` plus `render_file_request`.
+        Only names this manager published, and only the files behind them. A request is never an
+        arbitrary path into the filesystem.
         """
         await self._ready.wait()
-        chain = list(visited or [])
-        self._refuse_a_cycle(chain)
-        root, scene = await self._compose(chain)
-        return [root[ASSET_ROOT], scene]
+        real = self._published_assets.get(name, name if name in self._file_paths else None)
+        if real is None:
+            raise KeyError(
+                f"{name!r} is neither a file this description names nor an asset the last scene "
+                f"published. Ask for a scene before its assets: the names only exist once one "
+                f"has been handed out."
+            )
+        return await asyncio.to_thread(self._resolved(real).read_bytes)
 
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:

@@ -46,6 +46,7 @@ from dimos.robot.usd_manager import ASSET_ROOT, USD, Mount
 from dimos.sim2.actions import read_actions
 from dimos.sim2.backend import BACKENDS, SimulationBackend, load_backend
 from dimos.sim2.spec import Simulated, SimulatedRobot, SimulatedSensor, resolve, validate
+from dimos.sim2.usd_layer import scene_as_files
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 
@@ -54,7 +55,9 @@ logger = setup_logger()
 # A manager composes the same scene two ways and this is the one for an engine: it names the files
 # it was composed from, where `get_scene` names content a viewer fetches over a bus. See
 # UsdManager.get_scene_on_disk.
-_SCENE_RPC = "get_scene_on_disk"
+_SCENE_RPC = "get_scene"
+# How a consumer turns the names that scene carries back into files it can open.
+_ASSET_RPC = "get_asset"
 
 
 class SimulationSpec(Spec, Protocol):
@@ -157,7 +160,7 @@ class Simulation(SharedConfigModule):
         if mount is None:
             return self.config.scene
         client = (
-            RPCClient(None, None, mount.remote_name, {_SCENE_RPC}, rpc=self.rpc)
+            RPCClient(None, None, mount.remote_name, {_SCENE_RPC, _ASSET_RPC}, rpc=self.rpc)
             if mount.module is None
             else RPCClient.remote(mount.module, mount.remote_name, rpc=self.rpc)
         )
@@ -174,9 +177,14 @@ class Simulation(SharedConfigModule):
                     f"sim2: the world came from {mount.remote_name}.{_SCENE_RPC}() "
                     f"after {attempts} ask(s)"
                 )
-                # Rebased as it arrives, onto the root the manager reported: the layer says where
-                # its meshes are relative to something only that module knows.
-                return UsdModel.from_layer(resolve_usd_assets(answer[USD], answer[ASSET_ROOT]))
+                # The scene names its assets rather than pointing at them, which is what lets
+                # it reach a consumer sharing no filesystem with whoever composed it. An engine
+                # opens files, so they are fetched to disk here -- once per machine, keyed by
+                # content -- and the layer comes back naming those.
+                return scene_as_files(
+                    resolve_usd_assets(answer[USD], answer[ASSET_ROOT]),
+                    lambda name: getattr(client, _ASSET_RPC)(name),
+                )
             if attempts % 20 == 0:
                 logger.warning(
                     f"sim2: still waiting on {mount.remote_name} for {_SCENE_RPC}() "
