@@ -23,8 +23,8 @@ fix is good enough, and hands it to :meth:`PremapModule.submit`. See ``lidar/mod
 Named locations live here too, in the ``map`` frame, so every new fix moves them with the old
 map. They are not tf frames: the list on ``named_locations`` is where they are read from.
 
-Asking for ``"named_locations"`` on the shared ``render_file_request`` topic resends the list,
-which is how a recording that starts later gets a snapshot of it.
+An empty request on the shared ``render_file_request`` topic resends the list, which is how a
+recording that starts later gets a snapshot of it.
 
 ``named_locations`` is in and out: the whole list, as an ``InteractiveMarkerUpdate`` whose
 ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
@@ -78,9 +78,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 RECORDING_SUFFIXES = (".db", ".mcap")
-
-# What to ask for on `render_file_request` to be sent the named locations
-LOCATIONS_REQUEST = "named_locations"
 
 
 def find_stream(streams: list[str], wanted: str) -> str | None:
@@ -270,13 +267,14 @@ class PremapModule(Module):
         self.named_locations.publish(self.locations_snapshot())
 
     async def handle_render_file_request(self, request: String) -> None:
-        """``named_locations`` on the shared request topic: resend the list.
+        """An empty request on the shared request topic: resend every named location.
 
         A recording that starts after this module did would otherwise hold no snapshot of the
-        locations, and the next run reads them back out of the recording. Other names belong to
-        other modules (urdf_manager serves the URDF and the files it names), so this stays silent.
+        locations, and the next run reads them back out of the recording. A named request belongs
+        to whichever module owns that name (urdf_manager serves the URDF and the files it names),
+        so this stays silent on one.
         """
-        if request.data == LOCATIONS_REQUEST:
+        if request.data == "":
             self.named_locations.publish(self.locations_snapshot())
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
