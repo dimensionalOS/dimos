@@ -27,25 +27,34 @@ from typing import Any
 from dimos_lcm.world_msgs import WorldAction, WorldObservations
 
 from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.sim import SimulatedWorld
+from dimos.sim2.sim import SimulatedWorldConfig, scene_from
+from dimos.sim2.spec import validate
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class MujocoSim(SimulatedWorld):
+class MujocoSim(Module):
     """One compiled MuJoCo world, stepped in real time, publishing a frame of what moved.
+
+    A `SimulatedWorld` by shape rather than by inheritance -- actions in, observations out -- so
+    that what core asks of a backend is something a native module could satisfy too.
 
     It steps only once every module has started: a module that misses a frame never gets it,
     because a frame says what *changed* and the first one is the only one that says a robot
     exists at all.
     """
 
+    config: SimulatedWorldConfig
+    # The contract core states, and all of it.
+    actions: In[WorldAction]
+    world_observations: Out[WorldObservations]
     # A request names the world's layer, or a file it names, and gets it back on file_info --
     # the same pair a UsdManager serves a robot's meshes on, for the same reason.
     render_file_request: In[String]
@@ -59,6 +68,14 @@ class MujocoSim(SimulatedWorld):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        try:
+            validate(self.config.robots)
+        except Exception:
+            # Nothing else will stop a module that threw in its own constructor, and it has
+            # already started the threads `Module.__init__` starts.
+            self.stop()
+            raise
+        self.simulated = self.config.robots
         self._backend: MujocoBackend | None = None
         self._publisher: _LatestPublisher | None = None
         self._all_started = Event()
@@ -74,7 +91,7 @@ class MujocoSim(SimulatedWorld):
         running.cancel()
 
     def _engine(self) -> MujocoBackend:
-        usd = self.world()
+        usd = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
         if usd is None:
             raise ValueError(
                 "nothing says what this world is: pass scene= a USD layer or a file holding one,"
