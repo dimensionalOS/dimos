@@ -612,6 +612,12 @@ def _link_of(stage: Any, path: str) -> str:
     return str(prim.GetDisplayName() or prim.GetName())
 
 
+def _asset(module: UsdManager, name: str) -> bytes:
+    """The bytes out of get_asset, on a loop of this test's own, as _scene does."""
+    coroutine = cast("Any", UsdManager.get_asset).aio.__get__(module, UsdManager)
+    return cast("bytes", asyncio.run(coroutine(name)))
+
+
 def _scene(module: UsdManager) -> str:
     """The USD out of get_scene, on a loop of this test's own so its executor dies with it."""
     return _scene_answer(module)[1]
@@ -970,6 +976,34 @@ def test_a_published_asset_is_named_from_where_it_first_appears(
     published = next(iter(module._published_assets))
     assert published.startswith("/dimos/assets/")
     assert published.endswith("arm.stl")
+
+
+def test_get_asset_serves_a_published_mesh_and_nothing_else(
+    make_manager: Callable[..., UsdManager], tmp_path: Path
+) -> None:
+    """The fetch behind a published name, for a consumer that has to open the scene.
+
+    A viewer draws lazily and is served by `render_file_request`; a physics engine cannot start
+    until every mesh is on its disk, so it asks for them one at a time and wants an error rather
+    than a message that never comes.
+    """
+    pytest.importorskip("pxr")
+    mesh = tmp_path / "meshes" / "arm.stl"
+    mesh.parent.mkdir()
+    mesh.write_bytes(b"solid arm\n")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(subtree, asset_root=str(tmp_path))
+    )
+
+    _scene(module)
+    published = next(iter(module._published_assets))
+
+    assert _asset(module, published) == b"solid arm\n"
+    # Only names it published: a request is never an arbitrary path into the filesystem.
+    with pytest.raises(KeyError, match="neither a file this description names"):
+        _asset(module, "../../../etc/passwd")
 
 
 def test_one_mesh_on_two_mounts_is_published_once(
