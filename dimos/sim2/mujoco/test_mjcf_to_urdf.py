@@ -21,9 +21,8 @@ from numpy.typing import NDArray
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.unitree.go2.sim2 import Go2Sim
-from dimos.sim2.utils.mjcf_frames import mjcf_with_frames
-from dimos.sim2.utils.mjcf_to_urdf import mjcf_to_urdf
+from dimos.sim2.mujoco.mjcf_frames import mjcf_with_frames
+from dimos.sim2.mujoco.mjcf_to_urdf import mjcf_to_urdf
 
 _ARM = """
 <mujoco model="arm">
@@ -167,5 +166,7 @@ def test_ball_joints_are_refused(tmp_path: Path) -> None:
         mjcf_to_urdf(mjcf, out_dir=tmp_path)
 
 
-def test_the_go2_urdf_matches_its_mjcf_and_its_sensor_frames(tmp_path: Path) -> None:
-    assert_urdf_matches_mujoco(Go2Sim.mjcf, tmp_path, 20)
+# The G1 and the Go2 used to be checked here, through the MJCF each carried. They describe
+# themselves in USD now and carry no MJCF, so what matters about them is that their committed
+# layer is the robot -- which is dimos/robot/unitree/test_vendored_usd.py. This file is left
+# testing the converter itself, which is still how a vendor MJCF becomes one of those layers.

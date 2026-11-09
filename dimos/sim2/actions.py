@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""What can be done to any simulation, as typed actions: a robot sends them as a WorldAction, the Simulation hands them to its backend.
+"""What can be done to any simulation, as typed actions a robot sends as one WorldAction.
 
 Entities are robot ids or object names; a robot's joint is "<entity>/<joint>" on the wire.
 """

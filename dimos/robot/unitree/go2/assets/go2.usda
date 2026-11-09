@@ -728,9 +728,12 @@ def Xform "go2" (
                         }
 
                         def PhysicsRevoluteJoint "FL_calf_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
                             float newton:armature = 0.01
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
@@ -747,9 +750,12 @@ def Xform "go2" (
                     }
 
                     def PhysicsRevoluteJoint "FL_thigh_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
                         float newton:armature = 0.01
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
@@ -766,9 +772,12 @@ def Xform "go2" (
                 }
 
                 def PhysicsRevoluteJoint "FL_hip_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
                     float newton:armature = 0.01
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
@@ -1151,9 +1160,12 @@ def Xform "go2" (
                         }
 
                         def PhysicsRevoluteJoint "FR_calf_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
                             float newton:armature = 0.01
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
@@ -1170,9 +1182,12 @@ def Xform "go2" (
                     }
 
                     def PhysicsRevoluteJoint "FR_thigh_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
                         float newton:armature = 0.01
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
@@ -1189,9 +1204,12 @@ def Xform "go2" (
                 }
 
                 def PhysicsRevoluteJoint "FR_hip_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
                     float newton:armature = 0.01
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
@@ -1574,9 +1592,12 @@ def Xform "go2" (
                         }
 
                         def PhysicsRevoluteJoint "RL_calf_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
                             float newton:armature = 0.01
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
@@ -1593,9 +1614,12 @@ def Xform "go2" (
                     }
 
                     def PhysicsRevoluteJoint "RL_thigh_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
                         float newton:armature = 0.01
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
@@ -1612,9 +1636,12 @@ def Xform "go2" (
                 }
 
                 def PhysicsRevoluteJoint "RL_hip_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
                     float newton:armature = 0.01
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
@@ -1997,9 +2024,12 @@ def Xform "go2" (
                         }
 
                         def PhysicsRevoluteJoint "RR_calf_joint" (
-                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                         )
                         {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
                             float newton:armature = 0.01
                             float newton:damping = 0.034906585
                             float newton:friction = 0.2
@@ -2016,9 +2046,12 @@ def Xform "go2" (
                     }
 
                     def PhysicsRevoluteJoint "RR_thigh_joint" (
-                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                     )
                     {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
                         float newton:armature = 0.01
                         float newton:damping = 0.034906585
                         float newton:friction = 0.2
@@ -2035,9 +2068,12 @@ def Xform "go2" (
                 }
 
                 def PhysicsRevoluteJoint "RR_hip_joint" (
-                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI"]
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
                 )
                 {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
                     float newton:armature = 0.01
                     float newton:damping = 0.034906585
                     float newton:friction = 0.2
@@ -2322,85 +2358,169 @@ def Xform "go2" (
 
         def MjcActuator "FL_hip"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/FL_hip/FL_hip_joint>
         }
 
         def MjcActuator "FL_thigh"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/FL_hip/FL_thigh/FL_thigh_joint>
         }
 
         def MjcActuator "FL_calf"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 45.43
             uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/FL_hip/FL_thigh/FL_calf/FL_calf_joint>
         }
 
         def MjcActuator "FR_hip"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/FR_hip/FR_hip_joint>
         }
 
         def MjcActuator "FR_thigh"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/FR_hip/FR_thigh/FR_thigh_joint>
         }
 
         def MjcActuator "FR_calf"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 45.43
             uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/FR_hip/FR_thigh/FR_calf/FR_calf_joint>
         }
 
         def MjcActuator "RL_hip"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/RL_hip/RL_hip_joint>
         }
 
         def MjcActuator "RL_thigh"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/RL_hip/RL_thigh/RL_thigh_joint>
         }
 
         def MjcActuator "RL_calf"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 45.43
             uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/RL_hip/RL_thigh/RL_calf/RL_calf_joint>
         }
 
         def MjcActuator "RR_hip"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/RR_hip/RR_hip_joint>
         }
 
         def MjcActuator "RR_thigh"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 23.7
             uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/RR_hip/RR_thigh/RR_thigh_joint>
         }
 
         def MjcActuator "RR_calf"
         {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
             uniform double mjc:ctrlRange:max = 45.43
             uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
             rel mjc:target = </go2/Geometry/base/RR_hip/RR_thigh/RR_calf/RR_calf_joint>
         }
     }

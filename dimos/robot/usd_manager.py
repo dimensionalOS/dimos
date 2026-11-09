@@ -30,7 +30,6 @@ from pydantic import Field, field_validator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.shared_config import ConfigSenders, SharedConfigModule
 from dimos.core.stream import IO, In, Out
 from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -248,7 +247,7 @@ class UsdManagerConfig(ModuleConfig):
         return {frame: Mount.of(v) for frame, v in value.items()}
 
 
-class UsdManager(SharedConfigModule):
+class UsdManager(Module):
     """Poses the URDF from the joint state onto tf, and serves the robot as USD plus the files it names."""
 
     config: UsdManagerConfig
@@ -265,13 +264,18 @@ class UsdManager(SharedConfigModule):
         # Set once this manager is wholly built. super().__init__ takes an RPC session, so from
         # that line on a caller can ask for the scene -- and one does, the moment a simulation
         # goes looking for the world it is about to run. That reached a half-built object:
-        # `AttributeError: 'UrdfManager' object has no attribute '_subtree_clients'`. The rpcs
+        # `AttributeError: 'UsdManager' object has no attribute '_subtree_clients'`. The rpcs
         # that need this module assembled wait on it instead, which they can because they are
         # async: the handler is entered, yields, and resumes once __init__ has returned.
         self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._load(self.config.model)
+        # Converted here and once: everything below works on the USD, whatever it came from.
+        self._description = _as_usd(self.config.model or _world_model())
+        self._file_paths = self._description.referenced_files()
+        self._joints = {joint.name: joint for joint in self._description.joints}
+        # tf_renames reach this robot's own frames too, so every name it emits goes through here.
+        self._frames = self._renamed_own_frames()
         self._next_joint_tf_t = 0.0
         self._warned_about_joint_names = False
         # Per edge: the last transform sent (translation + rotation) and when.
@@ -353,40 +357,6 @@ class UsdManager(SharedConfigModule):
                     f"subtree"
                 )
 
-    def config_receive(self, config_senders: ConfigSenders) -> None:
-        models = [(name, config.get("model")) for name, config in config_senders]
-        if self.config.model is not None:
-            models.insert(0, ("model=", self.config.model))
-        if len(models) > 1:
-            raise ValueError(
-                f"UsdManager takes one model, from model= or one @shared_config(UsdManager); "
-                f"got {[n for n, _ in models]}"
-            )
-        if not models:
-            return
-        name, model = models[0]
-        if not isinstance(model, RobotModel | UsdModel):
-            raise TypeError(
-                f"{name}'s @shared_config(UsdManager) must return "
-                f"{{'model': RobotModel}} or {{'model': UsdModel}}"
-            )
-        if model is not self.config.model:
-            self._load(model)
-
-    def _load(self, model: RobotModel | UsdModel | None) -> None:
-        """Take this model as the one this manager answers for.
-
-        A model given as `model=` is loaded at construction; one that arrives over
-        @shared_config replaces it when it comes. None is a scene with no robot of its own --
-        a single link called "world" for mounts to hang from.
-        """
-        # Converted here and once: everything below works on the USD, whatever it came from.
-        self._description = _as_usd(model or _world_model())
-        self._file_paths = self._description.referenced_files()
-        self._joints = {joint.name: joint for joint in self._description.joints}
-        # tf_renames reach this robot's own frames too, so every name it emits goes through here.
-        self._frames = self._renamed_own_frames()
-
     @rpc
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
@@ -454,27 +424,28 @@ class UsdManager(SharedConfigModule):
         return ["", published]
 
     @rpc
-    async def get_scene_on_disk(self, visited: list[str] | None = None) -> list[str]:
-        """``[asset_root, usd]``: the same scene, still naming the files it was composed from.
+    async def get_asset(self, name: str) -> bytes:
+        """The bytes of one asset the scene this manager published names.
 
-        For a consumer that opens files rather than asking for them. A physics engine reads a
-        layer off the disk; `get_scene` hands out content names it serves over
-        `render_file_request` instead, which is right for a viewer across a bus and unusable to
-        MuJoCo -- "at least 4 vertices required" on the first piece of furniture is what asking
-        the wrong one of these looks like.
+        `get_scene` hands out names, not paths: a scene travels as a string and its meshes are
+        fetched, which is what lets a consumer anywhere read it. This is that fetch, as an rpc
+        rather than a round trip over `render_file_request`, because a consumer that has to open
+        the scene needs every mesh before it can start, synchronously, and wants an error rather
+        than a message that never comes. A viewer drawing lazily is better served by the topic,
+        and still is.
 
-        Resolve it against the root this answers with before reading it: the mounted subtrees
-        already carry absolute paths, having each been rebased as it arrived, and what is left
-        relative is this manager's own layer -- relative to its own directory, which is the root.
-
-        Same machine only, and deliberately so. A backend somewhere else has to be handed the
-        bytes, not a path, and that is `get_scene` plus `render_file_request`.
+        Only names this manager published, and only the files behind them. A request is never an
+        arbitrary path into the filesystem.
         """
         await self._ready.wait()
-        chain = list(visited or [])
-        self._refuse_a_cycle(chain)
-        root, scene = await self._compose(chain)
-        return [root[ASSET_ROOT], scene]
+        real = self._published_assets.get(name, name if name in self._file_paths else None)
+        if real is None:
+            raise KeyError(
+                f"{name!r} is neither a file this description names nor an asset the last scene "
+                f"published. Ask for a scene before its assets: the names only exist once one "
+                f"has been handed out."
+            )
+        return await asyncio.to_thread(self._resolved(real).read_bytes)
 
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:

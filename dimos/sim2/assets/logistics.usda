@@ -1,0 +1,388 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "MuJoCo USD Converter v0.9.0"
+    }
+    defaultPrim = "logistics"
+    doc = """Generated from Composed Stage of root layer /tmp/claude-1000/-home-dimos/ff9ad774-151d-43c4-9774-fa96d8ad90f5/scratchpad/logistics/converted/logistics.usda
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "Flattened_Prototype_1"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_1.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_1.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_1.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_1.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_1.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_1.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_1.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_1.inputs:roughness>
+        token outputs:out
+    }
+}
+
+def Xform "logistics" (
+    apiSchemas = ["GeomModelAPI"]
+    assetInfo = {
+        string name = "logistics"
+    }
+    kind = "component"
+)
+{
+    float3[] extentsHint = [(-10, -10, -1.3113022e-8), (10, 10, 3)]
+
+    def Scope "Geometry"
+    {
+        def Plane "floor" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            uniform token axis = "Z"
+            float3[] extent = [(-10, -10, -0), (10, 10, 0)]
+            double length = 20
+            rel material:binding = </logistics/Materials/floor>
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double width = 20
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "north_wall" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.78, 0.8, 0.8)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (6, 0.1, 1.5)
+            double3 xformOp:translate = (0, 5, 1.5)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "west_wall" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.78, 0.8, 0.8)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.1, 5, 1.5)
+            double3 xformOp:translate = (-5, 0, 1.5)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "shelf_left" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.16, 0.36, 0.35)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.45, 1.2, 0.8)
+            double3 xformOp:translate = (3, 2, 0.8)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "shelf_right" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.16, 0.36, 0.35)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.45, 1.2, 0.8)
+            double3 xformOp:translate = (3, -2, 0.8)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "crate" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.74, 0.28, 0.18)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.4, 0.4, 0.3)
+            double3 xformOp:translate = (-2, 2, 0.3)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "table" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.5, 0.52, 0.55)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 0.5, 0.06)
+            double3 xformOp:translate = (0, -3, 0.7)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "Box" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.22, 0.25, 0.25)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.06, 0.4, 0.33)
+            double3 xformOp:translate = (-0.8, -3, 0.33)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+
+        def Cube "Box_1" (
+            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+            displayName = "Box"
+            uiHints = {
+                string displayName = "Box"
+            }
+        )
+        {
+            float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+            rel material:binding:physics = </logistics/Physics/PhysicsMaterial>
+            uniform double[] mjc:solref = [0.02, 1]
+            float newton:contactGap = 0
+            float physics:density = 1000
+            color3f[] primvars:displayColor = [(0.22, 0.25, 0.25)] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayColor:indices = None
+            float[] primvars:displayOpacity = [1] (
+                interpolation = "constant"
+            )
+            int[] primvars:displayOpacity:indices = None
+            double size = 2
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (0.06, 0.4, 0.33)
+            double3 xformOp:translate = (0.8, -3, 0.33)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
+    }
+
+    def Scope "Materials"
+    {
+        def Material "floor" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_1>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0.635, 0.67, 0.67) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </logistics/Materials/floor/OpenPBR.outputs:out>
+            token outputs:surface.connect = </logistics/Materials/floor/PreviewSurface.outputs:surface>
+        }
+    }
+
+    def Scope "Physics"
+    {
+        def Material "PhysicsMaterial" (
+            apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+        )
+        {
+            float newton:contactDamping = 100
+            float newton:contactStiffness = 2500
+            float newton:rollingFriction = 0.0001
+            float newton:torsionalFriction = 0.005
+            float physics:dynamicFriction = 1
+            float physics:staticFriction = 1
+        }
+    }
+}
+
+def PhysicsScene "PhysicsScene" (
+    apiSchemas = ["NewtonSceneAPI", "MjcSceneAPI"]
+)
+{
+    uniform token mjc:option:cone = "elliptic"
+    uniform double mjc:option:impratio = 10
+    uniform int newton:maxSolverIterations = 100
+    uniform int newton:timeStepsPerSecond = 200
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+}
+
+# The MJCF said `<light pos="0 0 5" directional dir="0 0 -1">` and a headlight ambient of 0.35;
+# the converter drops lights entirely ("lights are not supported"), so they are written here. A
+# layer that says nothing about its lighting gets whatever the viewer guesses, which for the
+# office scene was a room lit from nowhere with flat black through the windows.
+def DistantLight "sun" (
+    prepend apiSchemas = ["ShadowAPI"]
+)
+{
+    # Straight down, as the MJCF's dir="0 0 -1" asked for.
+    color3f inputs:color = (1, 1, 1)
+    float inputs:intensity = 2.0
+    bool inputs:shadow:enable = 1
+    quatf xformOp:orient = (0.70710678, -0.70710678, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:orient"]
+}
+
+def DomeLight "ambient" (
+    prepend apiSchemas = ["ShadowAPI"]
+)
+{
+    # The headlight's ambient term: there is no bounce in the renderer, so this stands in for
+    # what would reach a surface after scattering off the walls.
+    color3f inputs:color = (1, 1, 1)
+    float inputs:intensity = 1.2
+    bool inputs:shadow:enable = 0
+}

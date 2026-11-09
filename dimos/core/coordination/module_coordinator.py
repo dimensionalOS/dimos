@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 import dataclasses
 import importlib
@@ -73,21 +73,6 @@ class ModuleDescriptor(NamedTuple):
     # RPC topic prefix. Usually the class/instance name; hosted modules may
     # advertise a run- and Host-scoped address. Defaulted for wire compatibility.
     rpc_name: str = ""
-
-
-def _namespace_of(instance_name: str) -> str:
-    """The namespace a deployed module sits in, or "" for one outside any."""
-    return instance_name.rsplit("/", 1)[0] if "/" in instance_name else ""
-
-
-def _shares_namespace(sender: str, receiver: str) -> bool:
-    """Whether a @shared_config value from `sender`'s namespace is meant for `receiver`'s.
-
-    A receiver outside any namespace hears everyone; a namespaced one hears its own namespace
-    and anything global. Namespacing exists to keep instances of the same modules apart, and a
-    config that crossed that boundary would undo it.
-    """
-    return not receiver or not sender or sender == receiver
 
 
 class ModuleCoordinator(Resource):
@@ -333,33 +318,6 @@ class ModuleCoordinator(Resource):
         self._send_on_system_modules()
         return durations
 
-    def _share_configs(self, receiver_names: Iterable[str]) -> None:
-        """Hand each SharedConfigModule among receiver_names every deployed @shared_config value aimed at it.
-
-        A namespaced receiver hears only its own namespace. Matching on type alone meant that
-        three namespaced robots, each offering its model, all reached one namespaced manager --
-        which then had three models and no way to say which robot it described. A receiver
-        outside any namespace still hears everyone, which is what a module like the simulation
-        wants: one world built from every robot standing in it.
-        """
-        from dimos.core.shared_config import SharedConfigModule, shared_config_methods
-
-        for receiver_name in receiver_names:
-            receiver_class = self._instance_classes[receiver_name]
-            if not issubclass(receiver_class, SharedConfigModule):
-                continue
-            receiver_namespace = _namespace_of(receiver_name)
-            senders = tuple(
-                (name, getattr(self._deployed_modules[name], method)())
-                for name, cls in self._instance_classes.items()
-                for method, target in shared_config_methods(cls)
-                if issubclass(receiver_class, target)
-                and _shares_namespace(_namespace_of(name), receiver_namespace)
-            )
-            cast("SharedConfigModule", self._deployed_modules[receiver_name]).deliver_shared_config(
-                senders
-            )
-
     def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
         return self._class_aliases.get(cls, cls)
 
@@ -508,7 +466,6 @@ class ModuleCoordinator(Resource):
                 coordinator,
                 remote_module_refs=remote_ref_proxies,
             )
-            coordinator._share_configs(coordinator._deployed_modules)
             t2 = time.perf_counter()
             coordinator.build_all_modules()
             t3 = time.perf_counter()
@@ -618,8 +575,6 @@ class ModuleCoordinator(Resource):
         new_modules = [
             proxy for name, proxy in self._deployed_modules.items() if name not in before
         ]
-
-        self._share_configs([name for name in self._deployed_modules if name not in before])
 
         if new_modules:
             safe_thread_map(new_modules, lambda m: m.build())
