@@ -95,62 +95,52 @@ Dimensional is the open-source operating system for general robotics. We are a r
 
 <table>
   <tr>
-    <td align="center" width="20%">
-      <h3>Quadruped</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Humanoid</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Arm</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Drone</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Misc</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
+    <td><b>Quadrupeds</b></td>
+    <td>
+      <a href="docs/platforms/quadruped/go2/index.md"><img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable">&nbsp;Unitree&nbsp;Go2&nbsp;pro/&#8288;air</a>&nbsp;· 
+      <a href="dimos/robot/deeprobotics/m20/deploy/README.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Deep&nbsp;Robotics&nbsp;Lynx&nbsp;M20</a>&nbsp;· 
+      <a href="docs/platforms/quadruped/spot/index.md"><img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental">&nbsp;Boston&nbsp;Dynamics&nbsp;Spot</a>
     </td>
   </tr>
-
   <tr>
-    <td align="center" width="20%">
-      🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
-      🟧 <a href="dimos/robot/deeprobotics/m20/deploy/README.md">Deep Robotics Lynx M20</a><br>
-      🟥 <a href="docs/platforms/quadruped/spot/index.md">Boston Dynamics Spot</a><br>
+    <td><b>Humanoids</b></td>
+    <td>
+      <a href="docs/platforms/humanoid/g1/index.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Unitree&nbsp;G1</a>&nbsp;· 
+      <a href="dimos/robot/galaxea/r1pro/README.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Galaxea&nbsp;R1&nbsp;Pro</a>
     </td>
-    <td align="center" width="20%">
-      🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
-      🟧 <a href="dimos/robot/galaxea/r1pro/README.md">Galaxea R1 Pro</a><br>
+  </tr>
+  <tr>
+    <td><b>Arms</b></td>
+    <td>
+      <a href="docs/capabilities/manipulation/index.md"><img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable">&nbsp;UFactory&nbsp;xArm&nbsp;6/&#8288;7,&nbsp;Lite6</a>&nbsp;· 
+      <a href="docs/capabilities/manipulation/piper_integration.md"><img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable">&nbsp;AgileX&nbsp;Piper</a>&nbsp;· 
+      <a href="docs/capabilities/manipulation/openyam_integration.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;OpenYAM</a>&nbsp;· 
+      <a href="docs/capabilities/manipulation/openarm_integration.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;OpenArm</a><br>
+      <a href="docs/capabilities/manipulation/a1z.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Galaxea&nbsp;A1Z</a>&nbsp;· 
+      <a href="docs/capabilities/manipulation/makermods_metal_integration.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;MakerMods&nbsp;Metal</a>&nbsp;· 
+      <a href="docs/capabilities/manipulation/seeed_b601_dm_integration.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Seeed&nbsp;reBot&nbsp;B601-&#8288;DM</a>&nbsp;· 
+      <a href="docs/capabilities/manipulation/a750.md"><img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental">&nbsp;A-&#8288;750</a>
     </td>
-    <td align="center" width="20%">
-      🟩 <a href="docs/capabilities/manipulation/index.md">UFactory xArm 6/7, Lite6</a><br>
-      🟩 <a href="docs/capabilities/manipulation/piper_integration.md">AgileX Piper</a><br>
-      🟨 <a href="docs/capabilities/manipulation/openyam_integration.md">OpenYAM</a><br>
-      🟨 <a href="docs/capabilities/manipulation/openarm_integration.md">OpenArm</a><br>
-      🟧 <a href="docs/capabilities/manipulation/a1z.md">Galaxea A1Z</a><br>
-      🟧 <a href="docs/capabilities/manipulation/makermods_metal_integration.md">MakerMods Metal</a><br>
-      🟧 <a href="docs/capabilities/manipulation/seeed_b601_dm_integration.md">Seeed reBot B601-DM</a><br>
-      🟥 <a href="docs/capabilities/manipulation/a750.md">A-750</a><br>
+  </tr>
+  <tr>
+    <td><b>Drones</b></td>
+    <td>
+      <a href="dimos/robot/drone/README.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;DJI&nbsp;(via&nbsp;RosettaDrone&nbsp;/&nbsp;MAVLink)</a>
     </td>
-    <td align="center" width="20%">
-      🟧 <a href="dimos/robot/drone/README.md">DJI (via RosettaDrone / MAVLink)</a><br>
-    </td>
-    <td align="center" width="20%">
-      🟨 <a href="dimos/hardware/sensors/lidar/livox">Livox Mid-360</a><br>
-      🟨 <a href="dimos/hardware/sensors/camera/realsense/README.md">Intel RealSense</a><br>
-      🟨 <a href="dimos/teleop/README.md">Meta Quest / PICO</a><br>
-      🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
+  </tr>
+  <tr>
+    <td><b>Sensors&nbsp;&amp;&nbsp;teleop</b></td>
+    <td>
+      <a href="dimos/hardware/sensors/lidar/livox"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Livox&nbsp;Mid-&#8288;360</a>&nbsp;· 
+      <a href="dimos/hardware/sensors/camera/realsense/README.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Intel&nbsp;RealSense</a>&nbsp;· 
+      <a href="dimos/teleop/README.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Meta&nbsp;Quest&nbsp;/&nbsp;PICO</a>&nbsp;· 
+      <a href="https://github.com/dimensionalOS/openFT-sensor"><img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental">&nbsp;Force&nbsp;Torque&nbsp;Sensor</a>
     </td>
   </tr>
 </table>
 <br>
 <div align="right">
-🟩 stable 🟨 beta 🟧 alpha 🟥 experimental
+<img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> stable <img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta"> beta <img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha"> alpha <img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental"> experimental
 
 </div>
 
@@ -176,9 +166,9 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 See [installer options](docs/installation/index.md), or platform notes:
 
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
+- <img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
-- 🟧 [macOS](docs/installation/osx.md)
+- <img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha"> [macOS](docs/installation/osx.md)
 
 > Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
