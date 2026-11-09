@@ -171,6 +171,17 @@ class UsdModel:
         return replace(self, _added_frames=self._added_frames + added)
 
     @classmethod
+    def from_layer(cls, usd: str) -> UsdModel:
+        """A layer given outright, with no file behind it.
+
+        What arrives over the bus: a manager hands a whole scene over as one string, and the
+        receiver has a description rather than somewhere to go and read one. Its asset paths have
+        to be absolute already -- there is no source file left for a relative one to be relative
+        to -- which is what `resolve_usd_assets` is for on the way in.
+        """
+        return cls(_text=usd)
+
+    @classmethod
     def from_robot_model(cls, model: RobotModel) -> UsdModel:
         """A URDF description as USD, converted when its layer is first asked for."""
         loaded = model.load()
