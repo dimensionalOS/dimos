@@ -57,7 +57,6 @@ from dimos.robot.usd_manager import (
 )
 from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
-# A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
 <robot name="box_robot">
   <link name="base"/>
@@ -70,7 +69,6 @@ _URDF = """<?xml version="1.0"?>
 </robot>
 """
 
-# The same cube on two symmetric mounts, for the two-of-the-same-arm cases.
 _TWO_ARM_URDF = """<?xml version="1.0"?>
 <robot name="box_robot">
   <link name="base"/>
@@ -115,7 +113,6 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UsdManagerPointClearin
 
 
 def _place_arm(module: UsdManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
-    """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
             Transform(
@@ -151,7 +148,6 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
     make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
-    # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
 
     assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is None
@@ -333,7 +329,6 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
                 timestamp=stamp,
             )
         )
-    # Both captures are processed after the newer state arrived.
     first = module.filter_cloud(captures[0])
     assert first is not None
     second = module.filter_cloud(captures[1])
@@ -358,7 +353,6 @@ def test_the_joint_state_is_published_as_one_tf_edge_per_joint(make_filter):
 @pytest.mark.parametrize(
     "overrides",
     [
-        # Multi-DOF joints are read from tf, so publishing them would feed the filter its own output.
         {"urdf_xml": _joint_robot("planar")},
         {"urdf_xml": _joint_robot("prismatic"), "publish_joint_tf": False},
     ],
@@ -394,7 +388,6 @@ def test_render_file_request_serves_the_usd_and_only_files_it_names(
     cube = str((package / "meshes" / "cube.stl").resolve())
     texture = str((package / "textures" / "skin.png").resolve())
 
-    # the scene and the files by the full paths it names; the URDF and anything else gets nothing
     pytest.importorskip("pxr")
     for request in (
         "robot.usda",
@@ -427,7 +420,6 @@ def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_captu
     assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
     np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
     np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
-    # a second sensor on the same input lags the first: its older capture is matched to its own capture time
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
     late = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=1.0))
     assert late is not None
@@ -469,8 +461,6 @@ def test_joint_transforms_match_roboplan_forward_kinematics_on_the_r1pro():
 
 
 class _FakeArm(Module):
-    """Stands in for a module bolted to the robot: all a mounted module owes is get_usd."""
-
     config: ModuleConfig
 
     @rpc
@@ -479,10 +469,6 @@ class _FakeArm(Module):
 
 
 class _FakeG1(Module):
-    """Stands in for a mounted module that is itself a manager: it answers get_scene, and its
-    answer already has its own lidar on it, hung from a frame carrying the g1's prefix.
-    """
-
     config: ModuleConfig
 
     @rpc
@@ -495,7 +481,6 @@ class _NoUsd(Module):
 
 
 def _subtree_usd(prim: str, link: str, mesh: str | None = None) -> str:
-    """A stand-in subtree in the dialect urdf_to_usd emits: displayName plus RigidBodyAPI."""
     geometry = (
         ""
         if mesh is None
@@ -527,8 +512,6 @@ def Xform "{prim}" (
 
 _SUBTREE_USD = _subtree_usd("fake_arm", "fake_arm_base")
 
-# A g1-shaped subtree: a root plus a head frame to hang something else off. Its names are
-# already prefixed, the way a nested manager's scene arrives.
 _G1_WITH_HEAD_USD = """#usda 1.0
 (
     defaultPrim = "g1"
@@ -550,13 +533,10 @@ def Xform "g1" (
 
 
 class _FakeClient:
-    """An RPC client answering get_usd/get_scene from a script; an Exception means 'not up yet'."""
-
     def __init__(self, *answers: Any, asset_root: str = "") -> None:
         self.answers = list(answers)
         self.asked = 0
         self.asset_root = asset_root
-        # Every mount chain it was handed, so a test can assert the chain travels.
         self.chains: list[list[str]] = []
 
     def get_usd(self) -> Any:
@@ -564,8 +544,6 @@ class _FakeClient:
         answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         if isinstance(answer, Exception):
             raise answer
-        # A bare string in a script means "that USD, rooted nowhere"; anything else goes
-        # through as-is so a test can hand over a malformed answer on purpose.
         return [self.asset_root, answer] if isinstance(answer, str) else answer
 
     def get_scene(self, visited: list[str] | None = None) -> Any:
@@ -603,21 +581,18 @@ def _usd_stage(usd: str) -> Any:
 
 
 def _link_of(stage: Any, path: str) -> str:
-    """The frame_id a prim travels under: its displayName, or its prim name without one."""
     prim = stage.GetPrimAtPath(path)
     assert prim, f"no prim at {path}"
     return str(prim.GetDisplayName() or prim.GetName())
 
 
 def _asset(module: UsdManager, name: str) -> bytes:
-    """The bytes out of get_asset, on a loop of this test's own, as _scene does."""
     owner = type(module)
     coroutine = cast("Any", owner.get_asset).aio.__get__(module, owner)
     return cast("bytes", asyncio.run(coroutine(name)))
 
 
 def _scene(module: UsdManager) -> str:
-    """The USD out of get_scene, on a loop of this test's own so its executor dies with it."""
     return _scene_answer(module)[1]
 
 
@@ -651,7 +626,6 @@ def test_get_scene_without_mounts_is_just_the_robot(
     pytest.importorskip("pxr")
     module = make_manager()
 
-    # Same layer; only the root differs, since a published scene resolves nothing off disk.
     assert _scene(module) == module.get_usd()[USD]
 
 
@@ -684,9 +658,6 @@ def test_get_scene_keeps_asking_a_module_that_is_not_serving_yet(
 def test_get_scene_does_not_return_half_a_robot_while_a_mount_is_silent(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    """With the deadline gone there is no error to assert, so assert that it is still waiting:
-    wait_for cancels it, which is also what keeps this test from leaking the retry loop.
-    """
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
     client = _FakeClient(RuntimeError("never"))
@@ -719,7 +690,6 @@ def test_a_module_class_names_the_only_instance_of_itself() -> None:
     mount = Mount.of(_FakeArm)
 
     assert mount.module is _FakeArm
-    # RPCClient.remote's own default for a module with no instance_name.
     assert mount.remote_name == "_FakeArm"
 
 
@@ -980,12 +950,6 @@ def test_a_published_asset_is_named_from_where_it_first_appears(
 def test_get_asset_serves_a_published_mesh_and_nothing_else(
     make_manager: Callable[..., UsdManager], tmp_path: Path
 ) -> None:
-    """The fetch behind a published name, for a consumer that has to open the scene.
-
-    A viewer draws lazily and is served by `render_file_request`; a physics engine cannot start
-    until every mesh is on its disk, so it asks for them one at a time and wants an error rather
-    than a message that never comes.
-    """
     pytest.importorskip("pxr")
     mesh = tmp_path / "meshes" / "arm.stl"
     mesh.parent.mkdir()
@@ -1000,7 +964,6 @@ def test_get_asset_serves_a_published_mesh_and_nothing_else(
     published = next(iter(module._published_assets))
 
     assert _asset(module, published) == b"solid arm\n"
-    # Only names it published: a request is never an arbitrary path into the filesystem.
     with pytest.raises(KeyError, match="neither a file this description names"):
         _asset(module, "../../../etc/passwd")
 
@@ -1032,7 +995,6 @@ def test_one_mesh_on_two_mounts_is_published_once(
 def test_a_subtree_with_no_root_keeps_its_paths_untouched(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    # An empty root means "nothing to resolve"; an absolute path needs no rebasing either.
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm})
     subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="/already/abs.stl")
@@ -1049,7 +1011,6 @@ def test_a_subtree_with_no_root_keeps_its_paths_untouched(
 def test_an_answer_that_is_not_a_root_and_a_usd_is_retried(
     make_manager: Callable[..., UsdManager], answer: Any
 ) -> None:
-    # A malformed answer is treated like a module that is not up yet, not grafted blindly.
     pytest.importorskip("pxr")
     module = make_manager(mounts={"arm": _FakeArm}, scene_retry_s=0.01)
     client = _FakeClient(answer, _SUBTREE_USD)
@@ -1081,7 +1042,6 @@ def test_frames_are_not_renamed_by_default(
 def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    # Written in the subtree's own names, which is what a vendor description gives you.
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager, tf_renames_pre_namespace={"fake_arm_base": "arm_base"})
 
@@ -1093,7 +1053,6 @@ def test_a_pre_namespace_rename_happens_before_the_prefix_goes_on(
 def test_a_post_namespace_rename_happens_after_the_prefix_goes_on(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    # Written in the prefixed names, and the only way to reach a name without the namespace.
     pytest.importorskip("pxr")
     module = _namespaced_arm(make_manager, tf_renames={"left/fake_arm_base": "left_arm"})
 
@@ -1164,7 +1123,6 @@ def test_a_lidar_mounts_onto_a_g1_that_is_itself_mounted_on_the_root(
 
     stage = _usd_stage(_scene(module))
 
-    # The g1 went onto the robot, and the arm went onto the g1's head.
     assert stage.GetPrimAtPath("/box_robot/base/arm/g1")
     assert stage.GetPrimAtPath("/box_robot/base/arm/g1/head_mount/fake_arm")
 
@@ -1179,7 +1137,6 @@ def test_a_mounted_manager_is_asked_for_its_whole_scene_not_just_its_own_layer(
 
 
 def test_an_instance_name_on_its_own_is_asked_for_its_own_layer() -> None:
-    # No class to ask whether it has a get_scene, so the narrower rpc is the safe assumption.
     assert Mount.of("left/xarm").subtree_rpc == "get_usd"
 
 
@@ -1267,7 +1224,6 @@ def test_a_manager_with_no_model_stands_on_a_world_link() -> None:
 
 
 def test_a_world_manager_has_no_asset_root_to_offer() -> None:
-    # There is no description file, so there is no directory its paths could resolve against.
     module = UsdManager()
     try:
         assert module.get_usd()[0] == ""
@@ -1312,7 +1268,6 @@ def test_tf_renames_reach_this_robots_own_frames_on_tf(
 def test_tf_renames_reach_this_robots_own_frames_in_its_usd(
     make_manager: Callable[..., UsdManager],
 ) -> None:
-    # Both sides or neither: a layer naming a frame no transform arrives for is worse than none.
     pytest.importorskip("pxr")
     module = make_manager(tf_renames={"arm": "gripper"})
 
@@ -1342,7 +1297,6 @@ def test_renaming_a_joint_leaves_the_name_its_joint_state_arrives_under(
         JointState(ts=1.0, name=["shoulder"], position=[np.pi / 2])
     )
 
-    # Rotated about x by the position the state carried, so the rename did not hide it.
     np.testing.assert_allclose(
         transform.rotation.to_tuple(), [np.sin(np.pi / 4), 0.0, 0.0, np.cos(np.pi / 4)], atol=1e-9
     )
@@ -1426,7 +1380,6 @@ def test_the_published_scene_carries_no_asset_root_to_resolve_against(
 def test_the_body_mask_still_cuts_the_robot_out_when_its_frames_are_renamed(
     make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
-    """The mask hangs on the tf lookups going through frame() and the joint keys not."""
     module = make_filter(tf_renames={"base": "chassis", "arm": "forearm"})
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
@@ -1469,7 +1422,6 @@ def test_a_renamed_multidof_joint_is_still_found_on_tf(
 
     result = module.filter_cloud(_cloud([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]))
 
-    # The cube moved with the floating joint, so the point at its new home goes and the far one stays.
     assert result is not None
     np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
 
@@ -1536,9 +1488,6 @@ def test_a_usd_model_serves_the_files_its_layer_names(scene_file: Path) -> None:
 
 
 def test_a_usd_model_poses_its_own_frames_on_tf(scene_file: Path) -> None:
-    """A USD conveys the tree by nesting and a nested link with no joint is welded, so this
-    scene's one edge is room -> table. The joint state names something else and is ignored.
-    """
     pytest.importorskip("pxr")
     module = UsdManager(model=UsdModel.from_file(scene_file))
     try:
@@ -1641,7 +1590,6 @@ def test_a_usd_native_robot_cuts_itself_out_of_its_own_cloud(tmp_path: Path) -> 
 
         result = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [0.05, 0.0, 0.0], [2.0, 0.0, 0.0]]))
 
-        # The 20cm cube on `arm` swallows the first two; the far point survives.
         assert result is not None
         np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
     finally:

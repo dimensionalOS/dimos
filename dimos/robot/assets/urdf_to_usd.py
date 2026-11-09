@@ -12,12 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""URDF to USD: one robot's links and joints written out as a USD stage.
-
-The other direction is ``usd_to_urdf``, and the two have to agree about the handful of things
-URDF can say and USD cannot -- ``PASSTHROUGH_KEY`` and ``_OUT_OF_PLANE`` are defined here,
-where they are written, and read from here by the reader.
-"""
 
 from __future__ import annotations
 
@@ -43,21 +37,15 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-# No single position, and no UsdPhysics equivalent: their pose comes from odometry.
 _MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
-# A URDF planar joint moves in its own xy and turns about z, so the other three are locked.
 _OUT_OF_PLANE = ("transZ", "rotX", "rotY")
-# customData holding the URDF this converter does not read. Standard field, not an attribute.
 PASSTHROUGH_KEY = "urdf:unconverted"
 
 
 @dataclass(frozen=True)
 class _Geometry:
-    """One ``<visual>`` or ``<collision>`` of a link."""
-
-    kind: str  # box | cylinder | sphere | mesh
+    kind: str
     origin: NDArray[np.float64]
-    # box: the three extents; cylinder: (radius, length); sphere: (radius,); mesh: ()
     size: tuple[float, ...]
     filename: str | None
     mesh_scale: tuple[float, float, float]
@@ -71,11 +59,6 @@ def urdf_to_usd(
     name: str | None = None,
     include_collision: bool = True,
 ) -> str:
-    """``model`` as one ``.usda`` layer; ``name`` is the defaultPrim, default ``<robot name>``.
-
-    Links nest down the kinematic tree at the URDF zero pose, so a viewer with no physics engine
-    still shows the robot assembled. A ``<mesh>`` keeps the path the URDF named.
-    """
     pxr = load_pxr()
     root_element = ET.fromstring(model.xml)
     name = name or root_element.get("name") or "robot"
@@ -84,7 +67,6 @@ def urdf_to_usd(
 
     stage = pxr.Usd.Stage.CreateInMemory(f"{name}.usda")
     pxr.UsdGeom.SetStageUpAxis(stage, pxr.UsdGeom.Tokens.z)
-    # URDF is metres and USD is unitless, so say so rather than leave a viewer to assume cm.
     pxr.UsdGeom.SetStageMetersPerUnit(stage, 1.0)
     root = pxr.UsdGeom.Xform.Define(stage, f"/{prim_identifier(pxr, name)}")
     stage.SetDefaultPrim(root.GetPrim())
@@ -116,11 +98,6 @@ def urdf_to_usd(
 
 
 def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
-    """Each link's mass, centre of mass and inertia tensor, from its ``<inertial>``.
-
-    A link without one is left out: in a converted MJCF that is a frame -- a sensor mount, a foot
-    contact point -- massless on purpose.
-    """
     found: dict[str, tuple[float, np.ndarray, np.ndarray]] = {}
     for link in ET.fromstring(xml).iter("link"):
         name, inertial = link.get("name"), link.find("inertial")
@@ -143,23 +120,15 @@ def _inertial_of(xml: str) -> dict[str, tuple[float, np.ndarray, np.ndarray]]:
                 [read["ixz"], read["iyz"], read["izz"]],
             ]
         )
-        # the tensor is about the centre of mass in the frame the origin's rpy names, so carry
-        # that rotation into the axes rather than dropping it
         rotation = Rotation.from_euler("xyz", rpy).as_matrix()
         found[name] = (float(mass_element.get("value", 0.0)), xyz, rotation @ matrix @ rotation.T)
     return found
 
 
 def _write_mass(pxr: Pxr, prim: Prim, mass: float, centre: np.ndarray, tensor: np.ndarray) -> None:
-    """Say the link's mass the way a physics engine reading this layer looks for it.
-
-    The URDF's tensor is a full symmetric matrix; UsdPhysics wants principal moments and the
-    rotation onto them. Without this a reader falls back to a density over the visual meshes, and
-    a G1 loads but cannot stand up.
-    """
     moments, axes = np.linalg.eigh(tensor)
     if np.linalg.det(axes) < 0:
-        axes[:, 0] = -axes[:, 0]  # a reflection is not a rotation
+        axes[:, 0] = -axes[:, 0]
     api = pxr.UsdPhysics.MassAPI.Apply(prim)
     api.CreateMassAttr(float(mass))
     api.CreateCenterOfMassAttr(pxr.Gf.Vec3f(*(float(value) for value in centre)))
@@ -188,7 +157,6 @@ def _write_link_tree(
 ) -> None:
     prim_path = f"{parent_path}/{prim_identifier(pxr, link)}"
     if link in paths:
-        # A URDF is a tree, so a second arrival means a malformed description; keep the first.
         logger.warning(f"URDF link {link!r} is reached more than once; ignoring the later edge")
         return
     xform = pxr.UsdGeom.Xform.Define(stage, prim_path)
@@ -233,11 +201,6 @@ def _geometry_name(geometry: _Geometry, index: int) -> str:
 
 
 def _zero_pose(joint: JointDescription) -> NDArray[np.float64]:
-    """Where this joint puts its child before anything moves.
-
-    A floating or planar joint has no single position to be asked for, so its origin stands in --
-    which is also what parent_from_child(0) gives every other type.
-    """
     if joint.type in _MULTI_DOF_JOINT_TYPES:
         return joint.origin()
     return joint.parent_from_child(0.0)
@@ -253,7 +216,6 @@ def _write_geometry(
     if geometry.color is not None:
         gprim.CreateDisplayColorAttr([pxr.Gf.Vec3f(*geometry.color)])
     if geometry.collision:
-        # Collision geometry is carried for planners and self-filters, not for rendering.
         pxr.UsdGeom.Imageable(gprim).CreateVisibilityAttr(pxr.UsdGeom.Tokens.invisible)
         pxr.UsdPhysics.CollisionAPI.Apply(gprim.GetPrim())
 
@@ -263,13 +225,12 @@ def _define_gprim(
 ) -> Prim:
     if geometry.kind == "box":
         cube = pxr.UsdGeom.Cube.Define(stage, path)
-        # A Cube is a unit cube scaled to the box's extents: USD has no three-sided box.
         cube.CreateSizeAttr(1.0)
         cube.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.size))
         return cube
     if geometry.kind == "cylinder":
         cylinder = pxr.UsdGeom.Cylinder.Define(stage, path)
-        cylinder.CreateAxisAttr(pxr.UsdGeom.Tokens.z)  # URDF cylinders are along z too
+        cylinder.CreateAxisAttr(pxr.UsdGeom.Tokens.z)
         cylinder.CreateRadiusAttr(geometry.size[0])
         cylinder.CreateHeightAttr(geometry.size[1])
         return cylinder
@@ -286,18 +247,9 @@ def _define_gprim(
 def _define_mesh(
     pxr: Pxr, stage: Stage, path: str, geometry: _Geometry, base_dir: Path | None
 ) -> Prim:
-    """The file the URDF named, in assetInfo, plus its hash. Nothing is converted here.
-
-    In ``assetInfo`` and **not** by a reference arc: a reference composes another USD layer, so
-    pointing one at an STL makes the layer invalid ("Cannot determine file format for
-    @...stl:SDF_FORMAT_ARGS:target=usd@") and composes the mesh to nothing in usdview, Isaac and
-    MuJoCo. assetInfo survives grafting and publishing, and a consumer that cannot fetch the file
-    sees an empty mesh rather than a broken layer.
-    """
     assert geometry.filename is not None
     mesh = pxr.UsdGeom.Mesh.Define(stage, path)
     mesh.AddScaleOp().Set(pxr.Gf.Vec3f(*geometry.mesh_scale))
-    # The path the URDF named, kept verbatim: those are the names UsdManager answers for.
     write_asset_info(pxr, mesh.GetPrim(), geometry.filename, base_dir)
     return mesh
 
@@ -339,8 +291,6 @@ def _define_joint(pxr: Pxr, stage: Stage, path: str, joint: JointDescription) ->
     if joint.type == "fixed":
         return pxr.UsdPhysics.FixedJoint.Define(stage, path)
     if joint.type in _MULTI_DOF_JOINT_TYPES:
-        # The base PhysicsJoint with nothing locked is free in all six degrees, which is a URDF
-        # floating joint; a planar one is the same with the out-of-plane axes locked by PhysicsLimitAPI.
         prim = pxr.UsdPhysics.Joint.Define(stage, path)
         if joint.type == "planar":
             for axis in _OUT_OF_PLANE:
@@ -353,12 +303,6 @@ def _define_joint(pxr: Pxr, stage: Stage, path: str, joint: JointDescription) ->
 
 
 def _set_joint_frames(pxr: Pxr, prim: Prim, joint: JointDescription) -> None:
-    """The joint's frame in each body.
-
-    ``physics:axis`` is only ever X, Y or Z, so a URDF axis that is none of those is folded
-    into both local rotations: the joint is authored about z with the bodies turned instead.
-    """
-    # A joint with no single axis -- fixed, or free in several degrees -- is not turned onto z.
     single_axis = joint.type not in {"fixed", *_MULTI_DOF_JOINT_TYPES}
     to_z = _rotation_to_z(joint.axis) if single_axis else Rotation.identity()
     origin = Rotation.from_euler("xyz", joint.origin_rpy)
@@ -367,14 +311,12 @@ def _set_joint_frames(pxr: Pxr, prim: Prim, joint: JointDescription) -> None:
     prim.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     prim.CreateLocalRot1Attr(_quat(pxr, to_z))
     if single_axis:
-        # Only the single-axis joint schemas have an axis; the generic PhysicsJoint has none.
         prim.CreateAxisAttr(pxr.UsdPhysics.Tokens.z)
 
 
 def _set_joint_limits(prim: Prim, joint: JointDescription) -> None:
     if joint.type == "continuous" or joint.lower is None or joint.upper is None:
-        return  # no limit attributes at all means unlimited, which is what continuous is
-    # A revolute limit is degrees in USD and radians in URDF; a prismatic limit is a distance.
+        return
     scale = 180.0 / np.pi if joint.type in {"revolute", "continuous"} else 1.0
     prim.CreateLowerLimitAttr(float(joint.lower * scale))
     prim.CreateUpperLimitAttr(float(joint.upper * scale))
@@ -386,7 +328,6 @@ def _quat(pxr: Pxr, rotation: Rotation) -> Quat:
 
 
 def _rotation_to_z(axis: tuple[float, float, float]) -> Rotation:
-    """A rotation taking +z onto ``axis``, so a joint authored about z turns about ``axis``."""
     vector = np.asarray(axis, dtype=np.float64)
     norm = float(np.linalg.norm(vector))
     if norm < 1e-9:
@@ -397,7 +338,6 @@ def _rotation_to_z(axis: tuple[float, float, float]) -> Rotation:
     sin = float(np.linalg.norm(cross))
     cos = float(np.dot(z, vector))
     if sin < 1e-9:
-        # Parallel or antiparallel: a half turn about any perpendicular axis for the latter.
         return Rotation.identity() if cos > 0 else Rotation.from_rotvec([np.pi, 0.0, 0.0])
     return Rotation.from_rotvec(cross / sin * np.arctan2(sin, cos))
 
@@ -426,8 +366,6 @@ def _urdf_links_of(xml: str, *, include_collision: bool) -> dict[str, list[_Geom
     return links
 
 
-# What urdf_to_usd reads for itself. Everything else a <link> or <joint> carries -- <inertial>,
-# <gazebo>, <transmission>, <sensor>, vendor tags -- is passed through untouched, not dropped.
 _UNDERSTOOD_LINK_TAGS = frozenset({"visual", "collision"})
 _UNDERSTOOD_JOINT_TAGS = frozenset({"origin", "parent", "child", "axis", "limit", "mimic"})
 
@@ -441,9 +379,6 @@ def _passthrough_xml(element: ET.Element, understood: frozenset[str]) -> list[st
 
 
 def _urdf_extras(xml: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
-    """Per-link and per-joint XML that urdf_to_usd does not itself understand: inertia, gazebo
-    blocks, transmissions, vendor tags. Meaningless here, not a reason to lose.
-    """
     root = ET.fromstring(xml)
     links = {
         name: extras
@@ -461,9 +396,7 @@ def _urdf_extras(xml: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
 
 
 def _set_passthrough(pxr: Pxr, prim: Prim, xml: Sequence[str] | None) -> None:
-    """Hang the URDF this converter did not read off the prim it belongs to, uninterpreted."""
     if xml:
-        # A plain python list is not a value USD can hold; an array of strings is.
         prim.SetCustomDataByKey(PASSTHROUGH_KEY, pxr.Vt.StringArray(list(xml)))
 
 
