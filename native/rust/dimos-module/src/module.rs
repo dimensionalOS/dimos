@@ -15,12 +15,10 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Debug;
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, watch};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use serde::de::DeserializeOwned;
@@ -65,58 +63,43 @@ pub(crate) fn init_tracing() {
         .try_init();
 }
 
-const INPUT_CHANNEL_CAPACITY: usize = 128;
+// Only absorbs jitter between the transport and the handler. A full buffer
+// blocks the transport so congestion reaches the publisher's QoS.
+const INPUT_BUFFER_LEN: usize = 8;
 const PUBLISH_CHANNEL_CAPACITY: usize = 32;
 
 // Each input() call produces a TypedRoute that decodes its message type
-// and forwards it to the right Input's mpsc channel.
+// and forwards it to the right Input's channel.
 pub(crate) trait Route: Send + Sync {
-    fn try_dispatch(&self, data: &[u8]);
+    /// Blocks the calling transport thread while the input's buffer is full.
+    fn dispatch(&self, data: &[u8]);
 }
 
 struct TypedRoute<T: Send + 'static> {
     topic: String,
     decode: fn(&[u8]) -> io::Result<T>,
-    sender: mpsc::Sender<T>,
-    drop_count: AtomicU64,
-    last_log_ns: AtomicU64,
+    sender: async_channel::Sender<T>,
 }
 
 impl<T: Send + 'static> Route for TypedRoute<T> {
-    fn try_dispatch(&self, data: &[u8]) {
+    fn dispatch(&self, data: &[u8]) {
         match (self.decode)(data) {
-            Ok(msg) => match self.sender.try_send(msg) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    // throttle the warning logging per route
-                    // we can't use warn_throttled! because this code is shared across all route instances
-                    let n = self.drop_count.fetch_add(1, Ordering::Relaxed) + 1;
-                    if crate::log::check_and_record(
-                        &self.last_log_ns,
-                        Duration::from_secs(1).as_nanos() as u64,
-                    ) {
-                        warn!(
-                            topic = %self.topic,
-                            dropped = n,
-                            queue_cap = INPUT_CHANNEL_CAPACITY,
-                            "Dispatcher could not send message because handler was full.",
-                        );
-                    }
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {}
-            },
+            // A closed channel means the module is stopping.
+            Ok(msg) => {
+                let _ = self.sender.send_blocking(msg);
+            }
             Err(e) => error!(topic = %self.topic, error = %e, "decode error"),
         }
     }
 }
 pub struct Input<T> {
     pub topic: String,
-    receiver: mpsc::Receiver<T>,
+    receiver: async_channel::Receiver<T>,
 }
 
 impl<T> Input<T> {
     pub async fn recv(&mut self) -> Option<T> {
-        self.receiver.recv().await
+        self.receiver.recv().await.ok()
     }
 }
 
@@ -139,14 +122,14 @@ impl<T> Output<T> {
 /// sees the whole topic including its own publishes.
 pub struct Io<T> {
     pub topic: String,
-    receiver: mpsc::Receiver<T>,
+    receiver: async_channel::Receiver<T>,
     encode: fn(&T) -> Vec<u8>,
     sender: mpsc::Sender<Vec<u8>>,
 }
 
 impl<T> Io<T> {
     pub async fn recv(&mut self) -> Option<T> {
-        self.receiver.recv().await
+        self.receiver.recv().await.ok()
     }
 
     pub async fn publish(&self, msg: &T) -> io::Result<()> {
@@ -355,8 +338,8 @@ impl Builder {
         &mut self,
         topic: &str,
         decode: fn(&[u8]) -> io::Result<T>,
-    ) -> mpsc::Receiver<T> {
-        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+    ) -> async_channel::Receiver<T> {
+        let (tx, rx) = async_channel::bounded(INPUT_BUFFER_LEN);
         self.routes
             .entry(topic.to_string())
             .or_default()
@@ -364,8 +347,6 @@ impl Builder {
                 topic: topic.to_string(),
                 decode,
                 sender: tx,
-                drop_count: AtomicU64::new(0),
-                last_log_ns: AtomicU64::new(0),
             }));
         rx
     }
@@ -444,7 +425,7 @@ pub(crate) async fn subscribe_routes<T: Transport>(
             for route in routes.iter() {
                 // A panicking handler must not kill the delivery loop.
                 let dispatched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    route.try_dispatch(bytes)
+                    route.dispatch(bytes)
                 }));
                 if dispatched.is_err() {
                     error!("dispatch handler panicked; message dropped");
@@ -1003,7 +984,7 @@ mod tests {
         let mut builder = builder_with_topics(&[("cmd", "/robot/cmd")]);
         let mut io = builder.io("cmd", |b| Ok(b.to_vec()), |b: &Vec<u8>| b.clone());
 
-        builder.routes["/robot/cmd"][0].try_dispatch(b"inbound");
+        builder.routes["/robot/cmd"][0].dispatch(b"inbound");
         assert_eq!(io.recv().await.expect("inbound message"), b"inbound");
 
         io.publish(&b"outbound".to_vec()).await.expect("publish");
@@ -1203,14 +1184,14 @@ mod tests {
 
     struct PanicRoute;
     impl Route for PanicRoute {
-        fn try_dispatch(&self, _data: &[u8]) {
+        fn dispatch(&self, _data: &[u8]) {
             panic!("handler blew up");
         }
     }
 
     struct CountingRoute(Arc<AtomicU64>);
     impl Route for CountingRoute {
-        fn try_dispatch(&self, _data: &[u8]) {
+        fn dispatch(&self, _data: &[u8]) {
             self.0.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -1239,21 +1220,44 @@ mod tests {
         .await;
     }
 
-    #[test]
-    #[tracing_test::traced_test]
-    fn typed_route_warns_and_counts_on_drop() {
-        let (tx, _rx) = mpsc::channel::<Vec<u8>>(1);
-        let route = TypedRoute {
-            topic: "/test".to_string(),
-            decode: |b| Ok(b.to_vec()),
-            sender: tx,
-            drop_count: AtomicU64::new(0),
-            last_log_ns: AtomicU64::new(0),
-        };
-        route.try_dispatch(&[1u8]); // fill queue
-        route.try_dispatch(&[1u8]); // now we warn
-        assert_eq!(route.drop_count.load(Ordering::Relaxed), 1);
-        assert!(logs_contain("handler was full"));
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_input_blocks_dispatch_instead_of_dropping() {
+        let transport = ControllableMockTransport::new();
+        let inbound = transport.inbound.clone();
+        let dispatch_log = transport.dispatch_log.clone();
+
+        let mut builder = Builder::new(topics(&[("data", "/data")]));
+        let mut input = builder.input("data", |b| Ok(b.to_vec()));
+        subscribe_routes(&transport, builder.routes).await.unwrap();
+
+        // Nothing drains the input yet, as if the handler never returned.
+        let total = INPUT_BUFFER_LEN + 4;
+        for i in 0..total {
+            inject_inbound(&inbound, "/data", vec![i as u8]);
+        }
+
+        wait_for("the input buffer to fill", || {
+            dispatch_log.lock().unwrap().len() == INPUT_BUFFER_LEN
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            dispatch_log.lock().unwrap().len(),
+            INPUT_BUFFER_LEN,
+            "delivery must block on a full input, not drop"
+        );
+
+        for i in 0..total {
+            let msg = tokio::time::timeout(Duration::from_secs(1), input.recv())
+                .await
+                .expect("delivery resumes once the handler drains")
+                .expect("input open");
+            assert_eq!(msg, vec![i as u8]);
+        }
+        wait_for("delivery to finish", || {
+            dispatch_log.lock().unwrap().len() == total
+        })
+        .await;
     }
 
     // Exercises the code #[derive(Module)] generates for an #[io] field.
@@ -1293,7 +1297,7 @@ mod tests {
             let mut builder = Builder::new(topics(&[("cmd", "/robot/cmd")]));
             let mut echo = Echo::build(&mut builder, NoConfig);
 
-            builder.routes["/robot/cmd"][0].try_dispatch(b"ping");
+            builder.routes["/robot/cmd"][0].dispatch(b"ping");
             // Dropping the routes closes the sender, so handle() drains and returns.
             builder.routes.clear();
             echo.handle().await;
