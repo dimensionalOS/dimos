@@ -232,6 +232,7 @@ class McapStore(Store):
         # _BYTES_CODEC — reachable but undecoded. _raw maps their stream name to the
         # source schema so summary() can flag them [raw bytes: <schema>].
         self._raw: dict[str, str | None] = {}  # raw stream name -> source schema
+        self._ambiguous: dict[str, str] = {}  # stream name two topics fold to -> error
         signatures: dict[str, tuple[Any, ...]] = {}
         if summary is not None and summary.statistics is not None:
             for cid, ch in summary.channels.items():
@@ -257,10 +258,12 @@ class McapStore(Store):
                     if wire is not None and had is not None and wire[0] == had[0]:
                         name = f"{name}_{wire[1].__name__}"
                     if self._stream_topic.get(name, ch.topic) != ch.topic:
-                        raise ValueError(
+                        # Only an error for whoever reads that stream; the rest still open.
+                        self._ambiguous[name] = (
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
                             " pass streams= to name them apart"
                         )
+                        continue
                 payload_type = ch.metadata.get("dimos.payload_type")
                 if (
                     decode_metadata
@@ -314,7 +317,7 @@ class McapStore(Store):
                     self._raw[name] = sch.name if sch else None
 
     def list_streams(self) -> list[str]:
-        return sorted(set(self._available) | set(self._streams))
+        return sorted((set(self._available) | set(self._streams)) - set(self._ambiguous))
 
     def summary(self) -> str:
         """Base summary, tagging codecless streams with ``[raw bytes: <schema>]``."""
@@ -330,6 +333,8 @@ class McapStore(Store):
     def _create_backend(
         self, name: str, payload_type: type | None = None, **config: Any
     ) -> Backend[Any]:
+        if name in self._ambiguous:
+            raise ValueError(self._ambiguous[name])
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]

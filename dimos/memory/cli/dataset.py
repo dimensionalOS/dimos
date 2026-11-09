@@ -32,8 +32,11 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
 
 
-def open_store(path: str | Path) -> Store:
-    """Open an already-resolved dataset *path*, dispatching on its extension."""
+def open_store(path: str | Path, *, decode_metadata: bool = False) -> Store:
+    """Open an already-resolved dataset *path*, dispatching on its extension.
+
+    ``decode_metadata`` trusts an .mcap channel's ``dimos.payload_type`` (see ``McapStore``).
+    """
     s = str(path)
     if s.endswith(".mcap"):
         from mcap.reader import make_reader
@@ -73,7 +76,7 @@ def open_store(path: str | Path) -> Store:
                 },
                 streams={name: topic for name, topic in STREAMS.items() if topic in legacy_topics},
             )
-        return McapStore(path=s)
+        return McapStore(path=s, decode_metadata=decode_metadata)
     if s.endswith(".db"):
         from dimos.memory.store.sqlite import SqliteStore
 

@@ -25,8 +25,11 @@ use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LO
 use crate::planner::snap_pose_to_cell;
 use crate::region_viz::{pack_cell, Cell, RegionUpdate, RegionViz, Segment};
 use crate::voxel::{surface_point_xyz, voxelize, VoxelKey, Xyz};
+use dimos_module::nalgebra::Vector3;
 use dimos_module::time::now;
-use dimos_module::{debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf};
+use dimos_module::{
+    debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
+};
 use lcm_msgs::actionlib_msgs::GoalStatus;
 use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
@@ -281,6 +284,8 @@ pub struct MlsPlanner {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
     active_goal: Shared<Goal>,
+    // The frame the active goal was given in, looked up on tf every replan.
+    goal_frame: Shared<String>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
     latest_status: LatestStatus,
@@ -309,6 +314,7 @@ impl MlsPlanner {
             pending: Arc::clone(&self.pending),
             seed_regions: Arc::clone(&self.seed_regions),
             active_goal: Arc::clone(&self.active_goal),
+            goal_frame: Arc::clone(&self.goal_frame),
             goal_changed: Arc::clone(&self.goal_changed),
             wake: Arc::clone(&self.wake),
             tf: self.tf.clone(),
@@ -429,6 +435,8 @@ impl MlsPlanner {
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
                     .await;
+                *self.goal_frame.lock().expect("goal frame mutex") =
+                    Some(msg.header.frame_id.clone());
                 self.set_active_goal(Some(Goal { id, position }));
             }
             None => {
@@ -475,6 +483,16 @@ fn stamps_paired(bounds: Option<&PoseStamped>, cloud: Option<&PointCloud2>) -> b
 fn goal_position(p: &Point) -> Option<Xyz> {
     let goal = (p.x as f32, p.y as f32, p.z as f32);
     (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
+}
+
+/// A goal position given in `frame`, in the world frame through that frame's latest pose on
+/// tf. A frame tf does not know (clicks carry viewer entity paths) is taken as the world frame.
+fn goal_in_world(at: Xyz, frame_to_world: Option<Transform>) -> Xyz {
+    let Some(t) = frame_to_world else {
+        return at;
+    };
+    let p = t.rotation() * Vector3::new(at.0 as f64, at.1 as f64, at.2 as f64) + t.translation();
+    (p.x as f32, p.y as f32, p.z as f32)
 }
 
 /// The worker's record of the active goal between passes.
@@ -588,6 +606,7 @@ struct Worker {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
     active_goal: Shared<Goal>,
+    goal_frame: Shared<String>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
     tf: Tf,
@@ -835,6 +854,15 @@ impl Worker {
         }
     }
 
+    /// The active goal's frame to the world frame, or None when it is the world frame or tf
+    /// does not know it.
+    fn goal_frame_to_world(&self) -> Option<Transform> {
+        let frame = self.goal_frame.lock().expect("goal frame mutex").clone()?;
+        (frame != self.config.world_frame)
+            .then(|| self.tf.get_latest(&self.config.world_frame, &frame))
+            .flatten()
+    }
+
     /// The base frame position in the world frame, from the latest tf.
     fn base_position(&self) -> Option<Xyz> {
         let t = self
@@ -903,7 +931,10 @@ impl Worker {
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
-            GoalStep::Plan { start, goal } => self.plan(planner, start, goal, progress).await,
+            GoalStep::Plan { start, goal } => {
+                let at = goal_in_world(goal.position, self.goal_frame_to_world());
+                self.plan(planner, start, goal, at, progress).await
+            }
         }
     }
 
@@ -914,14 +945,13 @@ impl Worker {
         planner: &mut Planner,
         start: Xyz,
         goal: Goal,
+        at: Xyz,
         progress: &mut GoalProgress,
     ) {
         let plan_start = Instant::now();
-        let outcome =
-            tokio::task::block_in_place(|| replan(planner, start, goal.position, &self.config));
+        let outcome = tokio::task::block_in_place(|| replan(planner, start, at, &self.config));
         let (status, reason) = outcome.status();
-        let report =
-            Report::new(goal.id, status, reason).with_remaining(distance(start, goal.position));
+        let report = Report::new(goal.id, status, reason).with_remaining(distance(start, at));
         let waypoints = match outcome {
             Replan::Reached => {
                 progress.unblock();
@@ -1687,6 +1717,22 @@ mod tests {
         let next = goal_at(2, (5.1, 0.0, 0.0));
         assert!(progress.arrive(next.id));
         assert_eq!(progress.followed, None);
+    }
+
+    #[test]
+    fn a_goal_follows_its_frame_on_tf_and_an_unknown_frame_is_world() {
+        use dimos_module::nalgebra::{Isometry3, Translation3, UnitQuaternion};
+        assert_eq!(goal_in_world((1.0, 2.0, 0.0), None), (1.0, 2.0, 0.0));
+
+        let quarter_turn = Isometry3::from_parts(
+            Translation3::new(10.0, 0.0, 0.0),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, std::f64::consts::FRAC_PI_2),
+        );
+        let (x, y, z) = goal_in_world(
+            (1.0, 0.0, 0.0),
+            Some(Transform::new("odom", "map", 0.0, quarter_turn)),
+        );
+        assert!((x - 10.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5 && z.abs() < 1e-5);
     }
 
     #[test]

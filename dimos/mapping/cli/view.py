@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""`dimos map view`: open a `.pc2.lcm` cloud - `dimos map global --export-pc2` - in rerun."""
+"""`dimos map view`: open the last map cloud of a `.db`/`.mcap` recording in rerun."""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ import typer
 
 
 def main(
-    path: Path = typer.Argument(..., help="Point cloud to view (.pc2.lcm)"),
+    path: Path = typer.Argument(..., help="Recording (.db/.mcap) whose last map cloud to view"),
+    stream: str = typer.Option("map_cloud", "--stream", help="Stream holding the map cloud"),
     voxel: float = typer.Option(0.05, "--voxel", help="Rendered point size (m)"),
     bottom_cutoff: float | None = typer.Option(
         None,
@@ -33,13 +34,13 @@ def main(
         None, "--out", help="Write a .rrd instead of opening the viewer"
     ),
 ) -> None:
-    """Load an LCM-encoded PointCloud2 and display it in rerun."""
+    """Load a recording's last map cloud and display it in rerun."""
     import rerun as rr
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+    from dimos.mapping.relocalization.module import load_premap
     from dimos.visualization.rerun.init import rerun_init
 
-    cloud = PointCloud2.lcm_decode(path.read_bytes())
+    cloud = load_premap(str(path), stream)
     print(f"{path}: {len(cloud.pointcloud.points)} points in {cloud.frame_id!r}")
 
     rerun_init("dimos map view")
