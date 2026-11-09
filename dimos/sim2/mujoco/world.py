@@ -84,7 +84,9 @@ def _register_usd_reader(scene: Path) -> None:
         ) from error
 
 
-def compile_world(scene: Path, simulated: Iterable[Simulated] = ()) -> mujoco.MjSpec:
+def compile_world(
+    scene: Path, simulated: Iterable[Simulated] = (), ids: Iterable[str] | None = None
+) -> mujoco.MjSpec:
     """The world the physics runs: the scene, with each robot prefixed "<robot_id>/".
 
     A robot the world already holds is configured where it stands. A composed scene arrives with
@@ -96,11 +98,16 @@ def compile_world(scene: Path, simulated: Iterable[Simulated] = ()) -> mujoco.Mj
     _register_usd_reader(Path(scene))
     robots = [d for d in simulated if isinstance(d, SimulatedRobot)]
     validate(robots)
+    # The robots whose parts get short names. Named explicitly by a *sensor*, which compiles the
+    # same composed scene and has no descriptions to read them off: it is told what is in the
+    # world by the world, and has to shorten exactly what the physics shortened or the entity
+    # ids in the observations will not match the bodies it is posing.
+    owners = [robot.robot_id for robot in robots] if ids is None else list(ids)
 
     world = mujoco.MjSpec.from_file(str(scene))
     # Before anything looks for a robot in it: a composed world names everything by prim path,
     # and what a robot's parts are called leaves the simulation as entity ids and tf frames.
-    shorten(world, ids=[robot.robot_id for robot in robots])
+    shorten(world, ids=owners)
     for robot in robots:
         prefix = f"{robot.robot_id}/"
         standing = resolved([body.name for body in world.bodies], prefix + robot.root_body)
