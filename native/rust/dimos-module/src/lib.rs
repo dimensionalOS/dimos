@@ -31,7 +31,7 @@ pub mod zenoh;
 pub use dimos_module_macros::{native_config, Module};
 pub use host::{host_main, HostSpec, ModuleEntry};
 pub use lcm::LcmTransport;
-pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
+pub use module::{Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::Transport;
 pub use workers::worker_pool;
@@ -42,23 +42,38 @@ pub use nalgebra;
 // Re-export LcmOptions so callers don't need to depend on dimos-lcm directly.
 pub use dimos_lcm::LcmOptions;
 
-/// Run module `M` over the transport named by the `DIMOS_TRANSPORT` env var,
-/// configured by the launch line on stdin.
+/// Run module `M` as its own process: open the transport `DIMOS_TRANSPORT`
+/// names, configured by the launch line on stdin, and run until the module
+/// finishes or SIGINT/SIGTERM arrives. Logs and exits 1 on failure.
 pub async fn run_with_transport<M: Module>() {
-    crate::module::init_tracing();
-    let launch = match crate::module::read_launch_config().await {
-        Ok(launch) => launch,
-        Err(e) => {
-            tracing::error!("failed to read the launch config from stdin: {e}");
-            std::process::exit(1);
+    module::init_tracing();
+    if let Err(e) = run_lone::<M>().await {
+        tracing::error!("{e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run_lone<M: Module>() -> std::io::Result<()> {
+    let launch = module::read_launch_config()
+        .await
+        .map_err(|e| context("failed to read the launch config from stdin", e))?;
+    let transport = transport::open_transport(&launch)
+        .await
+        .map_err(|e| context("failed to open the transport", e))?;
+    let (topics, config) = module::parse_config_value::<M::Config>(&launch)?;
+    module::validate_config(&config)?;
+    module::log_wiring(&module::exe_name(), &topics, &config);
+
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    tokio::spawn(async move {
+        if module::shutdown_signal().await.is_ok() {
+            let _ = tx.send(true);
         }
-    };
-    let transport = match crate::transport::open_transport(&launch).await {
-        Ok(transport) => transport,
-        Err(e) => {
-            tracing::error!("failed to open the transport: {e}");
-            std::process::exit(1);
-        }
-    };
-    run::<M>(transport, launch).await
+    });
+
+    module::run_module_core::<M>(transport, topics, config, rx).await
+}
+
+fn context(what: &str, e: std::io::Error) -> std::io::Error {
+    std::io::Error::new(e.kind(), format!("{what}: {e}"))
 }

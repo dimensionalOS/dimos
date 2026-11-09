@@ -170,8 +170,9 @@ pub(crate) async fn publish_encoded(
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
 }
 
-/// Extract `(topics, config)` from an already-parsed config object. `run`
-/// parses the line once and also reads `qos` from it, so this takes the value.
+/// Extract `(topics, config)` from an already-parsed launch line. The caller
+/// parses the line once and the transport reads its own blocks from the same
+/// value, so this takes the value.
 pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
     json: &serde_json::Value,
 ) -> io::Result<(HashMap<String, String>, C)> {
@@ -519,16 +520,10 @@ fn parse_launch_config(line: &str) -> io::Result<serde_json::Value> {
     serde_json::from_str(line.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-pub async fn run<M: Module>(transport: Arc<dyn Transport>, launch: serde_json::Value) {
-    if let Err(e) = run_fallible::<M>(transport, launch).await {
-        error!("{e}");
-        std::process::exit(1);
-    }
-}
-
 /// Build, wire and run one module over an already-open transport until it
-/// finishes or `shutdown` flips. Shared by the one-module-per-process `run`
-/// and by the baked host, which drives several of these on one transport.
+/// finishes or `shutdown` flips. Shared by `run_with_transport`, one module
+/// per process, and by the baked host, which drives several of these on one
+/// transport.
 pub(crate) async fn run_module_core<M: Module>(
     transport: Arc<dyn Transport>,
     topics: HashMap<String, String>,
@@ -578,27 +573,8 @@ pub(crate) fn exe_name() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-async fn run_fallible<M: Module>(
-    transport: Arc<dyn Transport>,
-    json: serde_json::Value,
-) -> io::Result<()> {
-    let (topics, config) = parse_config_value::<M::Config>(&json)?;
-    validate_config(&config)?;
-
-    log_wiring(&exe_name(), &topics, &config);
-
-    let (tx, rx) = watch::channel(false);
-    tokio::spawn(async move {
-        if shutdown_signal().await.is_ok() {
-            let _ = tx.send(true);
-        }
-    });
-
-    run_module_core::<M>(transport, topics, config, rx).await
-}
-
 #[cfg(unix)]
-async fn shutdown_signal() -> io::Result<()> {
+pub(crate) async fn shutdown_signal() -> io::Result<()> {
     use tokio::signal::unix::{signal, SignalKind};
 
     let mut terminate = signal(SignalKind::terminate())?;
@@ -609,7 +585,7 @@ async fn shutdown_signal() -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<()> {
+pub(crate) async fn shutdown_signal() -> io::Result<()> {
     tokio::signal::ctrl_c().await
 }
 
@@ -623,7 +599,7 @@ mod tests {
     use std::time::{Duration, Instant};
     use tokio::sync::Notify;
 
-    /// Parse a raw config line the way `run` does, for exercising
+    /// Parse a raw config line the way `run_with_transport` does, for exercising
     /// `parse_config_value` from the string form the coordinator sends.
     fn parse_config_json<C: DeserializeOwned + Serialize>(
         line: &str,
