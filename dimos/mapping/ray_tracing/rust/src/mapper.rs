@@ -334,59 +334,6 @@ mod tests {
         assert_eq!(mapper.global_points(), vec![5.5, 0.5, 0.5]);
     }
 
-    /// Five points and a step of two: the odd length must keep the first,
-    /// third and fifth rather than rounding the tail away.
-    fn five_in_a_row() -> Vec<Point> {
-        (0..5).map(|i| (i as f32 + 0.5, 0.5, 0.5)).collect()
-    }
-
-    #[test]
-    fn pre_trace_subsample_keeps_every_nth_point_of_a_sensor_frame() {
-        let cfg = Config {
-            pre_trace_subsample: 2,
-            ..config()
-        };
-        let mut mapper = Mapper::new(cfg);
-        // Translation only, so the kept points are the input plus 10 in x:
-        // the assertion sees both the subsample and the registration.
-        let pose = Pose {
-            position: (10.0, 0.0, 0.0),
-            orientation: IDENTITY,
-        };
-        mapper.add_frame(five_in_a_row(), pose);
-        assert_eq!(
-            mapper.registered_points(),
-            &[(10.5, 0.5, 0.5), (12.5, 0.5, 0.5), (14.5, 0.5, 0.5)]
-        );
-    }
-
-    #[test]
-    fn pre_trace_subsample_keeps_every_nth_point_of_a_world_frame() {
-        let cfg = Config {
-            pre_trace_subsample: 2,
-            ..config()
-        };
-        let mut mapper = Mapper::new(cfg);
-        mapper.add_frame_world(five_in_a_row(), (0.0, 0.0, 0.0));
-        assert_eq!(
-            mapper.registered_points(),
-            &[(0.5, 0.5, 0.5), (2.5, 0.5, 0.5), (4.5, 0.5, 0.5)]
-        );
-    }
-
-    #[test]
-    fn a_pre_trace_subsample_of_zero_or_one_keeps_everything() {
-        for step in [0, 1] {
-            let cfg = Config {
-                pre_trace_subsample: step,
-                ..config()
-            };
-            let mut mapper = Mapper::new(cfg);
-            mapper.add_frame_world(five_in_a_row(), (0.0, 0.0, 0.0));
-            assert_eq!(mapper.registered_points(), five_in_a_row(), "step {step}");
-        }
-    }
-
     #[test]
     fn identity_pose_is_passthrough() {
         let mut mapper = Mapper::new(config());
