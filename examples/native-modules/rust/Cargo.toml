@@ -12,6 +12,10 @@ name = "pong"
 path = "src/pong.rs"
 
 [[bin]]
+name = "slow_handler"
+path = "src/slow_handler.rs"
+
+[[bin]]
 name = "tf_listener"
 path = "src/tf_listener.rs"
 
