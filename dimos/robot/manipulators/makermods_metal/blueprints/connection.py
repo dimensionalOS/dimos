@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Metal trajectory and gripper control over connection streams."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -30,14 +29,12 @@ _MODEL = make_metal_model_config(robot="arm")
 
 
 def makermods_metal_connection_control_blueprint() -> Blueprint:
-    """Trajectories and the gripper, with the robot model served to clients."""
     return autoconnect(
         DamiaoCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=_MODEL.model,
             tasks=[
                 joint_trajectory_task([*_MODEL.joint_names, "arm/joint7"]),
-                # joint7 is open at its lower end.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
