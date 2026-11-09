@@ -113,11 +113,6 @@ def test_blind_to_lets_the_rays_through_further_frames(composed):
 
 
 def test_a_blind_spot_belongs_to_its_own_raycaster_and_not_to_the_view(composed):
-    """Blinding rewrites geom_group on the model the whole view shares, so it has to be undone.
-
-    The order matters: asking for the blind cast first is what catches the leak, because a view
-    that never restores the group answers the second, unblinded cast as though it were blind too.
-    """
     view = _view(composed)
     view.update(_World().at(0.0, 0.0, 0.0))
     base, _ = view.pose("dog/base")

@@ -121,9 +121,6 @@ class MujocoView:
         blind_to: Sequence[str] = (),
     ) -> MujocoRaycaster:
         mask = np.isin(np.arange(mujoco.mjNGROUP), groups).astype(np.uint8)
-        # Hiding rewrites geom_group on the model this view shares with every raycaster it has
-        # made, so the previous caster's blind set is undone first: otherwise a second cast
-        # without blind_to stayed blind to whatever the first one hid.
         self._show_hidden()
         for frame in blind_to or ():
             self._hide_from_rays(self._mount(frame), groups)
