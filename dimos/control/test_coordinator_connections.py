@@ -554,9 +554,7 @@ MOCK_BASE_AXES = ["mock/base/vx", "mock/base/vy", "mock/base/wz"]
 def test_one_robots_joint_and_base_commands_arrive_in_the_same_tick(
     rig: Callable[..., Rig], mocker: Any
 ) -> None:
-    """One robot with joint ports and a cmd_vel port: the base axes split
-    into their own routing entry (no mode conflict with the joints' position
-    mode) and merge back, so both commands leave in the same tick."""
+    """One connection keeps arm position and chassis velocity winners together."""
     error = mocker.patch.object(tick_mod.logger, "error")
     r = rig(WholeRobot)
     r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
@@ -578,13 +576,16 @@ def test_one_robots_joint_and_base_commands_arrive_in_the_same_tick(
     error.assert_not_called()
 
 
-def test_a_mode_conflict_on_a_connection_robots_route_drops_the_later_joint(
+def test_two_connection_joints_keep_their_winning_modes(
     rig: Callable[..., Rig], mocker: Any
 ) -> None:
-    """Two same-priority tasks driving one robot's joints in different modes:
-    the route-level guard logs the conflict and drops the later joint."""
+    """Different joints on one connection may use different command interfaces."""
+
+    class MixedArm(ArmCoordinator):
+        mock_velocity_command: Out[JointState]
+
     error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig(ArmCoordinator)
+    r = rig(MixedArm)
     r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
     task = JointVelocityTask("vel_arm", JointVelocityTaskConfig(["mock/joint2"]))
     task.start()
@@ -594,11 +595,165 @@ def test_a_mode_conflict_on_a_connection_robots_route_drops_the_later_joint(
     r.report_arm(*AT_REST)
     r.tick()
 
+    by_port = dict(r.sent)
+    assert list(by_port["mock_velocity_command"].name) == ["mock/joint2"]
+    assert list(by_port["mock_velocity_command"].velocity) == [0.3]
+    assert list(by_port["mock_position_command"].name) == [MOCK_JOINTS[0], *MOCK_JOINTS[2:]]
+    assert r.positions_sent()[-1] == [0.5, *AT_REST[2:]]
+    error.assert_not_called()
+
+
+def test_unsupported_connection_interface_rejects_the_whole_tick(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    error = mocker.patch.object(tick_mod.logger, "error")
+    r = rig(ArmCoordinator)  # Position commands only.
+    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
+    task = JointVelocityTask("unsupported", JointVelocityTaskConfig(["mock/joint2"]))
+    task.start()
+    r.coordinator.add_task(task)
+    task.set_velocities([0.3], t_now=time.perf_counter())
+    r.report_arm(*AT_REST)
+    r.tick()
+    assert r.sent == []
     error.assert_called_once_with(
-        "Mode conflict for hardware mock: joint mock/joint2 wants VELOCITY but "
-        "hardware already has POSITION. Dropping command for mock/joint2."
+        "Failed to send a command to mock: mock/joint2 cannot be told its velocity"
     )
-    assert r.positions_sent()[-1] == [0.5, *AT_REST[1:]]
+    task.stop()
+    r.coordinator.remove_task("sends_positions")
+    r.tick()
+    assert r.positions_sent()[-1] == AT_REST  # No partial update to joint1's hold.
+
+
+def test_velocity_only_joints_stop_during_hold_regardless_of_name_or_priority(
+    rig: Callable[..., Rig],
+) -> None:
+    class VelocityOnlyArm(ControlCoordinator):
+        mock_velocity_command: Out[JointState]
+        mock_joint_state: In[JointState]
+
+    r = rig(VelocityOnlyArm)
+    hold = OperatorHoldTask(priority=100)
+    r.coordinator.add_task(hold, task_type="operator_hold")
+    velocity = JointVelocityTask(
+        "fast_joint", JointVelocityTaskConfig(["mock/joint2"], priority=10000)
+    )
+    velocity.start()
+    r.coordinator.add_task(velocity)
+
+    def tick_and_speed() -> float:
+        r.report_arm(*AT_REST)
+        velocity.set_velocities([0.4], t_now=time.perf_counter())
+        before = len(r.sent)
+        r.tick()
+        assert len(r.sent) == before + 1
+        port, msg = r.sent[-1]
+        assert port == "mock_velocity_command"
+        assert list(msg.position) == []
+        return float(dict(zip(msg.name, msg.velocity, strict=True))["mock/joint2"])
+
+    assert tick_and_speed() == 0.4
+    hold.request("manual")
+    for _ in range(3):
+        assert tick_and_speed() == 0.0
+    assert r.coordinator.set_estop(True)
+    sent = len(r.sent)
+    r.tick()
+    assert len(r.sent) == sent
+    assert r.coordinator.set_estop(False)
+    r.tick()
+    assert len(r.sent) == sent  # Wait for real feedback after clearing.
+    assert tick_and_speed() == 0.0
+    hold.acknowledge()
+    assert tick_and_speed() == 0.4
+
+
+def test_hold_requested_during_connection_readiness_gates_the_same_tick(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    r = rig()
+    hold = OperatorHoldTask()
+    r.coordinator.add_task(hold, task_type="operator_hold")
+    velocity = base_task("moving_base", priority=10000)
+    r.coordinator.add_task(velocity)
+    r.report_base()
+    velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
+    source = r.coordinator._connections["go2"]
+    ready = source.ready_for_control
+
+    def request_before_publish(now: float | None = None) -> bool:
+        hold.request("manual")
+        return ready(now)
+
+    mocker.patch.object(source, "ready_for_control", side_effect=request_before_publish)
+    r.tick()
+    twist = r.twists_sent()[-1]
+    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+
+
+def test_new_hold_between_ticks_captures_a_new_target(rig: Callable[..., Rig]) -> None:
+    r = rig(ArmCoordinator)
+    hold = OperatorHoldTask()
+    r.coordinator.add_task(hold, task_type="operator_hold")
+    r.report_arm(0.2, *AT_REST[1:])
+    hold.request("manual")
+    r.tick()
+    assert r.positions_sent()[-1][0] == 0.2
+
+    hold.acknowledge()
+    r.report_arm(0.4, *AT_REST[1:])
+    hold.request("manual")  # No unheld command tick between the two sessions.
+    r.tick()
+    assert r.positions_sent()[-1][0] == 0.4
+
+    r.report_arm(0.6, *AT_REST[1:])
+    hold.request("manual", "same session, new reason")
+    r.tick()
+    assert r.positions_sent()[-1][0] == 0.4
+
+
+def test_connection_hold_recaptures_measured_positions_after_silence_and_estop(
+    rig: Callable[..., Rig], mocker: Any
+) -> None:
+    clock = [1000.0]
+    mocker.patch.object(time, "monotonic", side_effect=lambda: clock[0])
+    r = rig(WholeRobot)
+    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
+    velocity = JointVelocityTask(
+        "fast_base", JointVelocityTaskConfig(MOCK_BASE_AXES, priority=10000)
+    )
+    velocity.start()
+    r.coordinator.add_task(velocity)
+    hold = OperatorHoldTask(priority=100)
+    r.coordinator.add_task(hold, task_type="operator_hold")
+
+    def tick_at(position: float, held: bool = True) -> None:
+        r.report_arm(position, *AT_REST[1:])
+        r.report_base("mock")
+        velocity.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
+        r.tick()
+        assert r.positions_sent()[-1][0] == (position if held else 0.5)
+        twist = dict(r.sent)["mock_cmd_vel"]
+        expected = (0.0, 0.0, 0.0) if held else (0.4, -0.2, 0.3)
+        assert (twist.linear.x, twist.linear.y, twist.angular.z) == expected
+
+    tick_at(0.2, held=False)
+    hold.request("manual")
+    tick_at(0.2)  # Capture measured 0.2, not the previous commanded 0.5.
+    clock[0] += 1.0
+    before = len(r.sent)
+    r.tick()
+    assert len(r.sent) == before
+    tick_at(0.35)  # Recapture, not OperatorHoldTask's old frozen 0.2.
+    assert r.coordinator.set_estop(True)
+    r.tick()
+    assert r.coordinator.set_estop(False)
+    before = len(r.sent)
+    r.tick()
+    assert len(r.sent) == before
+    tick_at(0.45)
+    hold.acknowledge()
+    tick_at(0.45, held=False)
 
 
 def test_a_twist_command_reaches_a_connection_robots_base(rig: Callable[..., Rig]) -> None:
