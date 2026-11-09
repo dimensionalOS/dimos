@@ -17,13 +17,20 @@
 from pathlib import Path
 import subprocess
 import sys
+from typing import Protocol
 
 import pytest
 
 from dimos.robot.assets.model import UsdModel
 from dimos.sim2.assets.toy import toy_robot
-from dimos.sim2.sim import BACKENDS, SimulatedWorld, sim_module
-from dimos.sim2.spec import SimulatedRobot
+from dimos.sim2.sim import (
+    BACKENDS,
+    SimulatedWorld,
+    SimulatedWorldConfig,
+    scene_from,
+    sim_module,
+)
+from dimos.sim2.spec import SimulatedRobot, validate
 
 TOY = Path(__file__).parent / "assets" / "toy.usda"
 
@@ -39,56 +46,55 @@ def model() -> UsdModel:
     )
 
 
-def _world(*robots: SimulatedRobot) -> SimulatedWorld:
-    return SimulatedWorld(robots=robots)
+def _config(*robots: SimulatedRobot) -> SimulatedWorldConfig:
+    """The config a blueprint hands a backend, which is where a world is said to have robots."""
+    return SimulatedWorldConfig(robots=robots)
 
 
 def test_a_world_is_the_robots_it_was_configured_with_and_nothing_more(model):
-    """All core does with a description: hold the robots the blueprint put in this world.
+    """All core says about a description: the robots the blueprint put in this world.
 
-    Not "which of these is a camera", not "what should be drawn", and not which robot a sensor
-    is bolted to. A sensor describes itself to nobody: it reads the composed scene, builds its
-    own world from it, and renders from the observations -- so core never learns that anything
-    is watching, and an engine is handed robots and a room.
+    Not "which of these is a camera", not "what should be drawn", not which robot a sensor is
+    bolted to, and not what any robot's gains are -- those are in its layer. A sensor describes
+    itself to nobody at all: it reads the composed scene, builds its own world from it, and
+    renders from the observations.
     """
-    world = _world(SimulatedRobot("dog", model), SimulatedRobot("spot", model))
-    try:
-        assert [d.robot_id for d in world.simulated] == ["dog", "spot"]
-    finally:
-        world.stop()
+    config = _config(SimulatedRobot("dog", model), SimulatedRobot("spot", model))
+
+    assert [d.robot_id for d in config.robots] == ["dog", "spot"]
+    # Nothing about how to run them, beyond the name and how often the controller acts.
+    assert config.robots[0].control_period is None
 
 
 def test_duplicate_robots_are_rejected(model):
-    # As the world is configured, rather than once an engine is compiling it: two robots called
-    # one name is one set of topics and one tf tree, whatever is going to run them.
+    # Two robots called one name is one set of topics and one tf tree, whatever runs them.
     with pytest.raises(ValueError, match="duplicate"):
-        _world(SimulatedRobot("dog", model), SimulatedRobot("dog", model))
+        validate(_config(SimulatedRobot("dog", model), SimulatedRobot("dog", model)).robots)
+
+
+def test_a_simulated_world_is_a_shape_rather_than_a_base_class():
+    """So that a backend can be a native module, which cannot inherit from a Python class."""
+    assert issubclass(type(SimulatedWorld), type(Protocol))
+    assert set(SimulatedWorld.__annotations__) == {"actions", "world_observations"}
 
 
 def test_the_world_is_usd_even_when_it_was_configured_as_a_file():
-    """An engine here is only ever handed USD. A path is read, not passed on.
+    """A backend here is only ever handed USD. A path is read, not passed on.
 
     This is the whole of criterion one, in core: there is no route through which a backend
     receives something that is not a USD layer, so "accepts only a USD" is not a convention the
     backends have to keep to.
     """
-    world = SimulatedWorld(scene=TOY)
-    try:
-        model = world.world()
-        assert isinstance(model, UsdModel)
-        assert model.root_link == "base"
-    finally:
-        world.stop()
+    model = scene_from(None, None, TOY)
+
+    assert isinstance(model, UsdModel)
+    assert model.root_link == "base"
 
 
 def test_a_world_nobody_described_is_no_world_at_all():
     # None is core saying "nothing here says what the world is"; what to do about that is the
-    # engine's call, not a default scene core picked.
-    world = SimulatedWorld(scene=None)
-    try:
-        assert world.world() is None
-    finally:
-        world.stop()
+    # backend's call, not a default scene core picked.
+    assert scene_from(None, None, None) is None
 
 
 def test_an_unknown_engine_is_refused_by_name():
