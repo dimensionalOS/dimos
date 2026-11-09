@@ -33,7 +33,7 @@ infrared_left_camera_info = "sensor_msgs.CameraInfo"
 infrared_right_camera_info = "sensor_msgs.CameraInfo"
 
 [dependencies]
-dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "fcf991affe3211992cc610563657920556fa1bca" }
+dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "30482d5b99126e5404b3c0a56dd0eddc8fcea6a8" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 realsense-rust = "1.3"
 realsense-sys = "2.56"
