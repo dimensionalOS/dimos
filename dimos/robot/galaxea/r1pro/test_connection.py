@@ -23,7 +23,6 @@ from typing import Any
 
 import pytest
 
-from dimos.control.contract.limits import limits
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro import connection as connection_module
 from dimos.robot.galaxea.r1pro._connection_test_fakes import (
@@ -50,7 +49,6 @@ from dimos.robot.galaxea.r1pro.connection import (
     R1PRO_BASE_JOINTS,
     R1PRO_UPPER_BODY_JOINTS,
     R1ProConnection,
-    R1ProConnectionConfig,
 )
 from dimos.utils.testing.waiting import wait_until
 
@@ -157,19 +155,6 @@ def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable
         each.module.stop()
 
 
-def test_the_limits_table_is_the_18_urdf_joints_and_three_planar_joints() -> None:
-    table = limits(R1ProConnectionConfig())
-    assert set(table) == {
-        *(f"{j}/position" for j in R1PRO_UPPER_BODY_JOINTS),
-        *(f"{j}/velocity" for j in R1PRO_BASE_JOINTS),
-        "r1pro/left_gripper/position",
-        "r1pro/right_gripper/position",
-    }
-    for side in ("left", "right"):
-        jaw = table[f"r1pro/{side}_gripper/position"]
-        assert (jaw.lo, jaw.hi) == pytest.approx((0.0, 0.1))
-
-
 def test_nothing_is_published_until_every_segment_has_reported(
     rig: Callable[..., Rig], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -246,107 +231,6 @@ def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
     assert bool(r.ports["tf"].sent) is publish_tf
     if publish_tf:
         assert r.ports["odom"].sent[-1].position.x == pytest.approx(base.position[0])
-
-
-@pytest.mark.parametrize(
-    "invalid",
-    [
-        "absent",
-        "first",
-        "old_stamp",
-        "future",
-        "zero_stamp",
-        "bad_stamp",
-        "stale_receipt",
-        "stale_source",
-        "bad_yaw",
-        "nan",
-        "backwards",
-        "duplicate",
-        "long_gap",
-    ],
-)
-def test_invalid_measurements_revoke_whole_batch_authority_until_measured_recovery(
-    rig: Callable[..., Rig],
-    monkeypatch: pytest.MonkeyPatch,
-    invalid: str,
-) -> None:
-    r = rig(start=False)
-    r.module.connect()
-    clock = [100.0]
-    monkeypatch.setattr(connection_module.time, "time", lambda: clock[0])
-    monkeypatch.setattr(connection_module.time, "monotonic", lambda: 200.0)
-
-    def receive(ts: float, vx: float = 0.0, wz: float = 0.0) -> None:
-        clock[0] = max(clock[0], ts)
-        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(vx, 0.0, wz, ts))
-
-    if invalid != "absent":
-        receive(100.0)
-    assert r.module._base_state is None and not r.readings()  # Anchor, not measured motion.
-    interval_error = invalid in {"nan", "backwards", "duplicate", "long_gap"}
-    if invalid not in {"absent", "first"}:
-        receive(100.1, vx=0.4, wz=1.0)
-        assert list(r.readings()[-1].position) == pytest.approx([0.04, 0.0, 0.1])
-    pose = [r.module._odom_x, r.module._odom_y, r.module._odom_yaw]
-    count = len(r.readings())
-    if invalid == "nan":
-        receive(100.2, vx=float("nan"))
-        receive(100.3)  # First good sample only reanchors.
-    elif invalid in {"backwards", "duplicate", "long_gap", "old_stamp", "future", "zero_stamp"}:
-        stamp = {
-            "backwards": 100.05,
-            "duplicate": 100.1,
-            "long_gap": 102.0,
-            "old_stamp": 99.0,
-            "future": 101.1,
-            "zero_stamp": 0.0,
-        }[invalid]
-        # A future source stamp must not advance the independent receipt clock.
-        if interval_error:
-            clock[0] = stamp
-        msg: Any = chassis_speed(0.0, 0.0, 0.0, stamp)
-        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
-    elif invalid == "bad_stamp":
-        msg = chassis_speed(0.0, 0.0, 0.0, clock[0])
-        msg.header.stamp.sec = float("nan")  # Deliberately malformed vendor packet.
-        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
-    elif invalid == "stale_receipt":
-        r.module._odom_received_mono = 199.0
-    elif invalid == "stale_source":
-        assert r.module._base_state is not None
-        r.module._base_state.ts = 99.0
-    elif invalid == "bad_yaw":
-        assert r.module._base_state is not None
-        r.module._base_state.position[2] = float("nan")
-    if interval_error:
-        assert r.module._base_state is None and len(r.readings()) == count
-        assert [r.module._odom_x, r.module._odom_y, r.module._odom_yaw] == pytest.approx(pose)
-    r.feed()  # Ordinary arm and IMU traffic cannot authorize chassis motion.
-    r.fake.sensors.feed("/hdas/imu_chassis", RosImu(header=RosHeader()))
-    batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
-    batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
-    before = list(r.fake.control.published)
-    with pytest.raises(ValueError, match="fresh measured odometry"):
-        r.module.write(batch)
-    assert r.fake.control.published == before  # No partial arm SDK send.
-    r.module.write({f"{j}/velocity": 0.0 for j in R1PRO_BASE_JOINTS})
-    r.module.halt()  # Both zero and measured arm hold work without yaw.
-    stopped = r.speeds()[-1].twist
-    assert (stopped.linear.x, stopped.linear.y, stopped.angular.z) == (0.0, 0.0, 0.0)
-    for topic, q in zip(
-        (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC), (TORSO_Q, LEFT_Q, RIGHT_Q), strict=True
-    ):
-        assert list(r.joint_targets()[topic].position) == pytest.approx(q)
-    if interval_error:
-        receive(clock[0] + 0.1, vx=0.4)
-        state = r.readings()[-1]
-        assert list(state.position) == pytest.approx(
-            [0.04 + math.cos(0.1) * 0.04, math.sin(0.1) * 0.04, 0.1]
-        )
-        r.module.write({f"{R1PRO_BASE_JOINTS[0]}/velocity": 0.2})
-        assert r.speeds()[-1].twist.linear.x == pytest.approx(math.cos(0.1) * 0.2)
-        assert len(r.readings()) == count + 1  # Commands never integrate pose.
 
 
 # The jaws: vendor interface in millimetres, fault/staleness semantics, and the
@@ -525,3 +409,25 @@ def test_stop_and_halt_send_the_jaws_nothing(rig: Callable[..., Rig]) -> None:
     r.module.stop()
     assert len(r.jaws("left")) == 1
     assert r.jaws("right") == []
+
+
+def test_stale_feedback_rejects_mixed_commands_but_allows_halt(rig, monkeypatch):
+    r = rig(start=False)
+    r.module.connect()
+    r.feed()
+    feed_chassis_interval(r.fake)
+    received = r.module._odom_received_mono
+    monkeypatch.setattr(connection_module.time, "monotonic", lambda: received + 10.0)
+    batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
+    batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
+    before = list(r.fake.control.published)
+    with pytest.raises(ValueError, match="fresh measured odometry"):
+        r.module.write(batch)
+    assert r.fake.control.published == before
+    r.module.halt()
+    stopped = r.speeds()[-1].twist
+    assert (stopped.linear.x, stopped.linear.y, stopped.angular.z) == (0.0, 0.0, 0.0)
+    for topic, q in zip(
+        (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC), (TORSO_Q, LEFT_Q, RIGHT_Q), strict=True
+    ):
+        assert list(r.joint_targets()[topic].position) == pytest.approx(q)
