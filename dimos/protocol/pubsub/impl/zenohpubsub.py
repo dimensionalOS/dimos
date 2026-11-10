@@ -23,7 +23,7 @@ from typing import Any, Literal, cast
 
 import zenoh
 
-from dimos.protocol.pubsub.codec import describe_message
+from dimos.protocol.pubsub.codec import message_encoding
 from dimos.protocol.pubsub.encoders import CborEncoderMixin, MessageEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.message_types import resolve_channel_message_type
@@ -123,7 +123,7 @@ def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> T
         "dimos/data"                        -> Topic("dimos/data", default_lcm_type)
         "dimos/data/unknown.Foo"            -> Topic("dimos/data/unknown.Foo", default_lcm_type)
     """
-    if default_lcm_type is not None and describe_message(default_lcm_type).encoding == "cdr":
+    if default_lcm_type is not None and message_encoding(default_lcm_type) == "cdr":
         return Topic(key_expr, message_type=default_lcm_type)
     # Try to resolve the last segment as a message type
     parts = key_expr.rsplit("/", 1)

@@ -100,3 +100,15 @@ def describe_message(message_type: type[T]) -> MessageDescriptor[T]:
             legacy_name = f"{message_type.__module__}.{message_type.__name__}"
         return MessageDescriptor(message_type, "lcm", legacy_name, LCMCodec(message_type))
     raise TypeError(f"Unsupported or ambiguous message type: {message_type!r}")
+
+
+def message_encoding(message_type: type[Any]) -> Literal["lcm", "cdr"] | None:
+    """Encoding of *message_type*, or ``None`` while it is not describable.
+
+    Legacy channel helpers use this to keep their historical tolerance for
+    classes that are not bound to a codec yet instead of raising at parse time.
+    """
+    try:
+        return describe_message(message_type).encoding
+    except TypeError:
+        return None

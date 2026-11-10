@@ -47,6 +47,27 @@ def test_unsupported_types_fail_at_binding():
         Topic("test", message_type=dict)
 
 
+class UnboundPlain:
+    """Stand-in for a blueprint-pinned class that defines no codec."""
+
+
+def test_legacy_positional_type_keeps_lazy_binding():
+    """Pre-CDR blueprints may pin a class that has no codec yet.
+
+    The legacy ``lcm_type`` argument must keep constructing (that is what
+    ``dimos/core/coordination/test_blueprints.py`` asserts); the unsupported
+    error belongs at first encode/decode, as it was before the CDR layer.
+    """
+
+    topic = Topic("test", UnboundPlain)
+    assert topic.lcm_type is UnboundPlain
+    assert topic.message_type is UnboundPlain
+    with pytest.raises(TypeError, match="Unsupported"):
+        _ = topic.message
+    assert pickle.loads(pickle.dumps(topic)) == topic
+    assert Topic.from_channel_str("test", UnboundPlain) == topic
+
+
 @pytest.mark.parametrize("topic_type", [Topic, ZenohTopic])
 def test_generic_and_legacy_constructor_names_are_compatible(topic_type):
     topic = topic_type("test", message_type=Int32)
