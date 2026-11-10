@@ -146,14 +146,17 @@ class ReplayModule(Module):
         # would spend that lead time emitting nothing.
         static = {n for n, s in streams.items() if s.count() > 1 and s.first_ts() == s.last_ts()}
         timed_starts = [t for n, s in streams.items() if n not in static and (t := s.first_ts())]
-        replay.pin_anchor(min(timed_starts) if timed_starts else None)
+        static_values = {name: streams[name].first() for name in static}
         port: Out[DimosMsg]
         for name, port in self.outputs.items():
-            stream = streams[name]
             logger.info("Replaying %s -> %s", name, port)
+        # Logging and static-message decoding are setup, not replay lateness.
+        replay.pin_anchor(min(timed_starts) if timed_starts else None)
+        for name, port in self.outputs.items():
+            stream = streams[name]
             if name in static:
                 self.register_disposable(
-                    interval(1.0).subscribe(partial(_republish, port, stream.first()))
+                    interval(1.0).subscribe(partial(_republish, port, static_values[name]))
                 )
                 continue
             timed: Observable[DimosMsg] = stream.observable()
