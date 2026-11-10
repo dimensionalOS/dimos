@@ -42,6 +42,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.files.File import File
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -53,22 +54,26 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
-from dimos.simulation.sensors.mujoco_raycaster import MujocoRaycaster
-from dimos.simulation.sim_world.body import Body, BodyShape, Rig, Sensor
+from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
+from dimos.simulation.sim_world.body import (
+    COLLISION_GROUP,
+    Body,
+    BodyShape,
+    Rig,
+    Sensor,
+)
 from dimos.simulation.sim_world.premap import premap_cloud, without_objects
+from dimos.simulation.sim_world.scene_data import scene_files
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 FRAME_DT = 0.1
-ROBOT_VISUAL_GROUP = 2
-COLLISION_GROUP = 3
-# Collision primitives are left out.
-LIDAR_GROUPS = np.isin(np.arange(6), (SCENE_GROUP, ROBOT_VISUAL_GROUP)).astype(np.uint8)
 # Looks only. The lidar and the contacts never read color or light.
 BOX_RGBA = {
     "wall": (0.86, 0.84, 0.78, 1.0),
@@ -212,7 +217,8 @@ def build_model(scene: Scene, rig: Rig) -> mujoco.MjModel:
         housing.quat = (q[3], q[0], q[1], q[2])
         housing.group = COLLISION_GROUP
     model = spec.compile()
-    rig.tune(model)
+    if rig.tune is not None:
+        rig.tune(model)
     return model
 
 
@@ -254,12 +260,21 @@ class Sim:
         self.model = build_model(scene, rig)
         self.data = mujoco.MjData(self.model)
         self.robot = body(self.model, self.data)
+        base = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, rig.base_body)
+        self.lidar_groups = np.isin(np.arange(6), (SCENE_GROUP, rig.lidar_group)).astype(np.uint8)
         self.lidars = [
-            sensor.lidar(MujocoRaycaster(self.model, self.data, LIDAR_GROUPS), seed + i)
+            sensor.lidar(
+                MujocoRaycaster(
+                    self.model,
+                    self.data,
+                    self.lidar_groups,
+                    NO_BODY_EXCLUDED if sensor.sees_base else base,
+                ),
+                seed + i,
+            )
             for i, sensor in enumerate(rig.sensors)
         ]
         self.lio = GroundTruthLio()
-        self._lio_counts = [0] * len(rig.sensors)
         self.ticks_per_frame = round(FRAME_DT / self.robot.dt)
         self.t = 0.0
         self._tick = 0
@@ -322,15 +337,13 @@ class Sim:
         """Advance one control tick. Returns the lidar frame that completed on this tick, if any."""
 
         def cast() -> None:
-            for i, (sensor, lidar, n) in enumerate(
-                zip(self.rig.sensors, self.lidars, self._points_per_step, strict=True)
+            for sensor, lidar, n in zip(
+                self.rig.sensors, self.lidars, self._points_per_step, strict=True
             ):
                 position, rotation = self.sensor_pose(sensor)
-                points = lidar.cast(position, rotation, n)
+                points = lidar.cast(position, rotation, n, sensor.lio_keep_every)
                 kept = points[np.linalg.norm(points, axis=1) >= sensor.lio_blind_range]
-                first = -self._lio_counts[i] % sensor.lio_keep_every
-                self._lio_counts[i] += len(kept)
-                self.lio.add(kept[first :: sensor.lio_keep_every], position, rotation)
+                self.lio.add(kept, position, rotation)
 
         self.robot.tick(command, cast)
         self._tick += 1
@@ -376,6 +389,8 @@ class SimWorld(Module, ABC):
     rig: ClassVar[Rig]
 
     cmd_vel: In[Twist]
+    # a request for SCENE_FILE or a file it names is answered on file_info; other names are another module's
+    render_file_request: In[String]
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
@@ -385,6 +400,7 @@ class SimWorld(Module, ABC):
     contacts: Out[Contacts]
     scene: Out[LineSegments3D]
     loaded_map: Out[PointCloud2]
+    file_info: Out[File]
 
     _thread: Thread | None = None
     _reset: tuple[float, float, float, float] | None = None
@@ -400,6 +416,9 @@ class SimWorld(Module, ABC):
         self._hold = CommandHold(self.rig.command_timeout)
         self._stop_event = Event()
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+        self.register_disposable(
+            Disposable(self.render_file_request.subscribe(self._on_render_file_request))
+        )
         if not self.config.wait_for_scene:
             self._begin(self._load(self.config.family, self.config.seed, self.config.scene_params))
         self._started.set()
@@ -450,6 +469,23 @@ class SimWorld(Module, ABC):
         command = np.array([msg.linear.x, msg.linear.y, msg.angular.z])
         if not self._hold.update(command, time.monotonic()):
             logger.warning("Ignored non-finite cmd_vel", command=command.tolist())
+
+    def _on_render_file_request(self, msg: String) -> None:
+        sim = getattr(self, "_sim", None)
+        if sim is None:
+            return
+        data = self._scene_files(sim).get(msg.data)
+        if data is not None:
+            self.file_info.publish(File(msg.data, data))
+
+    def _scene_files(self, sim: Sim) -> dict[str, bytes]:
+        # built once per scene: the world's geometry and textures never change while it runs
+        scene_id = f"{sim.scene.name}-{id(sim)}"
+        if getattr(self, "_files_for", None) != scene_id:
+            robot = mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_BODY, sim.rig.base_body)
+            self._files = scene_files(sim.model, sim.data, scene_id, sim.rig.world_frame, robot)
+            self._files_for = scene_id
+        return self._files
 
     @abstractmethod
     def _build(self, scene: Scene, seed: int) -> Sim:

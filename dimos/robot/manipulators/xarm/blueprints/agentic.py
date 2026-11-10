@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_skills import ManipulationSkills
@@ -32,7 +32,7 @@ xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
     ManipulationSkills.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 # The stack already carries a detector and a segmenter; adding the agent on top
@@ -41,17 +41,17 @@ xarm7_planner_coordinator_agent = autoconnect(
 xarm_grasp_agent = autoconnect(
     xarm_grasp,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 ).global_config(n_workers=6)
 
 xarm_grasp_graspgenx_agent = autoconnect(
     xarm_grasp_graspgenx,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 ).global_config(n_workers=6)
 
 xarm_perception_sim_agent = autoconnect(
     xarm_perception_sim,
     McpServer.blueprint(),
-    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+    Agent.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )

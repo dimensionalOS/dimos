@@ -112,6 +112,69 @@ function Pose({ session }) {
 
 `@dimos/sdk` is not published to npm yet. Outside the repository, use `/sdk.js`.
 
+## Raw topics
+
+`session.topics` operates alongside the declared-channel API. A topic source has its own lifetime and does not require a watched robot, a robot manifest, or a running blueprint. It needs a topic provider running next to the robot and a relay with open topics: a local relay is open, and a relay with an auth file opens them with `--open-topics`. See [Raw topics](/docs/web/relay.md#raw-topics) on the relay page.
+
+Name the source with `connect({ url, token, topicSource })`, or leave `topicSource` out when a single provider is connected. A subscription to a source that is not connected yet waits (`interrupted` with `source_offline`) and attaches when the provider connects. The provider's Zenoh session defines the reachable network; selecting a robot in the UI does not narrow it.
+
+| Call | Behavior |
+|---|---|
+| `session.topics.subscribe(keyExpr, options, onMessage)` | Returns a handle immediately. Zenoh expressions such as `workspace/desktop/events/**` retain each sample's concrete key. No catalog entry or existing publisher is needed. |
+| `handle.ready()` | Resolves after the provider installs the subscription and the route is ready, even when no publisher exists. |
+| `handle.status()` / `handle.onStatus(callback)` | Reports `connecting`, `ready`, `interrupted`, `rejected`, or `closed`, with a structured error when applicable. `onStatus` returns a listener cleanup function. |
+| `handle.update(options)` | Reopens only this handle with merged options and resolves when ready. Other consumers sharing the old route retain their settings. |
+| `handle.close()` | Releases this handle. The source subscription ends after its last consumer leaves. |
+| `session.topics.onReconnect(callback)` | Runs after available subscriptions recover; sources that are not connected do not block it. Refetch authoritative HTTP state here after an interrupted event stream. |
+| `session.topics.sources()` / `onSources(callback)` | Lists the connected sources with their generation, the provider's read/write capabilities and supported profiles. A source that disconnects leaves the list. |
+| `session.topics.list({ source, prefix, cursor, limit })` | Returns a bounded page of descriptors plus a continuation cursor. An empty cursor ends pagination. |
+| `session.topics.publish(key, bytes, { source, encoding })` | Sends binary bytes to a concrete key and resolves with the provider's local-put receipt. Requires a provider that accepts writes. |
+
+Subscription options are `source`, `delivery`, `profile`, and `maxHz`. Select `delivery: "reliable"` for events, with `profile: "raw"`; every delivered sample invokes the callback immediately, outside the UI snapshot tick. Dense event bursts may be coalesced for up to 90 ms while preserving individual frames and callbacks. Reliable overflow interrupts the route explicitly so the application can resynchronize. `delivery: "latest"` keeps the newest sample per concrete key and drops obsolete work; `maxHz` limits this sampling, not reliable event delivery.
+
+The bundled provider shares subscriptions and media transforms across consumers
+with the same source, key expression, delivery and profile, including different
+`maxHz` settings. It samples at the highest requested rate; the relay applies
+each viewer's rate separately and retains that viewer's newest pending sample.
+
+Route faults preserve their error code in `onStatus` and retry only the affected subscription with exponential backoff from 1 to 30 seconds. Other subscriptions and guarded publishers keep their connection. Temporary readiness and capacity rejections also retry; a new subscription, `update()`, or reconnect makes a fresh attempt after a rejection. Unknown option names are rejected. Each route tracks up to 128 concrete keys; a larger wildcard reports `topic_key_limit`, so narrow or split the expression when needed.
+
+An undecodable media sample is dropped without interrupting the route. The provider logs a rate-limited warning for that route and counts `decodeFailures` in diagnostics and subsequent media sample metadata.
+
+Each callback receives `payload: Uint8Array`, `key`, `encoding`, `source`, `generation`, `sequence`, `ingressTs`, optional `sourceTs`, `sentTs`, and `metadata`. Payload bytes are borrowed: copy before mutation or transfer to a worker. The timestamp fields distinguish acquisition, provider ingress and transmission. Preserve that distinction when measuring age. Decode JSON with a reused `TextDecoder` only on a stream whose encoding you know. Unknown encodings remain bytes; descriptor names never trigger imports or Python object construction.
+
+Catalog entries distinguish known, observed and advertised topics. Quiet metadata is not proof that a publisher is currently producing data. Use the exact descriptor key, including remappings and domain/type suffixes. Raw reads remain possible when discovery is empty.
+
+A successful binary publish means the provider's Zenoh put completed locally, not that the robot acted. A `TopicError` exposes `code` and an `outcome` of `rejected`, `unknown`, or `interrupted`. Disconnects and acknowledgement timeouts may have an unknown outcome. Commands are never automatically replayed after reconnect; do not retry an unknown result blindly.
+
+Ordinary puts have a five-second provider deadline including queue time. A blocked put reports `topic_put_timeout` with an unknown outcome; subsequent writes are rejected as `topic_put_busy` until it completes. Expired queued writes are rejected before execution. This preserves subscriptions and the independent guarded-command lane without spawning more blocked put threads.
+
+### Media and custom data
+
+Select an advertised fixed profile with latest delivery. The provider gates the source before conversion and shares identical subscriptions; the SDK's `TopicMediaDecoder` bounds browser work across consumers. Feed raw callbacks to `decoder.push(sample)`, call `decoder.reset()` on subscription interruption or profile change, and `decoder.close()` with the subscription. Its callback receives a decoded media value and the original sample. Render through canvas/WebGL and animation frames instead of React state per frame. The renderer owns and must close any bitmaps it creates.
+
+| Profile | Decoded value |
+|---|---|
+| `image.jpeg.low.v1` | JPEG bytes, at most 640×360, quality 60, 30 Hz |
+| `image.jpeg.balanced.v1` | JPEG bytes, at most 1280×720, quality 75, 30 Hz |
+| `image.jpeg.high.v1` | JPEG bytes, at most 1920×1080, quality 85, 30 Hz |
+| `depth.lossless.v1` | Lossless `Uint16Array` or `Float32Array`, original shape/encoding, units and invalid values, at most 30 Hz |
+| `cloud.q16.low.v1` | Quantized positions, one in four valid points, at most 5 Hz |
+| `cloud.q16.balanced.v1` | Quantized positions, all valid points, at most 20 Hz |
+| `cloud.q16.full.v1` | Quantized positions, all valid points, at most 30 Hz |
+
+Clouds expose `Float32Array` positions and optional float intensity/RGB buffers, source count, acquisition header and quantization error. Depth is numeric data, not color JPEG. These fixed profiles do not provide adaptive bandwidth or dynamic codec controls.
+
+For explicit `pZenohTransport` reads, `projectCbor(sample.payload)` returns either `{ kind: "value", value }` or `{ kind: "opaque", bytes, reason }`. JSON-like values, tuples and simple dataclass fields have a bounded data-only projection. A dataclass name is inert metadata; unknown Python tags remain opaque. The existing LCM decoder and Desktop's `/msgs.js` wrappers remain available for known schemas and typed publishing.
+
+### Continuous controls
+
+Use `session.topics.publisher(key, safeStopBytes, { source, encoding, group, timeoutMs, takeover })` for a provider that advertises `guardedPublishers`. It requires a provider that accepts writes and an explicit safe-stop payload. `group` identifies shared control ownership; takeover is explicit. The handle has `ready()`, `status()`, `onStatus()`, `publish(bytes)`, and terminal `close()`. Wait for readiness before accepting fresh user input. Commands received while opening are rejected, not queued.
+
+Provider expiry is 100–1000 ms, with 400 ms as the SDK default. The provider sends the safe stop on release, expiry or lost ownership, and the SDK retires a handle on focus/page/connection loss and refuses to open one while the page is hidden. The handle itself expires after `timeoutMs` without an accepted command, including a newly ready handle that never sent a command; heartbeats cannot keep it armed. A provider `guard_expired` status requires a new handle. After failure or reconnect, clear held controls and require a neutral transition and new input before creating another handle.
+
+The robot also needs a watchdog on its side of any link whose loss could leave motion active. The migrated Controller uses the R1 Pro velocity watchdog and guarded joint-jog expiry in the robot-side trajectory task. An older robot runtime does not acquire those protections from a browser update. The dim-app adapter exposes `guardedPublisher`; its legacy `publisher().setDeadman()` API has not been recreated wholesale.
+
 ## Exposing your own channels
 
 So far the page could only subscribe to the bridge's built-in channels (`odom`, `color_image`, `global_costmap`). `cockpit(channels=[...])` exposes any typed stream without a panel. A `Channel` names a stream and its Python type. The defaults matter here: a dimOS message type is sent as its LCM bytes and decoded in the browser without any registration, a plain dataclass or JSON value is sent as JSON, and an `Image` needs an explicit encoding. Every parameter is on the [Bridge](/docs/web/bridge.md#exposing-a-stream-with-channel) page.

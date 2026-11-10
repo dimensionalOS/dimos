@@ -83,7 +83,7 @@ def _sparse_checkout(url: str, ref: str, sparse_paths: tuple[str, ...]) -> Path:
                 config.set_value('remote "origin"', "promisor", "true")
             (temp_path / ".git" / "info").mkdir(parents=True, exist_ok=True)
             (temp_path / ".git" / "info" / "sparse-checkout").write_text(
-                "".join(f"/{path.strip('/')}/\n" for path in sparse_paths)
+                "".join(f"/{path.strip('/')}\n" for path in sparse_paths)
             )
             # Only the pinned commit, then only the blobs under the sparse paths.
             repo.git.fetch("--depth", "1", "--filter=blob:none", "origin", ref)

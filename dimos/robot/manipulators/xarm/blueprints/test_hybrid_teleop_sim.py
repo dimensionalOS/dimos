@@ -17,14 +17,20 @@
 A rig wires one mock arm, the trajectory task and the hold task into a real
 OperatorHoldCoordinator, then ticks it by hand so every assertion is
 deterministic.
+
+The collection tests write a small session folder by hand and export it, to
+check that a camera running at the blueprint's frame rate passes the
+recording profile's checks.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
@@ -41,14 +47,28 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.core.coordination.blueprint_config.fields import module_config_cls
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.imitation.collection.episode import EpisodeStatus
+from dimos.imitation.dataprep.build import run_dataprep
+from dimos.imitation.dataprep.schema import OutputConfig, RecordingSchema, Sample
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.String import String
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import (
+    _CAMERA_HEIGHT,
+    _CAMERA_WIDTH,
     OperatorHoldCoordinator,
+    _collection_profile,
     hybrid_teleop_sim,
+    hybrid_teleop_sim_collect,
 )
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]
@@ -180,6 +200,12 @@ class TestEstopStatus:
         assert [msg.data for msg in statuses] == [False]
 
 
+def test_request_operator_reaches_the_coordinator() -> None:
+    assert resolve_module_refs(hybrid_teleop_sim)["teleopskills", "_coordinator"] == (
+        "ControlCoordinator"
+    )
+
+
 def test_blueprint_ranks_hold_over_jog_over_autonomy():
     tasks = next(
         cast("list[TaskConfig]", cast("dict[str, Any]", atom.kwargs)["tasks"])
@@ -189,3 +215,80 @@ def test_blueprint_ranks_hold_over_jog_over_autonomy():
     priority = {task.type: task.priority for task in tasks}
 
     assert priority["operator_hold"] > priority["eef_twist"] > priority["trajectory"]
+
+
+def _camera_fps() -> float:
+    """The frame rate (frames per second) the collection stack's sim camera is set to."""
+    sim = next(
+        atom
+        for atom in hybrid_teleop_sim_collect.active_blueprints
+        if issubclass(atom.module, MujocoSimModule)
+    )
+    return float(module_config_cls(sim)(**sim.kwargs).fps)
+
+
+def _session(directory: Path, camera_fps: float) -> Path:
+    """Write a session folder like the collection stack's, with one saved one-second episode.
+
+    Args:
+        directory: folder to create.
+        camera_fps: how many camera frames per second the episode holds. The
+            joint positions come at 100 per second.
+    """
+    schema = _collection_profile.to_schema()
+    schema.payload = "recording.db"
+    directory.mkdir()
+    (directory / "schema.json").write_text(schema.model_dump_json())
+    joints = list(schema.observation["state"].names)
+    image = np.zeros((_CAMERA_HEIGHT, _CAMERA_WIDTH, 3), dtype=np.uint8)
+    with SqliteStore(path=str(directory / schema.payload)) as store:
+        status = store.stream("status", String, codec="json")
+        camera = store.stream("color_image", Image, codec="lcm")
+        state = store.stream("coordinator_joint_state", JointState, codec="lcm")
+        for ts, event in [(10.0, "start"), (11.0, "save")]:
+            document = EpisodeStatus(
+                ts=ts,
+                state="recording" if event == "start" else "idle",
+                last_event=event,
+                episodes_saved=0,
+                episodes_discarded=0,
+                task_label="teleop",
+            )
+            status.append(String(document.to_json()), ts=ts)
+        for k in range(round(camera_fps) + 1):
+            ts = 10.0 + k / camera_fps
+            camera.append(Image(ts=ts, format=ImageFormat.RGB, data=image), ts=ts)
+        for k in range(101):
+            ts = 10.0 + k / 100
+            state.append(JointState(ts=ts, name=joints, position=[0.0] * len(joints)), ts=ts)
+    return directory
+
+
+def _export(directory: Path) -> list[Sample]:
+    """Run dataset export on a session folder and return the frames it writes."""
+    config = RecordingSchema.read(directory).dataprep_config(
+        directory, OutputConfig(format="hdf5", path=directory / "dataset.h5")
+    )
+    frames: list[Sample] = []
+
+    def writer(samples: Iterator[Sample], _output: OutputConfig) -> Path:
+        frames.extend(samples)
+        return directory
+
+    run_dataprep(config, writer=writer)
+    return frames
+
+
+def test_collection_export_accepts_the_sim_camera_rate(tmp_path: Path) -> None:
+    fps = _camera_fps()
+
+    frames = _export(_session(tmp_path / "session", fps))
+
+    assert len(frames) == round(fps) + 1
+
+
+def test_collection_export_rejects_half_the_sim_camera_rate(tmp_path: Path) -> None:
+    session = _session(tmp_path / "session", _camera_fps() / 2)
+
+    with pytest.raises(RuntimeError, match="failed dataset validation.*source rate"):
+        _export(session)
