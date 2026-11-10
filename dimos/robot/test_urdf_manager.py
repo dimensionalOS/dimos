@@ -25,6 +25,7 @@ import numpy as np
 from open3d.core import Tensor
 import pinocchio as pin
 import pytest
+from pytest_mock import MockerFixture
 import trimesh
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -48,6 +49,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_model_config,
 )
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
+import dimos.robot.urdf_manager as urdf_manager_module
 from dimos.robot.urdf_manager import (
     USD,
     CircularMountError,
@@ -882,6 +884,25 @@ def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
     module = make_manager()
 
     assert module.get_usd()[0] == str(tmp_path)
+
+
+def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
+    make_manager: Callable[..., UrdfManager],
+    mocker: MockerFixture,
+) -> None:
+    pytest.importorskip("pxr")
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(subtree, asset_root="/opt/arm/desc")
+    )
+    warn = mocker.patch.object(urdf_manager_module.logger, "warning")
+
+    _scene(module)
+
+    said = [call.args[0] for call in warn.call_args_list if "cannot open" in call.args[0]]
+    assert len(said) == 1
+    assert "/opt/arm/desc/meshes/arm.stl" in said[0]
 
 
 def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
