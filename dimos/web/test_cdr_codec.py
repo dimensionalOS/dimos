@@ -22,9 +22,9 @@ import sys
 from typing import Any
 
 from dimos_cdrgen.registry import decode, encode
-from dimos_messages.geometry_msgs.msg import Point, PoseStamped
 import pytest
 
+from dimos_messages.geometry_msgs.msg import Point, PoseStamped
 from dimos.web.cdr_codec import check_cdr_params, encode_cdr_v1, export_schema
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import resolve_encoder
@@ -43,9 +43,7 @@ def test_cdr_channel_embeds_schema_and_preserves_owned_encoder() -> None:
     assert "MSG: std_msgs/Header" in wire["params"]["cdr"]["definition"]
     assert "MSG: builtin_interfaces/Time" in wire["params"]["cdr"]["definition"]
     assert dict(channel.params) == {"note": "x"}
-    # Support-layer check: the compiled channel spec survives the worker
-    # boundary. Pickling a whole Blueprint is a separate core concern.
-    spec = pickle.loads(pickle.dumps(atom.kwargs["channels"][0]))
+    spec = pickle.loads(pickle.dumps(blueprint)).blueprints[0].kwargs["channels"][0]
     msg = build_messages()[0][1]
     assert spec.encoder is encode_cdr_v1
     assert spec.encoder(msg, spec.params) == encode(msg)

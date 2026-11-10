@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_messages.builtin_interfaces.msg import Time
-from dimos_messages.sensor_msgs.msg import CompressedImage
-from dimos_messages.std_msgs.msg import Header
 import imagecodecs
 import numpy as np
 import pytest
 import rerun as rr
 
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import CompressedImage
+from dimos_messages.std_msgs.msg import Header
 from dimos.visualization.rerun.cdr import image_archetype
 
 

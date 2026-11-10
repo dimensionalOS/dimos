@@ -15,14 +15,13 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from dimos_messages.std_msgs.msg import String
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import _deploy_all_modules, _viewer_message_types
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.core.transport import ZenohTransport
+from dimos_messages.std_msgs.msg import String
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 

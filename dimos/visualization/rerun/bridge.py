@@ -43,12 +43,6 @@ from typing import (
 )
 from urllib.parse import urlparse
 
-from dimos_messages.sensor_msgs.msg import (
-    CameraInfo,
-    CompressedImage,
-    Image,
-)
-from dimos_messages.tf2_msgs.msg import TFMessage
 import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -61,12 +55,12 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as LegacyCameraInfo
-from dimos.msgs.sensor_msgs.Image import Image as LegacyImage
-from dimos.msgs.tf2_msgs.TFMessage import (
-    TfFrameTree as LegacyTfFrameTree,
-    TFMessage as LegacyTFMessage,
+from dimos_messages.sensor_msgs.msg import (
+    CameraInfo,
+    CompressedImage,
+    Image,
 )
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
@@ -375,21 +369,11 @@ class RerunBridgeModule(Module):
         self._min_intervals: dict[str, float] = {}
         self._tf_lock = threading.Lock()
         self._tf_tree = self._new_tf_tree()
-        self._legacy_tf_tree = self._new_legacy_tf_tree()
 
     def _new_tf_tree(self) -> TfFrameTree | None:
         if self.config.tf_axes <= 0:
             return None
         return TfFrameTree(
-            axis_length=self.config.tf_axes,
-            root=f"{self.config.entity_prefix}/tf",
-        )
-
-    def _new_legacy_tf_tree(self) -> LegacyTfFrameTree | None:
-        """The tf tree for legacy DimOS messages, whose transforms are flat."""
-        if self.config.tf_axes <= 0:
-            return None
-        return LegacyTfFrameTree(
             axis_length=self.config.tf_axes,
             root=f"{self.config.entity_prefix}/tf",
         )
@@ -502,21 +486,14 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
-        legacy_tf = isinstance(msg, LegacyTFMessage)
-        if self._tf_tree is not None and (legacy_tf or isinstance(msg, TFMessage)):
+        if self._tf_tree is not None and isinstance(msg, TFMessage):
             with self._tf_lock:
-                if legacy_tf:
-                    for path, archetype in msg.to_rerun(self._legacy_tf_tree):
-                        rr.log(path, archetype)
-                else:
-                    for entry in generated_archetypes(msg, entity_path) or []:
-                        rr.log(entry[0], entry[1])
-                    self._tf_tree.update(msg.transforms)
+                for entry in generated_archetypes(msg, entity_path) or []:
+                    rr.log(entry[0], entry[1])
+                self._tf_tree.update(msg.transforms)
             return
 
-        if isinstance(msg, (CameraInfo, LegacyCameraInfo)) and (
-            entity_path not in self.config.visual_override
-        ):
+        if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
             self._log_camera_info(entity_path, msg)
             return
 
@@ -525,7 +502,7 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
-        is_image = isinstance(msg, (Image, CompressedImage, LegacyImage))
+        is_image = isinstance(msg, (Image, CompressedImage))
         if is_image:
             self._image_entities.add(entity_path)
 
@@ -560,12 +537,10 @@ class RerunBridgeModule(Module):
                         rr.log(entity_path, self._camera_pinhole(self._camera_infos[frame_id]))
 
     @staticmethod
-    def _camera_pinhole(info: CameraInfo | LegacyCameraInfo) -> Archetype:
-        if isinstance(info, LegacyCameraInfo):
-            return cast("Archetype", info.to_rerun_pinhole())
+    def _camera_pinhole(info: CameraInfo) -> Archetype:
         return camera_pinhole(info)
 
-    def _log_camera_info(self, entity_path: str, info: CameraInfo | LegacyCameraInfo) -> None:
+    def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
 
         Rerun draws the frustum only when the Pinhole sits on the image entity,
@@ -596,7 +571,6 @@ class RerunBridgeModule(Module):
         self._camera_infos = {}
         self._image_entities = set()
         self._tf_tree = self._new_tf_tree()
-        self._legacy_tf_tree = self._new_legacy_tf_tree()
         self._min_intervals = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
@@ -696,44 +670,7 @@ class RerunBridgeModule(Module):
                 rr.disable_timeline("source")
 
     def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
-        """Subscribe with explicit generated types supplied by the runtime graph.
-
-        Without explicit CDR transports or generated message types this is the
-        legacy path: every topic (or the named ones) on the selected backend,
-        with the seq keying the legacy renderers declare.
-        """
-        if not self.config.message_types and not self.config.cdr_transports:
-            if not self.config.topics:
-                if isinstance(pubsub, Zenoh):
-                    keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
-                    return pubsub.subscribe_all(self._on_message, keyed=keyed)
-                return pubsub.subscribe_all(self._on_message)
-
-            if not isinstance(pubsub, Zenoh):
-                logger.warning(
-                    f"{pubsub.__class__.__name__} cannot subscribe per topic; "
-                    f"listening to everything and ignoring topics={self.config.topics}"
-                )
-                return pubsub.subscribe_all(self._on_message)
-
-            # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
-            legacy_keys = [
-                f"{transport_topic(name, self.config.g)}/*" for name in self.config.topics
-            ]
-            legacy_unsubs = [
-                pubsub.subscribe(ZenohTopic(key), self._on_message)  # type: ignore[arg-type]
-                for key in legacy_keys
-            ]
-            logger.info(
-                f"bridge subscribed to {len(legacy_unsubs)} topics: {', '.join(self.config.topics)}"
-            )
-
-            def legacy_unsubscribe() -> None:
-                for unsub in legacy_unsubs:
-                    unsub()
-
-            return legacy_unsubscribe
-
+        """Subscribe with explicit generated types supplied by the runtime graph."""
         message_types = self.config.message_types
         for transport in self.config.cdr_transports.values():
             message_type = getattr(transport.topic, "message_type", None)

@@ -114,7 +114,7 @@ function Pose({ session }) {
 
 ## Exposing your own channels
 
-So far the page could only subscribe to the bridge's built-in channels (`odom`, `color_image`, `global_costmap`). `cockpit(channels=[...])` exposes any typed stream without a panel. A `Channel` names a stream and its Python type. The defaults matter here: a dimOS message type is sent as its LCM bytes and decoded in the browser without any registration, a registered generated message can opt in to CDR with its schema, a plain dataclass or JSON value is sent as JSON, and an `Image` needs an explicit encoding. Every parameter is on the [Bridge](/docs/web/bridge.md#exposing-a-stream-with-channel) page.
+So far the page could only subscribe to the bridge's built-in channels (`odom`, `color_image`, `global_costmap`). `cockpit(channels=[...])` exposes any typed stream without a panel. A `Channel` names a stream and its Python type. The defaults matter here: a registered generated message is sent as CDR with its schema, and a plain dataclass or JSON value is sent as JSON. Choose `jpeg.v1` explicitly when displaying an `Image` in a Video panel. Every parameter is on the [Bridge](/docs/web/bridge.md#exposing-a-stream-with-channel) page.
 
 The example package below adds a `health` stream from a module of our own to the Go2. The [next section](#a-custom-binary-encoding) adds the Go2's lidar with a custom binary encoding.
 
@@ -227,7 +227,7 @@ The page opens automatically and the health line updates once a second.
 
 ## A custom binary encoding
 
-The Go2's `lidar` stream is a `PointCloud2`. Its default LCM encoding costs 16 bytes per point at the full rate; its CDR encoding, when you select it, includes all declared point fields at the full rate. This step sends a quarter of the points as bare (x, y) pairs instead and draws them as a live 2D scatter. It adds an encoder and a channel on the robot side, and a decoder and a canvas on the page.
+The Go2's `lidar` stream is a `PointCloud2`. Its default CDR encoding includes all declared point fields at the full rate. This step sends a quarter of the points as bare (x, y) pairs instead and draws them as a live 2D scatter. It adds an encoder and a channel on the robot side, and a decoder and a canvas on the page.
 
 In `web.py`, the encoder and the second channel:
 

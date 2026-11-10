@@ -24,14 +24,14 @@ from contextlib import ExitStack
 import threading
 from typing import Any
 
+import numpy as np
+
+from dimos.core.transport import ZenohTransport
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos_messages.sensor_msgs.msg import Image, Imu, JointState
 from dimos_messages.std_msgs.msg import Empty, Header, Int64, String
-import numpy as np
-
-from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.web.cockpit import Channel, cockpit

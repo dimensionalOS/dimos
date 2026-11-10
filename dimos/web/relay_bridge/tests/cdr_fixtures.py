@@ -20,13 +20,13 @@ from typing import Any
 
 from dimos_cdrgen.definitions import Definitions
 from dimos_cdrgen.registry import encode as cdr_encode
+import numpy as np
+
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
 from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
 from dimos_messages.sensor_msgs.msg import Image, Imu, JointState
 from dimos_messages.std_msgs.msg import Empty, Header, Int64, String
-import numpy as np
-
 from dimos.web.cdr_codec import CDR_V1_SUFFIX, export_schema
 from dimos.web.relay_bridge.locate import find_web_dir
 
