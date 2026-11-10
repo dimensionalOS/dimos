@@ -28,7 +28,7 @@ Older modules pinned to SDK 0.1.0 retain their explicit legacy wire path. SDK
 0.2.0 does not fall back to legacy TF decoding.
 
 Message definitions come from the existing built-in message pipeline in
-`packages/dimos-generated/schema-sources.json`. Before building the SDK from
+`packages/dimos-messages/schema-sources.json`. Before building the SDK from
 source, install the project to generate `build/message-source/rust`. The SDK
 and native consumers depend on that same `dimos-generated-messages` crate;
 TF messages have no separate definitions or generation command.
