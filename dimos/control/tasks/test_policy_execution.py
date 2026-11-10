@@ -26,6 +26,7 @@ import pytest
 
 from dimos.control.task import CoordinatorState
 from dimos.control.tasks.policy_execution import OnnxActor, PolicyTask, PolicyTick
+from dimos.utils.testing.waiting import wait_until
 
 
 class _StubSession:
@@ -214,6 +215,8 @@ class _StubPolicyTask(PolicyTask):
         self.acts = 0
         self.resets = 0
         self.ended = 0
+        self.act_ticks: list[PolicyTick] = []
+        self.reset_ticks: list[PolicyTick] = []
         self.command = [0.0, 0.0]
         self.fail_act = False
         self.on_act: Any = None
@@ -234,11 +237,13 @@ class _StubPolicyTask(PolicyTask):
 
     def reset_policy(self, tick: PolicyTick) -> None:
         self.resets += 1
+        self.reset_ticks.append(tick)
         if self.on_reset is not None:
             self.on_reset()
 
     def act(self, tick: PolicyTick) -> np.ndarray:
         self.acts += 1
+        self.act_ticks.append(tick)
         if self.on_act is not None:
             self.on_act()
         if self.fail_act:
@@ -294,46 +299,83 @@ def test_policy_task_owns_claim_cadence_hold_and_dry_run() -> None:
     assert task.acts == 3 and task.policy_ticks == 3
 
 
-def test_policy_task_cancellation_drops_an_in_flight_result() -> None:
+def _block_phase(task: _StubPolicyTask, phase: str) -> tuple[threading.Event, threading.Event]:
+    """Block the next act() or reset_policy() call so its ordering is observable."""
+    entered, release = threading.Event(), threading.Event()
+
+    def block() -> None:
+        entered.set()
+        release.wait(5)
+
+    if phase == "act":
+        task.on_act = block
+    else:
+        task.on_reset = block
+    return entered, release
+
+
+def _compute_in_thread(task: _StubPolicyTask, t_now: float) -> tuple[threading.Thread, list[Any]]:
+    outputs: list[Any] = []
+    worker = threading.Thread(
+        target=lambda: outputs.append(task.compute(_state(t_now))), daemon=True
+    )
+    worker.start()
+    return worker, outputs
+
+
+@pytest.mark.parametrize("phase", ["act", "reset"])
+@pytest.mark.parametrize(
+    "ordering",
+    ["new-session-while-blocked", "finish-before-new-session"],
+    ids=["overlap", "finish-first"],
+)
+def test_new_session_ordering_around_a_cancelled_call(phase: str, ordering: str) -> None:
+    """A new session opens while the old call is blocked, or only after it finishes."""
     task = _StubPolicyTask()
+    task.command = [1.5, -2.0]
     task.start()
     task.request_session(0.0)
-    entered, finish = threading.Event(), threading.Event()
-    task.on_act = lambda: (entered.set(), finish.wait(5))
-    outputs: list[Any] = []
-    worker = threading.Thread(target=lambda: outputs.append(task.compute(_state(0.0))), daemon=True)
-    worker.start()
+    entered, release = _block_phase(task, phase)
+
+    old_worker, old_outputs = _compute_in_thread(task, 0.0)
     assert entered.wait(2)
+    first_epoch = task.session_epoch
+    assert task.session_active
+
+    # Invalidate the old session and request a new one while its call is blocked.
     task.end_session()
-    finish.set()
-    worker.join(2)
-    assert outputs == [None]
-    assert not task.session_active and task.ended == 1
+    task.request_session(0.5)
 
+    if ordering == "finish-before-new-session":
+        release.set()
+        old_worker.join(2)
+        assert old_outputs == [None]
+        new_worker, new_outputs = _compute_in_thread(task, 0.5)
+    else:
+        new_worker, new_outputs = _compute_in_thread(task, 0.5)
+        wait_until(
+            lambda: task.session_active and task.session_epoch == first_epoch + 2,
+            timeout=2,
+            interval=0.005,
+            message="the new session did not open while the old call was blocked",
+        )
+        assert old_worker.is_alive() and new_worker.is_alive()
+        assert old_outputs == [] and new_outputs == []
+        release.set()
+        old_worker.join(2)
 
-def test_policy_task_cancellation_is_responsive_during_reset() -> None:
-    task = _StubPolicyTask()
-    task.start()
-    task.request_session(0.0)
-    entered, finish = threading.Event(), threading.Event()
-    task.on_reset = lambda: (entered.set(), finish.wait(5))
-    outputs: list[Any] = []
-    worker = threading.Thread(target=lambda: outputs.append(task.compute(_state(0.0))), daemon=True)
-    worker.start()
-    assert entered.wait(2)
-    done = threading.Event()
-
-    def stop() -> None:
-        task.end_session()
-        done.set()
-
-    stopper = threading.Thread(target=stop, daemon=True)
-    stopper.start()
-    assert done.wait(2), "invalidation blocked on the runtime reset"
-    finish.set()
-    worker.join(2)
-    stopper.join(2)
-    assert outputs == [None] and task.resets == 1
+    new_worker.join(2)
+    assert not old_worker.is_alive() and not new_worker.is_alive() and old_outputs == [None]
+    assert len(new_outputs) == 1 and new_outputs[0] is not None
+    assert task.session_active and task.session_epoch == first_epoch + 2
+    assert (task.ended, task.resets, task.acts) == (1, 2, 2 if phase == "act" else 1)
+    # The new session's reset and act carry its own generation and tick time.
+    assert (task.reset_ticks[-1].epoch, task.reset_ticks[-1].t_now) == (
+        task.session_epoch,
+        0.5,
+    )
+    assert (task.act_ticks[-1].epoch, task.act_ticks[-1].t_now) == (task.session_epoch, 0.5)
+    assert new_outputs[0].positions == task.command
 
 
 def test_policy_task_inference_error_and_bad_command_close_the_session() -> None:
