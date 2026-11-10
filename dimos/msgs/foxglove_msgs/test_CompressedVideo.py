@@ -18,11 +18,12 @@ from functools import cache
 import av
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 import reactivex as rx
 from reactivex.subject import Subject
 import rerun as rr
 
-from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo, decode_video
+from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo, _FrameDecoder, decode_video
 from dimos.msgs.helpers import resolve_msg_type
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -142,7 +143,7 @@ def test_decode_video_joined_mid_stream_starts_at_the_next_keyframe() -> None:
     assert _decode(_stream("h264")[3:]) == _stamped(*range(8, 24))
 
 
-@pytest.mark.parametrize("format", ["h264", "h265", "av1"])
+@pytest.mark.parametrize("format", ["h264", "h265", "av1", "vp8", "vp9"])
 def test_decode_video_keyframes_only(format: str) -> None:
     assert _decode(_stream(format), keyframes_only=True) == _stamped(0, 8, 16)
 
@@ -157,11 +158,32 @@ def test_decode_video_reopens_the_decoder_when_the_format_changes() -> None:
     assert _decode(packets) == _stamped(*range(24), *range(24))
 
 
-def test_decode_video_reordered_frames_keep_their_capture_time() -> None:
+@pytest.mark.parametrize("max_hz, expected", [(None, range(24)), (4, range(0, 24, 8))])
+def test_decode_video_reordered_frames_keep_their_capture_time(
+    max_hz: float | None, expected: range
+) -> None:
     packets = _stream("h264", b_frames=2)
     assert [packet.ts for packet in packets] != sorted(packet.ts for packet in packets)
 
-    assert _decode(packets) == _stamped(*range(24))
+    assert _decode(packets, max_hz=max_hz) == _stamped(*expected)
+
+
+@pytest.mark.parametrize("max_hz", [None, 4])
+def test_decode_video_skips_missing_timestamps_without_stopping_or_reordering(
+    mocker: MockerFixture, max_hz: float | None
+) -> None:
+    frames = [
+        av.VideoFrame.from_ndarray(_numbered_frame(number), format="bgr24") for number in range(5)
+    ]
+    frames[0].pts = 0
+    frames[2].pts = 500_000_000
+    frames[4].pts = 1_000_000_000
+    context = mocker.Mock(spec=av.VideoCodecContext)
+    context.decode.side_effect = [[], [], [frames[0]], [frames[1]], [frames[2]], frames[3:]]
+    mocker.patch.object(_FrameDecoder, "_open", return_value=context)
+    packets = tuple(CompressedVideo(PACKET, ts=number / 4) for number in range(5))
+
+    assert _decode(packets, max_hz=max_hz) == [(0, 0.0), (2, 0.5), (4, 1.0)]
 
 
 def test_decode_video_subscriptions_do_not_share_a_decoder() -> None:

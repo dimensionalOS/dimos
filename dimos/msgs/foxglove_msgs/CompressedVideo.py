@@ -129,8 +129,8 @@ class _FrameDecoder:
     _format: str
     """Codec name of the packets ``_context`` was opened for."""
 
-    _newest: CompressedVideo | None
-    """The last packet decoded; frames released after it take its ``frame_id``."""
+    _last_frame_id: str
+    """The last packet's frame of reference, also used when flushing."""
 
     _published_ts: float
     """Packet time of the last published frame."""
@@ -140,7 +140,7 @@ class _FrameDecoder:
         self._min_interval = min_interval
         self._context = None
         self._format = ""
-        self._newest = None
+        self._last_frame_id = ""
         self._published_ts = float("-inf")
 
     def _open(self, format: str) -> VideoCodecContext:
@@ -175,23 +175,22 @@ class _FrameDecoder:
             images = self.flush()
             self._context = self._open(packet.format)
             self._format = packet.format
-        self._newest = packet
-        # The packet's time rides through the decoder as pts, so a frame the
-        # decoder releases late or out of order keeps the time it was captured.
+        self._last_frame_id = packet.frame_id
+        # PTS carries the source packet's timestamp as integer nanoseconds.
         encoded = av.Packet(packet.data.tobytes())
         encoded.pts = round(packet.ts * 1e9)
-        return images + self._publishable(self._context, encoded, packet)
+        return images + self._publishable(self._context, encoded, packet.frame_id)
 
     def flush(self) -> list[Image]:
         """Close the decoder and return the frames it was still holding."""
-        context, newest = self._context, self._newest
+        context = self._context
         self._context = None
-        if context is None or newest is None:
+        if context is None:
             return []
-        return self._publishable(context, None, newest)
+        return self._publishable(context, None, self._last_frame_id)
 
     def _publishable(
-        self, context: VideoCodecContext, encoded: Packet | None, newest: CompressedVideo
+        self, context: VideoCodecContext, encoded: Packet | None, frame_id: str
     ) -> list[Image]:
         import av
 
@@ -201,15 +200,17 @@ class _FrameDecoder:
             return []
         images = []
         for frame in frames:
-            ts = newest.ts if frame.pts is None else frame.pts / 1e9
+            if self._keyframes_only and not frame.key_frame:
+                continue
+            if frame.pts is None:
+                continue
+            ts = frame.pts / 1e9
             # A timestamp that runs backwards (a replay looping) publishes at once.
             if 0 <= ts - self._published_ts < self._min_interval:
                 continue
             self._published_ts = ts
             images.append(
-                Image.from_numpy(
-                    frame.to_ndarray(format="bgr24"), ImageFormat.BGR, newest.frame_id, ts
-                )
+                Image.from_numpy(frame.to_ndarray(format="bgr24"), ImageFormat.BGR, frame_id, ts)
             )
         return images
 
