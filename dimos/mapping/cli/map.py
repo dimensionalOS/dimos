@@ -347,7 +347,12 @@ def main(
     export_cloud: bool = typer.Option(
         False,
         "--export-cloud",
-        help="Write the PGO map to ./<dataset>_map.db as its map_cloud stream, a relocalization premap (implies --pgo)",
+        help="Write the PGO map to ./<dataset>_map.db under --map-name, a relocalization premap (implies --pgo)",
+    ),
+    map_name: str = typer.Option(
+        "v1",
+        "--map-name",
+        help="Name the exported map is written under, as the relocalizer's frame map/<name>",
     ),
     full_pgo: bool = typer.Option(
         False,
@@ -698,14 +703,18 @@ def main(
         subprocess.Popen(["rerun", str(out)])
 
     if export_cloud and pgo_map is not None:
+        from dimos.mapping.relocalization.module import map_cloud_stream
         from dimos.memory.store.sqlite import SqliteStore
 
         out_path = Path.cwd() / f"{db_path.stem}_map.db"
         out_path.unlink(missing_ok=True)
+        # A .db stream name is a SQL identifier, so the map's streams are the underscored spelling
+        stream = map_cloud_stream(map_name, slashed=False)
         with SqliteStore(path=str(out_path)) as map_store:
-            map_store.stream("map_cloud", PointCloud2).append(pgo_map, ts=pgo_map.ts or 0.0)
+            map_store.stream(stream, PointCloud2).append(pgo_map, ts=pgo_map.ts or 0.0)
         print(
-            f"wrote {out_path} (map_cloud), relocalize against it with --map-file {out_path.name}"
+            f"wrote {out_path} ({stream}, frame map/{map_name}), "
+            f"relocalize against it with --map-file {out_path.name}"
         )
 
     if export:

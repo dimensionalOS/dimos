@@ -102,6 +102,11 @@ def find_stream(streams: list[str], wanted: str) -> str | None:
 MAP_CLOUD_RE = re.compile(r"^map_(?P<name>.+)_cloud$")
 
 
+def map_cloud_stream(name: str, slashed: bool = True) -> str:
+    """The stream a map called *name* keeps its cloud on, in either spelling."""
+    return f"map/{name}/cloud" if slashed else f"map_{name}_cloud"
+
+
 def map_names(streams: list[str]) -> dict[str, str]:
     """Every map in *streams*, as its name -> the stream its cloud is on."""
     found: dict[str, str] = {}
