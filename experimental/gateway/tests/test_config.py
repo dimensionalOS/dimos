@@ -119,7 +119,13 @@ def test_config_answers_the_shared_settings_the_gateway_reads(
         "recordings:\n  dir: /tmp/elsewhere\nblueprint-view:\n  rates-poll-s: 5\n"
     )
     defaults = SharedConfig(
-        home=home, socket=None, recordings_dir=None, zenoh_namespace=None, zenoh_connect=None
+        home=home,
+        socket=None,
+        recordings_dir=None,
+        zenoh_namespace=None,
+        zenoh_connect=None,
+        zenoh_gossip=None,
+        topics_enabled=None,
     )
     assert client.get("/config").json() == {
         "path": str(home / "dimos_home" / "config.yaml"),

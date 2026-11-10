@@ -51,7 +51,7 @@ def transfer(state: State, monkeypatch: pytest.MonkeyPatch) -> threading.Event:
         while not release.wait(0.02):
             tick("upload", 50, 100)
         if "nologin" in path:
-            raise PermissionError("not logged in")
+            raise uploads.NotLoggedInError()
         tick("upload", 100, 100)
         return {"upload_id": "cloud-1", "skipped": False, "quota": {}}
 
@@ -304,6 +304,21 @@ def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
     client.get("/cloud/account")
     client.get("/cloud/account?fresh")
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("api", "console"),
+    [
+        ("https://api.dimensional.org", "https://console.dimensional.org/console/data"),
+        ("http://api.localhost:8080/v1/", "http://console.localhost:8080/console/data"),
+        ("http://localhost:8080", None),
+    ],
+)
+def test_the_console_link_is_the_api_hosts_console_sibling(
+    api: str, console: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DIMOS_CLOUD_URL", api)
+    assert uploads.console_datasets_url() == console
 
 
 def test_rate_gives_a_time_left_after_warming_up() -> None:

@@ -34,7 +34,7 @@ from pydantic import ValidationError
 from dimos.constants import LOG_DIR
 from dimos.core.coordination.process_lifecycle import is_pid_alive
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
-from experimental.gateway import constants, store
+from experimental.gateway import constants, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
 
 ModuleValues = dict[str, dict[str, Any]]
@@ -98,7 +98,10 @@ def launch_env_defaults() -> dict[str, str]:
     the blueprint lacks is refused), so a saved setting still wins."""
     from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-    return module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
+    defaults = module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
+    if shared_config.shared_config().topics_enabled is True:
+        defaults["TOPIC_METADATA"] = "true"
+    return defaults
 
 
 def parse(raw: Any) -> LaunchConfig:

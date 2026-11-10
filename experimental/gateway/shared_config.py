@@ -37,6 +37,8 @@ class SharedConfig:
     recordings_dir: str | None
     zenoh_namespace: str | None
     zenoh_connect: str | None
+    zenoh_gossip: bool | None
+    topics_enabled: bool | None
     # the blueprint view's remaining timers (config.yaml `blueprint-view:`), served to it by GET /config
     view_rates_poll_s: float = (
         2.0  # Desktop's topic rates have no event, so they're asked for this often
@@ -82,19 +84,23 @@ def shared_config() -> SharedConfig:
         value = (on_disk.get(section) or {}).get(key)
         return None if value == "" else value
 
+    # only the blueprint-view keys config.yaml sets, the rest keep SharedConfig's defaults
+    view: dict[str, Any] = {
+        name: kind(value)
+        for name, kind, key in (
+            ("view_rates_poll_s", float, "rates-poll-s"),
+            ("view_poll_without_events_s", float, "poll-without-events-s"),
+            ("view_log_max_records", int, "log-max-records"),
+        )
+        if (value := pick(None, "blueprint-view", key)) is not None
+    }
     return SharedConfig(
         home=home,
         socket=pick("socket", "dimos-gateway", "socket"),
         recordings_dir=pick("recordingsDir", "recordings", "dir"),
         zenoh_namespace=pick("zenohNamespace", "zenoh", "namespace"),
         zenoh_connect=pick("zenohConnect", "zenoh", "connect"),
-        **{
-            name: kind(value)
-            for name, kind, key in (
-                ("view_rates_poll_s", float, "rates-poll-s"),
-                ("view_poll_without_events_s", float, "poll-without-events-s"),
-                ("view_log_max_records", int, "log-max-records"),
-            )
-            if (value := pick(None, "blueprint-view", key)) is not None
-        },
+        zenoh_gossip=pick(None, "zenoh", "gossip"),
+        topics_enabled=pick(None, "topics", "enabled"),
+        **view,
     )

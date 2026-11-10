@@ -37,19 +37,19 @@ async def account(
     state: GatewayState,
     fresh: FreshQuery = False,
     login_not: Annotated[str | None, Query(alias="loginNot")] = None,
-) -> dict[str, Any]:
+) -> responses.Account:
     """`?loginNot=` answers only once the login's state isn't that one (the login page waits on it instead of polling)."""
     login = await state.uploads.next_login(login_not) if login_not else state.uploads.login_state()
     return {**await state.uploads.account(fresh), "login": login}
 
 
 @router.post("/cloud/login", response_model=responses.Login)
-async def start_login(state: GatewayState) -> dict[str, Any]:
+async def start_login(state: GatewayState) -> responses.Login:
     return await state.uploads.start_login()
 
 
 @router.delete("/cloud/login", response_model=responses.Account)
-async def cancel_login_or_logout(state: GatewayState) -> dict[str, Any]:
+async def cancel_login_or_logout(state: GatewayState) -> responses.Account:
     if state.uploads.login_state()["state"] in ("starting", "pending"):
         state.uploads.cancel_login()
         answer = await state.uploads.account(False)
@@ -64,7 +64,7 @@ async def upload_list(state: GatewayState) -> dict[str, Any]:
 
 
 @router.post("/cloud/uploads", response_model=responses.Upload)
-async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]:
+async def enqueue(state: GatewayState, request: UploadRequest) -> responses.Upload:
     if (request.path is None) == (request.retry is None):
         raise ApiError(400, "give either path or retry")
     if request.path is None:

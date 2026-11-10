@@ -212,7 +212,7 @@ async def watch_logs(
             watch_filter=lambda _change, path: subject(path) is not None,
             debounce=debounce_ms,
         ):
-            for name in sorted({subject(path) for _, path in changes} - {None}):
+            for name in sorted({run for _, path in changes if (run := subject(path)) is not None}):
                 bus.send({"type": "log", "run": name})
     except Exception:
         logger.exception("watching the logs failed")
