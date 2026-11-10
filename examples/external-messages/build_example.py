@@ -40,7 +40,9 @@ def owner_version() -> str:
         try:
             from dimos_messages_schemas.provider import package_root  # type: ignore[import-untyped]
         except ImportError as error:  # pragma: no cover - example guard
-            raise SystemExit("Install DimOS (pip install .) before building this example") from error
+            raise SystemExit(
+                "Install DimOS (pip install .) before building this example"
+            ) from error
         return json.loads((package_root() / "message-package.json").read_text())["version"]
 
 

@@ -48,9 +48,7 @@ jobs:
         run: bash docker/ros/install-nix.sh
       - name: Relock the modules onto this revision
         if: steps.shared.outputs.changed == 'true'
-        run: |
-          python3 .github/scripts/test_relock_shared_flakes.py
-          python3 bin/relock-shared-flakes
+        run: python3 bin/relock-shared-flakes
 
       - name: autofix.ci
         uses: autofix-ci/action@v1.3.4

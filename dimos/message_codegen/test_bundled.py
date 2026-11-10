@@ -204,7 +204,12 @@ assert not (external_root() / "cpp/std_msgs").exists()
 assert all("dimos-generated" not in req for req in distribution("external-reading").requires)
 """
     (Path(python).parent.parent / "check_installed.py").write_text(script)
-    run(python, "-I", str(Path(python).parent.parent / "check_installed.py"), cwd=Path(python).parent.parent)
+    run(
+        python,
+        "-I",
+        str(Path(python).parent.parent / "check_installed.py"),
+        cwd=Path(python).parent.parent,
+    )
 
 
 @pytest.mark.parametrize("mode", ["wheel", "source", "editable", "git"])
@@ -213,7 +218,9 @@ def test_installed_messages_and_external_header_identity(tmp_path, artifacts, mo
     # Owner version comes from the generated manifest inside the artifact, not a literal.
     with zipfile.ZipFile(wheel) as archive:
         initializer = next(
-            n for n in archive.namelist() if n.endswith("dimos_messages_schemas/package/message-package.json")
+            n
+            for n in archive.namelist()
+            if n.endswith("dimos_messages_schemas/package/message-package.json")
         )
         version = json.loads(archive.read(initializer))["version"]
 
