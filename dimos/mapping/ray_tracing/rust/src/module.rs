@@ -445,15 +445,15 @@ impl Worker {
         }
 
         if let Some(points) = global_points {
-            let global = premap_points_to_cloud(&points, out_frame_id, stamp.clone());
+            let global = points_to_cloud(&points, true, out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
         }
         if let Some(points) = local_points {
-            let local = points_to_cloud(&points, out_frame_id, stamp.clone());
+            let local = points_to_cloud(&points, false, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map, &local).await;
         }
         if let Some(points) = fine_points {
-            let fine = points_to_cloud(&points, out_frame_id, stamp.clone());
+            let fine = points_to_cloud(&points, false, out_frame_id, stamp.clone());
             publish_cloud(&self.local_map_fine, &fine).await;
         }
 
@@ -481,7 +481,8 @@ impl Worker {
             )
         });
         for (cell, points) in due {
-            let mut cloud = points_to_cloud(&points, &self.config.world_frame, stamp.clone());
+            let mut cloud =
+                points_to_cloud(&points, false, &self.config.world_frame, stamp.clone());
             cloud.header.seq = pack_cell(cell);
             publish_cloud(&self.map_regions, &cloud).await;
         }
@@ -593,7 +594,7 @@ fn seed_region_messages(
 ) -> (PoseStamped, PointCloud2) {
     let mut bounds = bounds_to_pose(cylinder, frame_id, stamp.clone());
     bounds.header.seq = seq;
-    let mut cloud = points_to_cloud(points, frame_id, stamp.clone());
+    let mut cloud = points_to_cloud(points, false, frame_id, stamp.clone());
     cloud.header.seq = seq;
     (bounds, cloud)
 }
@@ -805,36 +806,32 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
     }
 }
 
-/// Pack flat (x, y, z, premap) quads into an LCM cloud message with a uint8
-/// `premap` field after x, y, z, intensity.
-fn premap_points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
-    const STEP: i32 = 17;
-    let mut data = Vec::with_capacity((points.len() / 4) * STEP as usize);
+/// Pack flat (x, y, z) triples into an LCM cloud message. With `premap`, the
+/// points are (x, y, z, premap) quads and the cloud carries a uint8 `premap`
+/// field after x, y, z, intensity.
+fn points_to_cloud(points: &[f32], premap: bool, frame_id: &str, stamp: Time) -> PointCloud2 {
+    let stride = if premap { 4 } else { 3 };
+    let step: i32 = if premap { 17 } else { 16 };
+    let mut data = Vec::with_capacity((points.len() / stride) * step as usize);
     let mut n: i32 = 0;
-    for p in points.as_chunks::<4>().0 {
+    for p in points.chunks_exact(stride) {
         write_point(&mut data, &mut n, p[0], p[1], p[2]);
-        data.push(u8::from(p[3] != 0.0));
+        if premap {
+            data.push(u8::from(p[3] != 0.0));
+        }
     }
     let mut cloud = make_cloud(data, n, frame_id, stamp);
-    cloud.fields.push(PointField {
-        name: PREMAP_FIELD.into(),
-        offset: 16,
-        datatype: PointField::UINT8 as u8,
-        count: 1,
-    });
-    cloud.point_step = STEP;
-    cloud.row_step = STEP * n;
-    cloud
-}
-
-/// Pack flat (x, y, z) triples into an LCM cloud message.
-fn points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
-    let mut data = Vec::with_capacity((points.len() / 3) * 16);
-    let mut n: i32 = 0;
-    for p in points.as_chunks::<3>().0 {
-        write_point(&mut data, &mut n, p[0], p[1], p[2]);
+    if premap {
+        cloud.fields.push(PointField {
+            name: PREMAP_FIELD.into(),
+            offset: 16,
+            datatype: PointField::UINT8 as u8,
+            count: 1,
+        });
+        cloud.point_step = step;
+        cloud.row_step = step * n;
     }
-    make_cloud(data, n, frame_id, stamp)
+    cloud
 }
 
 async fn publish_cloud(out: &Output<PointCloud2>, cloud: &PointCloud2) {
@@ -929,7 +926,7 @@ mod tests {
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
         );
         let t = Transform::new("odom", "map", 0.0, iso);
-        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default());
+        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], false, "map", Time::default());
 
         let part = prepare_seed(&cloud, tf_to_pose(&t), 1.0, (0.0, 0.0, 0.0), 4.0)
             .expect("loaded map must decode");
@@ -943,7 +940,7 @@ mod tests {
         assert_eq!(created, 1);
 
         let region = mapper.local_points(&part.regions[0].cylinder.bounds());
-        let seeded = points_to_cloud(&region, "odom", Time::default());
+        let seeded = points_to_cloud(&region, false, "odom", Time::default());
         assert!(cloud_points(&seeded).contains(&voxel_center(10, 3, 0)));
     }
 
@@ -965,7 +962,7 @@ mod tests {
             0.0,
             0.0,
         ];
-        let loaded = premap_points_to_cloud(&quads, "map", Time::default());
+        let loaded = points_to_cloud(&quads, true, "map", Time::default());
         let (points, premap) = extract_xyz_premap(&loaded).expect("premap cloud must decode");
         assert_eq!(points, vec![(1.5, 0.5, 0.5), (2.5, 0.5, 0.5)]);
         assert_eq!(
@@ -989,8 +986,12 @@ mod tests {
         for tile in part.tiles() {
             mapper.seed_tile(tile, &part.live);
         }
-        let global =
-            premap_points_to_cloud(&mapper.global_points_premap(), "odom", Time::default());
+        let global = points_to_cloud(
+            &mapper.global_points_premap(),
+            true,
+            "odom",
+            Time::default(),
+        );
         let (points, premap) = extract_xyz_premap(&global).expect("global map must decode");
         let mut flagged: Vec<((f32, f32, f32), bool)> =
             points.into_iter().zip(premap.unwrap()).collect();
@@ -1004,7 +1005,7 @@ mod tests {
     /// A loaded cloud without the field is all premap.
     #[test]
     fn loaded_cloud_without_premap_field_is_all_premap() {
-        let cloud = points_to_cloud(&[1.5, 0.5, 0.5], "map", Time::default());
+        let cloud = points_to_cloud(&[1.5, 0.5, 0.5], false, "map", Time::default());
         let part = prepare_seed(
             &cloud,
             Pose {
@@ -1201,7 +1202,7 @@ mod tests {
         assert_eq!(occupied, vec![(3, -2, 1)]);
 
         // Encode and decode the occupied voxel center exactly as the port would.
-        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], "world", Time::default());
+        let cloud = points_to_cloud(&[3.5, -1.5, 1.5], false, "world", Time::default());
         let Ok(points) = extract_xyz(&cloud) else {
             panic!("occupied cloud must decode");
         };
@@ -1227,11 +1228,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
+            false,
             "world",
             Time::default(),
         );
@@ -1252,11 +1255,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
+            false,
             "world",
             Time::default(),
         );
@@ -1278,11 +1283,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
+            false,
             "world",
             Time::default(),
         );
@@ -1306,11 +1313,13 @@ mod tests {
         };
         let global = points_to_cloud(
             &emit_points(&map, 1.0, None, &live),
+            false,
             "world",
             Time::default(),
         );
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
+            false,
             "world",
             Time::default(),
         );
@@ -1344,6 +1353,7 @@ mod tests {
         map.set_support_min(3);
         let local = points_to_cloud(
             &emit_points(&map, 1.0, Some(&cylinder), &live),
+            false,
             "world",
             Time::default(),
         );
