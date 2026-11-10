@@ -22,7 +22,7 @@ Wait for the spoken greeting to finish and the final assistant reply to appear i
 ```bash
 uv run dimos stop
 RELEASE_TRACE_DIR="$(mktemp -d)"
-uv run dimos --replay run unitree-go2-agentic --daemon --mcpclient.trace-dir "$RELEASE_TRACE_DIR"
+uv run dimos --replay run unitree-go2-agentic --daemon --agent.trace-dir "$RELEASE_TRACE_DIR"
 uv run dimos agent-send "say hello"
 ```
 
@@ -48,14 +48,14 @@ Type these prompts in `humancli`, one at a time:
 * "Without stopping patrol first, try to turn in place 90 degrees. If there is a conflict, report the exact error and do not recover."
 * "Stop patrol, then turn in place 90 degrees."
 
-Expected result: the first prompt shows two live tool boxes that stream at the same time. The second is refused with `Cannot start 'turn_in_place': capability 'movement' is held by 'start_patrol'`. After the third the patrol box closes and the turn completes.
+Expected result: the first prompt shows two live tool boxes that stream at the same time. The second returns `Cannot start 'turn_in_place': capability 'movement' is held by 'start_patrol'. Call the appropriate stop tool first, then retry.` and the agent reports it without stopping the patrol. After the third the patrol box closes and the turn completes.
 
 ## 7.3 Point navigation skill
 
 Needs the Habitat setup from the [Habitat check](08_navigation.md#87-habitat-simulation).
 
 ```bash
-uv run dimos run habitat-nav mcp-server point-nav-skill-container
+uv run dimos run habitat-nav mcp-server
 # In another terminal:
 uv run dimos mcp call go_to --arg x=<x> --arg y=<y>
 uv run dimos mcp call go_to --arg x=<x2> --arg y=<y2>
@@ -77,7 +77,7 @@ uv run dimos run habitat-typesafe
 uv run humancli --transport zenoh
 ```
 
-* In Rerun drive with WASD until a chair is in the camera view, then type `go to the chair` in `humancli`.
+* Click the viewer's Keyboard Teleop panel so its border turns green and drive with WASD until a chair is in the camera view, then type `go to the chair` in `humancli`.
 
 Expected result: the robot turns toward the chair and drives up to it, and the agent ends with `goal reached or unreachable; stopped`.
 
@@ -146,6 +146,8 @@ uv run dimos evals vqa generate recordings/<run-id>/memory.db --start 20 --stop 
 uv run dimos evals vqa run ~/.local/state/dimos/datasets/vqa/memory-frames --model gpt-4o-mini
 ```
 
+`generate` refuses a non-empty destination. If `~/.local/state/dimos/datasets/vqa/memory-frames` is left over from an earlier run, delete it first or pass `--output <dir>` to `generate` and give that directory to `run`.
+
 The first recorded images can precede the first `camera_info` or `tf` message. If generation reports missing calibration or pose at the selected image timestamp, increase `--start` until the first selected image is after both streams begin. `20` skipped the startup gap in this check.
 
 Expected result: `generate` prints "Generated N VQA case(s)" with the dataset directory, and `run` prints a result line per case and a summary with no errors.
@@ -157,7 +159,7 @@ The `xarm6-worldbelief` hardware blueprint has a broken TF tree, so this check r
 ```bash
 uv run python -c "from dimos.utils.data import get_data; print(get_data('xarm6_worldbelief_realsense_d435i_stationery_calibrated/xarm6_worldbelief_20260729_203624_161992.db'))"
 uv run dimos --replay run world-belief-module mcp-server --daemon --worldbeliefmodule.db-path <printed-path>
-# Wait for "WorldBelief scan models warmed up" in uv run dimos log -f.
+# The start prints "WorldBelief scan models warmed up" before it returns; no separate wait is needed.
 uv run dimos mcp call scan -j '{"prompt": ["book", "pen"]}' --timeout 300
 uv run dimos mcp call recall -a text="pen" --timeout 300
 uv run dimos stop

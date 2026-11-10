@@ -122,6 +122,10 @@ class ControlCoordinatorConfig(ModuleConfig):
     # How old a robot's newest reading may be, in seconds, before it is no
     # longer commanded.
     reading_timeout_s: float = 0.2
+    # Joints, named "<robot>/<joint>", whose connection commands zero
+    # stiffness. The connection keeps those gains; this declaration only
+    # lets tasks that require zero stiffness (hand guiding) accept the robot.
+    zero_stiffness_joints: list[str] = field(default_factory=lambda: [])
 
 
 class ControlCoordinator(Module):
@@ -383,7 +387,13 @@ class ControlCoordinator(Module):
         """Create a control task from config via the task registry."""
         from dimos.control.tasks.registry import control_task_registry
 
-        return control_task_registry.create(cfg.type, cfg, hardware=self._hardware)
+        return control_task_registry.create(
+            cfg.type,
+            cfg,
+            hardware=self._hardware,
+            connections=self._connections,
+            model=self.config.model,
+        )
 
     def _frame_pose_port(self) -> Out[TFMessage]:
         port = getattr(self, "tf", None)
@@ -438,6 +448,11 @@ class ControlCoordinator(Module):
                     readings.get(robot, []),
                     self.config.model,
                     self.config.reading_timeout_s,
+                    zero_stiffness_joints=[
+                        joint
+                        for joint in self.config.zero_stiffness_joints
+                        if joint.startswith(f"{robot}/")
+                    ],
                 )
                 self._connections[robot] = source
                 self._command_ports[robot] = {
@@ -445,6 +460,12 @@ class ControlCoordinator(Module):
                 }
                 for joint in source.joint_names:
                     self._joint_to_hardware[joint] = robot
+        declared = {joint for source in self._connections.values() for joint in source.joint_names}
+        unknown = set(self.config.zero_stiffness_joints) - declared
+        if unknown:
+            raise ValueError(
+                f"zero-stiffness joints belong to no robot driven here: {sorted(unknown)}"
+            )
         for robot, source in self._connections.items():
             for kind in source.reading_ports:
                 handler = functools.partial(source.on_message, kind)
@@ -575,32 +596,23 @@ class ControlCoordinator(Module):
 
     @rpc
     def get_joint_positions(self) -> dict[str, float]:
-        """Get current joint positions for all joints."""
-        with self._hardware_lock:
-            positions: dict[str, float] = {}
-            for hw in self._hardware.values():
-                state = hw.read_state()  # {joint_name: JointState}
-                for joint_name, joint_state in state.items():
-                    positions[joint_name] = joint_state.position
-            for connection in self._connections.values():
-                positions.update(connection.read_joints().joint_positions)
-            return positions
+        """Return the latest tick's joint positions without polling hardware."""
+        return self._tick_loop.joint_positions if self._tick_loop is not None else {}
 
     @rpc
     def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
         """Execute a trajectory through the coordinator's sole trajectory task."""
-        current_positions = self.get_joint_positions()
         with self._task_lock:
             if self._trajectory_task is None:
                 return TrajectoryExecutionResult(
                     TrajectoryExecutionStatus.NO_TRAJECTORY_TASK,
                     "Control coordinator has no trajectory task",
                 )
-            return self._trajectory_task.execute(trajectory, current_positions)
+            return self._trajectory_task.execute(trajectory, self.get_joint_positions())
 
     @rpc
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the coordinator's sole trajectory task."""
+        """Cancel the trajectory under the same lock used to accept submissions."""
         with self._task_lock:
             if self._trajectory_task is None:
                 return TrajectoryCancellationResult(

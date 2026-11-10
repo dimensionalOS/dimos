@@ -42,7 +42,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
+from dimos.evals.agents.mcp_client_adapter import McpClientAdapter, _Turn
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.constants import RAW_README
@@ -239,13 +239,13 @@ def test_dataset_launches_and_cleans_up_the_agents_modules(
     env = Dataset(dataset)
 
     try:
-        running = env.start(("mcp-server", "mcp-client"))
+        running = env.start(("mcp-server", "agent"))
         # The endpoint is the one the launched process registered, not a guess.
         assert running.mcp_url == "http://127.0.0.1:9993/mcp"
     finally:
         env.stop()
 
-    assert proc.demo_args == ["run", "mcp-server", "mcp-client"]
+    assert proc.demo_args == ["run", "mcp-server", "agent"]
     assert proc.simulator is None
     proc.start.assert_called_once_with()
     proc.stop.assert_called_once_with()
@@ -287,7 +287,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
 
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
-        _sim(attach=True).preflight(McpClientAdapter(modules=("mcp-client",)))
+        _sim(attach=True).preflight(McpClientAdapter(modules=("agent",)))
 
 
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
@@ -310,13 +310,13 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
 
     try:
-        env.start(("mcp-client", "speak-skill"))
+        env.start(("agent", "speak-skill"))
         assert proc.demo_args == [
             "run",
             "unitree-go2",
             "mcp-server",
             "unitree-skill-container",
-            "mcp-client",
+            "agent",
             "speak-skill",
             "--disable",
             "wavefront-frontier-explorer",
@@ -392,9 +392,9 @@ def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixtur
 
 def test_agent_preflight_mismatches(dataset: str) -> None:
     frozen = Dataset(dataset)
-    with pytest.raises(RuntimeError, match="McpClientAdapter needs a running McpClient"):
+    with pytest.raises(RuntimeError, match="McpClientAdapter needs a running Agent"):
         McpClientAdapter().preflight(frozen)
-    McpClientAdapter(modules=("mcp-server", "mcp-client")).preflight(frozen)  # brings its own
+    McpClientAdapter(modules=("mcp-server", "agent")).preflight(frozen)  # brings its own
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
 
 
@@ -799,7 +799,7 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     with pytest.raises(TypeError, match="0 agents"):
         load_agent("dimos.evals.agents.lib.single_call")
     with pytest.raises(ValidationError, match="modules"):
-        load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server mcp-client"])
+        load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server agent"])
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
@@ -815,17 +815,15 @@ def _write_trace_pair(trace_dir: Path, seq: int, *, response: bool = True) -> No
 def _run_mcp_client_adapter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    fake_mcp_client: Callable[[str, Path, PubSubTransport[Any], PubSubTransport[Any]], None],
+    fake_agent: Callable[[str, Path, PubSubTransport[Any], PubSubTransport[Any]], None],
     timeout_s: float,
 ) -> Trajectory:
-    """Run McpClientAdapter over real transports, with `fake_mcp_client` as McpClient."""
+    """Run McpClientAdapter over real transports, with `fake_agent` as Agent."""
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
 
     repointed: list[str] = []
-    app = SimpleNamespace(
-        McpClient=SimpleNamespace(set_trace_dir=repointed.append), stop=lambda: None
-    )
+    app = SimpleNamespace(Agent=SimpleNamespace(set_trace_dir=repointed.append), stop=lambda: None)
     monkeypatch.setattr("dimos.porcelain.dimos.Dimos.connect", lambda: app)
 
     human, agent_t, idle = (
@@ -839,7 +837,7 @@ def _run_mcp_client_adapter(
     workers: list[threading.Thread] = []
 
     def on_human(msg: str) -> None:
-        worker = threading.Thread(target=fake_mcp_client, args=(msg, trace_dir, agent_t, idle))
+        worker = threading.Thread(target=fake_agent, args=(msg, trace_dir, agent_t, idle))
         workers.append(worker)
         worker.start()
 
@@ -864,13 +862,13 @@ def _run_mcp_client_adapter(
 def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
 ) -> None:
-    """The production agent points the McpClient's raw capture at run_dir/raw,
+    """The production agent points the Agent's raw capture at run_dir/raw,
     publishes on /human_input, reads the turn back on /agent until
     /agent_idle or its budget runs out, and links every model call to the
-    McpClient's trace files (the message must arrive with no flush sleep: LCM
+    Agent's trace files (the message must arrive with no flush sleep: LCM
     publish is a synchronous send)."""
 
-    def fake_mcp_client(
+    def fake_agent(
         text: str, trace_dir: Path, agent_t: PubSubTransport[Any], idle: PubSubTransport[Any]
     ) -> None:
         idle.publish(False)
@@ -891,7 +889,7 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
             idle.publish(True)
 
     trajectory = _run_mcp_client_adapter(
-        tmp_path, monkeypatch, fake_mcp_client, timeout_s=10.0 if goes_idle else 0.5
+        tmp_path, monkeypatch, fake_agent, timeout_s=10.0 if goes_idle else 0.5
     )
 
     assert trajectory.extra.ended_by == ("answer" if goes_idle else "timeout")
@@ -918,13 +916,13 @@ def test_mcp_client_adapter_drives_a_turn_over_real_transports(
 def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_response: bool
 ) -> None:
-    """McpClient's failure note is not a model call, so it ends the case as an error.
+    """Agent's failure note is not a model call, so it ends the case as an error.
 
     An HTTP error leaves a trace pair for the failed request; a connection error doesn't.
     """
     note = "This turn failed with AuthenticationError: Error code: 401"
 
-    def fake_mcp_client(
+    def fake_agent(
         text: str, trace_dir: Path, agent_t: PubSubTransport[Any], idle: PubSubTransport[Any]
     ) -> None:
         idle.publish(False)
@@ -938,13 +936,31 @@ def test_mcp_client_adapter_ends_a_failed_turn_as_an_error(
         agent_t.publish(AIMessage(content=note, additional_kwargs={TURN_FAILED_KEY: True}))
         idle.publish(True)
 
-    trajectory = _run_mcp_client_adapter(tmp_path, monkeypatch, fake_mcp_client, timeout_s=10.0)
+    trajectory = _run_mcp_client_adapter(tmp_path, monkeypatch, fake_agent, timeout_s=10.0)
 
     assert (trajectory.extra.ended_by, trajectory.extra.error) == ("error", note)
     user, first = trajectory.steps
     assert first.observation == Observation(
         results=(ObservationResult(source_call_id="c1", content="arrived"),)
     )
+
+
+def test_mcp_client_adapter_turn_waits_for_the_failure_note_of_an_unanswered_call(
+    tmp_path: Path,
+) -> None:
+    """The idle flip can overtake the failure note. A call with no response leaves
+    no trace pair, so the received AIMessages already match the pairs; only the
+    note may end the turn."""
+    _write_trace_pair(tmp_path, 0)
+    _write_trace_pair(tmp_path, 1, response=False)
+    turn = _Turn(tmp_path)
+    turn.on_idle(False)
+    turn.on_agent(AIMessage(content="", tool_calls=[{"name": "move_to", "args": {}, "id": "c1"}]))
+    turn.on_idle(True)
+    assert not turn.done.is_set()
+
+    turn.on_agent(AIMessage(content="failed", additional_kwargs={TURN_FAILED_KEY: True}))
+    assert turn.done.is_set()
 
 
 def test_agents_report_every_available_tool() -> None:

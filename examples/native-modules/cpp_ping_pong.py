@@ -70,7 +70,9 @@ def blueprint() -> Blueprint:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
     args = parser.parse_args()
 

@@ -6,6 +6,8 @@ The default blueprint maps dynamic environments in real time.
 
 `dimos --robot-ip ... run unitree-go2`
 
+Loop closure corrects odometry drift, and simulators have none, so it is off under `--simulation`. `--pgovoxelmapper.pgo.loop-closure true` turns it back on there.
+
 ## Saving maps between runs
 
 `dimos --robot-ip ... run unitree-go2-map`
