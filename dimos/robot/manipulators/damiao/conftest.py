@@ -21,21 +21,21 @@ from pydantic import model_validator
 import pytest
 from typing_extensions import Self
 
-from dimos.control.contract.convert import joint_state_to_values
-from dimos.control.contract.keys import Interface
 from dimos.robot.manipulators.damiao import arm as arm_module
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     TEST_ROBOT,
-    Builder,
-    FakeArm,
-    FakeGripper,
-    FakeRobot,
-    LocalTransport,
+    wire_hosted_connection,
 )
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
+)
+from dimos.robot.manipulators.damiao.testing.fake_native import (
+    Builder,
+    FakeArm,
+    FakeGripper,
+    FakeRobot,
 )
 from dimos.utils.testing.waiting import wait_until
 
@@ -111,13 +111,7 @@ def make_rig(connection_class, boundary, mocker):
 
     def make(**kwargs):
         module = connection_class(deadman_timeout_s=10, **kwargs)
-        commands, readings = LocalTransport(), LocalTransport()
-        # The connection has no command subscription: this ingress is the
-        # test's stand-in for the coordinator's direct call.
-        commands.subscribe(
-            lambda msg: module.command(joint_state_to_values(msg, (Interface.POSITION,)))
-        )
-        module.set_transport("joint_state", readings)
+        commands, readings = wire_hosted_connection(module)
         made.append(module)
         module.start()
         # The hosted cycle is the only reader; publish one measured sample so

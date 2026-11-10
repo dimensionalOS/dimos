@@ -236,17 +236,14 @@ def test_shipped_metal_blueprint_runs_the_direct_cycle_in_real_workers(tmp_path)
 
     assert evidence["installed"] and evidence["fail_closed"]
     assert evidence["module_counts"] == [2], evidence
-    assert evidence["same_cycle_and_thread"], evidence["read_write_pairs"]
+    # The driver already asserts these; re-check the evidence it published.
+    assert evidence["same_cycle_and_thread"] and evidence["wrote_target"], evidence
     assert len(evidence["writer_identities"]) == 1, evidence["writer_identities"]
-    assert evidence["wrote_target"]
-    assert evidence["status_connected"] and evidence["last_command_time"] is not None
-    assert evidence["last_error"] is None
-    assert evidence["deadman_fired_then_cleared"]
+    assert evidence["deadman_fired_then_cleared"] and evidence["workers_exited"]
     assert (
         "feedback failed: RuntimeError: fake Damiao feedback failure requested by the test"
         in (evidence["fault"])
     )
-    assert evidence["workers_exited"]
 
 
 def test_blueprint_composition_is_coordinator_connection_and_remaps():

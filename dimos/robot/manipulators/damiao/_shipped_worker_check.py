@@ -63,52 +63,37 @@ def _alive(pid: int) -> bool:
 
 
 def _read_log(path: str) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
     with open(path) as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                events.append(json.loads(line))
-    return events
+        return [json.loads(line) for line in handle if line.strip()]
 
 
 def _pairing(
     events: list[dict[str, Any]], start: float, end: float
-) -> tuple[bool, list[dict[str, Any]], list[tuple[int, int, str]]]:
+) -> tuple[bool, int, list[tuple[int, int, str]]]:
     """Whether every write in the window follows a read of its own cycle/thread."""
     window = [
         event
         for event in events
         if start <= event["time"] <= end and event["event"] in ("read", "write")
     ]
-    pairs: list[dict[str, Any]] = []
+    pairs = 0
     writers: set[tuple[int, int, str]] = set()
     ok = True
-    for index, event in enumerate(window):
+    previous: dict[str, Any] | None = None
+    for event in window:
         if event["event"] != "write":
+            previous = event
             continue
         writers.add((event["pid"], event["tid"], event["thread"]))
-        previous = window[index - 1] if index else None
-        if previous is None:
-            # The window may start in the middle of a tick; that write's read
-            # is outside it, so there is nothing to pair it with.
-            continue
-        same = (
-            previous["event"] == "read"
-            and previous["pid"] == event["pid"]
-            and previous["tid"] == event["tid"]
-            and previous["epoch"] == event["epoch"]
-        )
-        ok = ok and same
-        pairs.append(
-            {
-                "same_cycle_and_thread": same,
-                "pid": event["pid"],
-                "tid": event["tid"],
-                "thread": event["thread"],
-                "epoch": event["epoch"],
-            }
-        )
+        if previous is not None:
+            pairs += 1
+            ok = ok and (
+                previous["event"] == "read"
+                and previous["pid"] == event["pid"]
+                and previous["tid"] == event["tid"]
+                and previous["epoch"] == event["epoch"]
+            )
+        previous = event
     return ok, pairs, sorted(writers)
 
 
@@ -120,9 +105,9 @@ def main() -> int:
         "a real vendor CAN transport constructor is still callable"
     )
 
-    blueprint = metal_control()
     scout_addr = os.environ.get(SCOUT_ENV)
     assert scout_addr, f"{SCOUT_ENV} must name a private multicast group for this run"
+    blueprint = metal_control()
     parsed = BlueprintConfigParser(blueprint).parse(
         ["--can-port", "fake-test-can"],
         environ={},
@@ -132,13 +117,12 @@ def main() -> int:
     manager: Any = built._managers["python"]
     pids = [worker.pid for worker in manager.workers if worker.pid is not None]
     assert pids, "the shipped blueprint must deploy into real worker processes"
-    assert [worker.module_count for worker in manager.workers if worker.module_count] == [2], (
-        "the shipped coordinator and its connection must share one worker"
-    )
+    counts = [worker.module_count for worker in manager.workers if worker.module_count]
+    assert counts == [2], "the shipped coordinator and its connection must share one worker"
 
     evidence: dict[str, Any] = {
         "worker_pids": pids,
-        "module_counts": [worker.module_count for worker in manager.workers if worker.module_count],
+        "module_counts": counts,
         "installed": True,
         "fail_closed": True,
     }
@@ -155,28 +139,16 @@ def main() -> int:
         # whole positions dict, so a snapshot must never be assembled from
         # several reads: that would manufacture a pose out of partial samples
         # and hide a real loss of feedback.
-        holder: dict[str, dict[str, float]] = {}
-        incomplete: list[list[str]] = []
-
-        def complete() -> bool:
-            seen = coordinator.get_joint_positions()
-            missing = sorted(set(joints) - set(seen))
-            if missing:
-                incomplete.append(missing)
-                return False
-            holder["snapshot"] = seen
-            return True
-
-        wait_until(complete, timeout=15.0)
-        start_positions = holder["snapshot"]
-        assert all(joint in start_positions for joint in joints), incomplete[-1:]
+        wait_until(
+            lambda: set(joints) <= set(coordinator.get_joint_positions()),
+            timeout=15.0,
+        )
+        start_positions = coordinator.get_joint_positions()
         target = []
         for joint in joints:
             lower, upper = limits[joint.removeprefix("arm/")]
             value = start_positions[joint]
             step = TARGET_STEP if upper is None or value + TARGET_STEP <= upper else -TARGET_STEP
-            if lower is not None and value + step < lower:
-                step = 0.005 if upper is None or value + 0.005 <= upper else -0.005
             goal = value + step
             assert (lower is None or goal >= lower) and (upper is None or goal <= upper), (
                 f"{joint}: start {value} and target {goal} must be inside {lower}..{upper}"
@@ -212,27 +184,14 @@ def main() -> int:
         status = connection.status()
         assert status.connected, status
         assert status.last_command_time is not None, status
-        assert status.last_error is None, status
-        assert status.last_rejection is None, status
-        evidence.update(
-            {
-                "joints": len(joints),
-                "incomplete_snapshots": len(incomplete),
-                "target": target,
-                "start": [start_positions[joint] for joint in joints],
-                "status_connected": status.connected,
-                "last_command_time": status.last_command_time,
-                "last_error": status.last_error,
-            }
-        )
+        assert status.last_error is None and status.last_rejection is None, status
 
         events = _read_log(log_path)
-        assert {event["pid"] for event in events} <= set(pids), (
-            f"fake boundary was used outside the workers: {sorted({event['pid'] for event in events})}"
-        )
+        used = {event["pid"] for event in events}
+        assert used <= set(pids), f"fake boundary was used outside the workers: {sorted(used)}"
         ok, pairs, writers = _pairing(events, started, finished)
-        assert len(pairs) >= 2, f"too few write cycles to prove pairing: {pairs}"
-        assert ok, f"a write did not follow a read in the same worker, thread and cycle: {pairs}"
+        assert pairs >= 2, f"too few write cycles to prove pairing: {pairs}"
+        assert ok, "a write did not follow a read in the same worker, thread and cycle"
         assert len(writers) == 1, f"writes came from more than one thread: {writers}"
         wrote_target = any(
             event["event"] == "write"
@@ -241,24 +200,13 @@ def main() -> int:
             for event in events
         )
         assert wrote_target, "the fake arm never received the trajectory target"
-        evidence.update(
-            {
-                "read_write_pairs": len(pairs),
-                "same_cycle_and_thread": ok,
-                "writer_identities": [list(identity) for identity in writers],
-                "wrote_target": wrote_target,
-            }
-        )
 
         # Deadman: with the coordinator stopped, no further commands are
         # authorized, so the connection halts the arm and reports it.
         coordinator.set_estop(True)
         wait_until(lambda: connection.status().deadman_fired, timeout=15.0)
-        halted = connection.status()
-        assert halted.deadman_fired, halted
         coordinator.set_estop(False)
         wait_until(lambda: not connection.status().deadman_fired, timeout=15.0)
-        evidence["deadman_fired_then_cleared"] = True
 
         # Fault: the fake boundary fails a reading; the connection latches it.
         trigger = os.environ.get(fake_native.FAIL_ENV)
@@ -277,7 +225,21 @@ def main() -> int:
         os.unlink(trigger)
         fault = connection.status().last_error
         assert fault and expected_fault in fault, fault
-        evidence["fault"] = fault
+
+        evidence.update(
+            {
+                "joints": len(joints),
+                "read_write_pairs": pairs,
+                "same_cycle_and_thread": ok,
+                "writer_identities": [list(identity) for identity in writers],
+                "wrote_target": wrote_target,
+                "status_connected": status.connected,
+                "last_command_time": status.last_command_time,
+                "last_error": status.last_error,
+                "deadman_fired_then_cleared": True,
+                "fault": fault,
+            }
+        )
     finally:
         built.stop()
 

@@ -357,6 +357,12 @@ def test_deploy_parallel_keeps_a_group_on_one_worker(create_worker_manager):
     # The two grouped modules share one worker; the ungrouped one is alone.
     assert sorted(worker.module_count for worker in worker_manager._workers) == [1, 2]
 
+    with pytest.raises(ValueError, match="one entry per spec"):
+        worker_manager.deploy_parallel(
+            [(SimpleModule, global_config, {})],
+            groups=[0, 1],
+        )
+
     for module in modules:
         module.stop()
 
@@ -382,16 +388,6 @@ def test_deploy_parallel_groups_after_dedicated_workers_claim_their_own(
 
     for module in modules:
         module.stop()
-
-
-def test_deploy_parallel_rejects_a_group_per_spec_mismatch(create_worker_manager):
-    worker_manager = create_worker_manager(n_workers=1)
-
-    with pytest.raises(ValueError, match="one entry per spec"):
-        worker_manager.deploy_parallel(
-            [(SimpleModule, global_config, {})],
-            groups=[0, 1],
-        )
 
 
 def test_collect_stats(create_worker_manager):

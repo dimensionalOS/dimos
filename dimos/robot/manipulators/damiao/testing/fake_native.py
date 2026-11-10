@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The native CAN boundary a no-hardware Damiao acceptance run sees in workers.
+"""The native CAN boundary a no-hardware Damiao test sees.
 
-This module is loaded by :mod:`sitecustomize` from this directory, which a test
-driver puts on ``PYTHONPATH`` *before* it builds any worker. Every process that
-imports :mod:`can_motor_control` after that gets these in-memory classes
+The unit fixtures import these classes directly. The worker acceptance run also
+loads this module through :mod:`sitecustomize` from this directory, which the
+test driver puts on ``PYTHONPATH`` *before* it builds any worker. Every process
+that imports :mod:`can_motor_control` after that gets these in-memory classes
 instead of the vendor ones, and the vendor transport constructors are sealed so
-they raise instead of opening a bus. It is only importable from the test driver
-directory and is never imported by production code.
+they raise instead of opening a bus. Nothing here is imported by production
+code.
 
 Events recorded by the fake boundary are appended as JSON lines to the path in
 ``DIMOS_FAKE_DAMIAO_LOG`` when that variable is set. A read is logged from
-``FakeRobot.refresh`` (the only path a connection's reading takes) and a write
-from ``FakeArm.mit_control`` (the only path a position command takes), each with
-its process, thread and the read epoch, so a test can prove the read and the
-write happened in one cycle and one thread.
+``FakeRobot.refresh`` and a write from ``FakeArm.mit_control``, each with its
+process, thread and read epoch, so a test can prove the read and the write
+happened in one cycle and one thread.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import os
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -72,14 +72,19 @@ def _log(event: str, **fields: Any) -> None:
 
 
 class FakeArm:
-    """One bus's arm motors. A write moves the reported position to the target."""
+    """One bus's arm motors. A worker write also moves the reported position."""
 
-    def __init__(self, count: int, initial: float = 0.0) -> None:
+    #: The hosted worker boundary follows commands; unit fixtures keep the
+    #: reported state fixed unless a test sets it.
+    follows_commands: ClassVar[bool] = False
+
+    def __init__(self, count: int, initial: float = 0.2) -> None:
         self.q = np.full(count, initial, dtype=np.float64)
-        self.dq = np.zeros(count, dtype=np.float64)
-        self.tau = np.zeros(count, dtype=np.float64)
+        self.dq = np.full(count, 0.3, dtype=np.float64)
+        self.tau = np.full(count, 0.4, dtype=np.float64)
         self.commands: list[np.ndarray] = []
         self.modes: list[str] = []
+        self.error: Exception | None = None
 
     def positions(self) -> np.ndarray:
         return self.q.copy()
@@ -91,11 +96,12 @@ class FakeArm:
         return self.tau.copy()
 
     def mit_control(self, rows: np.ndarray) -> None:
+        if self.error:
+            raise self.error
         rows = np.asarray(rows, dtype=np.float64)
         self.commands.append(rows.copy())
-        # A fake motor follows its commanded position, so a closed cycle reads
-        # back exactly what the coordinator wrote.
-        self.q = rows[:, 2].copy()
+        if self.follows_commands:
+            self.q = rows[:, 2].copy()
         _log("write", q=self.q.tolist())
 
     def set_mode(self, mode: str) -> None:
@@ -105,11 +111,14 @@ class FakeArm:
 class FakeGripper:
     """One jaw, tracked by its normalised opening."""
 
+    follows_mit: ClassVar[bool] = False
+
     def __init__(self) -> None:
         self.opening = 0.4
         self.motor = SimpleNamespace(position=0.4)
         self.commands: list[float] = []
         self.modes: list[str] = []
+        self.mit_commands: list[tuple[float, float, float, float, float]] = []
         self.enable_count = 0
         self.disable_count = 0
 
@@ -127,79 +136,106 @@ class FakeGripper:
         self.disable_count += 1
 
     def mit_control(self, kp: float, kd: float, q: float, dq: float, tau: float) -> None:
-        del kp, kd, dq, tau
-        self.opening = q
+        self.mit_commands.append((kp, kd, q, dq, tau))
+        if self.follows_mit:
+            self.opening = q
 
 
 class FakeRobot:
     """The in-memory robot the vendor ``Robot`` would be."""
 
+    #: Zero is inside every joint range of the shipped Damiao models, so the
+    #: worker boundary starts there; unit fixtures use the richer 0.2 pose.
+    default_position: ClassVar[float] = 0.2
+    arm_type: ClassVar[type[FakeArm]] = FakeArm
+    gripper_type: ClassVar[type[FakeGripper]] = FakeGripper
+
     def __init__(self) -> None:
-        # Zero is inside every joint range of the shipped Damiao models. A
-        # uniform non-zero pose can be outside a joint's declared limits (for
-        # example Metal's joint2 is -3.14..0), and the coordinator would then
-        # correctly refuse to command it.
-        self.default_position = 0.0
         self.groups: dict[str, FakeArm | FakeGripper] = {}
         self.events: list[str] = []
+        self.connected = False
+        self.enable_error: Exception | None = None
+        self.disable_error: Exception | None = None
+        self.refresh_error: Exception | None = None
+        self.tick_error: Exception | None = None
+        self.bus_specs: list[tuple[Any, ...]] = []
+        self.arm_specs: list[tuple[Any, ...]] = []
+        self.gripper_specs: list[tuple[Any, ...]] = []
 
     def __getitem__(self, name: str) -> FakeArm | FakeGripper:
         return self.groups[name]
 
     def connect(self) -> None:
         self.events.append("connect")
+        self.connected = True
         _log("connect")
 
     def enable(self) -> None:
         self.events.append("enable")
         _log("enable")
+        if self.enable_error:
+            raise self.enable_error
 
     def disable(self) -> None:
         self.events.append("disable")
         _log("disable")
+        if self.disable_error:
+            raise self.disable_error
 
     def refresh(self) -> None:
         global _epoch
         _epoch += 1
         self.events.append("refresh")
-        if os.environ.get(FAIL_ENV) and os.path.exists(os.environ[FAIL_ENV]):
+        if self.refresh_error:
+            raise self.refresh_error
+        trigger = os.environ.get(FAIL_ENV)
+        if trigger and os.path.exists(trigger):
             raise RuntimeError(FAILURE_MESSAGE)
         _log("read")
 
     def tick(self, deadline: int) -> None:
         assert deadline > 0
         self.events.append("tick")
-
-    @property
-    def bus_names(self) -> list[str]:
-        return list(self.groups)
-
-    @property
-    def group_names(self) -> list[str]:
-        return list(self.groups)
+        if self.tick_error:
+            raise self.tick_error
 
 
-class FakeBuilder:
-    def __init__(self) -> None:
-        self.robot = FakeRobot()
+class Builder:
+    """Build a fake robot, or attach groups to one a fixture already owns."""
 
-    def add_bus(self, name: str, bus: Any, codec: Any) -> FakeBuilder:
-        del bus, codec
-        self.robot.events.append(f"bus:{name}")
+    def __init__(self, robot: FakeRobot | None = None) -> None:
+        self.robot = robot if robot is not None else FakeRobot()
+
+    def add_bus(self, name: str, bus: Any, codec: Any) -> Builder:
+        self.robot.bus_specs.append((name, bus, codec))
         return self
 
-    def add_arm(self, name: str, *, bus: str, motors: list[Any]) -> FakeBuilder:
-        del bus
-        self.robot.groups[name] = FakeArm(len(motors), self.robot.default_position)
+    def add_arm(self, name: str, *, bus: str, motors: list[Any]) -> Builder:
+        self.robot.arm_specs.append((name, bus, motors))
+        self.robot.groups[name] = self.robot.arm_type(len(motors), self.robot.default_position)
         return self
 
-    def add_gripper(self, name: str, **kwargs: Any) -> FakeBuilder:
-        del kwargs
-        self.robot.groups[name] = FakeGripper()
+    def add_gripper(self, name: str, **kwargs: Any) -> Builder:
+        self.robot.gripper_specs.append((name, kwargs))
+        self.robot.groups[name] = self.robot.gripper_type()
         return self
 
     def build(self) -> FakeRobot:
         return self.robot
+
+
+class _WorkerArm(FakeArm):
+    follows_commands = True
+
+
+class _WorkerGripper(FakeGripper):
+    follows_mit = True
+
+
+class _WorkerRobot(FakeRobot):
+    default_position = 0.0
+    arm_type = _WorkerArm
+    gripper_type = _WorkerGripper
 
 
 class FakeMotorSpec:
@@ -209,8 +245,7 @@ class FakeMotorSpec:
 
 class FakeBus:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        self.args = args
-        self.kwargs = kwargs
+        pass
 
 
 #: The vendor constructors, kept so a test can prove they are sealed.
@@ -243,8 +278,8 @@ def install() -> None:
         if original is not None:
             _originals[name] = original
             _seal(original, name)
-    can_motor_control.Robot = FakeRobot
-    can_motor_control.Robot.builder = staticmethod(FakeBuilder)  # type: ignore[attr-defined]
+    can_motor_control.Robot = _WorkerRobot
+    can_motor_control.Robot.builder = staticmethod(lambda: Builder(_WorkerRobot()))  # type: ignore[attr-defined]
     can_motor_control.Arm = FakeArm
     can_motor_control.Gripper = FakeGripper
     can_motor_control.MotorSpec = FakeMotorSpec

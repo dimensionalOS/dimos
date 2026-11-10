@@ -18,14 +18,14 @@ A hosted connection is a ``ConnectionModule`` with ``hosted=True`` deployed
 into the coordinator's own worker process. The tick loop then reads its
 hardware directly for the feedback tasks compute on, and writes the arbitrated
 result back, with no command or reading message in between. These tests prove
-the order, the freshness, the e-stop generation gate and the bounded telemetry,
-in process and once with real worker processes.
+the order, the freshness, the e-stop generation gate and the bounded telemetry.
+The shipped stack's real-worker acceptance lives in
+``dimos/robot/manipulators/damiao/test_damiao_blueprints.py``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-import os
 import threading
 import time
 from typing import Any
@@ -46,12 +46,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
-    joint_trajectory_task,
 )
 from dimos.control.tick_loop import TickLoop
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -202,7 +198,7 @@ def rig(mocker: Any) -> Iterator[Callable[..., Rig]]:
         r.stop()
 
 
-def test_the_cycle_reads_this_tick_and_writes_without_an_action_message(
+def test_the_cycle_reads_and_writes_in_one_tick_without_an_action_message(
     rig: Callable[..., Rig],
 ) -> None:
     r = rig()
@@ -222,22 +218,21 @@ def test_the_cycle_reads_this_tick_and_writes_without_an_action_message(
         timeout=2.0,
     )
 
-
-def test_telemetry_publication_never_paces_the_cycle(rig: Callable[..., Rig]) -> None:
-    r = rig()
+    # A stalled telemetry publication cannot pace the cycle: every tick still
+    # read and wrote.
     release = threading.Event()
     r.arm.set_transport("joint_state", RecordingTransport(release=release))  # type: ignore[arg-type]
-    r.coordinator.add_task(SendsPositions({"mock/joint1": 0.3}))
-
     started = time.monotonic()
     for _ in range(5):
         r.tick()
     assert time.monotonic() - started < 2.0
-    assert r.arm.writes[-1]["mock/joint1/position"] == pytest.approx(0.3)
+    assert r.arm.writes[-1]["mock/joint1/position"] == pytest.approx(0.7)
     release.set()
 
 
-def test_an_estop_latched_during_compute_rejects_the_write(rig: Callable[..., Rig]) -> None:
+def test_an_estop_during_compute_rejects_the_write_and_a_clear_does_not_replay_it(
+    rig: Callable[..., Rig],
+) -> None:
     r = rig(deadman_timeout_s=0.05)
     task = BlocksInCompute(0.4)
     r.coordinator.add_task(task)
@@ -269,6 +264,14 @@ def test_an_estop_latched_during_compute_rejects_the_write(rig: Callable[..., Ri
     assert not thread.is_alive()
     assert len(r.arm.writes) == writes
     wait_until(lambda: r.arm.halts > 0, timeout=2.0)
+
+    # The clear does not revive the tick computed before it; a fresh tick,
+    # computed on a new reading, may write again.
+    r.coordinator.set_estop(False)
+    wait_until(lambda: r.coordinator._command_generation == 2, timeout=5.0)
+    assert len(r.arm.writes) == writes
+    r.tick()
+    assert r.arm.writes[-1]["mock/joint1/position"] == pytest.approx(0.4)
 
 
 def test_a_cancel_with_a_trajectory_blocked_in_compute_returns_and_drops_its_write(
@@ -326,53 +329,21 @@ def test_a_cancel_with_a_trajectory_blocked_in_compute_returns_and_drops_its_wri
     assert len(r.arm.writes) == writes
 
 
-def test_a_command_computed_before_a_clear_is_not_replayed(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    task = BlocksInCompute(0.4)
-    r.coordinator.add_task(task)
-    r.tick()
-    writes = len(r.arm.writes)
-    task.armed.set()
-
-    thread = threading.Thread(target=r.tick)
-    thread.start()
-    assert task.entered.wait(timeout=5.0)
-    estop = threading.Thread(target=r.coordinator.set_estop, args=(True,))
-    estop.start()
-    wait_until(lambda: r.coordinator._command_generation == 1, timeout=5.0)
-    clear = threading.Thread(target=r.coordinator.set_estop, args=(False,))
-    clear.start()
-    task.release.set()
-    thread.join(timeout=5.0)
-    estop.join(timeout=5.0)
-    clear.join(timeout=5.0)
-
-    # The tick computed before the stop/clear pair may not move the robot.
-    assert len(r.arm.writes) == writes
-    # A tick after the clear, computed on a fresh reading, may.
-    wait_until(lambda: r.coordinator._command_generation == 2, timeout=5.0)
-    r.tick()
-    assert r.arm.writes[-1]["mock/joint1/position"] == pytest.approx(0.4)
-
-
-def test_a_hosted_coordinator_without_the_connection_in_process_refuses_to_start(
-    mocker: Any,
-) -> None:
-    mocker.patch.object(TickLoop, "start")
-    coordinator = HostedArmCoordinator(model=MOCK_MODEL)
-    try:
-        with pytest.raises(ValueError, match="needs 'mock'\\'s connection module in its worker"):
-            coordinator.start()
-    finally:
-        coordinator.stop()
-
-
-def test_local_connection_binds_the_instance_in_the_coordinator_namespace(
+def test_a_hosted_coordinator_binds_its_own_connection_and_refuses_without_one(
     mocker: Any,
 ) -> None:
     from dimos.control.connection.mock_joint_connection import MockJointConnection
 
     mocker.patch.object(TickLoop, "start")
+    # No connection in this worker: refuse to start rather than fall back to
+    # streams. Check it before this test registers any connection.
+    bare = HostedArmCoordinator(model=MOCK_MODEL)
+    try:
+        with pytest.raises(ValueError, match="needs 'mock'\\'s connection module in its worker"):
+            bare.start()
+    finally:
+        bare.stop()
+
     first = MockJointConnection(
         instance_name="one/arm", source="mock", model=fake_arm_model(), hosted=True
     )
@@ -390,98 +361,5 @@ def test_local_connection_binds_the_instance_in_the_coordinator_namespace(
         with pytest.raises(ValueError, match="cannot tell which one belongs"):
             other._local_connection("mock")
     finally:
-        coordinator.stop()
-        other.stop()
-        first.stop()
-        second.stop()
-
-
-# End to end, with the connection and the coordinator in real worker processes.
-
-TARGET = [0.2, -0.1, 0.3, 0.0, 0.1, -0.2, 0.25]
-
-
-class HostedRobots(ControlCoordinator):
-    """Ports for FakeArm driven directly; no command or reading port is used."""
-
-    hosted_connections = True
-    mock_position_command: Out[JointState]
-    mock_joint_state: In[JointState]
-
-
-@pytest.fixture
-def hosted_system() -> Iterator[ModuleCoordinator]:
-    blueprint = autoconnect(
-        HostedRobots.blueprint(
-            instance_name="HostedDirectCheck",
-            model=MOCK_MODEL,
-            reading_timeout_s=10.0,
-            tasks=[joint_trajectory_task(MOCK_JOINTS)],
-        ),
-        FakeArm.blueprint(source="mock", model=fake_arm_model(), hosted=True),
-    ).remappings(
-        [
-            (FakeArm, "position_command", "mock_position_command"),
-            (HostedRobots, "mock_joint_state", "joint_state"),
-        ]
-    )
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
-    built = ModuleCoordinator.build(blueprint, parsed)
-    manager: Any = built._managers["python"]
-    pids = [worker.pid for worker in manager.workers if worker.pid is not None]
-    assert pids, "the hosted pair must run in real worker processes"
-    yield built
-    built.stop()
-    for pid in pids:
-        wait_until(lambda pid=pid: not _process_alive(pid), timeout=5.0)
-
-
-def _process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
-
-
-def test_a_real_worker_pair_runs_the_direct_cycle(hosted_system: ModuleCoordinator) -> None:
-    coordinator = hosted_system.get_instance(HostedRobots)
-    arm = hosted_system.get_instance(FakeArm)
-
-    # Both modules run in the same worker: no RPC hop between the cycle and
-    # the hardware it reads and writes.
-    manager: Any = hosted_system._managers["python"]
-    assert [worker.module_count for worker in manager.workers if worker.module_count] == [2]
-
-    wait_until(lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()), timeout=10.0)
-    now = coordinator.get_joint_positions()
-    trajectory = JointTrajectory(
-        joint_names=MOCK_JOINTS,
-        points=[
-            TrajectoryPoint(
-                positions=[now[joint] for joint in MOCK_JOINTS],
-                velocities=[0.0] * len(MOCK_JOINTS),
-            ),
-            TrajectoryPoint(
-                positions=TARGET,
-                velocities=[0.0] * len(MOCK_JOINTS),
-                time_from_start=0.3,
-            ),
-        ],
-    )
-    result = coordinator.execute_trajectory(trajectory)
-    assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
-
-    def reached() -> bool:
-        seen = coordinator.get_joint_positions()
-        return all(
-            joint in seen and seen[joint] == pytest.approx(target, abs=1e-6)
-            for joint, target in zip(MOCK_JOINTS, TARGET, strict=True)
-        )
-
-    wait_until(reached, timeout=10.0)
-    # The hosted connection was written directly: its deadman was fed.
-    status = arm.status()
-    assert status.last_command_time is not None
-    assert status.last_rejection is None
-    assert status.last_error is None
+        for module in (other, coordinator, first, second):
+            module.stop()

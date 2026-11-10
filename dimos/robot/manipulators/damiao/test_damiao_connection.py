@@ -23,7 +23,10 @@ import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao import arm as arm_module, connection as common
-from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
+    LocalTransport,
+    read_until_fault,
+)
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.testing.waiting import wait_until
 
@@ -287,12 +290,7 @@ def test_feedback_fault_reports_a_failing_disable(make_rig, boundary):
     module, _, _ = make_rig()
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].refresh_error = RuntimeError("lost feedback")
-    try:
-        module.read_measured()
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("read_measured did not latch the feedback fault")
+    read_until_fault(module)
     assert "disable failed" in module.status().last_error
     boundary[0].disable_error = None
     boundary[0].refresh_error = None

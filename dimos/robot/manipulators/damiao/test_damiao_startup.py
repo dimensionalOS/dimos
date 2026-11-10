@@ -16,6 +16,7 @@
 
 import pytest
 
+from dimos.robot.manipulators.damiao import connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
@@ -51,9 +52,7 @@ def test_first_state_follows_telemetry_setup_and_ready_log(connection_class, bou
     module = connection_class()
     readings = LocalTransport()
     module.set_transport("joint_state", readings)
-    info = mocker.spy(
-        __import__("dimos.robot.manipulators.damiao.connection", fromlist=["logger"]).logger, "info"
-    )
+    info = mocker.spy(common.logger, "info")
     try:
         module.start()
         reading = module.read_measured()
