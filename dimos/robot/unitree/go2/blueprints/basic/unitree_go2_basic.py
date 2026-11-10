@@ -38,11 +38,11 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.messages.dimos_msgs.msg import LineSegments3D
-    from dimos.messages.geometry_msgs.msg import PoseArray, PoseStamped, Twist
-    from dimos.messages.nav_msgs.msg import OccupancyGrid
-    from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2
-    from dimos.messages.std_msgs.msg import Float32
+    from dimos_messages.dimos_msgs.msg import LineSegments3D
+    from dimos_messages.geometry_msgs.msg import PoseArray, PoseStamped, Twist
+    from dimos_messages.nav_msgs.msg import OccupancyGrid
+    from dimos_messages.sensor_msgs.msg import CameraInfo, PointCloud2
+    from dimos_messages.std_msgs.msg import Float32
     from dimos.visualization.rerun.bridge import RerunData, RerunMulti
 
 

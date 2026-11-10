@@ -46,10 +46,10 @@ from dimos.control.task import (
 )
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.whole_body.spec import IMUState
-    from dimos.messages.geometry_msgs.msg import PoseStamped
+    from dimos_messages.geometry_msgs.msg import PoseStamped
 
 logger = setup_logger()
 

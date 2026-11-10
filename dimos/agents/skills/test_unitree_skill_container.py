@@ -24,8 +24,8 @@ import pytest
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.base import NavigationState
 from dimos.robot.unitree.unitree_skill_container import (
     _UNITREE_COMMANDS,

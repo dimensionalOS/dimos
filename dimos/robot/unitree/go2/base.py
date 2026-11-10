@@ -31,12 +31,12 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.messages.foxglove_msgs.msg import CompressedVideo
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2
-from dimos.messages.std_msgs.msg import String
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.foxglove_msgs.msg import CompressedVideo
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, PointCloud2
+from dimos_messages.std_msgs.msg import String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (

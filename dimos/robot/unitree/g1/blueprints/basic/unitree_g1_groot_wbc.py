@@ -69,10 +69,10 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import Odometry, Path as NavPath
-from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import Odometry, Path as NavPath
+from dimos_messages.sensor_msgs.msg import Imu, JointState
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1

@@ -26,14 +26,14 @@ import time
 from dimos.memory.vis.space.elements import Point as VisualPoint, Polyline, Text
 from dimos.memory.vis.space.space import Space
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Point as GeoPoint,
     Pose,
     PoseStamped,
 )
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 
 # Plot styling constants for the trajectory renderers below.
 _REF_COLOR = "#cccccc"  # reference path = light gray

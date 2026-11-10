@@ -17,8 +17,8 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 pytest.importorskip("dimos_mls_planner")
@@ -26,7 +26,7 @@ pytest.importorskip("dimos_mls_planner")
 from dimos.mapping.ray_tracing.transformer import RayTraceMap
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
-from dimos.messages.geometry_msgs.msg import Transform
+from dimos_messages.geometry_msgs.msg import Transform
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
 from dimos.navigation.global_planner.mls_planner.utils.plan_rrd import Seeding, SeedStage
 

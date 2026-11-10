@@ -28,8 +28,8 @@ from dimos.mapping.pointclouds.occupancy import (
     OccupancyConfig,
 )
 from dimos.message_utils import occupancy as occupancy_utils
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

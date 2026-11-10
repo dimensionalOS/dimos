@@ -33,7 +33,7 @@ from dimos.memory import convert_recording
 from dimos.memory.convert_recording import convert
 from dimos.memory.recording_migration import inspect_recording
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.std_msgs.msg import String
 from dimos.models.embedding.base import Embedding
 
 

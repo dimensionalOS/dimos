@@ -18,8 +18,8 @@ import time
 from typing import Any
 
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import VideoStats
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import VideoStats
+from dimos_messages.std_msgs.msg import Header
 
 
 def from_dict(d: dict[str, Any]) -> VideoStats:

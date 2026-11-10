@@ -648,6 +648,39 @@ jobs:
       - name: Relay image build  # docker/relay/Dockerfile must not rot silently
         run: docker build -f docker/relay/Dockerfile .
 
+  message-artifacts:
+    # Builds the real wheel and sdist, then runs the artifact acceptance suite.
+    # DIMOS_BUNDLE_REQUIRED=1 turns a missing artifact into a failure instead of
+    # the skip used by ordinary unit-test runs.
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: python -m pip install --upgrade build wheel 'setuptools>=70' pytest
+      - name: Build wheel and sdist
+        env:
+          DIMOS_ALLOW_MISSING_COCKPIT: "1"
+        run: python -m build --outdir dist
+      - name: Populate local wheelhouse
+        run: >-
+          python -m pip download --dest wheelhouse
+          'dimos-cdrgen==0.1.2' 'setuptools>=70' wheel pybind11 numpy 'requests>=2.31'
+      - name: Artifact acceptance
+        env:
+          DIMOS_ALLOW_MISSING_COCKPIT: "1"
+          DIMOS_BUNDLE_DIST: ${{ github.workspace }}/dist
+          DIMOS_BUNDLE_WHEELHOUSE: ${{ github.workspace }}/wheelhouse
+          DIMOS_BUNDLE_REQUIRED: "1"
+        run: python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_bundled.py
+
   agent:
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -1192,8 +1225,8 @@ jobs:
           import numpy as np
           from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
           from dimos.message_utils import pointcloud
-          from dimos.messages.builtin_interfaces.msg import Time
-          from dimos.messages.std_msgs.msg import Header
+          from dimos_messages.builtin_interfaces.msg import Time
+          from dimos_messages.std_msgs.msg import Header
 
           points = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
           cloud = pointcloud.from_xyz(points, header=Header(stamp=Time(sec=1, nanosec=0), frame_id=''))
@@ -1327,6 +1360,7 @@ jobs:
     - isolated-python-tests
     - md-babel
     - web
+    - message-artifacts
     - agent
     - tests
     - self-hosted-tests

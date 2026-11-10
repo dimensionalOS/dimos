@@ -53,8 +53,8 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.protocol.tf.static_tf_publisher import (
     FrameSpec,
     StaticTfPublisher,

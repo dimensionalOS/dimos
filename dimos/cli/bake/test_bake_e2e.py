@@ -33,9 +33,9 @@ import pytest
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 pytestmark = pytest.mark.bake_e2e
 

@@ -20,9 +20,9 @@ from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )

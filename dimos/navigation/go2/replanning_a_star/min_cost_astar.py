@@ -21,14 +21,14 @@ from numpy.typing import NDArray
 
 from dimos.message_utils import occupancy as occupancy_utils
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
     Quaternion,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding

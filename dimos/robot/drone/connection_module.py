@@ -30,7 +30,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.models import LatLon
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -40,9 +40,9 @@ from dimos.messages.geometry_msgs.msg import (
     Twist,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header, String
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header, String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger

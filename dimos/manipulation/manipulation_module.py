@@ -93,8 +93,8 @@ from dimos.manipulation.visualization.config import (
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.operator import ManipulationOperator
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -103,9 +103,9 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import JointState, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import JointState, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 

@@ -28,8 +28,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from dimos.message_utils import image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseWithCovariance,
@@ -38,9 +38,9 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import Image, Imu, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import Image, Imu, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds import cdr
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap

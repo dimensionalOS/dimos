@@ -128,7 +128,7 @@ dimos/
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
 ├── visualization/rerun/     # Rerun bridge
-├── message_utils/           # Operations on generated dimos.messages values
+├── message_utils/           # Operations on generated dimos_messages values
 └── utils/                   # Logging, data loading
 docs/
 ├── usage/modules.md         # ← Module system deep dive
@@ -159,7 +159,7 @@ Autonomous subsystems. Communicate via `In[T]`/`Out[T]` typed streams. Run in fo
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.core import rpc
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 class MyModule(Module):
     color_image: In[Image]

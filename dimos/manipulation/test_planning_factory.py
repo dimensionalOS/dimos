@@ -52,8 +52,8 @@ from dimos.manipulation.planning.trajectory_generator.config import (
     TrajectoryParametrizationConfig,
 )
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 

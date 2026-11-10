@@ -32,7 +32,7 @@ from dimos.control.tasks.pose_target_ik import (
     pose_target_value,
     string_tuple_converter,
 )
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig

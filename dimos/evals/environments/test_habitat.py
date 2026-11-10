@@ -25,7 +25,7 @@ from dimos.evals.environments.habitat import HabitatEnvironment
 from dimos.message_utils import image as image_utils
 from dimos.message_utils.geometry import vector_array
 from dimos.message_utils.time import header_now
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseWithCovariance,
@@ -34,7 +34,7 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
+from dimos_messages.nav_msgs.msg import Odometry
 from dimos.simulation.habitat.connection import HabitatConnection, HabitatConnectionConfig
 
 
@@ -194,7 +194,7 @@ def test_readiness_failure_releases_resources(tmp_path, mocker):
 
 def test_readiness_and_pose_normalization():
     from dimos.memory.store.memory import MemoryStore
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
     env = environment()
     with MemoryStore() as store:

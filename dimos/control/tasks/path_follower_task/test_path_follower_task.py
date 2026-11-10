@@ -31,8 +31,8 @@ from dimos.control.tasks.path_follower_task.path_follower_task import (
 )
 from dimos.core.global_config import global_config as _gc
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.std_msgs.msg import Header
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 

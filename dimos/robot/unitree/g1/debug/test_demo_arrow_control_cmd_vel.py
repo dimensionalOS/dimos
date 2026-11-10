@@ -4,7 +4,7 @@
 from threading import Condition
 
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 from dimos.robot.unitree.g1.debug.demo_arrow_control_cmd_vel import publish_twist
 
 

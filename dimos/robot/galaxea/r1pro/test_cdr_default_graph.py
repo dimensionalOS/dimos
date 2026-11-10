@@ -16,7 +16,7 @@ from contextlib import ExitStack
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 
 

@@ -57,8 +57,8 @@ from dimos.evals.vqa.primitives.range import ObjectRangeEvidence
 from dimos.evals.vqa.suite import format_case_inputs, load_suite
 from dimos.message_utils import image as image_utils
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

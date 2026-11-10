@@ -28,7 +28,7 @@ from dimos.memory.cli import dataset
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import image, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -37,9 +37,9 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.go2.loop_closure.pgo import Keyframe, PoseGraph
 from dimos.visualization.rerun.cdr import cloud_archetype
 

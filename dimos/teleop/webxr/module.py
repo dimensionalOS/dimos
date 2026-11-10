@@ -45,12 +45,12 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Pose,
     PoseStamped,
 )
-from dimos.messages.sensor_msgs.msg import Joy
-from dimos.messages.std_msgs.msg import Header, String, UInt32
+from dimos_messages.sensor_msgs.msg import Joy
+from dimos_messages.std_msgs.msg import Header, String, UInt32
 from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.body_tracking import BodyTrackingMode, BodyTrackingSnapshot

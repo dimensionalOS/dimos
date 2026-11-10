@@ -49,7 +49,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.hardware.whole_body.spec import WholeBodyAdapter
-    from dimos.messages.geometry_msgs.msg import Twist
+    from dimos_messages.geometry_msgs.msg import Twist
 
 logger = setup_logger()
 

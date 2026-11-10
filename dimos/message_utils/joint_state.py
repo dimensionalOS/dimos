@@ -9,8 +9,8 @@ from typing import Any
 import numpy as np
 
 from dimos.message_utils.time import header_now, time_from_seconds
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 
 def from_mapping(value: Mapping[str, Any]) -> JointState:

@@ -19,8 +19,8 @@ from dimos.imitation.collection.blueprint import (
     learning_collect_webxr_piper,
     learning_collect_webxr_xarm7,
 )
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import String
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"

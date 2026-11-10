@@ -24,7 +24,7 @@ import pytest
 
 from dimos.mapping.pointclouds.box_filter import PointCloudBoxFilter
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     Quaternion,
@@ -32,8 +32,8 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.tf.tf import MultiTBuffer
 
 

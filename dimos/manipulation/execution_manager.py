@@ -34,8 +34,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.dimos_msgs.msg import TrajectoryStatus
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.dimos_msgs.msg import TrajectoryStatus
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

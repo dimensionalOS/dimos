@@ -249,8 +249,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils, time as message_time
 
 class RobotConnection(Module):
@@ -296,7 +296,7 @@ A blueprint example that connects the image stream from a robot to an MCP-backed
 ```py skip
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer

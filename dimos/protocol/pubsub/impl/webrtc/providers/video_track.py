@@ -30,7 +30,7 @@ import av
 import numpy as np
 
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

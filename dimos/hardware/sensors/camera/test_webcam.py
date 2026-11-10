@@ -23,9 +23,9 @@ import reactivex as rx
 from dimos.hardware.sensors.camera.module import WebcamModule, WebcamModuleConfig
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
 from dimos.message_utils import camera_info, image as image_utils
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_camera_config_defaults_to_one_typed_webcam_field() -> None:

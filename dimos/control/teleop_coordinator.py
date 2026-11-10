@@ -16,8 +16,8 @@
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.stream import In
-from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
-from dimos.messages.std_msgs.msg import Float32, UInt32
+from dimos_messages.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_messages.std_msgs.msg import Float32, UInt32
 
 
 class TeleopControlCoordinator(ControlCoordinator):

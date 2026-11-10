@@ -28,7 +28,7 @@ from dimos.evals.agents.lib.single_call import (
 )
 from dimos.evals.types import RunningEnvironment
 from dimos.message_utils.agent import content_blocks
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation

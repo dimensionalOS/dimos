@@ -42,15 +42,15 @@ import dimos.core.transport_factory as transport_factory
 from dimos.core.transport_factory import make_transport
 from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.message_utils import image, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
     Quaternion,
 )
-from dimos.messages.sensor_msgs.msg import Joy
-from dimos.messages.std_msgs.msg import Header, String, UInt32
+from dimos_messages.sensor_msgs.msg import Joy
+from dimos_messages.std_msgs.msg import Header, String, UInt32
 from dimos.teleop.webxr.body_tracking import BodyTrackingSnapshot
 from dimos.teleop.webxr.controller_types import (
     Buttons,

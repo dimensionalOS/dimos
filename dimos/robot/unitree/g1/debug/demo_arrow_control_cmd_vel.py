@@ -21,7 +21,7 @@ import traceback
 from typing import Any
 
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 
 CMD_VEL_TOPIC = "/cmd_vel"
 

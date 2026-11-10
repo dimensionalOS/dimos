@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.nav_msgs.msg import Path
 
 
 @dataclass(frozen=True)

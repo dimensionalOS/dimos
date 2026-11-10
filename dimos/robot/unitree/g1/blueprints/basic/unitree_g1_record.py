@@ -29,7 +29,7 @@ from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.memory.module import default_recording_dir
-from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos_messages.sensor_msgs.msg import CameraInfo
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
 from dimos.robot.unitree.g1.g1_recorder import G1Recorder

@@ -20,9 +20,9 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import occupancy as occupancy_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer

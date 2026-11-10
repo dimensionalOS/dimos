@@ -21,9 +21,9 @@ import pytest
 from reactivex.subject import Subject
 
 from dimos.message_utils import camera_info, image as image_utils
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.person_tracker import (
     PersonTracker,
     _align_images_and_detections as align_person,

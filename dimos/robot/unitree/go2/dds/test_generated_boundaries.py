@@ -7,10 +7,10 @@ from dimos_cdrgen.registry import encode
 import numpy as np
 
 from dimos.message_utils import pointcloud
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import Imu
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Imu
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds import ros
 from dimos.robot.unitree.go2.dds.cli.mcap2db import _dynamic_joint_state
 from dimos.robot.unitree.go2.dds.cli.render import integrate_position, integrate_velocity

@@ -23,8 +23,8 @@ from numpy.typing import NDArray
 from dimos.mapping.voxels.impl.o3d import O3dVoxels
 from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 

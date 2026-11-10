@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
     from dimos.memory.stream import Stream
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
     from dimos.models.embedding.base import EmbeddingModel
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.localize.localize import LocalizeTrace

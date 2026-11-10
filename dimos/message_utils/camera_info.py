@@ -29,9 +29,9 @@ import numpy as np
 from numpy.typing import NDArray
 import yaml
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos_messages.std_msgs.msg import Header
 
 
 def _dimensions(width: int, height: int) -> None:

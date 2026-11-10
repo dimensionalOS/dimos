@@ -44,8 +44,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.messages.geometry_msgs.msg import PointStamped, Pose, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.geometry_msgs.msg import PointStamped, Pose, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
 from dimos.navigation.experimental.dannav.geometry.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
 

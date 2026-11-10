@@ -23,7 +23,7 @@ from dimos_cdrgen.registry import decode
 
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import transport_topic
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSubBase
 from dimos.utils.testing.waiting import wait_until

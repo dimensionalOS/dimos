@@ -30,8 +30,8 @@ from dimos.experimental.memory import rust_cli_recorder
 from dimos.experimental.memory.rust_cli_recorder import RustRecordingPlan, RustRecordingSession
 from dimos.experimental.memory.rust_recorder import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 
 

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 try:
     import roboplan.cartesian_planning as roboplan_cartesian
@@ -59,8 +59,8 @@ from dimos.manipulation.planning.world.roboplan_world import (
     RoboPlanWorld,
 )
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

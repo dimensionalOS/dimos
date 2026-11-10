@@ -21,8 +21,8 @@ import numpy as np
 import open3d as o3d
 
 from dimos.message_utils import geometry, pointcloud
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, PointCloud2
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox

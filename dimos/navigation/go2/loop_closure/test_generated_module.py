@@ -22,10 +22,10 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import LineSegments3D
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import LineSegments3D
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.module import PGOVoxelMapper
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.threadpool import get_max_workers

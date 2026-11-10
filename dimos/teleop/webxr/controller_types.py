@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import ClassVar
 
-from dimos.messages.sensor_msgs.msg import Joy
+from dimos_messages.sensor_msgs.msg import Joy
 
 
 class Hand(IntEnum):

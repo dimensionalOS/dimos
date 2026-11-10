@@ -19,8 +19,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import camera_info, geometry, image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.fiducial.fixture_verification import (
     BoardLayout,

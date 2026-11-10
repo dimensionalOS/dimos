@@ -39,7 +39,7 @@ from dimos.message_utils import (
     geometry,
     pointcloud as pointcloud_utils,
 )
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Pose,
     TransformStamped,
     Vector3,
@@ -51,8 +51,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.messages.geometry_msgs.msg import Pose, TransformStamped
-    from dimos.messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.geometry_msgs.msg import Pose, TransformStamped
+    from dimos_messages.sensor_msgs.msg import CameraInfo
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()

@@ -24,11 +24,11 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion, Vector3
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import (
     BoundingBox3D,
     Detection3D,
     Detection3DArray,

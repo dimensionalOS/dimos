@@ -38,11 +38,11 @@ from dimos.manipulation.planning.spec.models import (
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
         Obstacle,
         PlanningGroupID,
     )
-    from dimos.messages.vision_msgs.msg import Detection3D
+    from dimos_messages.vision_msgs.msg import Detection3D
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -279,7 +279,7 @@ class WorldMonitor:
             self._obstacle_monitor.on_collision_object(msg)
 
     def on_detections(self, detections: list[Detection3D]) -> None:
-        """Handle perception detections (Detection3D from dimos.messages.vision_msgs.msg)."""
+        """Handle perception detections (Detection3D from dimos_messages.vision_msgs.msg)."""
         if self._obstacle_monitor is not None:
             self._obstacle_monitor.on_detections(detections)
 

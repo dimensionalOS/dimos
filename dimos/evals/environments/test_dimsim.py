@@ -20,8 +20,8 @@ from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.memory.store.memory import MemoryStore
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_dimsim_launch_setup_and_pose(mocker):

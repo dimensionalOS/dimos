@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import occupancy as occupancy_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
 
 

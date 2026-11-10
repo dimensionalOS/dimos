@@ -67,10 +67,10 @@ from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import MotorState, WholeBodyAdapter
 from dimos.message_utils import time as message_time
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 @pytest.fixture

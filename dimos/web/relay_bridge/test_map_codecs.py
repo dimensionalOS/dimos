@@ -18,9 +18,9 @@ import math
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Bool
 from dimos.web import _test_values as message_values
 from dimos.web.codecs import resolve_decoder, resolve_encoder
 from dimos.web.relay_bridge.builtin_codecs import decode_bool, decode_point, encode_path

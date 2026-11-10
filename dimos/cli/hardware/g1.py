@@ -24,8 +24,8 @@ import typer
 
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import ModuleHandle
 from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS, G1_READY_SPEED_SCALE

@@ -42,10 +42,10 @@ if TYPE_CHECKING:
         VisualizationStateFrame,
     )
     from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-    from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-    from dimos.messages.geometry_msgs.msg import PoseStamped
-    from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+    from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+    from dimos_messages.geometry_msgs.msg import PoseStamped
+    from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 
 
 @runtime_checkable

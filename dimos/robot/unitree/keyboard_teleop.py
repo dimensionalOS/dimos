@@ -33,9 +33,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
-from dimos.messages.sensor_msgs.msg import Joy
-from dimos.messages.std_msgs.msg import Float32, Int8
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.sensor_msgs.msg import Joy
+from dimos_messages.std_msgs.msg import Float32, Int8
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

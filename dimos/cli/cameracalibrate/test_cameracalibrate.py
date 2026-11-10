@@ -32,9 +32,9 @@ from dimos.cli.cameracalibrate.cameracalibrate import (
     write_camera_info_yaml,
 )
 from dimos.message_utils import camera_info, image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 
 
 def _synthetic_chessboard_gray(

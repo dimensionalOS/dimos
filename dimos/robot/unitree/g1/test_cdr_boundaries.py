@@ -27,9 +27,9 @@ from reactivex import Subject
 from dimos.core.module import Module
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import image, pointcloud
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.g1.connection import G1Connection
 from dimos.robot.unitree.g1.g1_tf_publisher import G1TfPublisher, mount_transforms
 from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection

@@ -47,8 +47,8 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import pLCMTransport
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 from dimos.web import _test_values as message_values
 from dimos.web.relay_bridge.config import RelayBridgeConfig, default_manifest
 from dimos.web.relay_bridge.e2e_support import (

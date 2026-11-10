@@ -24,9 +24,9 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import geometry
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import RobotModel
 

@@ -53,7 +53,7 @@ from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
 from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.message_utils import image as image_utils
 from dimos.message_utils.time import to_seconds
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel

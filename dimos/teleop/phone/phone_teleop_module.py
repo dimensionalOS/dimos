@@ -37,8 +37,8 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import decode_data_frame, peek_data_frame_lengths

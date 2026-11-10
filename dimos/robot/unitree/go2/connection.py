@@ -35,7 +35,7 @@ from dimos.core.stream import In, Out
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import camera_info as calibration, geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
     Transform,
@@ -43,13 +43,13 @@ from dimos.messages.geometry_msgs.msg import (
     Twist,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import (
+from dimos_messages.sensor_msgs.msg import (
     CameraInfo,
     Image,
     PointCloud2,
 )
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg

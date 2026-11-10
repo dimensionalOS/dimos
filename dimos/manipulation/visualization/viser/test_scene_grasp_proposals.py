@@ -20,8 +20,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
@@ -30,8 +30,8 @@ from dimos.manipulation.visualization.viser.scene import (
     GRASP_PROPOSAL_EMPHASIS_COUNT,
     ViserManipulationScene,
 )
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Vector3
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Pose, Quaternion, Vector3
 
 
 def _scene() -> ViserManipulationScene:

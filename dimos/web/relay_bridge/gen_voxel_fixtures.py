@@ -34,8 +34,8 @@ from typing import Any
 import numpy as np
 
 from dimos.message_utils import pointcloud, time
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.web.relay_bridge.builtin_codecs import encode_voxels
 from dimos.web.relay_bridge.locate import find_web_dir
 

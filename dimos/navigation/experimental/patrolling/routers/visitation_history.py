@@ -16,8 +16,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.message_utils import occupancy as occupancy_utils
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 
 
 def _circular_disk(radius_cells: int) -> NDArray[np.bool_]:

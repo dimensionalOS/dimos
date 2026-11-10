@@ -23,7 +23,7 @@ import torch.nn.functional as functional
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 

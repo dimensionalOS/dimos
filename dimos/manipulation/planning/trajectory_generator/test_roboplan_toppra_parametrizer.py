@@ -27,7 +27,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("roboplan.toppra")
 
@@ -57,7 +57,7 @@ from dimos.manipulation.planning.trajectory_generator.roboplan_toppra_parametriz
 )
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 pytestmark = pytest.mark.self_hosted

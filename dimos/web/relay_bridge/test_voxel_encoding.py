@@ -29,7 +29,7 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.web import _test_values as message_values
 from dimos.web.codecs import resolve_encoder
 from dimos.web.relay_bridge import builtin_codecs

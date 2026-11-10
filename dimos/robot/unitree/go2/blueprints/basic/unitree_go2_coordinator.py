@@ -26,7 +26,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_twist
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
 from dimos.robot.unitree.go2.connection import GO2Connection
 
 _go2_joints = make_twist_base_joints("go2")

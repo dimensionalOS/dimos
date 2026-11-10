@@ -34,9 +34,9 @@ from dimos.memory.store.null import NullStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, SpeedLimit
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import camera_optical_frame_id, is_fisheye_model
 from dimos.perception.fiducial.marker_transformer import DetectMarkers, MarkersPerFrame

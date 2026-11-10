@@ -35,8 +35,8 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import time as message_time
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.dimos_msgs.msg import TrajectoryStatus
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import TrajectoryStatus
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 

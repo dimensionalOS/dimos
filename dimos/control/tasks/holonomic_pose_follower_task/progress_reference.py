@@ -35,7 +35,7 @@ import math
 import numpy as np
 
 from dimos.message_utils import geometry
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.nav_msgs.msg import Path
 
 _EPS = 1e-9
 

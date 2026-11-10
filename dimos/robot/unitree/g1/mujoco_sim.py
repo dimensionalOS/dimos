@@ -24,7 +24,7 @@ from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
     Transform,
@@ -32,8 +32,8 @@ from dimos.messages.geometry_msgs.msg import (
     Twist,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig

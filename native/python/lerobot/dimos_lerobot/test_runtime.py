@@ -41,9 +41,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, UInt32
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, UInt32
 from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 

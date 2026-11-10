@@ -38,12 +38,12 @@ from dimos.mapping.relocalization.module import fix_error, yaw_deg
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:
-    from dimos.messages.geometry_msgs.msg import TransformStamped
+    from dimos_messages.geometry_msgs.msg import TransformStamped
 
 # rerun is imported inside the functions that log: it is heavy and only this command loads it.
 

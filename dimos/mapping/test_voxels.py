@@ -20,7 +20,7 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.message_utils import pointcloud
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 from dimos.utils.testing.moment import OutputMoment

@@ -39,10 +39,10 @@ from dimos.experimental.robot.bosdyn.spot.config import (
 from dimos.experimental.robot.bosdyn.spot.utils import roll_optical_frame
 from dimos.memory.replay import resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

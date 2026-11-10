@@ -30,10 +30,10 @@ from dimos.core.transport_factory import make_transport
 from dimos.memory.store.cdr_mcap import CdrMcapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.utils.threadpool import get_max_workers
 
