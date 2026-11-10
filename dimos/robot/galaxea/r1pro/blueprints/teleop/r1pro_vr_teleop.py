@@ -17,7 +17,7 @@
 The Quest's controllers drive both arms (7+7) and **one** torso joint through
 a single ``teleop_ik`` task on the standard control contract — the same input,
 task, IK and model path regardless of backend — and each trigger drives its
-own jaw through a dedicated feedback-gated gripper task.
+own jaw through the existing gripper task; the connection owns feedback checks.
 
 The IK solves both arms (7+7) plus the waist's top pitch and yaw joints, so the
 torso acts as the redundancy that lets the operator reach without a locked
@@ -57,12 +57,11 @@ coordinator E-STOP ends the arm session and clears the captured references,
 so no stale intent replays on the next engagement. The chassis follows the
 sticks whenever the module runs (as on the Go2) and is zeroed by the module
 on no input, by the velocity task's timeout when twist frames stop, and by
-the connection's deadman when commands stop. A jaw whose feedback drops out
-loses its emitted target; a target latched *during* an outage has never been
-sent and goes out on the first tick whose feedback covers the jaw again —
-only a fresh intent that was never emitted may wait for feedback. Recovery
-never automatically resends a previously emitted intent. This is not a vendor
-cancel or a physical E-STOP.
+the connection's deadman when commands stop. The connection rejects jaw
+writes while feedback is invalid and blocks the interrupted target after
+recovery, including targets received during the outage. A different opening
+is required to reauthorize a vendor write; the generic gripper task has no
+intent-generation signal. This is not a vendor cancel or a physical E-STOP.
 
 Usage:
     dimos run r1pro-vr-teleop            # fake backend, safe anywhere
@@ -187,20 +186,12 @@ def _teleop_task(*, full_torso: bool = False) -> TaskConfig:
 
 
 def _gripper_task(name: str, joint: str, port: str) -> TaskConfig:
-    """One jaw per task: feedback-gated, and scoped by port, not broadcast.
-
-    ``stream_bind`` moves the task's ``gripper_command`` input off the shared
-    broadcast port onto this hand's own trigger stream, so one message can
-    never move both jaws and the unscoped ``gripper_command`` port has no
-    route to either task. (``accept_broadcast=False`` would refuse scoped
-    stream input too — it exists for invoke-driven manipulation stacks.)
-    """
+    """One unchanged gripper task per jaw, scoped through existing stream bindings."""
     return TaskConfig(
         name=name,
         type="gripper",
         joint_names=[joint],
         priority=20,
-        params={"require_feedback": True},
         stream_bind={"gripper_command": port},
     )
 
@@ -232,7 +223,7 @@ class R1ProVrCoordinator(ControlCoordinator):
 
     Twist input is mapped by the explicit twist_velocity task, using measured
     planar yaw. Vendor body/world conversion belongs to the connection, never
-    this coordinator. Command-only jaws follow the owning declaration's policy.
+    this coordinator. Gripper feedback and vendor policy stay inside the connection.
     """
 
     r1pro_position_command: Out[JointState]
@@ -254,7 +245,7 @@ def _vr_tasks(*, full_torso: bool = False) -> list[TaskConfig]:
         _gripper_task("r1pro_right_gripper", "r1pro/right_gripper", "right_gripper_command"),
         joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
         _chassis_task(),
-        operator_hold_task(),
+        operator_hold_task(joint_names=list(R1PRO_UPPER_BODY_JOINTS)),
     ]
 
 

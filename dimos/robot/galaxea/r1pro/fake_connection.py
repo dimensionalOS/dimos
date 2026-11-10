@@ -133,6 +133,8 @@ class FakeR1ProConnection(ConnectionModule):
         self._gripper_target: dict[str, float | None] = {
             side: None for side in R1PRO_GRIPPER_SIDES.values()
         }
+        self._gripper_last_intent: dict[str, float | None] = dict.fromkeys(self._gripper_target)
+        self._gripper_blocked: dict[str, float | None] = dict.fromkeys(self._gripper_target)
         # Feedback suppression knobs for outage tests.
         self._feedback_enabled = True
         self._gripper_feedback_enabled: dict[str, bool] = {
@@ -239,7 +241,20 @@ class FakeR1ProConnection(ConnectionModule):
 
             for joint, side in R1PRO_GRIPPER_SIDES.items():
                 value = values.get(f"{joint}{SEPARATOR}{Interface.POSITION}")
-                if value is not None:
+                if value is None:
+                    continue
+                if not self._feedback_enabled or not self._gripper_feedback_enabled[side]:
+                    self._gripper_blocked[side] = value
+                    continue
+                if value == self._gripper_blocked[side] or value == self._gripper_last_intent[side]:
+                    continue
+                initial_hold = (
+                    self._gripper_last_intent[side] is None
+                    and value == self._gripper_measured[side]
+                )
+                self._gripper_blocked[side] = None
+                self._gripper_last_intent[side] = value
+                if not initial_hold:
                     self._gripper_target[side] = value
 
     def halt(self) -> None:

@@ -54,7 +54,7 @@ controllers drive both arms and the top torso pitch/yaw joints through one
 `teleop_ik` task. The lower two pitch joints stay at measured positions;
 `full_torso=True` explicitly enables all 18 upper-body joints. Top pitch has
 5× posture cost and a 0.15 rad/s velocity cap; arm and yaw costs are unchanged. Each trigger drives its own jaw through
-a separate feedback-gated gripper task; the jaws never enter the IK model or a
+the existing gripper task with a separate input binding; the jaws never enter the IK model or a
 trajectory. Left thumbstick controls forward/lateral velocity and right
 thumbstick x controls yaw, reusing Go2's thumbstick mapping and deadzone.
 `ArmThumbstickTeleopModule.cmd_vel` feeds the coordinator's `twist_command`
@@ -63,8 +63,8 @@ onto `r1pro_velocity_command: JointState` and the selected connection. The same
 path applies to fake and real, with limits ±1/±1 m/s and ±2 rad/s. Centred,
 missing or stale sticks command zero; arm poses and triggers never drive the
 chassis. Thumbsticks do not require the arm grips. No keyboard/nav input is wired.
-Operator hold freezes position-capable arm joints, excluding the command-only
-jaws; it does not claim chassis velocity interfaces. E-stop stops command
+Operator hold is explicitly scoped to the upper-body joints;
+it does not claim jaw positions or chassis velocity interfaces. E-stop stops command
 publication and invalidates velocity intent. After clearing it, fresh velocity
 input may drive the chassis; the arm position hold still awaits acknowledgement.
 
@@ -97,10 +97,10 @@ available on `coordinator_joint_state`. No physical base driver is started.
 capture the controller references. Releasing either grip, controller input
 going stale, or a coordinator E-STOP ends the session and clears the
 references, so the next engagement starts from a fresh capture and no old
-intent replays. A jaw whose feedback drops out loses its emitted target; a
-target latched *during* the outage has never been sent and goes out on the
-first tick whose feedback covers the jaw again: it is fresh input that was
-never emitted, not an automatic resend of a previously emitted target.
+intent replays. The connection rejects jaw writes while feedback is invalid,
+and feedback recovery alone does not reauthorize an interrupted target. A
+different target is required; the unchanged generic task does not provide an
+intent-generation signal for reissuing the same opening.
 
 **Stop is not a cancel.** As with the rest of the R1 Pro stack, stopping the
 coordinator, the deadman, or an E-STOP only stops *us* from sending new
@@ -154,12 +154,15 @@ return. This replaces the old adapter path, where an estopped robot simply
 kept its last position command with no deadman. After clearing software E-stop,
 fresh operator velocity input is required; pre-stop intent is not replayed.
 
-**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`, opening
-in metres over the vendor's 0–100 mm range) is a command-only contract joint
-driven by its own feedback-gated gripper task — never held, never zero-filled,
-never sent anything while idle. A target whose feedback goes stale, malformed
-or faulted is interrupted: it is not re-sent until the task withdraws it or an
-explicit new command replaces it, and the readback is withheld meanwhile.
+**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`) is an
+ordinary position joint in metres over the vendor's 0–100 mm range. Each uses
+the unchanged gripper task and a separate input binding. Both measured jaw
+positions are required for initial coordinator readiness. The R1Pro connection
+owns feedback/fault checks, millimetre conversion and duplicate suppression;
+an initial hold at the measured opening does not issue a vendor target.
+Stale or faulted feedback blocks vendor writes. An interrupted target is not
+replayed merely because feedback returns; replace it with a different target.
+The generic task's readback remains its last measurement, not a freshness signal.
 
 **Stop is not a cancel.** `stop()`/`halt()` and the deadman only stop *us*
 from sending new targets. They are not a vendor cancel and not a physical

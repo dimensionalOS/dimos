@@ -39,11 +39,8 @@ from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_
 
 # One canonical trajectory task spans both arms and the torso; the planner
 # selects an arm through the model's planning groups, not through task names.
-# Each jaw gets its own gripper task: feedback-gated (a jaw whose feedback
-# drops out loses its latched target and waits for a new command) and never
-# listening to the unscoped broadcast, so one message can never move both
-# sides together. The task names are the ones R1PRO_GRIPPER_TASKS binds to
-# the arm planning groups.
+# Each jaw uses the existing gripper task, with its input routed separately.
+# Vendor feedback, fault handling and duplicate-target suppression live in the connection.
 _GRIPPER_TASK_JOINTS = {
     "r1pro_left_gripper": "r1pro/left_gripper",
     "r1pro_right_gripper": "r1pro/right_gripper",
@@ -68,7 +65,7 @@ _manipulation_tasks = [
             type="gripper",
             joint_names=[joint],
             priority=10,
-            params={"require_feedback": True, "accept_broadcast": False},
+            stream_bind={"gripper_command": task_name.removeprefix("r1pro_") + "_command"},
         )
         for task_name, joint in _GRIPPER_TASK_JOINTS.items()
     ),

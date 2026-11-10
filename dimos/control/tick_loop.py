@@ -269,7 +269,6 @@ class TickLoop:
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
         joint_command_interfaces: dict[str, frozenset[Interface]] = {}
-        command_only_joints: set[str] = set()
         per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
 
         with self._hardware_lock:
@@ -295,7 +294,6 @@ class TickLoop:
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
                 joint_command_interfaces.update(joints.joint_command_interfaces)
-                command_only_joints.update(joints.command_only_joints)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
@@ -303,7 +301,6 @@ class TickLoop:
             joint_efforts=joint_efforts,
             timestamp=time.time(),
             joint_command_interfaces=joint_command_interfaces,
-            command_only_joints=frozenset(command_only_joints),
         )
         return snapshot, per_hardware
 

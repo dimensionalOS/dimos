@@ -413,7 +413,7 @@ def test_ik_model_is_torso_plus_both_arms_grippers_excluded() -> None:
     grippers = [t for t in _vr_tasks() if t.type == "gripper"]
     assert {t.joint_names[0] for t in grippers} == set(R1PRO_GRIPPER_JOINTS)
     for task in grippers:
-        assert task.params["require_feedback"] is True
+        assert task.params == {}
         side = "left" if "left" in task.joint_names[0] else "right"
         assert task.stream_bind == {"gripper_command": f"{side}_gripper_command"}
 
@@ -554,17 +554,7 @@ def test_estop_clears_the_session_and_stops_commands() -> None:
         assert chain.body_q() == pytest.approx(held, abs=1e-2)
 
 
-def test_fresh_gripper_intent_during_outage_is_sent_once_feedback_recovers() -> None:
-    """EXPOSURE: the framework's current gripper semantics, made visible.
-
-    A jaw whose feedback drops out loses its *emitted* target (never replayed).
-    But a target latched *during* the outage was never sent, so it is held and
-    goes out automatically on the first tick whose feedback covers the jaw
-    again — no new operator input required. This is the coordinator/task's
-    documented behavior (see GripperControlTaskConfig.require_feedback); it
-    has NOT been independently approved as queueing semantics, and a software
-    stop is neither a vendor cancel nor a physical E-STOP.
-    """
+def test_gripper_outage_is_gated_by_the_connection_without_replay() -> None:
     with Chain() as chain:
         chain.hold(trigger_left=1.0)  # jaw closed
         wait_until(lambda: chain.task.is_active(), timeout=5.0, interval=0.02)
@@ -584,10 +574,13 @@ def test_fresh_gripper_intent_during_outage_is_sent_once_feedback_recovers() -> 
         chain.send_joy("left", trigger=0.2, grip=1.0)  # opening 0.8 -> 0.08 m
         time.sleep(0.3)
         assert chain.gripper_target("left") == pytest.approx(0.05)
-        # Feedback returns: the latched intent replays with no new input.
+        # Recovery alone does not reauthorize the blocked target.
         chain.fake.set_gripper_feedback_enabled("left", True)
+        time.sleep(0.15)
+        assert chain.gripper_target("left") == pytest.approx(0.05)
+        chain.send_joy("left", trigger=0.7, grip=1.0)
         wait_until(
-            lambda: chain.gripper_target("left") == pytest.approx(0.08),
+            lambda: chain.gripper_target("left") == pytest.approx(0.03),
             timeout=5.0,
             interval=0.02,
         )
@@ -690,7 +683,7 @@ def test_twist_timeout_zeroes_the_chassis_instead_of_holding_speed() -> None:
         assert not chain.fake.status().deadman_fired
 
 
-def test_position_hold_claims_only_position_capable_non_command_only_joints() -> None:
+def test_position_hold_is_scoped_to_upper_body_joints() -> None:
     with Chain() as chain:
         chain.coordinator.task_invoke("operator_hold", "request", {"route": "manual"})
         hold = chain.coordinator._tasks["operator_hold"]

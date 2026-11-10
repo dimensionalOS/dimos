@@ -167,10 +167,6 @@ class ConnectionSource:
         self._robot = robot
         self._timeout = reading_timeout_s
         self._limits = table
-        self.command_only_joints = frozenset(
-            name if name.startswith(f"{robot}/") else f"{robot}/{name}"
-            for name in config.command_only_joints
-        )
 
         self._joint_ports = {
             interface: port
@@ -202,9 +198,6 @@ class ConnectionSource:
                     position_limit=table.get(f"{name}/position", Limits()),
                 )
             )
-        unknown_policy = self.command_only_joints - set(keys)
-        if unknown_policy:
-            raise ValueError(f"command_only_joints not declared: {sorted(unknown_policy)}")
         unknown = frozenset(zero_stiffness_joints) - set(keys)
         if unknown:
             raise ValueError(
@@ -227,11 +220,7 @@ class ConnectionSource:
         for port in readings:
             if port == JOINT_STATE:
                 self._readers[port] = _read_joint_state
-                groups = [
-                    tuple(joint.state_keys.values())
-                    for joint in self._joints
-                    if joint.name not in self.command_only_joints
-                ]
+                groups = [tuple(joint.state_keys.values()) for joint in self._joints]
             elif port == IMU:
                 self._readers[port] = _reader(imu_to_values, imu, robot)
                 groups = [(sensor.key,) for sensor in self._sensors]
@@ -241,17 +230,12 @@ class ConnectionSource:
                     f"one of {', '.join(READING_PORTS)}"
                 )
             self._needed[port] = groups
-            self._port_keys[port] = (
-                frozenset(key for joint in self._joints for key in joint.state_keys.values())
-                if port == JOINT_STATE
-                else frozenset(key for group in groups for key in group)
-            )
+            self._port_keys[port] = frozenset(key for group in groups for key in group)
 
         # Guards the readings and flags below, which readings change and the
         # tick loop reads.
         self._lock = threading.Lock()
         self._latest: Values = {}
-        self._key_seen: dict[str, float] = {}
         # The ports whose readings are all in _latest.
         self._reported: frozenset[str] = frozenset()
         # The ports that have ever reported in full.
@@ -345,12 +329,10 @@ class ConnectionSource:
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._port_receipts.clear()
-                self._key_seen.clear()
                 self._resumed = True
                 self._restart = False
             # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
-            self._key_seen = {**self._key_seen, **dict.fromkeys(mine, now)}
             if port not in reported and all(
                 any(key in latest for key in group) for group in self._needed[port]
             ):
@@ -396,13 +378,10 @@ class ConnectionSource:
         A joint that does not report something is left out of that lookup,
         rather than given a zero that looks like a real reading.
         """
-        now = time.monotonic()
-        with self._lock:
-            latest, key_seen = self._latest, self._key_seen
+        latest = self._latest
         snapshot = JointStateSnapshot(
             timestamp=self._received_at,
             joint_command_interfaces=self.joint_command_interfaces,
-            command_only_joints=self.command_only_joints,
         )
         for joint in self._joints:
             for interface, into in (
@@ -412,11 +391,6 @@ class ConnectionSource:
             ):
                 key = joint.state_keys.get(interface)
                 if key is not None and key in latest:
-                    if (
-                        joint.name in self.command_only_joints
-                        and now - key_seen.get(key, 0.0) > self._timeout
-                    ):
-                        continue
                     into[joint.name] = latest[key]
         return snapshot
 
@@ -484,9 +458,6 @@ class ConnectionSource:
                     self._holds[joint.name] = value
                 else:
                     self._holds.pop(joint.name, None)
-                continue
-            if joint.name in self.command_only_joints:
-                self._holds.pop(joint.name, None)
                 continue
             velocity_key = joint.command_keys.get(Interface.VELOCITY)
             hold = self._hold(joint, latest)

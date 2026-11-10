@@ -86,7 +86,6 @@ class JointStateSnapshot:
     joint_efforts: dict[JointName, float] = field(default_factory=dict)
     timestamp: float = 0.0
     joint_command_interfaces: dict[JointName, frozenset[Interface]] = field(default_factory=dict)
-    command_only_joints: frozenset[JointName] = frozenset()
 
     def get_position(self, joint_name: JointName) -> float | None:
         """Get position for a specific joint."""
