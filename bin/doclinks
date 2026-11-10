@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-python "$REPO_ROOT/dimos/cli/doclinks.py" "$@"
+# PYTHONSAFEPATH keeps the caller's directory off sys.path, so dimos/cli/dimos.py cannot shadow the package.
+PYTHONSAFEPATH=1 PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" python -m dimos.cli.doclinks "$@"
