@@ -17,7 +17,7 @@ required-features = ["module"]
 
 [dependencies]
 # The body the law is parameterized from.
-dimos-local-planner = { path = "../../../local_planner/rust", default-features = false }
+dimos-local-planner = { path = "../../local_planner/rust", default-features = false }
 serde = { version = "1", features = ["derive"], optional = true }
 dimos-module = { git = "https://github.com/dimensionalOS/dimos", rev = "6663bcb6e5e18f43a6cb9cf77ccbec613e310443", optional = true }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen", optional = true }
@@ -33,12 +33,12 @@ module = ["dimos-local-planner/module", "dep:serde", "dep:dimos-module", "dep:lc
 
 # `cargo test --features module` also runs the module's own tests.
 [dev-dependencies]
-dimos-local-planner = { path = "../../../local_planner/rust", default-features = false, features = ["test-bodies"] }
+dimos-local-planner = { path = "../../local_planner/rust", default-features = false, features = ["test-bodies"] }
 serde_json = "1"
 
 [package.metadata.dimos.module.trajectory_follower]
 path = "dimos_trajectory_follower::module::follower::TrajectoryFollower"
-python = "dimos.navigation.trajectory_follower.fancy.native:TrajectoryFollowerNative"
+python = "dimos.navigation.trajectory_follower.native:TrajectoryFollowerNative"
 threads = 2
 
 [package.metadata.dimos.module.trajectory_follower.inputs]

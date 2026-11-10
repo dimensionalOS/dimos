@@ -33,7 +33,7 @@ from typing import Any, Generic, TypeVar, cast
 
 import reactivex as rx
 from reactivex.abc import DisposableBase, ObserverBase, SchedulerBase
-from reactivex.disposable import Disposable, SerialDisposable
+from reactivex.disposable import Disposable, SerialDisposable, SingleAssignmentDisposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
@@ -160,7 +160,12 @@ def timed_playback(
                     observer.on_completed()
                 return None
 
-            disp.disposable = sched.schedule_relative(delay, emit)
+            # A timer that fires right away can schedule its successor before this
+            # call returns. Install the slot first, so that storing this timer late
+            # cannot dispose the successor and stop the replay.
+            scheduled = SingleAssignmentDisposable()
+            disp.disposable = scheduled
+            scheduled.disposable = sched.schedule_relative(delay, emit)
 
         if next_message is not None:
             schedule_emission(next_message)
