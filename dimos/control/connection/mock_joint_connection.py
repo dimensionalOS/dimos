@@ -31,7 +31,9 @@ from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import movable_joints
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -113,12 +115,13 @@ class MockJointConnection(ConnectionModule):
                 positions = dict(self._positions)
             self.joint_state.publish(
                 JointState(
-                    ts=time.time(),
-                    frame_id=self._frame,
+                    header=Header(
+                        stamp=message_time.time_from_seconds(time.time()), frame_id=self._frame
+                    ),
                     name=[f"{self.config.source}/{name}" for name in positions],
-                    position=list(positions.values()),
-                    velocity=[0.0] * len(positions),
-                    effort=[0.0] * len(positions),
+                    position=np.asarray(list(positions.values()), dtype=np.float64),
+                    velocity=np.zeros(len(positions), dtype=np.float64),
+                    effort=np.zeros(len(positions), dtype=np.float64),
                 )
             )
             self._stop_reading.wait(1.0 / self.config.state_rate_hz)

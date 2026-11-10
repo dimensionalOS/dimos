@@ -49,12 +49,9 @@ from dimos.control.contract.limits import Limits, model_limit, movable_joints
 from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped
+from dimos_messages.sensor_msgs.msg import Imu, JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -250,7 +247,7 @@ class ConnectionSource:
                 self._readers[port] = _reader(pose_to_values, self._base, robot)
                 groups = [(f"{self._base}{SEPARATOR}{i}",) for i in POSE_INTERFACES]
             elif port == BASE_VELOCITY:
-                self._readers[port] = _reader(twist_to_values, self._base, robot)
+                self._readers[port] = _reader(_read_twist_stamped, self._base, robot)
                 groups = [(f"{self._base}{SEPARATOR}{i}",) for i in TWIST_INTERFACES]
             elif port == IMU:
                 self._readers[port] = _reader(imu_to_values, imu, robot)
@@ -536,6 +533,11 @@ def _read_joint_state(msg: Any) -> Values:
     return joint_state_to_values(msg, JOINT_STATE_FIELDS)
 
 
+def _read_twist_stamped(msg: Any, base: str) -> Values:
+    """A base's speeds from a TwistStamped: the twist it carries."""
+    return twist_to_values(msg.twist, base)
+
+
 def _within(value: float, limit: Limits) -> bool:
     """Whether ``value`` is a finite number inside ``limit``'s bounds."""
     return (
@@ -557,7 +559,7 @@ def _reader(
     """
 
     def read(msg: Any) -> Values:
-        frame = getattr(msg, "frame_id", "")
+        frame = getattr(getattr(msg, "header", None), "frame_id", "")
         if SEPARATOR in frame and not frame.startswith(f"{robot}{SEPARATOR}"):
             raise ValueError(f"frame {frame!r} is another robot's")
         return convert(msg, part)

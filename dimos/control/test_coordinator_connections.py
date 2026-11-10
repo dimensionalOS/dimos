@@ -31,6 +31,7 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 from pydantic import Field
 import pytest
 from reactivex.disposable import Disposable
@@ -60,14 +61,11 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
+from dimos_messages.geometry_msgs.msg import PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.testing.waiting import wait_until
 
@@ -304,11 +302,13 @@ class Rig:
     def report_arm(self, *positions: float) -> None:
         """The fake arm's joint positions, joint1 first, standing still."""
         still = [0.0] * len(positions)
-        msg = JointState(
-            name=MOCK_JOINTS[: len(positions)],
-            position=list(positions),
-            velocity=still,
-            effort=still,
+        msg = joint_state_utils.from_mapping(
+            {
+                "name": MOCK_JOINTS[: len(positions)],
+                "position": list(positions),
+                "velocity": still,
+                "effort": still,
+            }
         )
         self.report("mock_joint_state", msg)
 
@@ -347,7 +347,12 @@ def test_aggregate_state_waits_for_complete_initial_readings(rig: Callable[..., 
     assert published == []
     r.report(
         "mock_joint_state",
-        JointState(name=MOCK_JOINTS[2:], position=[0.3] * (len(MOCK_JOINTS) - 2)),
+        joint_state_utils.from_mapping(
+            {
+                "name": MOCK_JOINTS[2:],
+                "position": [0.3] * (len(MOCK_JOINTS) - 2),
+            }
+        ),
     )
     r.tick()
     assert published == []
@@ -356,8 +361,8 @@ def test_aggregate_state_waits_for_complete_initial_readings(rig: Callable[..., 
 
     assert len(published) == 1
     assert published[0][1].name == MOCK_JOINTS
-    assert published[0][1].position == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2))]
-    assert r.positions_sent()[-1] == published[0][1].position
+    assert list(published[0][1].position) == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2))]
+    assert r.positions_sent()[-1] == list(published[0][1].position)
 
 
 def test_a_reading_arriving_after_the_snapshot_waits_for_the_next_tick(
@@ -381,7 +386,7 @@ def test_a_reading_arriving_after_the_snapshot_waits_for_the_next_tick(
     r.tick()
     assert len(published) == 1
     assert published[0][1].name == MOCK_JOINTS
-    assert published[0][1].position == [0.2] * len(MOCK_JOINTS)
+    assert list(published[0][1].position) == [0.2] * len(MOCK_JOINTS)
 
 
 def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
@@ -421,7 +426,18 @@ def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., 
     r.coordinator.add_task(task)
 
     r.report_arm(*AT_REST)
-    r.report("mock_imu", Imu(orientation=Quaternion(0.0, 0.0, 0.0, 1.0)))
+    r.report(
+        "mock_imu",
+        Imu(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            orientation_covariance=np.zeros(9, dtype=np.float64),
+            angular_velocity=Vector3(0.0, 0.0, 0.0),
+            angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+            linear_acceleration=Vector3(0.0, 0.0, 0.0),
+            linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+        ),
+    )
     r.tick()
 
     assert r.positions_sent() == [[0.5, *AT_REST[1:]]]
@@ -454,7 +470,9 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
 
     r.report(
         "mock_joint_state",
-        JointState(name=["mock/joint1", "mock/drive_joint"], position=[0.0, 0.2]),
+        joint_state_utils.from_mapping(
+            {"name": ["mock/joint1", "mock/drive_joint"], "position": [0.0, 0.2]}
+        ),
     )
     r.tick()
     assert r.coordinator.task_invoke("gripper", "get_normalized") == pytest.approx([1 - 0.2 / 0.85])
@@ -519,7 +537,9 @@ def test_a_port_carrying_the_wrong_message_is_refused_at_start(rig: Callable[...
         go2_cmd_vel: Out[JointState]
         go2_odom: In[PoseStamped]
 
-    with pytest.raises(ValueError, match="'go2_cmd_vel' is robot 'go2'.*must carry Twist"):
+    with pytest.raises(
+        ValueError, match="'go2_cmd_vel' is robot 'go2'.*must carry .*Twist, not .*JointState"
+    ):
         rig(WrongBase)
 
 
@@ -703,10 +723,23 @@ def drive_to_target(system: ModuleCoordinator) -> None:
     coordinator = system.get_instance(Robots)
     wait_until(lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()), timeout=10.0)
     trajectory = JointTrajectory(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
         joint_names=MOCK_JOINTS,
         points=[
-            TrajectoryPoint(positions=positions(system)),
-            TrajectoryPoint(positions=TARGET, time_from_start=0.3),
+            JointTrajectoryPoint(
+                positions=np.asarray(positions(system), dtype=np.float64),
+                velocities=np.zeros(len(MOCK_JOINTS), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.0),
+            ),
+            JointTrajectoryPoint(
+                positions=np.asarray(TARGET, dtype=np.float64),
+                velocities=np.zeros(len(TARGET), dtype=np.float64),
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+                time_from_start=message_time.duration_from_seconds(0.3),
+            ),
         ],
     )
 

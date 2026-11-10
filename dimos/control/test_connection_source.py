@@ -20,15 +20,23 @@ from collections.abc import Collection
 from pathlib import Path
 import tempfile
 
+import numpy as np
 import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils, time as message_time
+from dimos_messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.testing.waiting import wait_until
 
@@ -78,7 +86,41 @@ def base(readings: Collection[str] = ("odom", "base_velocity")) -> ConnectionSou
 
 def reading(*positions: float) -> JointState:
     """The arm's joint positions, joint1 first."""
-    return JointState(name=[J1, J2][: len(positions)], position=list(positions))
+    return joint_state_utils.from_mapping(
+        {"name": [J1, J2][: len(positions)], "position": list(positions)}
+    )
+
+
+def pose(*, frame_id: str = "") -> PoseStamped:
+    """A stamped pose at the origin, in the frame named."""
+    return PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=frame_id),
+        pose=Pose(
+            position=Point(x=0.0, y=0.0, z=0.0),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
+
+
+def twist_stamped(*, frame_id: str = "") -> TwistStamped:
+    """A stamped, still twist, in the frame named."""
+    return TwistStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=frame_id),
+        twist=Twist(linear=Vector3(x=0.0, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=0.0)),
+    )
+
+
+def imu(*, frame_id: str = "") -> Imu:
+    """An IMU at rest, in the frame named."""
+    return Imu(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=frame_id),
+        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        orientation_covariance=np.zeros(9, dtype=np.float64),
+        angular_velocity=Vector3(x=0.0, y=0.0, z=0.0),
+        angular_velocity_covariance=np.zeros(9, dtype=np.float64),
+        linear_acceleration=Vector3(x=0.0, y=0.0, z=0.0),
+        linear_acceleration_covariance=np.zeros(9, dtype=np.float64),
+    )
 
 
 def arm_at(
@@ -105,7 +147,7 @@ def test_joints_come_from_the_model_under_the_robots_name() -> None:
 def test_joints_and_sensors_come_from_readings() -> None:
     source = arm(readings=("joint_state", "imu"))
     source.on_message("joint_state", reading(0.3, -0.2))
-    source.on_message("imu", Imu(orientation=Quaternion(0.0, 0.0, 0.0, 1.0), frame_id="imu"))
+    source.on_message("imu", imu(frame_id="imu"))
 
     joints = source.read_joints()
     assert joints.joint_positions == {J1: 0.3, J2: -0.2}
@@ -120,9 +162,14 @@ def test_joints_and_sensors_come_from_readings() -> None:
 def test_every_joint_state_message_counts() -> None:
     source = arm(model=GRIPPER_MODEL)
 
-    source.on_message("joint_state", JointState(name=[J1], position=[0.3], effort=[1.5]))
+    source.on_message(
+        "joint_state",
+        joint_state_utils.from_mapping({"name": [J1], "position": [0.3], "effort": [1.5]}),
+    )
     assert not source.ready_for_control()
-    source.on_message("joint_state", JointState(name=[GRIPPER], position=[0.05]))
+    source.on_message(
+        "joint_state", joint_state_utils.from_mapping({"name": [GRIPPER], "position": [0.05]})
+    )
 
     assert source.ready_for_control()
     joints = source.read_joints()
@@ -133,8 +180,12 @@ def test_every_joint_state_message_counts() -> None:
 def test_other_robots_and_bad_messages_are_ignored() -> None:
     source = arm_at(0.3, 0.0)
 
-    source.on_message("joint_state", JointState(name=["other/joint1"], position=[0.9]))
-    source.on_message("joint_state", JointState(name=[J1, J2], position=[0.9]))
+    source.on_message(
+        "joint_state", joint_state_utils.from_mapping({"name": ["other/joint1"], "position": [0.9]})
+    )
+    source.on_message(
+        "joint_state", joint_state_utils.from_mapping({"name": [J1, J2], "position": [0.9]})
+    )
 
     assert source.read_joints().joint_positions == {J1: 0.3, J2: 0.0}
 
@@ -240,8 +291,8 @@ def test_each_kind_of_command_goes_to_its_own_port() -> None:
 
 def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     source = base()
-    source.on_message("odom", PoseStamped(frame_id="odom"))
-    source.on_message("base_velocity", TwistStamped(frame_id="base"))
+    source.on_message("odom", pose(frame_id="odom"))
+    source.on_message("base_velocity", twist_stamped(frame_id="base"))
 
     values = source.command({}, None)
     first, *rest = source.command_messages(values, ts=1.0)
@@ -308,13 +359,13 @@ def test_a_reading_in_another_robots_frame_is_dropped() -> None:
     share can neither fill in this robot's readings nor keep them fresh. A
     frame with no namespace is taken as its own."""
     source = base()
-    source.on_message("odom", PoseStamped(frame_id="go2a/odom"))
-    source.on_message("base_velocity", TwistStamped(frame_id="go2a/base"))
+    source.on_message("odom", pose(frame_id="go2a/odom"))
+    source.on_message("base_velocity", twist_stamped(frame_id="go2a/base"))
     assert not source.ready_for_control()
     assert source.unreported() == ["odom", "base_velocity"]
 
-    source.on_message("odom", PoseStamped(frame_id="go2/odom"))
-    source.on_message("base_velocity", TwistStamped(frame_id="base"))
+    source.on_message("odom", pose(frame_id="go2/odom"))
+    source.on_message("base_velocity", twist_stamped(frame_id="base"))
     assert source.ready_for_control()
 
 

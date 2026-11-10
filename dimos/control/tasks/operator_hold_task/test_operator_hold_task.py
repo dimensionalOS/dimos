@@ -116,7 +116,7 @@ def test_repeat_request_refreshes_reason_but_keeps_start_and_positions():
 
     assert second.route == "failsafe" and second.reason == "second"
     assert second.started_at == first.started_at
-    assert output is not None and output.positions == [0.5]
+    assert output is not None and list(output.positions) == [0.5]
 
 
 def test_status_goes_out_on_first_tick_then_every_interval_then_on_acknowledge():

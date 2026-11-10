@@ -26,12 +26,15 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 import pytest
 
 from dimos.control._control_test_helpers import FakeArm
 from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.control.contract.limits import Limits
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.testing.cbor import roundtrip
 
 JOINT1 = "mock/joint1/position"
@@ -79,7 +82,16 @@ class Rig:
     def move(self, **positions: float) -> None:
         """Send joint positions on ``position_command``, e.g. ``move(joint1=0.5)``."""
         names = [f"{self.module.config.source}/{joint}" for joint in positions]
-        self.send("position_command", JointState(name=names, position=list(positions.values())))
+        self.send(
+            "position_command",
+            JointState(
+                header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+                name=names,
+                position=np.asarray(list(positions.values()), dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            ),
+        )
 
     def sent(self, port: str) -> list[Any]:
         return list(self.ports[port].sent)
@@ -166,7 +178,7 @@ def test_a_position_command_is_written_and_the_readings_follow(rig: Callable[...
     msg = r.sent("joint_state")[-1]
     assert isinstance(msg, JointState)
     assert msg.name == [f"mock/joint{i}" for i in range(1, 8)]
-    assert msg.velocity == msg.effort == [0.0] * 7
+    assert list(msg.velocity) == list(msg.effort) == [0.0] * 7
 
 
 def test_a_command_from_another_thread_is_written(rig: Callable[..., Rig]) -> None:
@@ -201,7 +213,16 @@ def test_keys_of_other_robots_are_skipped_and_feed_nothing(rig: Callable[..., Ri
     assert writes(r) == []
     assert r.module.status().last_rejection is None
     assert r.module.status().last_command_time is None
-    r.send("position_command", JointState(name=["other/joint1", "mock/joint1"], position=[9, 0.5]))
+    r.send(
+        "position_command",
+        JointState(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+            name=["other/joint1", "mock/joint1"],
+            position=np.asarray([9.0, 0.5], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
+    )
     assert writes(r) == [{JOINT1: 0.5}]
 
 
