@@ -202,10 +202,6 @@ class PolicyTask(BaseControlTask):
 
     # ----------------------------------------------------------- public state
     @property
-    def joint_names(self) -> list[str]:
-        return list(self._joint_names)
-
-    @property
     def dry_run(self) -> bool:
         return self._dry_run
 
