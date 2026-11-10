@@ -145,7 +145,6 @@ class OperatorHoldTask(BaseControlTask):
         self._priority = priority
         self._status_interval = status_interval
         self._joint_names = joint_names
-        self._velocity_joints: frozenset[str] = frozenset()
         self._publish: Callable[[OperatorHoldStatus], None] | None = None
 
         self._lock = threading.Lock()
@@ -167,9 +166,6 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             return ResourceClaim(
                 joints=frozenset(self._held),
-                inhibited_joints=(
-                    self._velocity_joints if self._on and not self._estopped else frozenset()
-                ),
                 priority=self._priority,
                 mode=ControlMode.SERVO_POSITION,
             )
@@ -191,14 +187,6 @@ class OperatorHoldTask(BaseControlTask):
                 and name not in state.joints.command_only_joints
                 and (self._joint_names is None or name in self._joint_names)
             }
-            self._velocity_joints = frozenset(
-                name
-                for name, interfaces in state.joints.joint_command_interfaces.items()
-                if Interface.VELOCITY in interfaces
-                and Interface.POSITION not in interfaces
-                and name not in state.joints.command_only_joints
-                and (self._joint_names is None or name in self._joint_names)
-            )
             self._held = {name: value for name, value in self._held.items() if name in eligible}
             self._unheld.intersection_update(eligible)
             # Freeze nothing while e-stopped, so after the clear the hold

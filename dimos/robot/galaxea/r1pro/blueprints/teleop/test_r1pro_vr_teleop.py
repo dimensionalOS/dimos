@@ -690,22 +690,17 @@ def test_twist_timeout_zeroes_the_chassis_instead_of_holding_speed() -> None:
         assert not chain.fake.status().deadman_fired
 
 
-def test_operator_hold_blocks_continuous_sticks_and_excludes_jaws() -> None:
+def test_position_hold_claims_only_position_capable_non_command_only_joints() -> None:
     with Chain() as chain:
+        chain.coordinator.task_invoke("operator_hold", "request", {"route": "manual"})
+        hold = chain.coordinator._tasks["operator_hold"]
+        wait_until(lambda: bool(hold.claim().joints), timeout=5.0)
+        claim = hold.claim()
+        assert claim.joints == frozenset(R1PRO_UPPER_BODY_JOINTS)
+        assert not set(R1PRO_BASE_JOINTS + R1PRO_GRIPPER_JOINTS) & claim.joints
+        # Position hold does not redefine velocity-task authorization.
         chain.send_sticks(left_y=-1.0)
         wait_until(lambda: chain.base_state()["vx"] == 1.0, timeout=5.0)
-        chain.coordinator.task_invoke("operator_hold", "request", {"route": "manual"})
-        wait_until(lambda: chain.base_state()["vx"] == 0.0, timeout=0.5)
-        position = chain.base_state()["x"]
-        for _ in range(20):
-            chain.send_sticks(left_y=-1.0, left_x=1.0, right_x=1.0)
-            time.sleep(0.02)
-            assert chain.chassis_speeds()[-1] == (0.0, 0.0, 0.0)
-        assert chain.base_state()["x"] == pytest.approx(position)
-        claim = chain.coordinator._tasks["operator_hold"].claim()
-        claimed = claim.joints | claim.inhibited_joints
-        assert set(R1PRO_BASE_JOINTS) <= claimed
-        assert not set(R1PRO_GRIPPER_JOINTS) & claimed
 
 
 def test_estop_stops_the_chassis_and_clearing_it_does_not_resume_motion() -> None:
@@ -721,13 +716,11 @@ def test_estop_stops_the_chassis_and_clearing_it_does_not_resume_motion() -> Non
         assert len(chain.chassis_speeds()) == sent_at_estop
         wait_until(lambda: chain.fake.status().deadman_fired, timeout=5.0, interval=0.05)
         assert chain.base_state()["vx"] == pytest.approx(0.0)
-        # Clearing while fresh deflected-stick packets continue must not
-        # resume: the inherited operator hold requires acknowledgement.
-        chain.send_sticks(left_y=-1.0)
+        # Clearing E-stop alone must not replay the old velocity. Position
+        # hold does not inhibit fresh velocity commands after the clear.
+        chain.send_sticks()
         assert chain.coordinator.set_estop(False)
-        position = chain.base_state()["x"]
-        for _ in range(20):
-            chain.send_sticks(left_y=-1.0)
-            time.sleep(0.02)
-            assert chain.base_state()["vx"] == pytest.approx(0.0)
-        assert chain.base_state()["x"] == pytest.approx(position, abs=1e-6)
+        time.sleep(0.1)
+        assert chain.base_state()["vx"] == pytest.approx(0.0)
+        chain.send_sticks(left_y=-1.0)
+        wait_until(lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0)
