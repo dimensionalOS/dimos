@@ -231,7 +231,11 @@ class PickAndPlaceModule(Module):
                 Header(self.config.planning_frame),
                 [GraspCandidate(pose, float(grasp.get("score", 0.0)))],
             )
-        candidates, facts = self._drop_touching(object_id, pointcloud, candidates, group)
+        # A chosen grasp is checked where it is, never slid to another depth.
+        depth_search = self.config.grasp_depth_search if grasp is None else 0.0
+        candidates, facts = self._drop_touching(
+            object_id, pointcloud, candidates, group, depth_search
+        )
         facts["source"] = source
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
@@ -274,6 +278,7 @@ class PickAndPlaceModule(Module):
         pointcloud: PointCloud2,
         candidates: GraspCandidateArray,
         group: PlanningGroupID,
+        depth_search: float,
     ) -> tuple[GraspCandidateArray, dict[str, Any]]:
         """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
@@ -282,6 +287,8 @@ class PickAndPlaceModule(Module):
             pointcloud: The target's points, planning frame, metres.
             candidates: The provider's grasps, same frame.
             group: Planning group whose tool tip the grasps pose.
+            depth_search: How far (metres) a grasp may slide along its approach
+                to pass when none passes where it is; 0 keeps every grasp where it is.
 
         Returns the grasps that pass, and for the pick's result either
         ``contact_rejected`` (how many were dropped) or ``contact_check_skipped``
@@ -315,7 +322,7 @@ class PickAndPlaceModule(Module):
                 self.config.grasp_contact_margin,
                 self.config.grasp_obstacle_margin,
                 JointState(name=list(joints), position=list(joints.values())),
-                self.config.grasp_depth_search,
+                depth_search,
             )
         except Exception as exc:
             logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))

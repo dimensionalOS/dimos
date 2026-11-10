@@ -134,3 +134,23 @@ def test_a_given_grasp_that_fails_the_contact_check_is_not_tried(
     manipulation.plan_to_poses.assert_not_called()
     manipulation.set_gripper_position.assert_not_called()
     module._grasp_generator.propose_grasps.assert_not_called()
+
+
+def test_a_given_grasp_is_checked_only_where_it_is(
+    module: PickAndPlaceModule, gripper: MagicMock
+) -> None:
+    module.config.grasp_depth_search = 0.02
+    # The grasp fails where it is and would pass 5 mm deeper.
+    gripper.check.side_effect = [[False], [True]]
+    pose = _candidate(0.1).pose
+    given = {
+        "position": list(pose.position.to_tuple()),
+        "orientation": list(pose.orientation.to_tuple()),
+    }
+
+    result = module.pick_object("cup-1", grasp=given)
+
+    assert result.metadata["contact_rejected"] == 1
+    assert gripper.check.call_count == 1
+    manipulation: Any = module._manipulation
+    manipulation.plan_to_poses.assert_not_called()
