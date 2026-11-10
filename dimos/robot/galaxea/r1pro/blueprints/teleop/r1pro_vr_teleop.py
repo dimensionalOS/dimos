@@ -75,6 +75,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.operator_hold_task.operator_hold_task import operator_hold_task
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -306,7 +307,11 @@ def make_r1pro_vr_teleop(
             R1ProVrCoordinator.blueprint(
                 instance_name="ControlCoordinator",
                 tick_rate=100,
-                connections=[declaration],
+                connections=[
+                    ConnectionConfig(
+                        **declaration.model_dump(include=set(ConnectionConfig.model_fields))
+                    )
+                ],
                 tasks=_vr_tasks(full_torso=full_torso),
             ),
             *(
