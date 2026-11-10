@@ -170,6 +170,10 @@ class UsdManagerConfig(ModuleConfig):
     mounts: dict[str, Mount] = Field(default_factory=dict)
     tf_renames: dict[str, str] = Field(default_factory=dict)
     tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
+    # Description joint -> the name joint state carries it under, where the two differ.
+    # A control stack names a joint for its hardware ("main/left_knee"); a description names
+    # it as its source does ("left_knee_joint"), and then no joint state reaches any joint.
+    joint_renames: dict[str, str] = Field(default_factory=dict)
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
     @field_validator("mounts", mode="before")
@@ -199,6 +203,7 @@ class UsdManager(Module):
         self._joints = {joint.name: joint for joint in self._description.joints}
         self._frames = self._renamed_own_frames()
         self._next_joint_tf_t = 0.0
+        self._warned_about_joint_names = False
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._usd: str | None = None
         self._usd_lock = RLock()
@@ -551,9 +556,10 @@ class UsdManager(Module):
             if joint.mimic is not None and joint.mimic[0] in positions:
                 leader, multiplier, offset = joint.mimic
                 positions[joint.name] = multiplier * positions[leader] + offset
+        self._warn_if_nothing_matches(positions)
         return [
             Transform.from_matrix(
-                joint.parent_from_child(positions.get(joint.name, 0.0)),
+                joint.parent_from_child(positions.get(self.joint_state_name(joint.name), 0.0)),
                 frame_id=self.frame(joint.parent_link),
                 child_frame_id=self.frame(joint.child_link),
                 ts=state.ts,
@@ -561,6 +567,31 @@ class UsdManager(Module):
             for joint in self._joints.values()
             if joint.type not in MULTI_DOF_JOINT_TYPES
         ]
+
+    def joint_state_name(self, joint: str) -> str:
+        """What this description's joint is called in the joint state that drives it."""
+        return self.config.joint_renames.get(joint, joint)
+
+    def _warn_if_nothing_matches(self, positions: Mapping[str, float]) -> None:
+        """Say so when a joint state names nothing this description knows.
+
+        An unmatched joint falls back to 0.0, and a model drawn entirely at 0.0 looks like a
+        model: it is posed, it just never moves, and the base pose keeps moving under it. That
+        is a long way to find from the outside, so the one reading that catches it -- not one
+        name in common -- says it once.
+        """
+        if self._warned_about_joint_names or not positions:
+            return
+        self._warned_about_joint_names = True
+        wanted = {self.joint_state_name(name) for name in self._joints}
+        if wanted & set(positions):
+            return
+        logger.warning(
+            f"joint state names none of this description's joints, so every joint it draws "
+            f"stays at 0: it carries {sorted(positions)[:3]}, the description wants "
+            f"{sorted(wanted)[:3]}. Give the manager joint_renames if the two spell joints "
+            f"differently."
+        )
 
     def frame(self, link_or_joint: str) -> str:
         renamed = self._frames.get(link_or_joint, link_or_joint)

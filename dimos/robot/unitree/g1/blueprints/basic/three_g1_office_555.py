@@ -23,7 +23,7 @@ from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import G1Sim
+from dimos.robot.unitree.g1.sim2 import G1Sim, joint_renames
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.sim import sim_module
@@ -110,6 +110,7 @@ def _robot(name: str) -> Blueprint:
             UsdManager.blueprint(
                 model=G1Sim.usd,
                 mounts={G1Sim.lidar_mount_frame: f"{name}/{LivoxSim.name}"},
+                joint_renames=joint_renames(name),
             ),
             LivoxSim.blueprint(frame_id=G1Sim.lidar_mount_frame, scene_manager=SCENE_MANAGER),
             _walker(name),
