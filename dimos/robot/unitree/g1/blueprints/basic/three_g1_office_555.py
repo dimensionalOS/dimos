@@ -145,6 +145,14 @@ three_g1_office_555 = autoconnect(
     sim_module(
         scene_manager=SCENE_MANAGER,
         robots=[SimulatedRobot(name, G1Sim.usd) for name in SPOTS],
+        # Long enough for all three policies to have the joints before the world starts. These
+        # robots are held up by their policies and not by their servos -- left at the home pose
+        # a G1 folds in about a second and a half -- and a policy cannot command one until it
+        # has seen its joints, which it reads from this world's own observations. Building this
+        # world takes most of twenty seconds, because every module that wants a view of the room
+        # composes it again and compiles its own copy, so the controllers used to arm 8.5 to
+        # 9.8 s after stepping had already begun, by which time the robots were on the floor.
+        startup_delay=20.0,
     ),
     vis_module(viewer_backend=global_config.viewer),
     scene_manager,

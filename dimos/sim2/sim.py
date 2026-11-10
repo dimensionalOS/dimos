@@ -64,12 +64,13 @@ class SimulatedWorldConfig(SceneConfig):
     # observations this world publishes, so there is always an opening where the robot is
     # standing on nothing. This is how long the world refuses to spend it.
     #
-    # Twenty seconds because that is the shape of this scene's startup: every module that needs
-    # a view of the room composes it again and compiles its own copy -- ten compiles of four
-    # thousand geoms for three robots -- and the controllers armed 8.5 to 9.8 s after the world
-    # itself was built while that was going on. Nothing is stepped during the wait, so it costs
-    # no sim time and the robot has nothing to fall over in.
-    startup_delay: float = 20.0
+    # Zero by default and set by the blueprints that need it, because how long is a property of
+    # the scene and not of the simulator: three G1s in office_555 need twenty seconds, since
+    # every module that wants a view of that room composes it again and compiles its own copy --
+    # ten compiles of four thousand geoms -- and the controllers armed 8.5 to 9.8 s after the
+    # world itself was built while that was going on. A one-robot world on a stub scene needs
+    # none of it. Nothing is stepped during the wait, so it costs no sim time either way.
+    startup_delay: float = 0.0
 
 
 class SimulatedWorld(Protocol):
