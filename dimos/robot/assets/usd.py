@@ -61,7 +61,7 @@ def load_pxr() -> Pxr:
 
 def _let_mujoco_register_its_schemas_first() -> None:
     try:
-        import mujoco._usd  # type: ignore[import-untyped]  # noqa: F401
+        import mujoco._usd  # type: ignore[import-untyped,import-not-found]  # noqa: F401
     except ImportError:
         return
 
@@ -330,7 +330,7 @@ def warm_usd() -> None:
     list(stage.Traverse())
 
 
-def layer_from(pxr: Pxr, usd: str, what: str, root: Path | str | None = None) -> Layer:
+def layer_from(pxr: Pxr, usd: str, what: str, root: Path | str | None) -> Layer:
     if root is None:
         layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
     else:
