@@ -322,11 +322,37 @@ def _lookup(target: Any, qualname: str) -> Any:
     return target
 
 
+_GENERATED_MESSAGES_MODULE = "rosbags.usertypes"
+
+
 def _import(module_name: str, what: str) -> types.ModuleType:
     try:
         return importlib.import_module(module_name)
     except ImportError as e:
+        if module_name == _GENERATED_MESSAGES_MODULE:
+            # rosbags keeps generated message classes in this synthetic module and
+            # only creates it when a typestore registers them. A process that has
+            # not imported a generated message package yet (a forkserver worker, an
+            # RPC receiver) gets the reference from the wire, so register the
+            # installed packages now and retry the import.
+            _initialize_generated_messages()
+            try:
+                return importlib.import_module(module_name)
+            except ImportError:
+                pass
         raise CborDecodeError(f"cannot import {module_name!r} for {what}: {e}") from e
+
+
+def _initialize_generated_messages() -> None:
+    """Create ``rosbags.usertypes`` from the installed generated message packages."""
+    try:
+        from dimos_cdrgen.registry import message_types
+    except ImportError:  # no generated message packages installed
+        return
+    try:
+        message_types()
+    except Exception as e:  # a broken install must surface, not turn into "cannot import"
+        raise CborDecodeError(f"cannot initialize generated message registry: {e}") from e
 
 
 def _resolve(ref: str) -> Any:
