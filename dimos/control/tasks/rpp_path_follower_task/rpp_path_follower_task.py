@@ -196,6 +196,7 @@ class RPPPathFollowerTask(PathFollowerTask):
 
 
 class RPPPathFollowerTaskParams(BaseConfig):
+    yaw_joint: str | None = None
     artifact_path: str = DEFAULT_ARTIFACT_PATH
     speed: float = 0.7
     control_frequency: float = 10.0
@@ -218,6 +219,7 @@ def create_task(cfg: Any, hardware: Any) -> RPPPathFollowerTask:
     return RPPPathFollowerTask(
         cfg.name,
         PathFollowerTaskConfig(
+            yaw_joint=params.yaw_joint,
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             speed=params.speed,

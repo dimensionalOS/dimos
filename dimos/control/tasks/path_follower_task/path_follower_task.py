@@ -27,6 +27,7 @@ benchmark battery is obstacle-free.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import math
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -79,6 +80,8 @@ _UNSET: object = object()
 
 @dataclass
 class PathFollowerTaskConfig:
+    # Explicit measured yaw for world-coordinate output joints. None: body axes.
+    yaw_joint: str | None = None
     joint_names: list[str] = field(default_factory=lambda: ["base/vx", "base/vy", "base/wz"])
     priority: int = 20
     speed: float = 0.55
@@ -218,6 +221,11 @@ class PathFollowerTask(BaseControlTask):
         return self._state in ("initial_rotation", "path_following", "final_rotation")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
+        output_yaw = None
+        if self._config.yaw_joint is not None:
+            output_yaw = state.joints.get_position(self._config.yaw_joint)
+            if output_yaw is None or not math.isfinite(output_yaw):
+                return None
         if self._pending_path is not None:
             # Arm a stream-delivered path on the first tick that carries a pose;
             # the card handler has no odom to hand us.
@@ -306,6 +314,9 @@ class PathFollowerTask(BaseControlTask):
             actual_vx = state.joints.joint_velocities.get(self._joint_names_list[0], 0.0)
             actual_vy = state.joints.joint_velocities.get(self._joint_names_list[1], 0.0)
             actual_wz = state.joints.joint_velocities.get(self._joint_names_list[2], 0.0)
+            if output_yaw is not None:
+                c, s = math.cos(output_yaw), math.sin(output_yaw)
+                actual_vx, actual_vy = c * actual_vx + s * actual_vy, -s * actual_vx + c * actual_vy
             vx, vy, wz = self._pid.compute(vx, vy, wz, actual_vx, actual_vy, actual_wz)
         elif self._ff is not None:
             # Static gain compensation: cmd_to_robot = controller_cmd / K_plant
@@ -326,6 +337,9 @@ class PathFollowerTask(BaseControlTask):
             assert abs(vy) < 1e-6, f"PathFollowerTask forward_only: vy={vy} must be 0"
             vx = max(0.0, vx)
 
+        if output_yaw is not None:
+            c, s = math.cos(output_yaw), math.sin(output_yaw)
+            vx, vy = c * vx - s * vy, s * vx + c * vy
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             velocities=[vx, vy, wz],
@@ -628,6 +642,7 @@ class PathFollowerTask(BaseControlTask):
 
 
 class PathFollowerTaskParams(BaseConfig):
+    yaw_joint: str | None = None
     speed: float = 0.55
     control_frequency: float = 10.0
     goal_tolerance: float = 0.2
@@ -646,6 +661,7 @@ def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
     return PathFollowerTask(
         cfg.name,
         PathFollowerTaskConfig(
+            yaw_joint=params.yaw_joint,
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             speed=params.speed,

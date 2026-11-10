@@ -17,8 +17,8 @@
 One blueprint, ``--simulation`` flag picks the backend:
 
 Real hardware (default):
-    G1WholeBodyConnection (DDS rt/lowstate <-> rt/lowcmd) + transport_lcm
-    whole-body adapter. 500 Hz tick. Safety profile: unarmed + dry-run on
+    G1WholeBodyConnection (DDS rt/lowstate <-> rt/lowcmd) with canonical
+    named position joints. 100 Hz tick. Safety profile: unarmed + dry-run on
     start; activate explicitly through ControlCoordinator RPC after
     verifying commands. The policy ramps from the current pose to its
     bent-knee default over 10 s before taking torque control. The 14 arm
@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.connection.connection_module import ConnectionConfig as JointConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1_GROOT_KD,
@@ -62,7 +63,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -73,7 +74,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.g1.config import G1
@@ -85,6 +85,10 @@ from dimos.robot.unitree.g1.g1_rerun import (
 )
 from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
+from dimos.robot.unitree.g1.wholebody_connection import (
+    G1WholeBodyConnection,
+    G1WholeBodyConnectionConfig,
+)
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -139,6 +143,18 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 class _G1GrootCoordinator(TeleopControlCoordinator):
     g1_joints: Out[JointState]
+
+
+class _G1ConnectedGrootCoordinator(_G1GrootCoordinator):
+    g1_position_command: Out[JointState]
+    g1_joint_state: In[JointState]
+    g1_imu: In[Imu]
+
+
+_g1_declaration = G1WholeBodyConnectionConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD))
+_coordinator_cls = (
+    _G1GrootCoordinator if global_config.simulation == "mujoco" else _G1ConnectedGrootCoordinator
+)
 
 
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
@@ -276,7 +292,7 @@ if global_config.simulation == "mujoco":
     # now - the coordinator no longer polls the whole-body adapter for
     # base pose (read_odom was dropped from the Protocol). autoconnect
     # maps ``(odom, PoseStamped)`` to ``/odom`` by default; no override.
-    _adapter_type = "sim_mujoco_g1"
+
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
@@ -305,11 +321,9 @@ else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
-    # Real-hw backend: DDS connection module + transport_lcm adapter.
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
-    _adapter_type = "transport_lcm"
+    # Real hardware owns DDS conversion and PD gains; coordinator sends joint positions.
+    _backend = G1WholeBodyConnection.blueprint(**_g1_declaration.model_dump())
     _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
@@ -470,8 +484,7 @@ _rerun_config: dict[str, Any] = {
         _G1_JOINTS_ENTITY: 20.0,
         # Raw state streams arrive at ~440 Hz; useful only as debug plots.
         "world/g1/imu": 10.0,
-        "world/g1/motor_states": 10.0,
-        "world/g1/motor_command": 10.0,
+        "world/g1_position_command": 10.0,
         "world/odometry": 15.0,
         "world/global_map": 1.0,
         "world/global_costmap": 2.0,
@@ -496,20 +509,29 @@ def _viewer() -> Any:
     return vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
 
-_coordinator = _G1GrootCoordinator.blueprint(
+_coordinator = _coordinator_cls.blueprint(
     instance_name="ControlCoordinator",
     publish_robot_joint_states=True,
     tick_rate=_tick_rate,
+    connections=[]
+    if global_config.simulation == "mujoco"
+    else [
+        JointConnectionConfig(
+            **_g1_declaration.model_dump(include=set(JointConnectionConfig.model_fields))
+        )
+    ],
     hardware=[
         HardwareComponent(
             hardware_id="g1",
             hardware_type=HardwareType.WHOLE_BODY,
             joints=g1_joints,
-            adapter_type=_adapter_type,
+            adapter_type="sim_mujoco_g1",
             address=_adapter_address,
             wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
         ),
-    ],
+    ]
+    if global_config.simulation == "mujoco"
+    else [],
     tasks=[
         TaskConfig(
             name="groot_wbc",
@@ -553,19 +575,30 @@ _coordinator = _G1GrootCoordinator.blueprint(
         ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
         ("g1_joints", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
         ("cmd_vel", Twist): LCMTransport(_cmd_vel_topic, Twist),
-        # Real-hw only: the transport_lcm adapter speaks to
-        # G1WholeBodyConnection over these topics. autoconnect already
-        # matches by (name, type) so sim doesn't need them; they're
-        # harmless when the sim engine doesn't expose those ports.
-        ("motor_states", JointState): LCMTransport("/g1/motor_states", JointState),
+        ("joint_state", JointState): LCMTransport(_G1_JOINTS_TOPIC, JointState),
         ("imu", Imu): LCMTransport("/g1/imu", Imu),
-        ("motor_command", MotorCommandArray): LCMTransport("/g1/motor_command", MotorCommandArray),
     }
 )
 
 _unitree_g1_groot_wbc_core = (
     autoconnect(_backend, _coordinator)
-    .remappings([(_G1GrootCoordinator, "twist_command", "cmd_vel")])
+    .remappings(
+        [
+            (_coordinator_cls, "twist_command", "cmd_vel"),
+            *cast(
+                "Any",
+                (
+                    []
+                    if global_config.simulation == "mujoco"
+                    else [
+                        (G1WholeBodyConnection, "position_command", "g1_position_command"),
+                        (_G1ConnectedGrootCoordinator, "g1_joint_state", "joint_state"),
+                        (_G1ConnectedGrootCoordinator, "g1_imu", "imu"),
+                    ]
+                ),
+            ),
+        ]
+    )
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
 )
 

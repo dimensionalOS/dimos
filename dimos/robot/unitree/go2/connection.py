@@ -28,8 +28,13 @@ from reactivex.observable import Observable
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.connection.connection_module import (
+    ConnectionConfig as JointConnectionConfig,
+    ConnectionModule,
+)
+from dimos.control.contract.convert import joint_state_from_values, joint_state_to_values
+from dimos.control.contract.keys import Interface
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
@@ -41,16 +46,18 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.robot.unitree.config import connection_type
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
 from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_values, twist_from_values
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -65,7 +72,23 @@ class Go2Mode(str, Enum):
     RAGE = "rage"
 
 
-class ConnectionConfig(ModuleConfig):
+GO2_BASE_JOINTS: tuple[str, str, str] = ("go2/x", "go2/y", "go2/yaw")
+GO2_MODEL = RobotModel.from_root_link("base_link", name="go2").with_planar_base(
+    PlanarBaseDefinition(
+        joint_names=GO2_BASE_JOINTS,
+        velocity_limits=(2.0, 2.0, 3.0),
+        acceleration_limits=(5.0, 5.0, 8.0),
+    )
+)
+
+
+class ConnectionConfig(JointConnectionConfig):
+    source: str = "go2"
+    model: RobotModel | None = GO2_MODEL
+    joint_commands: dict[str, tuple[Interface, ...]] = {
+        name: (Interface.VELOCITY,) for name in GO2_BASE_JOINTS
+    }
+    odom_timeout_s: float = Field(default=0.2, gt=0.0, allow_inf_nan=False)
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
     lidar: bool = True
@@ -160,6 +183,8 @@ def make_connection(
 
         return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
     elif mode == "webrtc":
+        from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+
         assert ip is not None, "IP address must be provided"
         return UnitreeWebRTCConnection(
             ip,
@@ -345,11 +370,13 @@ class ReplayConnection(CompositeResource):
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
-class GO2Connection(Module, Camera, Pointcloud):
+class GO2Connection(ConnectionModule, Camera, Pointcloud):
     dedicated_worker = True
 
     config: ConnectionConfig
     cmd_vel: In[Twist]
+    velocity_command: In[JointState]
+    joint_state: Out[JointState]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
     lidar: Out[PointCloud2]
@@ -376,6 +403,9 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._odom_lock = Lock()
+        self._odom_yaw: float | None = None
+        self._odom_received_at = float("-inf")
         self._camera_info_stop = Event()
         self.connection = make_connection(
             self.config.ip,
@@ -396,11 +426,12 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     @rpc
     def start(self) -> None:
+        from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+
         super().start()
         self._camera_info_stop.clear()
         if not hasattr(self, "connection"):
             return
-        self.connection.start()
 
         def onimage(image: Image) -> None:
             image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
@@ -411,6 +442,13 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
         self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(
+            Disposable(
+                self.velocity_command.subscribe(
+                    lambda msg: self.command(joint_state_to_values(msg, (Interface.VELOCITY,)))
+                )
+            )
+        )
 
         if self.config.camera:
             self.register_disposable(self.connection.video_stream().subscribe(onimage))
@@ -439,22 +477,40 @@ class GO2Connection(Module, Camera, Pointcloud):
 
         self.connection.set_obstacle_avoidance(self.config.obstacle_avoidance)
 
+    def connect(self) -> None:
+        with self._odom_lock:
+            self._odom_yaw = None
+            self._odom_received_at = float("-inf")
+        self.connection.start()
+
+    def write(self, values: dict[str, float]) -> None:
+        with self._odom_lock:
+            yaw = self._odom_yaw
+            received = self._odom_received_at
+            if yaw is None or time.monotonic() - received > self.config.odom_timeout_s:
+                raise ValueError(
+                    "Go2 requires fresh measured odometry before a joint velocity command"
+                )
+            if not self.connection.move(twist_from_values(values, GO2_BASE_JOINTS, yaw=yaw)):
+                raise RuntimeError("Go2 rejected movement")
+
+    def halt(self) -> None:
+        self.connection.stop_movement()
+
     @rpc
     def stop(self) -> None:
         # Best-effort steps: teardown must always reach the WebRTC disconnect.
         self._camera_info_stop.set()
         try:
-            self.liedown()
-        except Exception:
-            logger.warning("liedown on stop failed (link already down?) — continuing teardown")
-
-        if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-
-        try:
-            # Cancel and drain stream callbacks before closing the replay DB
-            # or disconnecting the backend they read from.
+            # Close the command gate and drain callbacks before lying down,
+            # so an in-flight canonical command cannot restart motion in teardown.
             super().stop()
+            try:
+                self.liedown()
+            except Exception:
+                logger.warning("liedown on stop failed (link already down?) — continuing teardown")
+            if self._camera_info_thread and self._camera_info_thread.is_alive():
+                self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         finally:
             if self.connection:
                 try:
@@ -489,6 +545,17 @@ class GO2Connection(Module, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        try:
+            values = pose_to_values(msg, GO2_BASE_JOINTS)
+        except ValueError:
+            # Malformed feedback cannot authorize motion or refresh its receipt.
+            with self._odom_lock:
+                self._odom_yaw = None
+            return
+        with self._odom_lock:
+            self._odom_yaw = values[f"{GO2_BASE_JOINTS[2]}/position"]
+            self._odom_received_at = time.monotonic()
+        self.joint_state.publish(joint_state_from_values(values, GO2_BASE_JOINTS, ts=msg.ts))
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
