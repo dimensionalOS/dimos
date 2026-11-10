@@ -318,6 +318,14 @@ robots:
         r1pro-manipulation:
           title: R1 Pro manipulation (experimental)
           description: Upper-body manipulation planning on the R1 Pro.
+        r1pro-vr-teleop:
+          title: R1 Pro VR teleop preview
+          description: Quest arm, gripper and base teleoperation on a fake R1 Pro.
+          hidden: true
+        r1pro-vr-teleop-real:
+          title: R1 Pro VR teleop
+          description: Quest teleoperation on physical hardware; requires the vendor ROS stack.
+          hidden: true
         r1pro-planar-preview:
           title: R1 Pro planning preview
           description: 'Whole-body planning and execution on mock hardware: no robot needed.'
