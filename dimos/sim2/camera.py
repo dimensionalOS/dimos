@@ -29,6 +29,9 @@ from dimos.sim2.sensor_usd import camera_usd
 from dimos.sim2.sim import SceneConfig, scene_from
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class SimCameraConfig(SceneConfig):
@@ -51,9 +54,25 @@ class SimCamera(Module):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        self._capturing = asyncio.create_task(self._capture())
+        self._capturing = asyncio.create_task(self._watched_capture())
         yield
         self._capturing.cancel()
+
+    async def _watched_capture(self) -> None:
+        """Say so when the capture loop dies.
+
+        It is a bare task, so anything it raises is kept in the task object and nothing ever
+        reads it: the camera simply stops publishing and the only evidence is an empty topic.
+        A renderer that cannot start -- no display, a GL context that nine workers raced each
+        other for -- looks from the outside exactly like a camera whose rate is set to zero.
+        """
+        try:
+            await self._capture()
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            logger.exception(f"sim2: {self.frame_id} stopped capturing: {error!r}")
+            raise
 
     async def _capture(self) -> None:
         scene = scene_from(self.config.scene_manager, self.rpc, self.config.scene)
