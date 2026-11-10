@@ -25,10 +25,18 @@ pytest.importorskip("cel_expr_python")
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
 
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.orchestration.definition import DefinitionError
-from dimos.orchestration.module import StateMachineModule, state_machine
+from dimos.orchestration.module import (
+    StateMachineModule,
+    check_state_machines,
+    state_machine,
+)
 from dimos.spec.utils import get_protocol_method_signatures
 
 _MACHINE = """
@@ -101,6 +109,52 @@ def test_same_ports_and_roles_share_a_class(tmp_path: Path) -> None:
     (second,) = state_machine(_write(tmp_path, "second")).blueprints
     assert first.module is second.module
     assert first.name != second.name
+
+
+class _Worker(Module):
+    action_result: Out[GoalStatus]
+
+    @rpc
+    def reset(self, hard: bool) -> None: ...
+
+    @rpc
+    def work(self, goal_id: str, amount: int) -> None: ...
+
+    @rpc
+    def cancel_action(self, goal_id: str) -> None: ...
+
+
+class _WrongArgWorker(_Worker):
+    @rpc
+    def work(self, goal_id: str, count: int) -> None: ...
+
+
+class _ResultlessWorker(Module):
+    @rpc
+    def reset(self, hard: bool) -> None: ...
+
+    @rpc
+    def work(self, goal_id: str, amount: int) -> None: ...
+
+    @rpc
+    def cancel_action(self, goal_id: str) -> None: ...
+
+
+def test_check_accepts_a_fitting_provider(tmp_path: Path) -> None:
+    blueprint = autoconnect(state_machine(_write(tmp_path, "toy")), _Worker.blueprint())
+    assert check_state_machines(blueprint) is blueprint
+
+
+def test_check_rejects_a_wrong_arg_name(tmp_path: Path) -> None:
+    blueprint = autoconnect(state_machine(_write(tmp_path, "toy")), _WrongArgWorker.blueprint())
+    with pytest.raises(DefinitionError, match="toy: state 'busy': do: worker.work: .*'count'"):
+        check_state_machines(blueprint)
+
+
+def test_check_rejects_a_provider_without_action_result(tmp_path: Path) -> None:
+    blueprint = autoconnect(state_machine(_write(tmp_path, "toy")), _ResultlessWorker.blueprint())
+    with pytest.raises(DefinitionError, match="_resultlessworker has no action_result"):
+        check_state_machines(blueprint)
 
 
 _RUNTIME_MACHINE = """

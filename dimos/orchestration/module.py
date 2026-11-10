@@ -17,10 +17,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 import importlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -37,7 +39,8 @@ from typing_extensions import Self
 
 from dimos.agents.annotation import skill
 from dimos.constants import STATE_DIR
-from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint, StreamRef
+from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.core.core import rpc
 from dimos.core.dynamic_module import (
     MethodSpec,
@@ -381,29 +384,47 @@ def message_type(name: str) -> type:
     raise DefinitionError(f"unknown message type {name!r}")
 
 
-def _role_methods(definition: StateMachineDefinition) -> dict[str, dict[str, set[str]]]:
-    roles: dict[str, dict[str, set[str]]] = {}
+@dataclass(frozen=True)
+class _RoleUse:
+    where: str
+    role: str
+    method: str
+    params: tuple[str, ...]
+    is_action: bool = False
 
-    def add(target: str, params: Iterable[str]) -> None:
-        role, method = target.split(".")
-        roles.setdefault(role, {}).setdefault(method, set()).update(params)
 
+def _role_use(where: str, target: str, params: list[str], is_action: bool = False) -> _RoleUse:
+    role, method = target.split(".")
+    return _RoleUse(where, role, method, tuple(params), is_action)
+
+
+def _role_uses(definition: StateMachineDefinition) -> Iterator[_RoleUse]:
     for state in definition.states:
-        steps = [*state.entry, *state.exit, *(step for t in state.transitions for step in t.run)]
-        for step in steps:
+        where = f"state {state.name!r}"
+        steps = [(f"{where}: entry {i}", step) for i, step in enumerate(state.entry)]
+        steps += [(f"{where}: exit {i}", step) for i, step in enumerate(state.exit)]
+        steps += [
+            (f"{where}: transition {t}: run {i}", step)
+            for t, transition in enumerate(state.transitions)
+            for i, step in enumerate(transition.run)
+        ]
+        for at, step in steps:
             if isinstance(step, CallStep):
-                add(step.call, step.args)
+                yield _role_use(at, step.call, list(step.args))
         if isinstance(state.do, CallActivity):
-            add(state.do.call, state.do.args)
+            yield _role_use(f"{where}: do", state.do.call, list(state.do.args))
         elif isinstance(state.do, ActionActivity):
-            add(state.do.action, [*state.do.args, "goal_id"])
-            add(f"{state.do.action.split('.')[0]}.cancel_action", ["goal_id"])
-    return roles
+            action = _role_use(f"{where}: do", state.do.action, [*state.do.args, "goal_id"], True)
+            yield action
+            yield _RoleUse(action.where, action.role, "cancel_action", ("goal_id",))
 
 
 def _refs(definition: StateMachineDefinition) -> list[RefSpec]:
+    roles: dict[str, dict[str, set[str]]] = {}
+    for use in _role_uses(definition):
+        roles.setdefault(use.role, {}).setdefault(use.method, set()).update(use.params)
     refs: list[RefSpec] = []
-    for role, methods in _role_methods(definition).items():
+    for role, methods in roles.items():
         spec_name = "".join(part.title() for part in role.split("_")) + "Role"
         method_specs = [MethodSpec(name, tuple(sorted(params))) for name, params in methods.items()]
         refs.append(RefSpec(role, make_spec_class(spec_name, method_specs)))
@@ -428,3 +449,33 @@ def state_machine(path: Path | str) -> Blueprint:
     except (DefinitionError, TypeError, ValueError) as error:
         raise DefinitionError(f"{path}: {error}") from error
     return cls.blueprint(definition=definition, instance_name=definition.state_machine.name)
+
+
+_ACTION_RESULT = StreamRef("action_result", GoalStatus, "out")
+
+
+def check_state_machines(blueprint: Blueprint) -> Blueprint:
+    """Raise DefinitionError if a state machine's args or actions don't fit the modules serving its roles."""
+    resolved = resolve_module_refs(blueprint)
+    atoms = {atom.name: atom for atom in blueprint.active_blueprints}
+    problems: list[str] = []
+    for atom in atoms.values():
+        if not issubclass(atom.module, StateMachineModule):
+            continue
+        for use in _role_uses(atom.kwargs["definition"]):
+            provider = atoms.get(resolved.get((atom.name, use.role), ""))
+            if provider is None:
+                continue
+            at = f"{atom.name}: {use.where}: {use.role}.{use.method}"
+            signature = inspect.signature(getattr(provider.module, use.method))
+            try:
+                signature.bind(None, **dict.fromkeys(use.params))
+            except TypeError as error:
+                problems.append(f"{at}: {provider.name}.{use.method}{signature}: {error}")
+            if use.is_action and _ACTION_RESULT not in provider.streams:
+                problems.append(
+                    f"{at}: {provider.name} has no action_result: Out[GoalStatus] output"
+                )
+    if problems:
+        raise DefinitionError("\n".join(problems))
+    return blueprint
