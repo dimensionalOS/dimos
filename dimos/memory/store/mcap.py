@@ -52,7 +52,7 @@ from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
-from dimos.protocol.pubsub.message_types import resolve_message_type
+from dimos.protocol.pubsub.message_types import resolve_declared_message_type, resolve_message_type
 
 
 @runtime_checkable
@@ -99,7 +99,7 @@ def _dimos_wire(topic: str) -> tuple[str, type] | None:
     port, _, msg_name = rest.rpartition("/")
     if prefix != "dimos" or not port:
         return None
-    msg_type = get_dimos_type(msg_name)
+    msg_type = resolve_declared_message_type(msg_name)
     return (port, msg_type) if msg_type is not None else None
 
 
