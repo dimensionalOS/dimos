@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleop blueprints for xArm6 and xArm7."""
 
 from __future__ import annotations
 
@@ -212,10 +211,6 @@ _xarm7_teleop_model = make_xarm7_model_config(
     add_gripper=True,
 )
 
-# Dual-input arm: VR (teleop_ik) preempts browser keyboard (eef_twist) via
-# higher priority; when VR is idle the always-active eef_twist holds/drives.
-# The dedicated gripper task consumes normalized trigger commands independently.
-
 
 coordinator_teleop_xarm7 = autoconnect(
     TeleopControlCoordinator.blueprint(
@@ -302,16 +297,12 @@ coordinator_teleop_xarm6 = autoconnect(
 
 
 class XArmTwistCoordinator(ArmTwistCoordinator):
-    """End-effector twists and gripper openings in, from the Desktop Manipulation app;
-    one xArm named "arm" out, driven through ``XArmConnection``."""
-
     right_gripper_command: In[Float32]
     arm_position_command: Out[JointState]
     arm_velocity_command: Out[JointState]
     arm_joint_state: In[JointState]
 
 
-# The connection module's ports, onto the coordinator's ports for the robot named "arm".
 _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
     (XArmConnection, "position_command", "arm_position_command"),
     (XArmConnection, "velocity_command", "arm_velocity_command"),
@@ -320,18 +311,6 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 
 def _teleop(arm: XArmType) -> Blueprint:
-    """Jog an xArm's end and open and close its xArm Gripper from the Desktop
-    Manipulation app, through ``XArmConnection``. ``UsdManager`` serves the
-    arm's URDF and puts its joints on tf, so the app can draw it.
-
-    Wire it up with ``.remappings(_ARM_REMAPS)``. The arm's address is given at
-    run time, after the blueprint name (``--xarmconnection.ip 192.168.1.185``)
-    or as ``XARMCONNECTION__IP``.
-
-    Args:
-        arm: Which arm, e.g. "xarm7". It picks the coordinator's model, the IK
-            model, the connection's URDF and the URDF the app draws, so they agree.
-    """
     dof, robot_type = XARM_ARMS[arm]
     ik_model = make_xarm_model_config(dof, robot_type=robot_type, robot="arm", add_gripper=False)
     model = xarm_model(arm, gripper="xarm", robot="arm")
@@ -348,12 +327,9 @@ def _teleop(arm: XArmType) -> Blueprint:
                     params={
                         "robot_model": ik_model,
                         "target_frame": f"link{dof}",
-                        # The app sends twists only while a jog is held: the
-                        # end stops 0.3 s after the last one.
                         "timeout": 0.3,
                     },
                 ),
-                # drive_joint is open at 0 rad.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
@@ -369,6 +345,5 @@ def _teleop(arm: XArmType) -> Blueprint:
     )
 
 
-# The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
 xarm7_teleop = _teleop("xarm7").remappings(_ARM_REMAPS)
 xarm6_teleop = _teleop("xarm6").remappings(_ARM_REMAPS)

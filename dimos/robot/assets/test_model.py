@@ -824,7 +824,6 @@ def Xform "room" (
 
 
 def _urdf(tmp_path: Path) -> robot_model.RobotModel:
-    # The files exist, which is what lets load() resolve their relative paths.
     (tmp_path / "meshes").mkdir()
     (tmp_path / "meshes" / "arm.stl").write_text("mesh")
     (tmp_path / "textures").mkdir()
@@ -849,7 +848,6 @@ def test_to_usd_keeps_what_the_layer_cannot_answer(tmp_path: Path) -> None:
 def test_to_usd_does_not_convert_until_the_layer_is_asked_for(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """usd-core is not installable on a 3.10 arm robot, so a layer is built only when asked for."""
     import dimos.robot.assets.urdf_to_usd as conversion
 
     convert = mocker.patch.object(conversion, "urdf_to_usd", return_value="#usda 1.0\n")
@@ -908,9 +906,6 @@ def Xform "arm"
 
 
 def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
-    """A USD-native robot's joints are UsdPhysics prims, so they have to be read back before
-    anything can be posed at an angle; without this every link renders at the origin.
-    """
     pytest.importorskip("pxr")
     source = tmp_path / "arm.usda"
     source.write_text(_JOINTED_USDA)
@@ -927,9 +922,6 @@ def test_a_usd_native_model_poses_itself_from_the_layer(tmp_path: Path) -> None:
 def test_a_usd_model_converted_from_a_urdf_never_reads_the_layer_to_pose(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """Reading a layer back needs pxr, and it must not be on the path a URDF-described robot
-    takes: that is the line a 3.10 arm robot stands on.
-    """
     import dimos.robot.assets.usd_to_urdf as usd_to_urdf_module
 
     convert = mocker.patch.object(usd_to_urdf_module, "usd_to_urdf")
@@ -960,7 +952,6 @@ def test_a_missing_usd_file_says_so_when_the_layer_is_asked_for(tmp_path: Path) 
 
 
 def test_a_binary_usd_layer_is_refused_with_what_to_do(tmp_path: Path) -> None:
-    """A scene is handed over as one string, so a crate layer cannot travel."""
     crate = tmp_path / "room.usd"
     crate.write_bytes(b"PXR-USDC\x00\x81\xff\xfe")
     model = robot_model.UsdModel.from_file(crate)
@@ -995,13 +986,11 @@ def test_joint_velocity_limits_compose_with_loaded_renamed_views(tmp_path: Path)
 
 
 def test_a_usd_model_can_grow_frames_without_reading_the_file_yet(tmp_path: Path) -> None:
-    """A blueprint is built wherever it is imported, which is not always a machine with usd-core."""
     scene = tmp_path / "room.usda"
     model = UsdModel.from_file(scene).with_frames(
         {"spot": ("room", (1.0, 2.0, 0.0), (0.0, 0.0, 0.0))}
     )
 
-    # Nothing has touched the file: the model is only a description of what to read.
     assert not scene.exists()
 
     scene.write_text(
