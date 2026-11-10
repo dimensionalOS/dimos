@@ -61,7 +61,7 @@ def load_pxr() -> Pxr:
 
 def _let_mujoco_register_its_schemas_first() -> None:
     try:
-        import mujoco._usd  # type: ignore[import-untyped]  # noqa: F401
+        import mujoco._usd  # type: ignore[import-untyped,import-not-found]  # noqa: F401
     except ImportError:
         return
 
