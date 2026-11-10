@@ -35,7 +35,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
-    from av import VideoCodecContext
+    from av import Packet, VideoCodecContext
     from reactivex import Observable
 
     from dimos.visualization.rerun.bridge import RerunData
@@ -124,10 +124,13 @@ class _FrameDecoder:
     """Seconds of packet time between two published frames; 0 publishes all."""
 
     _context: VideoCodecContext | None
-    """Open for ``_format``; None until the first packet."""
+    """Open for ``_format``; None before the first packet and after ``flush``."""
 
     _format: str
     """Codec name of the packets ``_context`` was opened for."""
+
+    _newest: CompressedVideo | None
+    """The last packet decoded; frames released after it take its ``frame_id``."""
 
     _published_ts: float
     """Packet time of the last published frame."""
@@ -137,6 +140,7 @@ class _FrameDecoder:
         self._min_interval = min_interval
         self._context = None
         self._format = ""
+        self._newest = None
         self._published_ts = float("-inf")
 
     def _open(self, format: str) -> VideoCodecContext:
@@ -166,27 +170,45 @@ class _FrameDecoder:
     def decode(self, packet: CompressedVideo) -> list[Image]:
         import av
 
+        images = []
         if self._context is None or packet.format != self._format:
+            images = self.flush()
             self._context = self._open(packet.format)
             self._format = packet.format
+        self._newest = packet
         # The packet's time rides through the decoder as pts, so a frame the
         # decoder releases late or out of order keeps the time it was captured.
         encoded = av.Packet(packet.data.tobytes())
         encoded.pts = round(packet.ts * 1e9)
+        return images + self._publishable(self._context, encoded, packet)
+
+    def flush(self) -> list[Image]:
+        """Close the decoder and return the frames it was still holding."""
+        context, newest = self._context, self._newest
+        self._context = None
+        if context is None or newest is None:
+            return []
+        return self._publishable(context, None, newest)
+
+    def _publishable(
+        self, context: VideoCodecContext, encoded: Packet | None, newest: CompressedVideo
+    ) -> list[Image]:
+        import av
+
         try:
-            frames = self._context.decode(encoded)
+            frames = context.decode(encoded)
         except av.error.FFmpegError:
             return []
         images = []
         for frame in frames:
-            ts = packet.ts if frame.pts is None else frame.pts / 1e9
+            ts = newest.ts if frame.pts is None else frame.pts / 1e9
             # A timestamp that runs backwards (a replay looping) publishes at once.
             if 0 <= ts - self._published_ts < self._min_interval:
                 continue
             self._published_ts = ts
             images.append(
                 Image.from_numpy(
-                    frame.to_ndarray(format="bgr24"), ImageFormat.BGR, packet.frame_id, ts
+                    frame.to_ndarray(format="bgr24"), ImageFormat.BGR, newest.frame_id, ts
                 )
             )
         return images
@@ -200,8 +222,10 @@ def decode_video(
     Each subscription owns its decoder, opened for the codec the packets name
     and reopened when that name changes. Packets that yield no frame are
     dropped: the ones before the first keyframe, and with ``keyframes_only``
-    every packet that is not a keyframe. ``max_hz`` caps the frames published,
-    by packet timestamp; every packet is still decoded.
+    every packet that is not a keyframe. Frames the decoder still holds when
+    the codec changes or the stream completes are published first. ``max_hz``
+    caps the frames published, by packet timestamp; every packet is still
+    decoded.
 
     A missing packet corrupts every frame up to the next keyframe, so feed
     this from ``In.pure_observable()``, never the latest-wins ``observable()``,
@@ -226,9 +250,12 @@ def decode_video(
                 for image in images:
                     observer.on_next(image)
 
-            return source.subscribe(
-                on_next, observer.on_error, observer.on_completed, scheduler=scheduler
-            )
+            def on_completed() -> None:
+                for image in decoder.flush():
+                    observer.on_next(image)
+                observer.on_completed()
+
+            return source.subscribe(on_next, observer.on_error, on_completed, scheduler=scheduler)
 
         return rx.create(_subscribe)
 

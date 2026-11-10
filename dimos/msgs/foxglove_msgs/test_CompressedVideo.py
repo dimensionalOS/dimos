@@ -152,16 +152,16 @@ def test_decode_video_max_hz_caps_published_frames() -> None:
 
 
 def test_decode_video_reopens_the_decoder_when_the_format_changes() -> None:
-    packets = _stream("h264")[:8] + _stream("av1")
+    packets = _stream("h264", b_frames=2) + _stream("av1")
 
-    assert _decode(packets) == _stamped(*range(8), *range(24))
+    assert _decode(packets) == _stamped(*range(24), *range(24))
 
 
 def test_decode_video_reordered_frames_keep_their_capture_time() -> None:
     packets = _stream("h264", b_frames=2)
     assert [packet.ts for packet in packets] != sorted(packet.ts for packet in packets)
 
-    assert _decode(packets) == _stamped(*range(22))
+    assert _decode(packets) == _stamped(*range(24))
 
 
 def test_decode_video_subscriptions_do_not_share_a_decoder() -> None:
