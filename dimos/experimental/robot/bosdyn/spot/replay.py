@@ -31,6 +31,7 @@ import math
 from pathlib import Path
 
 from dimos.constants import RECORDINGS_DIR
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.experimental.robot.bosdyn.spot.config import (
@@ -111,6 +112,16 @@ class SpotReplay(Module):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
+    _store: SqliteStore | None = None
+
+    @rpc
+    def stop(self) -> None:
+        # Dispose the replay subscriptions before closing the database they read.
+        super().stop()
+        if self._store is not None:
+            self._store.stop()
+            self._store = None
+
     def _resolve_db_path(self) -> Path:
         if self.config.db_path:
             return resolve_db_path(Path(self.config.db_path).expanduser())
@@ -146,7 +157,7 @@ class SpotReplay(Module):
 
         store = SqliteStore(path=str(db_path), must_exist=True)
         store.start()
-        self.register_disposable(store)
+        self._store = store
 
         replay = store.replay(
             speed=self.config.speed,

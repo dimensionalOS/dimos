@@ -57,12 +57,15 @@ class RecordingPlayer(Module):
     lidar: Out[PointCloud2]
     tf: Out[TFMessage]
 
+    _store: SqliteStore | None = None
+
     @rpc
     def start(self) -> None:
         super().start()
         path = resolve_named_path(self.config.dataset, ".db")
-        store = self.register_disposable(SqliteStore(path=str(path), must_exist=True))
+        store = SqliteStore(path=str(path), must_exist=True)
         store.start()
+        self._store = store
         replay = store.replay(
             speed=self.config.speed,
             seek=self.config.seek,
@@ -77,6 +80,14 @@ class RecordingPlayer(Module):
 
         tf: ReplayStream[TFMessage] = replay.stream("tf")
         self.register_disposable(tf.observable().subscribe(self.tf.publish))
+
+    @rpc
+    def stop(self) -> None:
+        # Dispose the replay subscriptions before closing the database they read.
+        super().stop()
+        if self._store is not None:
+            self._store.stop()
+            self._store = None
 
 
 def _fine_points(cloud: Any) -> Any:
