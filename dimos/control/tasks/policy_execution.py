@@ -41,6 +41,10 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+#: Deadline comparison tolerance for rate cadences. Coordinator time is an
+#: accumulated float, so a nominal 0.05 s deadline must not slip one tick.
+_DEADLINE_TOLERANCE_S = 1e-9
+
 
 def preferred_onnx_providers(*, prefer_cuda: bool = True) -> list[str]:
     """Return ONNX Runtime providers in preference order.
@@ -213,11 +217,19 @@ class PolicyTickScheduler:
         self._next_deadline = t_now if self._period_s is not None else None
 
     def poll(self, t_now: float) -> bool:
-        """Return True when this coordinator tick should run inference."""
+        """Return True when this coordinator tick should run inference.
+
+        A rate tick is due once ``t_now`` reaches the deadline within the same
+        1 ns tolerance the Metal task has always used. Coordinator ticks are
+        accumulated floats (``i * 0.01``), so comparing exactly would push a
+        deadline of 0.15 to the 0.16 tick and shift every later inference.
+        """
         if self._every_n_ticks is not None:
             self._ticks += 1
             return self._ticks % self._every_n_ticks == 0
-        return self._next_deadline is None or t_now >= self._next_deadline
+        if self._next_deadline is None:
+            return True
+        return t_now + _DEADLINE_TOLERANCE_S >= self._next_deadline
 
     def mark(self, t_now: float) -> None:
         """Advance the rate deadline after a result was emitted.

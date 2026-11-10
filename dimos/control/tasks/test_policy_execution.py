@@ -140,6 +140,78 @@ def test_rate_scheduler_never_bursts_after_a_stall() -> None:
     assert scheduler.poll(1.1)
 
 
+def test_rate_scheduler_matches_the_legacy_20hz_indices_at_100hz() -> None:
+    """Differential: 100 Hz coordinator ticks must infer on ticks 0,5,...,100."""
+
+    def legacy_indices(times: list[float], period_s: float) -> list[int]:
+        # The Metal task's pre-refactor state machine, kept here as the oracle.
+        next_tick: float | None = 0.0
+        indices: list[int] = []
+        for index, now in enumerate(times):
+            if next_tick is not None and now + 1e-9 < next_tick:
+                continue
+            indices.append(index)
+            scheduled = (next_tick if next_tick is not None else now) + period_s
+            next_tick = now + period_s if scheduled <= now else scheduled
+        return indices
+
+    times = [index * 0.01 for index in range(101)]
+    scheduler = PolicyTickScheduler.at_hz(20.0)
+    scheduler.reset(times[0])
+    actual: list[int] = []
+    for index, now in enumerate(times):
+        if scheduler.poll(now):
+            actual.append(index)
+            scheduler.mark(now)
+
+    assert legacy_indices(times, 0.05) == list(range(0, 101, 5))
+    assert actual == legacy_indices(times, 0.05)
+
+
+@pytest.mark.parametrize("interval", [0.01, 0.02, 0.035])
+def test_rate_scheduler_matches_the_legacy_oracle_for_late_ticks(interval: float) -> None:
+    """Late and jittered ticks schedule from the tick that actually ran."""
+
+    def legacy(times: list[float], period_s: float) -> list[float]:
+        next_tick: float | None = 0.0
+        fired: list[float] = []
+        for now in times:
+            if next_tick is not None and now + 1e-9 < next_tick:
+                continue
+            fired.append(now)
+            scheduled = (next_tick if next_tick is not None else now) + period_s
+            next_tick = now + period_s if scheduled <= now else scheduled
+        return fired
+
+    # A stall (1.0 s), a tick a hair early (0.1500000005), and normal ticks.
+    times = [
+        0.0,
+        0.04,
+        0.1500000005,
+        0.150000002,
+        0.31,
+        0.36,
+        0.41,
+        1.0,
+        *[1.0 + index * interval for index in range(1, 41)],
+    ]
+    scheduler = PolicyTickScheduler.at_hz(20.0)
+    scheduler.reset(times[0])
+    actual = []
+    for now in times:
+        if scheduler.poll(now):
+            actual.append(now)
+            scheduler.mark(now)
+    assert actual == legacy(times, 0.05)
+
+
+def test_decimation_scheduler_is_unaffected_by_the_rate_tolerance() -> None:
+    scheduler = PolicyTickScheduler.every(5)
+    assert [scheduler.poll(index * 0.01) for index in range(11)] == [
+        index % 5 == 4 for index in range(11)
+    ]
+
+
 def test_scheduler_rejects_ambiguous_or_invalid_cadence() -> None:
     with pytest.raises(ValueError):
         PolicyTickScheduler()
