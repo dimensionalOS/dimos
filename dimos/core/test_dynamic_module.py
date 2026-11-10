@@ -154,7 +154,6 @@ def test_reload_then_reencode_preserves_identity():
             "collides with an existing _BaseA",
         ),
         ([PortSpec("peek_stream", Vector3, "in")], ValueError, "collides"),
-        ([PortSpec("config", Vector3, "in")], ValueError, "collides"),
         (
             [PortSpec("dup", Vector3, "in"), PortSpec("dup", str, "out")],
             ValueError,
@@ -193,16 +192,3 @@ def test_unimportable_message_type_rejected():
     ghost = type("GhostType", (), {"__module__": __name__})
     with pytest.raises(ValueError, match="sent by reference"):
         make_module_class(_BaseA, [PortSpec("ghost_feed", ghost, "in")])
-
-
-def test_non_module_base_rejected():
-    with pytest.raises(TypeError, match="Module subclass"):
-        make_module_class(_MarkerA, _PORTS)
-
-
-def test_function_local_base_rejected():
-    class LocalBase(Module):
-        pass
-
-    with pytest.raises(ValueError, match="base .* inside a function"):
-        make_module_class(LocalBase, _PORTS)

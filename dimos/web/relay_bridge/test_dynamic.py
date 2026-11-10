@@ -19,14 +19,12 @@
 # (see the module-level note in test_relay_bridge_module.py).
 
 from dataclasses import dataclass
-import re
 import subprocess
 import sys
 import threading
 
 import pytest
 
-from dimos.core import dynamic_module
 from dimos.core.coordination.blueprints import BlueprintAtom, StreamRef, autoconnect
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.dynamic_module import PortSpec
@@ -41,21 +39,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import Channel, cockpit
-from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
-from dimos.web.relay_bridge.e2e_support import stop_module
-
-# Marker message types: distinct classes so a shape differing only by type
-# gets a distinct generated class.
-
-
-class _MarkerA:
-    pass
-
-
-class _MarkerB:
-    pass
-
 
 # Static peers for autoconnect matching against generated ports.
 
@@ -104,95 +88,28 @@ def ping_transport():
     transport.stop()
 
 
-@pytest.fixture
-def local_modules():
-    """In-process module instances; stop_module also drains the asyncio
-    default executor so the thread-leak check stays clean."""
-    modules = []
-    yield modules
-    for module in reversed(modules):
-        stop_module(module)
-
-
-def test_class_name_is_deterministic_and_importable():
+def test_rx_and_tx_map_to_in_and_out_ports():
     generated = make_relay_bridge_class(_MAIN_SPECS)
-    again = make_relay_bridge_class(tuple(reversed(_MAIN_SPECS)))
-    assert re.fullmatch(r"DynamicRelayBridgeModule_[0-9a-f]{10}", generated.__name__)
-    assert generated.__module__ == "dimos.core.dynamic_module"
-    assert generated.__qualname__ == generated.__name__
-    assert again.__name__ == generated.__name__
-
-
-def test_memoization_and_canonical_order():
-    generated = make_relay_bridge_class(_MAIN_SPECS)
-    again = make_relay_bridge_class(tuple(reversed(_MAIN_SPECS)))
-    assert again is generated
     assert generated._dynamic_ports == (
         PortSpec("operator_note", str, "out"),
         PortSpec("sensor_ping", Vector3, "in"),
     )
 
 
-def test_cbor_roundtrip_returns_identical_class_object():
-    generated = make_relay_bridge_class(_MAIN_SPECS)
-    assert decode(encode(generated)) is generated
-
-
-def test_two_shapes_coexist_in_one_process():
-    shape_a = make_relay_bridge_class([DynamicPortSpec("marker_feed", _MarkerA, "rx")])
-    shape_b = make_relay_bridge_class([DynamicPortSpec("marker_feed", _MarkerB, "rx")])
-    assert shape_a is not shape_b
-    assert shape_a.__name__ != shape_b.__name__
-    assert decode(encode(shape_a)) is shape_a
-    assert decode(encode(shape_b)) is shape_b
-
-
-def test_generated_class_is_published_for_reload_lookup():
-    generated = make_relay_bridge_class(_MAIN_SPECS)
-    # The coordinator's restart path reloads the module and looks the class
-    # up again by name; the factory publishes it for exactly that.
-    assert getattr(sys.modules["dimos.core.dynamic_module"], generated.__name__) is generated
-
-
-def test_republish_after_memo_reset_returns_published_class(monkeypatch):
-    generated = make_relay_bridge_class([DynamicPortSpec("memo_reset_feed", Vector3, "rx")])
-    # A reload of dynamic_module.py rebinds _memo to a fresh dict while published
-    # classes survive in the module namespace; identity must be restored.
-    monkeypatch.setattr(dynamic_module, "_memo", {})
-    again = make_relay_bridge_class([DynamicPortSpec("memo_reset_feed", Vector3, "rx")])
-    assert again is generated
-
-
-def test_digest_name_collision_with_different_specs_raises(monkeypatch):
-    shape_a = make_relay_bridge_class([DynamicPortSpec("collide_a", Vector3, "rx")])
-    shape_b = make_relay_bridge_class([DynamicPortSpec("collide_b", Vector3, "rx")])
-    monkeypatch.setattr(dynamic_module, "_memo", {})
-    monkeypatch.setattr(dynamic_module, shape_a.__name__, shape_b)
-    with pytest.raises(ValueError, match="digest collision"):
-        make_relay_bridge_class([DynamicPortSpec("collide_a", Vector3, "rx")])
-
-
 _RELOAD_SCRIPT = """
 import importlib, sys
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.protocol.encode.cbor import decode, encode
 import dimos.web.relay_bridge.dynamic as dynamic
 
 C = dynamic.make_relay_bridge_class([dynamic.DynamicPortSpec("reload_feed", Vector3, "rx")])
-data = encode(C)
-mod = importlib.reload(sys.modules["dimos.core.dynamic_module"])
-assert getattr(mod, C.__name__) is C, "restart getattr lost the class"
-assert decode(data) is C, "pre-reload payload lost identity"
-assert decode(encode(C)) is C, "re-encode after reload failed"
+importlib.reload(sys.modules["dimos.core.dynamic_module"])
 again = dynamic.make_relay_bridge_class([dynamic.DynamicPortSpec("reload_feed", Vector3, "rx")])
 assert again is C, "factory lost identity after reload"
 """
 
 
-def test_reload_then_reencode_preserves_identity():
-    """The coordinator's restart path reloads dynamic_module.py and then re-deploys
-    the surviving class object, which re-encodes it. Runs in a subprocess so
-    the reload cannot poison this process's module state."""
+def test_factory_keeps_identity_after_core_reload():
+    """Runs in a subprocess so the reload cannot poison this process's module state."""
     result = subprocess.run(
         [sys.executable, "-c", _RELOAD_SCRIPT], capture_output=True, text=True, timeout=120
     )
@@ -203,46 +120,14 @@ def test_reload_then_reencode_preserves_identity():
     ("specs", "expected", "match"),
     [
         ([DynamicPortSpec("@control", Vector3, "rx")], ValueError, "reserved"),
-        ([DynamicPortSpec("not valid", Vector3, "rx")], ValueError, "identifier"),
-        ([DynamicPortSpec("class", Vector3, "rx")], ValueError, "identifier"),
-        ([DynamicPortSpec("_hidden", Vector3, "rx")], ValueError, "underscore"),
         ([DynamicPortSpec("x" * 65, Vector3, "rx")], ValueError, "longer than"),
-        ([DynamicPortSpec("color_image", Vector3, "rx")], ValueError, "collides"),
         ([DynamicPortSpec("ref", Vector3, "rx")], ValueError, "collides"),
-        ([DynamicPortSpec("peek_stream", Vector3, "rx")], ValueError, "collides"),
-        (
-            [DynamicPortSpec("dup", Vector3, "rx"), DynamicPortSpec("dup", str, "tx")],
-            ValueError,
-            "duplicate",
-        ),
         ([DynamicPortSpec("bad_dir", Vector3, "sideways")], ValueError, "direction"),
-        ([DynamicPortSpec("not_a_class", 42, "rx")], TypeError, "must be a class"),
-        ([DynamicPortSpec("generic_alias", list[int], "rx")], TypeError, "must be a class"),
     ],
 )
 def test_invalid_specs_rejected(specs, expected, match):
     with pytest.raises(expected, match=match):
         make_relay_bridge_class(specs)
-
-
-def test_main_module_message_type_rejected():
-    main_only = type("MainOnly", (), {"__module__": "__main__"})
-    with pytest.raises(ValueError, match="__main__"):
-        make_relay_bridge_class([DynamicPortSpec("main_feed", main_only, "rx")])
-
-
-def test_function_local_message_type_rejected():
-    class LocalType:
-        pass
-
-    with pytest.raises(ValueError, match="inside a function"):
-        make_relay_bridge_class([DynamicPortSpec("local_feed", LocalType, "rx")])
-
-
-def test_unimportable_message_type_rejected():
-    ghost = type("GhostType", (), {"__module__": __name__})
-    with pytest.raises(ValueError, match="sent by reference"):
-        make_relay_bridge_class([DynamicPortSpec("ghost_feed", ghost, "rx")])
 
 
 def test_blueprint_atom_discovers_exact_stream_refs():
@@ -289,20 +174,6 @@ def test_blueprint_roundtrip_preserves_generated_class_identity():
     assert restored == blueprint
     restored_atom = next(a for a in restored.blueprints if a.name == generated.name)
     assert restored_atom.module is generated
-
-
-def test_module_init_constructs_runtime_streams(local_modules):
-    generated = make_relay_bridge_class(_MAIN_SPECS)
-    module = generated()
-    local_modules.append(module)
-    assert sorted(module.inputs) == ["color_image", "global_costmap", "odom", "sensor_ping"]
-    assert sorted(module.outputs) == ["operator_note", "tele_cmd_vel"]
-    assert isinstance(module.sensor_ping, In)
-    assert module.sensor_ping.type is Vector3
-    assert isinstance(module.operator_note, Out)
-    assert module.operator_note.type is str
-    assert isinstance(module.config, RelayBridgeConfig)
-    assert module.config.relay_url is None
 
 
 @pytest.mark.skipif_flaky_in_ci

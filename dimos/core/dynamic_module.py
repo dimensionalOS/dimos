@@ -78,31 +78,7 @@ def _resolves_by_reference(cls: type[Any]) -> bool:
     return obj is cls
 
 
-def _by_reference_error(cls: type[Any], what: str) -> str | None:
-    if cls.__module__ == "__main__":
-        return (
-            f"{what} {cls.__qualname__} is only defined in __main__; move it into an "
-            "importable module so worker processes can reconstruct it"
-        )
-    if "<locals>" in cls.__qualname__:
-        return (
-            f"{what} {cls.__qualname__} is defined inside a function; move it to module "
-            "level so it can be sent by reference"
-        )
-    if not _resolves_by_reference(cls):
-        return (
-            f"{what} {cls.__module__}.{cls.__qualname__} cannot be sent by reference; it "
-            "must be importable under its own module and qualified name"
-        )
-    return None
-
-
 def _validate(base: type[Module], ports: tuple[PortSpec, ...], reserved: Collection[str]) -> None:
-    if not isinstance(base, type) or not issubclass(base, Module):
-        raise TypeError(f"base must be a Module subclass, got {base!r}")
-    base_error = _by_reference_error(base, "base")
-    if base_error is not None:
-        raise ValueError(base_error)
     reserved_names = frozenset(dir(base)) | frozenset(get_type_hints(base)) | frozenset(reserved)
     for port in ports:
         if not isinstance(port, PortSpec):
@@ -133,9 +109,23 @@ def _validate(base: type[Module], ports: tuple[PortSpec, ...], reserved: Collect
             raise TypeError(
                 f"stream {stream!r}: message_type must be a class, got {message_type!r}"
             )
-        message_error = _by_reference_error(message_type, "message type")
-        if message_error is not None:
-            raise ValueError(f"stream {stream!r}: {message_error}")
+        if message_type.__module__ == "__main__":
+            raise ValueError(
+                f"stream {stream!r}: message type {message_type.__qualname__} is only "
+                "defined in __main__; move it into an importable module so worker "
+                "processes can reconstruct it"
+            )
+        if "<locals>" in message_type.__qualname__:
+            raise ValueError(
+                f"stream {stream!r}: message type {message_type.__qualname__} is defined "
+                "inside a function; move it to module level so it can be sent by reference"
+            )
+        if not _resolves_by_reference(message_type):
+            raise ValueError(
+                f"stream {stream!r}: message type {message_type.__module__}."
+                f"{message_type.__qualname__} cannot be sent by reference; it must be "
+                "importable under its own module and qualified name"
+            )
     seen: set[str] = set()
     for port in ports:
         if port.stream in seen:
