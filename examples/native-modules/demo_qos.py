@@ -197,9 +197,13 @@ def main() -> None:
         started = time.perf_counter()
         while not publisher.report()["done"]:
             time.sleep(0.5)
-        time.sleep(2.0)
+        elapsed_s = time.perf_counter() - started
+        settle_s = max(2.0, 2 * args.handler_delay_ms / 1000.0)
+        received = -1.0
+        while (got := sink.report())["received"] != received and got["received"] < args.count:
+            received = got["received"]
+            time.sleep(settle_s)
         pub = publisher.report()
-        got = sink.report()
     finally:
         coordinator.stop()
 
@@ -214,7 +218,7 @@ def main() -> None:
     print(
         f"  publish  p50 {pub['p50_ms']:.2f} ms  p99 {pub['p99_ms']:.2f} ms  max {pub['max_ms']:.0f} ms"
     )
-    print(f"  stream took {time.perf_counter() - started - 2.0:.1f} s")
+    print(f"  stream took {elapsed_s:.1f} s")
 
 
 if __name__ == "__main__":
