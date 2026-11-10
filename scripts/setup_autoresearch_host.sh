@@ -15,7 +15,7 @@
 
 # Set up this PC to host the Metal autoresearch lab and its Desktop UI.
 #
-# Needs DimOS Desktop installed and running, plus git, uv, nix and npm.
+# Needs DimOS Desktop installed and running, plus git, uv, nix and npm, and about 15 GB free.
 # Usage: bash setup_autoresearch_host.sh [dimos folder, default ~/dimos-autoresearch]
 # Then put an LLM key in <dimos folder>/.env and open Desktop -> Manipulation.
 set -euo pipefail
@@ -46,7 +46,7 @@ step "Python environment (Desktop runs $DIMOS_DIR/.venv/bin/dimos)"
 (cd "$DIMOS_DIR" && uv venv --allow-existing --python 3.12 && uv sync --locked --python 3.12 --extra all)
 
 step "Obstacle-map helper (Rust, built with nix)"
-(cd "$DIMOS_DIR/dimos/mapping/ray_tracing/rust" && nix build -L path:.)
+(cd "$DIMOS_DIR/dimos/mapping/ray_tracing/rust" && nix --extra-experimental-features 'nix-command flakes' build -L path:.)
 
 step "Pi, the coding agent that writes the programs"
 command -v pi >/dev/null || npm install -g @earendil-works/pi-coding-agent
