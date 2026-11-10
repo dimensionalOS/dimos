@@ -326,13 +326,16 @@ impl VoxelMap {
     }
 
     /// Create a healthy seed voxel if absent. Returns whether it was created.
-    fn insert_seed(&mut self, key: VoxelKey) -> bool {
-        if self.voxels.contains_key(&key) {
+    /// A non-`premap` seed makes an existing voxel non-premap too.
+    fn insert_seed(&mut self, key: VoxelKey, premap: bool) -> bool {
+        if let Some(voxel) = self.voxels.get_mut(&key) {
+            voxel.premap &= premap;
             return false;
         }
         let support = self.count_healthy_neighbors(key);
         let mut seed = Voxel::with_health(SEED_HEALTH);
         seed.last_hit = self.frame;
+        seed.premap = premap;
         self.voxels.insert(key, seed, support);
         self.health_crossed(key, true);
         true
@@ -443,6 +446,8 @@ pub struct Voxel {
     normal: NormalFit,
     /// The map frame this voxel was last hit (or seeded) in.
     last_hit: u32,
+    /// Only premap points put it here: a live hit or non-premap seed point clears it.
+    premap: bool,
 }
 
 impl Default for Voxel {
@@ -456,6 +461,7 @@ impl Default for Voxel {
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
             last_hit: 0,
+            premap: false,
         }
     }
 }
@@ -466,6 +472,11 @@ impl Voxel {
             health,
             ..Default::default()
         }
+    }
+
+    /// Only premap points put it here: a live hit or non-premap seed point clears it.
+    pub fn is_premap(&self) -> bool {
+        self.premap
     }
 
     /// Fold a centered point into the running moments. True when the count
@@ -824,12 +835,22 @@ pub fn emit_points(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
 ) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, bounds, live, true)
+    emit_points_impl(map, voxel_size, bounds, live, true, false)
 }
 
 /// Every healthy voxel plus this frame's live voxels, with no support gate.
 pub fn emit_points_ungated(map: &VoxelMap, voxel_size: f32, live: &AHashSet<VoxelKey>) -> Vec<f32> {
-    emit_points_impl(map, voxel_size, None, live, false)
+    emit_points_impl(map, voxel_size, None, live, false, false)
+}
+
+/// `emit_points_ungated` as flat (x, y, z, premap) quads, premap 1.0 for a
+/// voxel only the loaded map has put there, else 0.0.
+pub fn emit_points_ungated_premap(
+    map: &VoxelMap,
+    voxel_size: f32,
+    live: &AHashSet<VoxelKey>,
+) -> Vec<f32> {
+    emit_points_impl(map, voxel_size, None, live, false, true)
 }
 
 fn emit_points_impl(
@@ -838,6 +859,7 @@ fn emit_points_impl(
     bounds: Option<&LocalBounds>,
     live: &AHashSet<VoxelKey>,
     gated: bool,
+    with_premap: bool,
 ) -> Vec<f32> {
     let mut out = scan_chunks(
         map,
@@ -852,10 +874,14 @@ fn emit_points_impl(
             let (x, y, z) = voxel_center(hv.key, voxel_size);
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
+                if with_premap {
+                    part.push(if hv.voxel.premap { 1.0 } else { 0.0 });
+                }
             }
         },
     );
 
+    // This frame hit them, so none is premap.
     for &key in live.iter() {
         if map.voxels.is_healthy(&key) {
             continue;
@@ -865,6 +891,9 @@ fn emit_points_impl(
             continue;
         }
         out.extend_from_slice(&[x, y, z]);
+        if with_premap {
+            out.push(0.0);
+        }
     }
     out
 }
@@ -1021,6 +1050,7 @@ pub fn update_map(
         }
         if let Some(voxel) = map.voxels.get_mut(&v) {
             voxel.last_hit = map.frame;
+            voxel.premap = false;
         }
     }
 
@@ -1068,6 +1098,8 @@ pub struct SeedRegion {
 pub struct SeedPartition {
     pub regions: Vec<SeedRegion>,
     pub voxels: usize,
+    /// Voxels a non-premap point of the cloud falls in. Empty when the whole cloud is premap.
+    pub live: AHashSet<VoxelKey>,
 }
 
 impl SeedPartition {
@@ -1092,7 +1124,23 @@ pub fn partition_seed(
     SeedPartition {
         regions: seed_regions(tiles, voxel_size, region_m),
         voxels,
+        live: AHashSet::new(),
     }
+}
+
+/// The voxels of the `points` whose `premap` flag is false.
+pub fn non_premap_voxels(
+    points: &[(f32, f32, f32)],
+    premap: &[bool],
+    voxel_size: f32,
+) -> AHashSet<VoxelKey> {
+    let inv = 1.0 / voxel_size;
+    points
+        .iter()
+        .zip(premap)
+        .filter(|&(&(x, y, z), &premap)| !premap && in_key_range(x, y, z, inv))
+        .map(|(&(x, y, z), _)| world_to_voxel(x, y, z, inv))
+        .collect()
 }
 
 /// Bucket a cloud into chunk tiles, nearest `origin` first, with the count of
@@ -1199,11 +1247,13 @@ impl Aabb {
     }
 }
 
-/// Seed one tile without ray tracing, creating only absent voxels. Returns
-/// the created keys.
+/// Seed one tile without ray tracing, creating only absent voxels. A voxel
+/// in `live` is seeded non-premap, and makes an existing one non-premap.
+/// Returns the created keys.
 pub fn seed_tile(
     map: &mut VoxelMap,
     points: &[(f32, f32, f32)],
+    live: &AHashSet<VoxelKey>,
     cfg: &Config,
 ) -> AHashSet<VoxelKey> {
     let inv = 1.0 / cfg.voxel_size;
@@ -1215,7 +1265,7 @@ pub fn seed_tile(
             continue;
         }
         let key = world_to_voxel(x, y, z, inv);
-        if map.insert_seed(key) {
+        if map.insert_seed(key, !live.contains(&key)) {
             created.insert(key);
         } else if !created.contains(&key) {
             continue;
@@ -1226,14 +1276,14 @@ pub fn seed_tile(
     created
 }
 
-/// Bulk-load a whole world-frame cloud in one call, tile by tile. Returns
-/// how many voxels were created.
+/// Bulk-load a whole world-frame premap cloud in one call, tile by tile.
+/// Returns how many voxels were created.
 pub fn seed_points(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config) -> usize {
     let region_m = CHUNK_EDGE as f32 * cfg.voxel_size;
     let part = partition_seed(points, cfg.voxel_size, (0.0, 0.0, 0.0), region_m);
     map.reserve_chunks(part.tile_count());
     part.tiles()
-        .map(|tile| seed_tile(map, tile, cfg).len())
+        .map(|tile| seed_tile(map, tile, &part.live, cfg).len())
         .sum()
 }
 

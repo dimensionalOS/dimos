@@ -20,8 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, chunk_points, emit_points, emit_points_fine, emit_points_ungated,
-    global_normal_fits, global_normals, seed_points, seed_tile, update_map, ChunkKey, Config,
-    Cylinder, FrameHits, LocalBounds, VoxelMap,
+    emit_points_ungated_premap, global_normal_fits, global_normals, seed_points, seed_tile,
+    update_map, ChunkKey, Config, Cylinder, FrameHits, LocalBounds, VoxelKey, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -107,11 +107,11 @@ impl Mapper {
         self.map.reserve_chunks(additional);
     }
 
-    /// Seed one tile of a partitioned world-frame cloud. Returns how many
-    /// voxels were created.
-    pub fn seed_tile(&mut self, tile: &[Point]) -> usize {
+    /// Seed one tile of a partitioned world-frame cloud, the voxels in
+    /// `live` as non-premap. Returns how many voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point], live: &AHashSet<VoxelKey>) -> usize {
         let pool = Arc::clone(&self.pool);
-        pool.install(|| seed_tile(&mut self.map, tile, &self.config))
+        pool.install(|| seed_tile(&mut self.map, tile, live, &self.config))
             .len()
     }
 
@@ -200,6 +200,13 @@ impl Mapper {
     pub fn global_points(&self) -> Vec<f32> {
         self.pool
             .install(|| emit_points_ungated(&self.map, self.config.voxel_size, &self.live.coarse))
+    }
+
+    /// `global_points` as flat (x, y, z, premap) quads.
+    pub fn global_points_premap(&self) -> Vec<f32> {
+        self.pool.install(|| {
+            emit_points_ungated_premap(&self.map, self.config.voxel_size, &self.live.coarse)
+        })
     }
 
     /// Support-gated healthy voxel centers within `bounds`, plus live voxels,

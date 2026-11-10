@@ -18,10 +18,11 @@ use std::time::{Duration, Instant};
 use crate::mapper::{register, Mapper, Pose};
 use crate::region_viz::{pack_cell, RegionSweep};
 use crate::voxel_ray_tracer::{
-    partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder, SeedPartition,
-    SeedRegion,
+    non_premap_voxels, partition_seed, region_at, region_of, Cell, ChunkKey, Config, Cylinder,
+    SeedPartition, SeedRegion, VoxelKey,
 };
-use dimos_module::pointcloud::extract_xyz;
+use ahash::AHashSet;
+use dimos_module::pointcloud::{extract_xyz, ExtractError};
 use dimos_module::{
     debug_throttled, error_throttled, warn_throttled, Input, Module, Output, Tf, Transform,
 };
@@ -161,6 +162,7 @@ impl RayTracingVoxelMap {
 /// queued and handed on region by region as each one completes.
 struct SeedLoad {
     regions: Vec<SeedRegion>,
+    live: AHashSet<VoxelKey>,
     next_region: usize,
     next_tile: usize,
     tile_count: usize,
@@ -178,6 +180,7 @@ impl SeedLoad {
         Self {
             tile_count: part.tile_count(),
             regions: part.regions,
+            live: part.live,
             next_region: 0,
             next_tile: 0,
             tiles_done: 0,
@@ -199,7 +202,7 @@ impl SeedLoad {
         let region = self.regions.get(self.next_region)?;
         let tile = &region.tiles[self.next_tile];
         let tile_start = Instant::now();
-        self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile));
+        self.created += tokio::task::block_in_place(|| mapper.seed_tile(tile, &self.live));
         let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
         self.last_tile_at = Instant::now();
         self.tiles_done += 1;
@@ -418,7 +421,7 @@ impl Worker {
                 mapper.add_frame(points, tf_to_pose(&tf_pose));
                 let region = mapper.local_due().then(|| mapper.take_local_bounds());
                 let cylinder = region.map(|c| c.bounds());
-                let global_points = mapper.global_due().then(|| mapper.global_points());
+                let global_points = mapper.global_due().then(|| mapper.global_points_premap());
                 let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
                 let fine_points = emit_fine
                     .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
@@ -442,7 +445,7 @@ impl Worker {
         }
 
         if let Some(points) = global_points {
-            let global = points_to_cloud(&points, out_frame_id, stamp.clone());
+            let global = premap_points_to_cloud(&points, out_frame_id, stamp.clone());
             publish_cloud(&self.global_map, &global).await;
         }
         if let Some(points) = local_points {
@@ -631,7 +634,8 @@ fn map_regions_due(
 }
 
 /// Register a loaded cloud into the world by `pose` and split it into seed
-/// tiles, nearest `origin` first. None when the cloud is unusable.
+/// tiles, nearest `origin` first. Its points are premap unless its `premap`
+/// field says otherwise. None when the cloud is unusable.
 fn prepare_seed(
     msg: &PointCloud2,
     pose: Pose,
@@ -639,8 +643,8 @@ fn prepare_seed(
     origin: (f32, f32, f32),
     region_m: f32,
 ) -> Option<SeedPartition> {
-    let mut points = match extract_xyz(msg) {
-        Ok(p) => p.into_iter().map(|[x, y, z]| (x, y, z)).collect::<Vec<_>>(),
+    let (mut points, premap) = match extract_xyz_premap(msg) {
+        Ok(p) => p,
         Err(e) => {
             warn!(error = %e, "Failed to get loaded map points, dropped a cloud.");
             return None;
@@ -650,7 +654,60 @@ fn prepare_seed(
         return None;
     }
     register(&mut points, pose);
-    Some(partition_seed(&points, voxel_size, origin, region_m))
+    let mut part = partition_seed(&points, voxel_size, origin, region_m);
+    if let Some(premap) = premap {
+        part.live = non_premap_voxels(&points, &premap, voxel_size);
+    }
+    Some(part)
+}
+
+/// The per-point field saying a point is only known from a loaded map.
+const PREMAP_FIELD: &str = "premap";
+
+/// A cloud's finite xyz points, with its `premap` flags when it has that field.
+fn extract_xyz_premap(
+    msg: &PointCloud2,
+) -> Result<(Vec<(f32, f32, f32)>, Option<Vec<bool>>), ExtractError> {
+    let Some(field) = msg.fields.iter().find(|f| f.name == PREMAP_FIELD) else {
+        let points = extract_xyz(msg)?;
+        return Ok((
+            points.into_iter().map(|[x, y, z]| (x, y, z)).collect(),
+            None,
+        ));
+    };
+    if field.datatype != PointField::UINT8 as u8 {
+        return Err(ExtractError("premap field is not uint8"));
+    }
+    let step = usize::try_from(msg.point_step).map_err(|_| ExtractError("negative point_step"))?;
+    let offset = usize::try_from(field.offset)
+        .ok()
+        .filter(|&o| o < step)
+        .ok_or(ExtractError(
+            "premap field offset does not fit within point_step",
+        ))?;
+    // extract_xyz checks the layout but drops non-finite points, so walk again to keep each flag with its point.
+    let offsets = ["x", "y", "z"].map(|name| {
+        msg.fields
+            .iter()
+            .find(|f| f.name == name && f.datatype == PointField::FLOAT32 as u8)
+            .and_then(|f| usize::try_from(f.offset).ok())
+    });
+    extract_xyz(msg)?;
+    let [Some(xo), Some(yo), Some(zo)] = offsets else {
+        return Err(ExtractError("missing a float32 x/y/z field"));
+    };
+    let n = (msg.width as usize) * (msg.height as usize);
+    let read = |at: usize| f32::from_le_bytes(msg.data[at..at + 4].try_into().expect("4 bytes"));
+    let mut points = Vec::with_capacity(n);
+    let mut premap = Vec::with_capacity(n);
+    for base in (0..n * step).step_by(step) {
+        let (x, y, z) = (read(base + xo), read(base + yo), read(base + zo));
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            points.push((x, y, z));
+            premap.push(msg.data[base + offset] != 0);
+        }
+    }
+    Ok((points, Some(premap)))
 }
 
 /// How long a loaded map waits for the transform that places it.
@@ -746,6 +803,28 @@ fn make_cloud(data: Vec<u8>, n: i32, frame_id: &str, stamp: Time) -> PointCloud2
         data,
         is_dense: true,
     }
+}
+
+/// Pack flat (x, y, z, premap) quads into an LCM cloud message with a uint8
+/// `premap` field after x, y, z, intensity.
+fn premap_points_to_cloud(points: &[f32], frame_id: &str, stamp: Time) -> PointCloud2 {
+    const STEP: i32 = 17;
+    let mut data = Vec::with_capacity((points.len() / 4) * STEP as usize);
+    let mut n: i32 = 0;
+    for p in points.as_chunks::<4>().0 {
+        write_point(&mut data, &mut n, p[0], p[1], p[2]);
+        data.push(u8::from(p[3] != 0.0));
+    }
+    let mut cloud = make_cloud(data, n, frame_id, stamp);
+    cloud.fields.push(PointField {
+        name: PREMAP_FIELD.into(),
+        offset: 16,
+        datatype: PointField::UINT8 as u8,
+        count: 1,
+    });
+    cloud.point_step = STEP;
+    cloud.row_step = STEP * n;
+    cloud
 }
 
 /// Pack flat (x, y, z) triples into an LCM cloud message.
@@ -857,12 +936,87 @@ mod tests {
         assert_eq!(part.voxels, 1);
         assert_eq!(part.regions.len(), 1);
         let mut mapper = Mapper::new(test_config());
-        let created: usize = part.tiles().map(|tile| mapper.seed_tile(tile)).sum();
+        let created: usize = part
+            .tiles()
+            .map(|tile| mapper.seed_tile(tile, &part.live))
+            .sum();
         assert_eq!(created, 1);
 
         let region = mapper.local_points(&part.regions[0].cylinder.bounds());
         let seeded = points_to_cloud(&region, "odom", Time::default());
         assert!(cloud_points(&seeded).contains(&voxel_center(10, 3, 0)));
+    }
+
+    /// A loaded cloud's `premap` field survives the wire into the seed, and the
+    /// global map hands each voxel's flag back out on the same field.
+    #[test]
+    fn premap_field_round_trips_through_seed_and_global_map() {
+        let quads = [
+            1.5,
+            0.5,
+            0.5,
+            1.0,
+            2.5,
+            0.5,
+            0.5,
+            0.0,
+            f32::NAN,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        let loaded = premap_points_to_cloud(&quads, "map", Time::default());
+        let (points, premap) = extract_xyz_premap(&loaded).expect("premap cloud must decode");
+        assert_eq!(points, vec![(1.5, 0.5, 0.5), (2.5, 0.5, 0.5)]);
+        assert_eq!(
+            premap,
+            Some(vec![true, false]),
+            "the NaN point drops with its flag"
+        );
+
+        let part = prepare_seed(
+            &loaded,
+            Pose {
+                position: (0.0, 0.0, 0.0),
+                orientation: (0.0, 0.0, 0.0, 1.0),
+            },
+            1.0,
+            (0.0, 0.0, 0.0),
+            4.0,
+        )
+        .expect("loaded map must decode");
+        let mut mapper = Mapper::new(test_config());
+        for tile in part.tiles() {
+            mapper.seed_tile(tile, &part.live);
+        }
+        let global =
+            premap_points_to_cloud(&mapper.global_points_premap(), "odom", Time::default());
+        let (points, premap) = extract_xyz_premap(&global).expect("global map must decode");
+        let mut flagged: Vec<((f32, f32, f32), bool)> =
+            points.into_iter().zip(premap.unwrap()).collect();
+        flagged.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0));
+        assert_eq!(
+            flagged,
+            vec![((1.5, 0.5, 0.5), true), ((2.5, 0.5, 0.5), false)]
+        );
+    }
+
+    /// A loaded cloud without the field is all premap.
+    #[test]
+    fn loaded_cloud_without_premap_field_is_all_premap() {
+        let cloud = points_to_cloud(&[1.5, 0.5, 0.5], "map", Time::default());
+        let part = prepare_seed(
+            &cloud,
+            Pose {
+                position: (0.0, 0.0, 0.0),
+                orientation: (0.0, 0.0, 0.0, 1.0),
+            },
+            1.0,
+            (0.0, 0.0, 0.0),
+            4.0,
+        )
+        .expect("loaded map must decode");
+        assert!(part.live.is_empty());
     }
 
     /// Two chunks stacked in z share a region cell, a third far off has its own.
@@ -1002,7 +1156,7 @@ mod tests {
             4.0,
         );
         for tile in part.tiles() {
-            mapper.seed_tile(tile);
+            mapper.seed_tile(tile, &part.live);
         }
         let mut viz = RegionSweep::default();
         let sizes = |due: Vec<(Cell, Vec<f32>)>| -> Vec<(Cell, usize)> {
