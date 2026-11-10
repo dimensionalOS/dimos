@@ -1028,3 +1028,82 @@ def test_a_grafted_subtree_keeps_its_own_shaders_when_the_scene_has_prims_by_the
         "asset keeps its shader networks beside its default prim, and grafting left the "
         "reference pointing at whatever owns that path in the scene"
     )
+
+
+_SCENE_WITH_TWO_SHADERS = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+over "Shared"
+{
+    def Shader "Surface"
+    {
+        color3f inputs:diffuseColor = (1, 0, 0)
+    }
+}
+
+over "Deeper"
+{
+    def Shader "Underneath"
+    {
+        color3f inputs:diffuseColor = (1, 0, 0)
+    }
+}
+
+def Xform "room"
+{
+}
+"""
+
+_SUBTREE_REACHING_TWO_HOPS = """#usda 1.0
+(
+    defaultPrim = "arm_sub"
+)
+
+over "Deeper"
+{
+    def Shader "Underneath"
+    {
+        color3f inputs:diffuseColor = (0, 0, 1)
+    }
+}
+
+over "Shared" (
+    prepend references = </Deeper>
+)
+{
+    def Shader "Surface"
+    {
+        color3f inputs:diffuseColor = (0, 1, 0)
+    }
+}
+
+def Xform "arm_sub"
+{
+    def Material "paint" (
+        prepend references = </Shared>
+    )
+    {
+    }
+}
+"""
+
+
+def test_carrying_a_referenced_prim_also_carries_what_that_prim_reaches() -> None:
+    from pxr import Gf
+
+    stage = _stage(graft_usd(_SCENE_WITH_TWO_SHADERS, {"room": _SUBTREE_REACHING_TWO_HOPS}))
+
+    paint = stage.GetPrimAtPath("/room/arm_sub/paint")
+    assert paint, "the grafted material is missing"
+    composed = paint.GetPrototype() if paint.IsInstance() else paint
+    shaders = {child.GetName(): child for child in composed.GetChildren()}
+    assert sorted(shaders) == ["Surface", "Underneath"], (
+        f"the second hop did not compose: got {sorted(shaders)}"
+    )
+    for name, expected in (("Surface", (0.0, 1.0, 0.0)), ("Underneath", (0.0, 0.0, 1.0))):
+        assert shaders[name].GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(*expected), (
+            f"{name} resolved to the scene's shader, so a prim carried over for the subtree "
+            f"kept an arc pointing at whatever owned that path in the scene"
+        )
