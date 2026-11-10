@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -23,10 +24,13 @@ import numpy as np
 import onnxruntime as ort
 import pytest
 
+from dimos.control.task import CoordinatorState
 from dimos.control.tasks.policy_execution import (
     OnnxActor,
     PolicyCommandHold,
     PolicySessionGuard,
+    PolicyTask,
+    PolicyTick,
     PolicyTickScheduler,
 )
 
@@ -287,3 +291,138 @@ def test_session_guard_invalidating_an_inactive_session_keeps_the_epoch() -> Non
     assert guard.epoch == epoch + 1
     guard.invalidate()
     assert guard.epoch == epoch + 1
+
+
+class _StubPolicyTask(PolicyTask):
+    """Smallest real consumer of the shared task skeleton."""
+
+    def __init__(self, *, dry_run: bool = False, hz: float = 20.0) -> None:
+        super().__init__(
+            "stub_policy",
+            ["a/1", "a/2"],
+            scheduler=PolicyTickScheduler.at_hz(hz),
+            priority=7,
+            dry_run=dry_run,
+        )
+        self.acts = 0
+        self.resets = 0
+        self.ended = 0
+        self.command = [0.0, 0.0]
+        self.fail_act = False
+        self.on_act: Any = None
+        self.on_reset: Any = None
+
+    def prepare(self, state: CoordinatorState) -> Any:
+        if not self.session_active:
+            if not self._session_requested:
+                return None
+            self.begin_session_locked(state.t_now)
+            return PolicyTick(self.session_epoch, state.t_now, reset=True)
+        if not self._scheduler.poll(state.t_now):
+            return self._hold.hold()
+        return PolicyTick(self.session_epoch, state.t_now)
+
+    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+        del by_task, joints
+
+    def reset_policy(self, tick: PolicyTick) -> None:
+        self.resets += 1
+        if self.on_reset is not None:
+            self.on_reset()
+
+    def act(self, tick: PolicyTick) -> np.ndarray:
+        self.acts += 1
+        if self.on_act is not None:
+            self.on_act()
+        if self.fail_act:
+            raise RuntimeError("actor failed")
+        return np.asarray(self.command, dtype=np.float32)
+
+    def on_session_ended(self) -> None:
+        self.ended += 1
+
+
+def _state(t_now: float) -> CoordinatorState:
+    return CoordinatorState(joints=MagicMock(), t_now=t_now, dt=0.01)
+
+
+def test_policy_task_owns_claim_cadence_hold_and_dry_run() -> None:
+    task = _StubPolicyTask()
+    assert not task.is_active()
+    assert task.claim().joints == frozenset({"a/1", "a/2"})
+    task.start()
+    assert task.is_active() and not task.session_active
+    assert task.compute(_state(0.0)) is None
+
+    task.request_session(0.0)
+    assert task.is_active()
+    first = task.compute(_state(0.0))
+    assert first is not None and task.session_active and task.policy_ticks == 1
+    # Between 20 Hz deadlines the shared hold re-emits the last command.
+    held = task.compute(_state(0.02))
+    assert held is not None and held.positions == first.positions
+    assert task.acts == 1
+    # The deadline tolerance keeps 0.05 due even from accumulated floats.
+    assert task.compute(_state(0.05)) is not None
+    assert task.acts == 2
+
+    task.set_dry_run(True)
+    assert task.compute(_state(0.10)) is None
+    assert task.acts == 3 and task.policy_ticks == 3
+
+
+def test_policy_task_cancellation_drops_an_in_flight_result() -> None:
+    task = _StubPolicyTask()
+    task.start()
+    task.request_session(0.0)
+    entered, finish = threading.Event(), threading.Event()
+    task.on_act = lambda: (entered.set(), finish.wait(5))
+    outputs: list[Any] = []
+    worker = threading.Thread(target=lambda: outputs.append(task.compute(_state(0.0))), daemon=True)
+    worker.start()
+    assert entered.wait(2)
+    task.invalidate_session()
+    finish.set()
+    worker.join(2)
+    assert outputs == [None]
+    assert not task.session_active and task.ended == 1
+
+
+def test_policy_task_cancellation_is_responsive_during_reset() -> None:
+    task = _StubPolicyTask()
+    task.start()
+    task.request_session(0.0)
+    entered, finish = threading.Event(), threading.Event()
+    task.on_reset = lambda: (entered.set(), finish.wait(5))
+    outputs: list[Any] = []
+    worker = threading.Thread(target=lambda: outputs.append(task.compute(_state(0.0))), daemon=True)
+    worker.start()
+    assert entered.wait(2)
+    done = threading.Event()
+
+    def stop() -> None:
+        task.invalidate_session()
+        done.set()
+
+    stopper = threading.Thread(target=stop, daemon=True)
+    stopper.start()
+    assert done.wait(2), "invalidation blocked on the runtime reset"
+    finish.set()
+    worker.join(2)
+    stopper.join(2)
+    assert outputs == [None] and task.resets == 1
+
+
+def test_policy_task_inference_error_and_bad_command_close_the_session() -> None:
+    task = _StubPolicyTask()
+    task.start()
+    task.request_session(0.0)
+    task.fail_act = True
+    assert task.compute(_state(0.0)) is None
+    assert not task.session_active
+    task.fail_act = False
+
+    task.request_session(0.1)
+    task.command = [0.0, float("nan")]
+    assert task.compute(_state(0.1)) is None
+    assert not task.session_active
