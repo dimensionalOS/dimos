@@ -167,6 +167,52 @@ def write_asset_info(pxr: Pxr, prim: Prim, filename: str, base_dir: Path | None)
     prim.SetAssetInfoByKey("version", digest)
 
 
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+
+def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
+    unopenable: dict[str, str] = {}
+    base = Path(root) if root else None
+    for asset in referenced_asset_paths(usd, root):
+        if asset.startswith(_ASSET_ROOT_PREFIX):
+            continue
+        path = Path(asset)
+        if not path.is_absolute():
+            if base is None:
+                unopenable[asset] = "relative, and this layer was opened with no asset root"
+                continue
+            path = base / path
+        try:
+            head = path.open("rb").read(len(_LFS_POINTER_PREFIX))
+        except OSError as error:
+            unopenable[asset] = f"{type(error).__name__}: {error.strerror or error}"
+            continue
+        if head == _LFS_POINTER_PREFIX:
+            unopenable[asset] = "an unfetched Git LFS pointer, not the file itself"
+    return unopenable
+
+
+def describe_unopenable_assets(unopenable: Mapping[str, str], *, what: str) -> str:
+    shown = "\n".join(f"  {asset}\n    {why}" for asset, why in sorted(unopenable.items())[:5])
+    more = f"\n  ... and {len(unopenable) - 5} more" if len(unopenable) > 5 else ""
+    prefix = _common_prefix(unopenable)
+    fetch = (
+        f'\nIf they are in this checkout: git lfs pull --include="{prefix}*"'
+        if any("LFS" in why for why in unopenable.values()) and prefix
+        else ""
+    )
+    return (
+        f"{what} names {len(unopenable)} asset(s) USD cannot open, so that geometry will be "
+        f"missing and every reference to it costs a USD warning on every open of this "
+        f"layer:\n{shown}{more}{fetch}"
+    )
+
+
+def _common_prefix(assets: Mapping[str, str]) -> str:
+    parents = {str(Path(asset).parent) for asset in assets}
+    return f"{parents.pop()}/" if len(parents) == 1 else ""
+
+
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
     pxr = load_pxr()
     layer = layer_from(pxr, usd, "a layer", root)
@@ -179,9 +225,9 @@ def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]
     return found
 
 
-def unhashed_assets(usd: str) -> dict[str, str]:
+def unhashed_assets(usd: str, root: Path | str | None = None) -> dict[str, str]:
     pxr = load_pxr()
-    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer"))
+    stage = pxr.Usd.Stage.Open(layer_from(pxr, usd, "a layer", root))
     missing: dict[str, str] = {}
     for prim in stage.Traverse():
         info = prim.GetAssetInfo() or {}
@@ -204,8 +250,8 @@ def _referenced_assets(pxr: Pxr, prim: Prim) -> list[str]:
     return assets
 
 
-def require_asset_hashes(usd: str, *, what: str) -> None:
-    missing = unhashed_assets(usd)
+def require_asset_hashes(usd: str, *, what: str, root: Path | str | None = None) -> None:
+    missing = unhashed_assets(usd, root)
     if not missing:
         return
     lines = []
