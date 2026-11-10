@@ -40,8 +40,8 @@ PROJECT = Path(__file__).resolve().parents[2] / "packages/dimos-messages"
 INTERFACES = PROJECT / "interfaces"
 LOCK = PROJECT / "schema-sources.json"
 
-# Message definitions owned by DimOS: authored here, not vendored.
-LOCAL = "dimos_msgs"
+# Message definition packages authored in this repository: not vendored.
+LOCAL = ("control_msgs", "dimos_msgs")
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -72,7 +72,7 @@ def load(project: Path = PROJECT) -> dict:
             raise ValueError(f"No files pinned for {source['repository']}")
         for destination, entry in source["files"].items():
             _relative(destination)
-            if destination.split("/")[0] == LOCAL:
+            if destination.split("/")[0] in LOCAL:
                 raise ValueError(f"Upstream source owns a local definition: {destination}")
             if set(entry) != {"path", "sha256"}:
                 raise ValueError(f"Unexpected file fields for {destination}")
@@ -93,12 +93,19 @@ def pinned(lock: dict) -> dict[str, str]:
 
 def local_files(project: Path = PROJECT) -> set[str]:
     """Committed paths authored in this repository."""
-    root = project / "interfaces" / LOCAL
+    interfaces = project / "interfaces"
     return {
-        str(path.relative_to(project / "interfaces"))
-        for path in root.rglob("*.msg")
+        str(path.relative_to(interfaces))
+        for name in LOCAL
+        for path in (interfaces / name).rglob("*.msg")
         if path.is_file()
     }
+
+
+def local_licenses(project: Path = PROJECT) -> set[str]:
+    """License files required for the authored definition packages present."""
+    interfaces = project / "interfaces"
+    return {f"licenses/{name}-LICENSE" for name in LOCAL if (interfaces / name).is_dir()}
 
 
 def verify(project: Path = PROJECT) -> list[str]:
@@ -115,11 +122,12 @@ def verify(project: Path = PROJECT) -> list[str]:
             problems.append(f"vendored definition does not match its pin: {destination}")
     local = local_files(project)
     if not local:
-        problems.append(f"no {LOCAL} definitions found")
-    license_file = f"licenses/{LOCAL}-LICENSE"
-    if not (interfaces / license_file).is_file():
-        problems.append(f"missing license: {license_file}")
-    allowed = set(expected) | local | {license_file}
+        problems.append(f"no {', '.join(LOCAL)} definitions found")
+    licenses = local_licenses(project)
+    for license_file in sorted(licenses):
+        if not (interfaces / license_file).is_file():
+            problems.append(f"missing license: {license_file}")
+    allowed = set(expected) | local | licenses
     for path in sorted(interfaces.rglob("*")):
         if path.is_file():
             relative = str(path.relative_to(interfaces))
@@ -179,9 +187,13 @@ def vendor(project: Path = PROJECT, cache: Path | None = None) -> None:
             shutil.copyfile(stage / destination, target)
         for path in sorted(interfaces.rglob("*"), reverse=True):
             relative = str(path.relative_to(interfaces))
-            if path.is_file() and relative not in expected and relative.split("/")[0] != LOCAL:
-                if relative != f"licenses/{LOCAL}-LICENSE":
-                    path.unlink()
+            if (
+                path.is_file()
+                and relative not in expected
+                and relative.split("/")[0] not in LOCAL
+                and relative not in local_licenses(project)
+            ):
+                path.unlink()
             elif path.is_dir() and not any(path.iterdir()):
                 path.rmdir()
     problems = verify(project)
