@@ -541,6 +541,9 @@ class RunLog(Body):
     records: list[LogRecord]
     offset: int
     loggers: list[str]
+    # false: it logs outside the gateway's and the served checkout's logs/ (a third checkout), so no `log` event
+    # says when it grows: ask again to see new lines
+    watched: bool
 
 
 class ProcessStats(Body):

@@ -44,6 +44,8 @@ export function LogsModal(
   const maxRecords = useRef(Infinity);
   maxRecords.current = config?.logMaxRecords ?? Infinity;
   const [read, setRead] = useState<(() => void) | null>(null);
+  // a run logging where the gateway doesn't watch (a third checkout's logs/) sends no log events: polled instead
+  const [watched, setWatched] = useState(true);
   // the next lines are asked for on each log event for this run; a new level or search cancels the request still
   // out for the old one, so the newest always wins
   useEffect(() => {
@@ -57,7 +59,7 @@ export function LogsModal(
         params.set("q", query);
       }
       try {
-        const page = await getJson<{ offset: number; records: LogRecord[] }>(
+        const page = await getJson<{ offset: number; records: LogRecord[]; watched?: boolean }>(
           `history/${encodeURIComponent(runId)}/logs?${params}`,
           { signal: abort.signal },
         );
@@ -65,6 +67,7 @@ export function LogsModal(
           return;
         }
         offset.current = page.offset;
+        setWatched(page.watched ?? true);
         const fresh = page.records;
         setRecords((old) => fresh.length ? [...old, ...fresh].slice(-maxRecords.current) : old);
         setNote((old) => fresh.length || old === null ? null : "No log lines yet.");
@@ -85,7 +88,7 @@ export function LogsModal(
       setRead(null);
     };
   }, [runId, level, query, paused, zenoh]);
-  useEvery(read ?? (() => {}), read && !eventsArrive ? config?.pollWithoutEventsS : null);
+  useEvery(read ?? (() => {}), read && (!eventsArrive || !watched) ? config?.pollWithoutEventsS : null);
   return (
     <Modal
       open

@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 8.5.0
+    version: 8.6.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -269,7 +269,7 @@ provides:
               type: string
     /history/{runId}/logs:
       get:
-        summary: A run's structured log records from ?after= on (?level=, ?q=, ?limit=); latest is the newest
+        summary: A run's structured log records from ?after= on (?level=, ?q=, ?limit=); latest is the newest; watched false = no log event says when it grows
         parameters:
           - name: runId
             in: path
@@ -331,7 +331,7 @@ provides:
               type: string
     /source:
       get:
-        summary: A source file the blueprint view links to (?file=)
+        summary: A source file the blueprint view links to (?file=; ?blueprint= reads it from that blueprint's live run's checkout)
     /msgs.js:
       get:
         summary: The LCM message decoders for the browser
