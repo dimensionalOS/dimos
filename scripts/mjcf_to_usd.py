@@ -214,19 +214,36 @@ def name_joints(stage: Any, pxr: Any) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mjcf", type=Path, help="the vendor MJCF, for its mesh names")
+    parser.add_argument("--converted", type=Path, help="the converter's stage")
+    parser.add_argument("--meshes", type=Path, help="the directory holding the mesh files")
+    parser.add_argument("--out", type=Path, help="the .usda to write")
     parser.add_argument(
-        "--mjcf", required=True, type=Path, help="the vendor MJCF, for its mesh names"
+        "--repaint",
+        type=Path,
+        nargs="+",
+        help="apply only the colour step to layers already converted, in place",
     )
-    parser.add_argument("--converted", required=True, type=Path, help="the converter's stage")
-    parser.add_argument(
-        "--meshes", required=True, type=Path, help="the directory holding the mesh files"
-    )
-    parser.add_argument("--out", required=True, type=Path, help="the .usda to write")
     args = parser.parse_args()
 
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
     pxr = argparse.Namespace(Gf=Gf, Sdf=Sdf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics)
+
+    if args.repaint:
+        for path in args.repaint:
+            stage = Usd.Stage.Open(str(path))
+            painted = paint_from_materials(stage, pxr)
+            stage.GetRootLayer().Export(str(path))
+            print(f"{painted} mesh(es) repainted in {path}")
+        return 0
+
+    missing = [
+        name for name in ("mjcf", "converted", "meshes", "out") if getattr(args, name) is None
+    ]
+    if missing:
+        print(f"ERROR: --{', --'.join(missing)} are required without --repaint", file=sys.stderr)
+        return 1
 
     for path in (args.mjcf, args.converted):
         if not path.is_file():
