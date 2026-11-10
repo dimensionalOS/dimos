@@ -1,21 +1,25 @@
 # CDR generation in dimOS
 
-**WIP:** Built-in messages work in standalone examples. CDR transport and application
-support are incomplete. Existing code continues to use `dimos.msgs`.
+Built-in message definitions are committed under
+`packages/dimos-messages/interfaces` together with their upstream licenses and
+`schema-sources.json` provenance (repository, revision, archive hash and
+per-file hashes). `setup.py` generates Python messages from those files through
+`dimos-cdrgen==0.1.2`; builds never download definitions or prepare schema
+archives.
 
-`setup.py` reads the definitions in `packages/dimos-generated` and calls
-`dimos-cdrgen==0.1.2`. The wheel contains `dimos_messages`, schemas, and native
-source code. The examples use these installed files.
-
-The [cdrgen guides](https://tomcc7.github.io/dimos-cdrgen/) describe its APIs and
-supported schemas. `dimos.message_codegen.native_build.write_cmake_toolchain`
+The wheel contains the generated `dimos_messages` package, the
+`dimos_messages_schemas` resources (schemas, C++/Rust build inputs and
+metadata), and the upstream licenses. The main `dimos` distribution owns the
+built-in messages; there is no separate `dimos-generated` distribution.
+The [cdrgen guides](https://tomcc7.github.io/dimos-cdrgen/) describe its APIs
+and supported schemas. `dimos.message_codegen.native_build.write_cmake_toolchain`
 adds paths for the dimOS SDK.
 
 ## Run the built-in examples
 
-Run all commands below from the repository root. Install `uv` and a C++ compiler
-first; the compiler is needed by dimOS's existing A* extension even for a source
-installation used only by Python. The examples use Python 3.12.
+Run all commands below from the repository root. Install `uv` and a C++
+compiler first; the compiler is needed by dimOS's existing A* extension even for
+a source installation used only by Python. The examples use Python 3.12.
 
 ### Install and run Python
 
@@ -28,20 +32,20 @@ DIMOS_ALLOW_MISSING_COCKPIT=1 uv pip install --python .venv-msg-review/bin/pytho
 `DIMOS_ALLOW_MISSING_COCKPIT=1` is the existing option to install without prepared
 web UI bundles. Omit it when building a complete distribution with those assets.
 The example imports the installed package, prints the generated Python and
-schema/native-source directories, and checks image and custom-message CDR roundtrips.
-Expected output includes:
+schema/native-source directories, and checks image and custom-message CDR
+roundtrips. Expected output includes:
 
 ```text
-Generated Python messages: <venv>/lib/python3.12/site-packages/dimos/messages
-Packaged schemas and native sources: <venv>/lib/python3.12/site-packages/dimos/messages_schemas/package
-Messages: 73 types
+Installed package: <venv>/lib/python3.12/site-packages/dimos_messages
+Generated Python messages: <venv>/lib/python3.12/site-packages
+Packaged schemas and native sources: <venv>/lib/python3.12/site-packages/dimos_messages_schemas/package
 PASS: sensor_msgs/msg/Image pixels, encoding and source stamp
 PASS: dimos_msgs/msg/LineSegments3D geometry, weight and nested type identity
 PASS: packaged definitions and C++/Rust build inputs; no compiled message libraries
 ```
 
 The generated directories are installation outputs, not files to edit. Message
-inputs live under `packages/dimos-generated` in the checkout.
+inputs live under `packages/dimos-messages/interfaces` in the checkout.
 
 ### Run C++ and Rust
 
@@ -53,9 +57,12 @@ uv pip install --python .venv-msg-review/bin/python 'dimos-cdrgen[native]==0.1.2
 ```
 
 This one command compiles the ordinary CMake and Cargo consumers in
-`examples/message-package/native`. Python writes an installed built-in Header,
-C++ appends `/cpp` to its frame ID, Rust appends `/rust`, and Python verifies
-`map/cpp/rust` with the timestamp unchanged. Expected final output:
+`examples/message-package/native`. The example reads the generated Rust crate
+version from the packaged manifest and pins the temporary Cargo dependency to
+it, so the example does not hardcode a release number. Python writes an
+installed built-in Header, C++ appends `/cpp` to its frame ID, Rust appends
+`/rust`, and Python verifies `map/cpp/rust` with the timestamp unchanged.
+Expected final output:
 
 ```text
 PASS: built-in Header Python -> C++ -> Rust -> Python
@@ -67,17 +74,31 @@ files are cleaned up. Native support builds use `~/.cache/dimos/messages`;
 retain Rust build artifacts. Cold builds download pinned dependencies;
 `DIMOS_OFFLINE=1` requires populated native and Cargo caches.
 
+### External message package
+
+`examples/external-messages` shows a package that defines one message and reuses
+the installed built-in `Header` by version dependency instead of redeclaring it:
+
+```sh skip
+python examples/external-messages/build_example.py
+```
+
+The checked-in `pyproject.toml.in` has no version literal. The script reads the
+installed DimOS version, renders a temporary `pyproject.toml`, and builds with
+`--no-build-isolation --no-deps`, so the build uses the local DimOS instead of
+downloading a different PyPI release.
+
 ### What installation does
 
 Definitions → setuptools calls cdrgen → Python/schema/native-source
-artifacts in the dimOS wheel → installed consumers. Source installation prepares
-verified definitions and generates artifacts. Wheel installation only installs
-those artifacts. The sdist includes definitions needed to rebuild the wheel.
+artifacts in the dimOS wheel → installed consumers. Source installation
+generates artifacts from the committed definitions. Wheel installation only
+installs those artifacts. The sdist includes definitions needed to rebuild the
+wheel.
 
 Installation does not compile or test the C++/Rust message consumers. Running
 `demo_native.py` performs that verification explicitly. These examples use files,
-with no robot connection, transport or SDK pub/sub. No dedicated native-message
-CI is required to install or run them.
+with no robot connection, transport or SDK pub/sub.
 
 ## Verify the integration
 
@@ -88,8 +109,18 @@ uv pip install 'dimos-cdrgen==0.1.2' numpy build pytest pytest-asyncio pytest-en
 python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
 ```
 
-These checks cover SDK path discovery and an installed Python message consumer.
-Native message generation/compilation is not run by CI. To manually verify the
-installed built-in messages across Python, C++ and Rust, run the
-[built-in example above](#run-c-and-rust).
+`dimos/message_codegen/test_bundled.py` is the artifact acceptance suite. It
+skips during ordinary unit-test runs; build the wheel and sdist first, then run:
+
+```sh skip
+DIMOS_BUNDLE_DIST=dist DIMOS_BUNDLE_WHEELHOUSE=wheelhouse DIMOS_BUNDLE_REQUIRED=1 \
+  python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_bundled.py
+```
+
+With `DIMOS_BUNDLE_REQUIRED=1`, missing wheel, sdist or wheelhouse inputs fail
+the run instead of skipping. The `message-artifacts` CI job runs exactly that
+command against the artifacts it built. The suite checks required message
+classes, schema closure, provider uniqueness, CDR roundtrips, and installed
+wheel/sdist/editable/git layouts, including external `Header` identity.
+
 Generic generator regression tests belong to the cdrgen repository.

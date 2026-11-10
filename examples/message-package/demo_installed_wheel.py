@@ -36,7 +36,7 @@ def main() -> None:
     installed = Path(dimos_messages.__file__).resolve()
     assert installed.is_relative_to(Path(sys.prefix).resolve()), installed
     owner = distribution("dimos")
-    assert "dimos/messages/std_msgs/msg/__init__.py" in {str(p) for p in owner.files}
+    assert "dimos_messages/std_msgs/msg/__init__.py" in {str(p) for p in owner.files or ()}
     assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_messages"]) == 1
     print(f"Installed package: {installed}")
     print(f"Generated Python messages: {installed.parent}")

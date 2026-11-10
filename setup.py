@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import sys
 
 from dimos_cdrgen.source_package import SourceDistribution, prepare
 from pybind11.setup_helpers import Pybind11Extension, build_ext
