@@ -209,7 +209,7 @@ def test_unsupported_python_payload_fails_before_native_process_starts(
     )
     connect(recorder, values="/values")
 
-    with pytest.raises(TypeError, match="only supports LCM-backed messages"):
+    with pytest.raises(TypeError, match="only supports DimOS message types"):
         recorder._stream_specs()
 
 
