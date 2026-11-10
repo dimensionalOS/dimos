@@ -127,6 +127,15 @@ def _manager_name(blueprint: Blueprint) -> str:
     return str(next(atom.name for atom in blueprint.blueprints if atom.module is UsdManager))
 
 
+def _walker_name(blueprint: Blueprint) -> str:
+    """The deployed instance name of a robot's coordinator, for the world to ask about arming.
+
+    Taken off the atom rather than spelled out, for the reason `_manager_name` is: it stays in
+    step with however the coordinator names instances, namespace prefix and all.
+    """
+    return str(next(atom.name for atom in blueprint.blueprints if atom.module is _Walker))
+
+
 _robots = {name: _robot(name) for name in SPOTS}
 
 scene_manager = UsdManager.blueprint(
@@ -143,6 +152,9 @@ three_g1_office_555 = autoconnect(
     sim_module(
         scene_manager=SCENE_MANAGER,
         robots=[SimulatedRobot(name, G1Sim.usd) for name in SPOTS],
+        # Who the world waits for: it starts the moment all three coordinators report their
+        # GR00T task armed, and `startup_delay` below is only the cap on that wait.
+        wait_for=[_walker_name(blueprint) for blueprint in _robots.values()],
         # Long enough for all three policies to have the joints before the world starts. These
         # robots are held up by their policies and not by their servos -- left at the home pose
         # a G1 folds in about a second and a half -- and a policy cannot command one until it

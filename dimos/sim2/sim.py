@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from collections.abc import Iterable, Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -64,6 +65,9 @@ class SimulatedWorldConfig(SceneConfig):
     # observations this world publishes, so there is always an opening where the robot is
     # standing on nothing. This is how long the world refuses to spend it.
     #
+    # It is a cap, not a duration: with `wait_for` set, the hold ends the moment every module
+    # named there says it is driving, and this is only how long the world will wait to be told.
+    #
     # Zero by default and set by the blueprints that need it, because how long is a property of
     # the scene and not of the simulator: three G1s in office_555 need twenty seconds, since
     # every module that wants a view of that room composes it again and compiles its own copy --
@@ -71,6 +75,28 @@ class SimulatedWorldConfig(SceneConfig):
     # world itself was built while that was going on. A one-robot world on a stub scene needs
     # none of it. Nothing is stepped during the wait, so it costs no sim time either way.
     startup_delay: float = 0.0
+    # The modules to ask before starting, so the wait is as long as it has to be and no longer.
+    #
+    # Each is a module instance -- a Blueprint, or the name one was deployed under -- that owns a
+    # control task. The world asks each for its tasks' `state_snapshot()` through the
+    # coordinator's `task_invoke` and holds until none of them is still unarmed. A module that
+    # cannot answer, or whose tasks do not report arming, is not something to wait for: the hold
+    # then runs to `startup_delay` exactly as it does with this left empty. So the worst case is
+    # the blind wait, and the only thing knowing can do is shorten it.
+    wait_for: tuple[Mount, ...] = ()
+
+    @field_validator("wait_for", mode="before")
+    @classmethod
+    def _normalize_wait_for(cls, value: object) -> object:
+        if value is None:
+            return ()
+        if isinstance(value, Mount):
+            return (value,)
+        if isinstance(value, str) or isinstance(value, Mapping):
+            return (Mount.of(value),)
+        if isinstance(value, Iterable):
+            return tuple(v if isinstance(v, Mount) else Mount.of(v) for v in value)
+        return (Mount.of(value),)
 
 
 class SimulatedWorld(Protocol):
@@ -100,6 +126,37 @@ def scene_from(
         lambda name: getattr(client, ASSET_RPC)(name),
     )
     return UsdModel.from_file(layer)
+
+
+# What `driving()` needs of a module that owns control tasks.
+_CONTROL_RPC = frozenset({"get_active_tasks", "task_invoke"})
+
+
+def driving(mount: Mount, rpc: Any) -> bool:
+    """Whether every task this module owns that reports arming is armed.
+
+    A control task's `state_snapshot()` is the only thing in the stack that says whether a
+    policy has taken the joints, and the coordinator already exposes it: the task declares it in
+    its `TASK_EXPOSES` card and `task_invoke` dispatches it. A task whose snapshot has no
+    `armed` is not a task that arms, so it is not something to wait for.
+
+    False while a module has not started its tasks yet -- that is the case worth waiting out.
+    Raises if the module cannot be reached or refuses the call, which the caller reads as "it
+    cannot say" rather than as "no".
+    """
+    client = (
+        RPCClient(None, None, mount.remote_name, set(_CONTROL_RPC), rpc=rpc)
+        if mount.module is None
+        else RPCClient.remote(mount.module, mount.remote_name, rpc=rpc)
+    )
+    tasks = client.get_active_tasks()
+    if not tasks:
+        return False
+    for task in tasks:
+        snapshot = client.task_invoke(task, "state_snapshot")
+        if isinstance(snapshot, Mapping) and not snapshot.get("armed", True):
+            return False
+    return True
 
 
 BACKENDS = {"mujoco": "dimos.sim2.mujoco.sim.MujocoSim"}
