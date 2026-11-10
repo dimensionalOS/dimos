@@ -45,6 +45,15 @@ Base phone teleop module. Receives orientation + gyro data from phone motion sen
 ### SimplePhoneTeleop
 Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Twist`.
 
+### LeaderTeleopModule
+Reads Feetech leader arms over serial and publishes follower joint targets plus
+per-side gripper openings. The robot is config, not code: a `SideMapping` per
+side names which leader motor drives which follower joint, with limits, scale
+and offset. `LeaderCoordinator` adds the `leader_joint_command` port to the
+Damiao coordinator and `leader_task` binds it to a `trajectory` task at priority
+20, above a policy's lane. Calibrate with `dimos hardware feetech-leader
+calibrate`; the `leader-teleop` extra installs the Feetech SDK.
+
 ## Subclassing
 
 `WebXRTeleopModule` is designed for extension. Override these methods:
@@ -83,6 +92,13 @@ teleop/
 │   ├── robot_type.py            # RobotType: broker config → operator view auto-select
 │   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
 │   └── blueprints/              # cloudflare.py (Go2 transport + multicam, xArm6/7)
+├── leader/
+│   ├── module.py                # LeaderTeleopModule: Feetech leaders -> joint targets
+│   ├── mapping.py               # SideMapping/JointMapping/GripperMapping (config, not code)
+│   ├── coordinator.py           # LeaderCoordinator, leader_task, leader_gripper_tasks
+│   ├── feetech.py               # Feetech serial readers + mock reader
+│   ├── calibration.py           # Per-side calibration files under STATE_DIR/teleop/leader
+│   └── cli/                     # dimos hardware feetech-leader {calibrate,joint-tui,setup-motor-id}
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
