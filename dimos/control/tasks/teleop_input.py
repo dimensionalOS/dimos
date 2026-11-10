@@ -14,12 +14,10 @@
 
 """Receipt-stamped WebXR operator input for teleoperation control tasks.
 
-The coordinator delivers controller poses and packed buttons as separate
-streams.  A policy or IK task needs the last sample of every source plus the
-time it was *received*: a goal rebuilt from one live and one stale controller
-is not fresh, and a held grip cannot outlive its button message.  This layer
-records exactly that.  Deciding what a stale input means (wait, release, fault)
-stays with the task.
+Controller poses and packed buttons arrive as separate streams.  A task needs
+the last sample of every source plus its *receipt* time: a goal rebuilt from one
+live and one stale controller is not fresh, and a held grip cannot outlive its
+button message.  Deciding what a stale input means stays with the task.
 """
 
 from __future__ import annotations
@@ -34,9 +32,6 @@ if TYPE_CHECKING:
 
     PoseLike = Pose | PoseStamped
 
-#: Controller sides in the trained/goal layout.
-SIDES: tuple[str, str] = ("left", "right")
-
 
 class TeleopInput:
     """Last sample and receipt time of each WebXR input source."""
@@ -45,10 +40,6 @@ class TeleopInput:
         self._poses: dict[str, tuple[PoseLike, float]] = {}
         self._buttons_at: float | None = None
         self._grips: tuple[bool, bool] = (False, False)
-
-    @property
-    def grips(self) -> tuple[bool, bool]:
-        return self._grips
 
     @property
     def deadman(self) -> bool:
