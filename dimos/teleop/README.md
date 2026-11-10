@@ -50,8 +50,8 @@ Reads Feetech leader arms over serial and publishes follower joint targets plus
 per-side gripper openings. The robot is config, not code: a `SideMapping` per
 side names which leader motor drives which follower joint, with limits, scale
 and offset. `LeaderCoordinator` adds the `leader_joint_command` port to the
-Damiao coordinator and `leader_task` binds it to a `trajectory` task at priority
-20, above a policy's lane. Calibrate with `dimos hardware feetech-leader
+Damiao coordinator and `leader_task` points the coordinator's `joint_trajectory`
+task at that port with `stream_bind`. Calibrate with `dimos hardware feetech-leader
 calibrate`; the `leader-teleop` extra installs the Feetech SDK.
 
 ## Subclassing
