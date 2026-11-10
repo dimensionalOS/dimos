@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXModule
 from dimos.manipulation.grasping.grasp_generator_module import (
     GraspGeneratorModule,
     _approach_angle,
@@ -186,3 +187,14 @@ def test_bad_arguments_are_refused(
 ) -> None:
     with pytest.raises(ValueError, match=match):
         generator._propose_for("cup-1", approach, 30.0, limit)
+
+
+def test_each_grasp_generator_gives_the_agent_its_own_tool() -> None:
+    def skills(cls: type[GraspGeneratorModule]) -> set[str]:
+        return {name for name in cls.rpcs if getattr(getattr(cls, name), "__skill__", False)}
+
+    graspgenx, heuristic = skills(GraspGenXModule), skills(HeuristicGraspModule)
+
+    # An agent's tools are keyed by name, so a shared name would hide one generator.
+    assert graspgenx == {"propose_graspgenx_grasps"}
+    assert heuristic == {"propose_heuristic_grasps"}

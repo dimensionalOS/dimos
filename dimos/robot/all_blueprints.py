@@ -282,6 +282,7 @@ all_modules = {
     "google-maps-skill-container": "dimos.agents.skills.google_maps_skill_container.GoogleMapsSkillContainer",
     "gps-nav-skill-container": "dimos.agents.skills.gps_nav_skill.GpsNavSkillContainer",
     "grasp-gen-x-module": "dimos.manipulation.grasping.grasp_gen_x.module.GraspGenXModule",
+    "grasp-generator-module": "dimos.manipulation.grasping.grasp_generator_module.GraspGeneratorModule",
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
     "habitat-connection": "dimos.simulation.habitat.connection.HabitatConnection",
     "hand-teleop-module": "dimos.teleop.webxr.extensions.HandTeleopModule",

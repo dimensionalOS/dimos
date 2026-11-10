@@ -83,7 +83,7 @@ class HeuristicGraspModule(GraspGeneratorModule):
         )
 
     @skill
-    def propose_grasps_for(
+    def propose_heuristic_grasps(
         self,
         object_id: str,
         approach: list[float] | None = None,

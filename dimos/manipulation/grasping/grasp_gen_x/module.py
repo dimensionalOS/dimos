@@ -106,7 +106,7 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
         raise NotImplementedError
 
     @skill
-    def propose_grasps_for(
+    def propose_graspgenx_grasps(
         self,
         object_id: str,
         approach: list[float] | None = None,

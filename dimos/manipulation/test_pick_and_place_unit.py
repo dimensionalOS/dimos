@@ -607,7 +607,7 @@ def test_pick_and_place_work_without_a_box_filter(module: PickAndPlaceModule) ->
 
 
 def _given(x: float, **extra: Any) -> dict[str, Any]:
-    """A grasp handed to pick_object, as propose_grasps_for gives it: a top-down grasp at ``x``."""
+    """A grasp handed to pick_object, as a grasp generator's skill gives it: a top-down grasp at ``x``."""
     pose = _candidate(x).pose
     return {
         "position": list(pose.position.to_tuple()),
