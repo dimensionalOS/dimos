@@ -5,6 +5,7 @@ This page explains general dimOS concepts that you'd use to build applications: 
 ## Table of Contents
 
 - [Modules](/docs/usage/modules.md): The primary units of deployment in dimOS, modules run in parallel and are python classes.
+- [StateTree](/docs/usage/statetree.md): hierarchical behavior logic that a module ticks on its own loop.
 - [Streams](/docs/usage/data_streams/index.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/docs/usage/blueprints.md): a way to group modules together and define their connections to each other.
 - [Distributed runs](/docs/usage/distributed/index.md): one blueprint across several machines.
