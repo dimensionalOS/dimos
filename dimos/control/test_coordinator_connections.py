@@ -945,7 +945,11 @@ def positions(system: ModuleCoordinator) -> list[float]:
 def drive_to_target(system: ModuleCoordinator) -> None:
     """Send the fake arm a trajectory to TARGET, and wait until it gets there."""
     coordinator = system.get_instance(Robots)
-    wait_until(lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()), timeout=10.0)
+    wait_until(
+        lambda: "joint_trajectory" in coordinator.list_tasks()
+        and set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()),
+        timeout=10.0,
+    )
     trajectory = JointTrajectory(
         joint_names=MOCK_JOINTS,
         points=[
