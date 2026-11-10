@@ -243,6 +243,13 @@ def test_connection_config_accepts_position_commands_only():
         common.DamiaoConnectionConfig(source="arm", pd=True)
 
 
+def test_damiao_has_no_stream_execution_mode():
+    """The reader-thread/stream fallback is gone, so it cannot be selected."""
+    assert common.DamiaoConnectionConfig(source="arm").hosted is True
+    with pytest.raises(ValueError, match="hosted must be True"):
+        common.DamiaoConnectionConfig(source="arm", hosted=False)
+
+
 def test_can_selectors_must_match_the_robot_buses(connection_class):
     class Missing(connection_class):
         def can_ports(self):
