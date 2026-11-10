@@ -120,7 +120,8 @@ export function App() {
 
   const running = !!launch && (launch.phase === "running" || launch.phase === "starting");
   const live = running || !!liveRun;
-  const logsRun = RUN ?? launch?.runId ?? null;
+  // a run started in a terminal is live without a gateway launch: its logs, stats and Stop are the live run's
+  const logsRun = RUN ?? (running ? launch?.runId : liveRun?.run_id) ?? launch?.runId ?? null;
   const busy = !!relaunching || launch?.phase === "starting" || launch?.phase === "stopping";
   // a launch that never became a run (a bad config, a build that failed) has no run log: what it printed stands in
   const launchOutput = !logsRun && launch?.output ? launch.output : null;
@@ -247,7 +248,7 @@ export function App() {
       }
     }), []);
   useEffect(() => {
-    if (!visible || !running) {
+    if (!visible || !live) {
       setStats(null);
       return;
     }
@@ -261,8 +262,8 @@ export function App() {
       offStats();
       offReconnect();
     };
-  }, [visible, running, pollStats, zenoh]);
-  useEvery(pollStats, visible && running ? withoutEventsS : null);
+  }, [visible, live, pollStats, zenoh]);
+  useEvery(pollStats, visible && live ? withoutEventsS : null);
 
   // Hz per topic (without its leading slash), and the live topics no module here is wired to
   const rates = useMemo(() => {
@@ -412,7 +413,7 @@ export function App() {
                 </span>
               </Button>
             )}
-            {running && (
+            {live && (
               <Button
                 size="sm"
                 data-bp-stop
@@ -485,8 +486,8 @@ export function App() {
                 error={error}
                 rates={rateRowsHeard}
                 ratesError={ratesError}
-                stats={running ? stats : null}
-                statsError={running ? statsError : null}
+                stats={live ? stats : null}
+                statsError={live ? statsError : null}
                 onOpen={open}
                 onHover={setHovered}
               />
