@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
-import onnxruntime as ort  # type: ignore[import-untyped]
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.hardware_interface import ConnectedWholeBody
@@ -43,6 +42,12 @@ from dimos.control.task import (
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
+)
+from dimos.control.tasks.policy_execution import (
+    OnnxActor,
+    PolicyCommandHold,
+    PolicyTickScheduler,
+    preferred_onnx_providers,
 )
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
@@ -165,26 +170,6 @@ _NUM_ACTIONS = 15
 _NUM_MOTORS = 29
 
 
-def _preferred_onnx_providers() -> list[str]:
-    available = ort.get_available_providers()
-    providers: list[str] = []
-
-    if "CUDAExecutionProvider" in available:
-        preload_dlls = getattr(ort, "preload_dlls", None)
-        if preload_dlls is not None:
-            try:
-                preload_dlls(cuda=True, cudnn=True, msvc=False)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to preload ONNXRuntime CUDA/cuDNN libraries",
-                    error=repr(exc),
-                )
-        providers.append("CUDAExecutionProvider")
-
-    providers.append("CPUExecutionProvider")
-    return providers
-
-
 @dataclass
 class G1GrootWBCTaskConfig:
     """Configuration for the GR00T WBC task.
@@ -303,19 +288,17 @@ class G1GrootWBCTask(BaseControlTask):
         self._joint_names_set = frozenset(config.joint_names)
         self._all_joint_names = list(config.all_joint_names)
 
-        providers = _preferred_onnx_providers()
-        self._balance_session = ort.InferenceSession(str(config.balance_onnx), providers=providers)
-        self._walk_session = ort.InferenceSession(str(config.walk_onnx), providers=providers)
-        self._balance_input = self._balance_session.get_inputs()[0].name
-        self._walk_input = self._walk_session.get_inputs()[0].name
+        providers = preferred_onnx_providers()
+        self._balance_actor = OnnxActor(config.balance_onnx, providers=providers)
+        self._walk_actor = OnnxActor(config.walk_onnx, providers=providers)
         logger.info(
             "G1GrootWBCTask loaded ONNX models",
             task=name,
             balance=str(config.balance_onnx),
             walk=str(config.walk_onnx),
             requested_providers=providers,
-            balance_providers=self._balance_session.get_providers(),
-            walk_providers=self._walk_session.get_providers(),
+            balance_providers=self._balance_actor.providers,
+            walk_providers=self._walk_actor.providers,
         )
 
         self._default_29 = np.asarray(config.default_positions_29, dtype=np.float32)
@@ -326,8 +309,8 @@ class G1GrootWBCTask(BaseControlTask):
         self._last_action = np.zeros(_NUM_ACTIONS, dtype=np.float32)
         self._obs_buf = np.zeros((1, _SINGLE_OBS_DIM * _OBS_HISTORY_LEN), dtype=np.float32)
         self._first_inference = True
-        self._tick_count = 0
-        self._last_targets: list[float] | None = None
+        self._tick_scheduler = PolicyTickScheduler.every(config.decimation)
+        self._hold = PolicyCommandHold(self._joint_names_list)
 
         # Last-known-good state caches. compute() falls back to these
         # whenever a joint is missing from CoordinatorState (transient
@@ -347,7 +330,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._armed = False
         self._arming = False
         self._arm_pending = False
-        self._dry_run = bool(config.auto_dry_run)
+        self._hold.set_dry_run(config.auto_dry_run)
         self._arming_duration = 0.0
         self._arming_start_t = 0.0
         self._ramp_start: NDArray[np.float32] | None = None
@@ -435,12 +418,8 @@ class G1GrootWBCTask(BaseControlTask):
         # pure damping (tau = -kd * dq), which mirrors the reference
         # backend's inactive "hold current pose" behaviour.
         if not self._armed and not self._arming:
-            self._last_targets = current_15.tolist()
-            return JointCommandOutput(
-                joint_names=self._joint_names_list,
-                positions=self._last_targets,
-                mode=ControlMode.SERVO_POSITION,
-            )
+            self._hold.set(current_15)
+            return self._hold.output()
 
         # Arming: lerp ramp_start -> default_15 over arming_duration.
         if self._arming:
@@ -450,7 +429,7 @@ class G1GrootWBCTask(BaseControlTask):
                 1.0 if self._arming_duration <= 0.0 else min(1.0, elapsed / self._arming_duration)
             )
             target = self._ramp_start + alpha * (self._default_15 - self._ramp_start)
-            self._last_targets = target.tolist()
+            self._hold.set(target)
             if alpha >= 1.0:
                 self._arming = False
                 self._armed = True
@@ -458,31 +437,19 @@ class G1GrootWBCTask(BaseControlTask):
                 logger.info(
                     "G1GrootWBCTask ramp complete - policy armed",
                     task=self._name,
-                    mode="dry-run" if self._dry_run else "live",
+                    mode="dry-run" if self._hold.dry_run else "live",
                 )
-            return JointCommandOutput(
-                joint_names=self._joint_names_list,
-                positions=self._last_targets,
-                mode=ControlMode.SERVO_POSITION,
-            )
+            return self._hold.output()
 
         # Armed: run the policy.  In dry-run mode we still compute (so
         # the obs buffer stays hot), but return None so no command goes
         # downstream. A throttled log line shows what WOULD have been
         # sent so operators can verify pre-go behavior.
-        self._tick_count += 1
-
         # Decimation: only run inference every N ticks.  Between inference
         # ticks, re-emit the last target so the coordinator keeps driving
         # the joints (or nothing, in dry-run).
-        if self._tick_count % self._config.decimation != 0:
-            if self._dry_run or self._last_targets is None:
-                return None
-            return JointCommandOutput(
-                joint_names=self._joint_names_list,
-                positions=self._last_targets,
-                mode=ControlMode.SERVO_POSITION,
-            )
+        if not self._tick_scheduler.poll(state.t_now):
+            return self._hold.hold()
 
         # State was refreshed up top (with fall-back-to-last-good on
         # missing joints). Snapshot the caches now so concurrent state
@@ -531,17 +498,17 @@ class G1GrootWBCTask(BaseControlTask):
         # Model selection: balance when near-stationary, walk otherwise.
         cmd_norm = float(np.linalg.norm(cmd))
         if cmd_norm <= self._config.cmd_norm_threshold:
-            raw = self._balance_session.run(None, {self._balance_input: self._obs_buf})[0]
+            raw = self._balance_actor.run(self._obs_buf)
         else:
-            raw = self._walk_session.run(None, {self._walk_input: self._obs_buf})[0]
+            raw = self._walk_actor.run(self._obs_buf)
 
-        action = raw[0, :_NUM_ACTIONS].astype(np.float32)
+        action = raw[:_NUM_ACTIONS].astype(np.float32)
         self._last_action[:] = action
 
         target_q_15 = action * self._config.action_scale + self._default_15
-        self._last_targets = target_q_15.tolist()
+        self._hold.set(target_q_15)
 
-        if self._dry_run:
+        if self._hold.dry_run:
             # Throttled peek at the commanded pose so the operator can
             # decide whether it looks sane before flipping dry-run off.
             if (state.t_now - self._last_dry_run_log_t) >= 1.0:
@@ -555,11 +522,7 @@ class G1GrootWBCTask(BaseControlTask):
                 self._last_dry_run_log_t = state.t_now
             return None
 
-        return JointCommandOutput(
-            joint_names=self._joint_names_list,
-            positions=self._last_targets,
-            mode=ControlMode.SERVO_POSITION,
-        )
+        return self._hold.output()
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_names_set:
@@ -607,13 +570,15 @@ class G1GrootWBCTask(BaseControlTask):
         self._armed = False
         self._arming = False
         self._arm_pending = False
-        self._dry_run = bool(self._config.auto_dry_run)
-        self._last_targets = None
+        self._hold.set_dry_run(self._config.auto_dry_run)
+        self._hold.clear()
         self._reset_policy_state()
         with self._cmd_lock:
             self._cmd[:] = 0.0
             self._last_cmd_time = 0.0
-        logger.info("G1GrootWBCTask started", task=self._name, armed=False, dry_run=self._dry_run)
+        logger.info(
+            "G1GrootWBCTask started", task=self._name, armed=False, dry_run=self._hold.dry_run
+        )
         if self._config.auto_arm:
             self.arm(self._config.default_ramp_seconds)
 
@@ -623,7 +588,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._armed = False
         self._arming = False
         self._arm_pending = False
-        self._last_targets = None
+        self._hold.clear()
         logger.info("G1GrootWBCTask stopped", task=self._name)
 
     # Arming / dry-run (RPC-callable via coordinator.task_invoke)
@@ -689,7 +654,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._arm_pending = False
         self._ramp_start = None
         self._arming_start_t = 0.0
-        self._last_targets = None
+        self._hold.clear()
         self._state_seen = False
         self._cached_q_29[:] = self._default_29
         self._cached_dq_29[:] = 0.0
@@ -719,9 +684,9 @@ class G1GrootWBCTask(BaseControlTask):
         hardware before committing motor torques.
         """
         new_val = bool(enabled)
-        if new_val == self._dry_run:
+        if new_val == self._hold.dry_run:
             return
-        self._dry_run = new_val
+        self._hold.set_dry_run(new_val)
         self._last_dry_run_log_t = 0.0
         logger.info("G1GrootWBCTask dry_run changed", task=self._name, dry_run=new_val)
 
@@ -732,7 +697,7 @@ class G1GrootWBCTask(BaseControlTask):
             "armed": self._armed,
             "arming": self._arming,
             "arm_pending": self._arm_pending,
-            "dry_run": self._dry_run,
+            "dry_run": self._hold.dry_run,
             "arming_duration": self._arming_duration,
         }
 
@@ -743,7 +708,7 @@ class G1GrootWBCTask(BaseControlTask):
         self._last_action[:] = 0.0
         self._obs_buf[:] = 0.0
         self._first_inference = True
-        self._tick_count = 0
+        self._tick_scheduler.reset()
 
     def _build_obs(
         self,
