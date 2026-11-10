@@ -84,10 +84,19 @@ def _walker(name: str) -> Blueprint:
 
 
 SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
-    # On the floor, not at HOME_HEIGHT: that is where the *pelvis* sits once the home
-    # pose is struck, and the mount carries the robot's root, which is down at its feet.
-    # Spawning the root at pelvis height left it hanging 0.76 m up (pelvis at 1.548
-    # against a standing 0.793) to drop the moment physics began.
+    # On the floor, not at HOME_HEIGHT. This frame used to say HOME_HEIGHT, and the reason
+    # given was that a frame on the floor would be "a G1 with its pelvis at ankle height".
+    # That was true of the old path, where compile_world attached a robot from its own
+    # layer and zeroed its root first (root.pos = (0, 0, 0)), so this frame alone said
+    # where the robot stood. A composed world is the other path: the robot is already in
+    # the scene, nothing zeroes it, and its own layer still carries the offset from its
+    # root up to its pelvis. The two then add. Measured, with the frame at HOME_HEIGHT:
+    #
+    #     freejoint on /office_555/main   z = 0.755   (this frame)
+    #                  main/pelvis        z = 1.548   (0.755 + the robot's own 0.793)
+    #
+    # so every robot hung 0.76 m in the air and dropped the moment physics began. On the
+    # floor the pelvis comes out at 0.793, which is where a standing G1 keeps it.
     {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
