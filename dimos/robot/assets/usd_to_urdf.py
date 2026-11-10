@@ -48,11 +48,13 @@ def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = 
     stage = pxr.Usd.Stage.Open(layer)
 
     links = _usd_links_of(pxr, stage)
+    world = _world_body(stage)
     joints = [
         joint
-        for joint in (_joint_of(pxr, prim) for prim in _joint_prims(pxr, stage))
+        for joint in (_joint_of(pxr, prim, world) for prim in _joint_prims(pxr, stage))
         if joint is not None
     ]
+    links |= _static_bodies_of(pxr, stage, links, joints)
 
     default_prim = stage.GetDefaultPrim()
     robot_name = name or (default_prim.GetName() if default_prim else "robot")
@@ -121,6 +123,26 @@ def _usd_links_of(pxr: Pxr, stage: Stage) -> dict[str, Any]:
     return links
 
 
+def _world_body(stage: Stage) -> str | None:
+    root = stage.GetDefaultPrim()
+    return str(root.GetDisplayName() or root.GetName()) if root else None
+
+
+def _static_bodies_of(
+    pxr: Pxr, stage: Stage, links: dict[str, Any], joints: list[_Joint]
+) -> dict[str, Any]:
+    named = {joint.parent for joint in joints} | {joint.child for joint in joints}
+    wanted = named - set(links)
+    if not wanted:
+        return {}
+    found: dict[str, Any] = {}
+    for prim in stage.Traverse():
+        name = prim.GetDisplayName() or prim.GetName()
+        if name in wanted and name not in found:
+            found[name] = prim
+    return found
+
+
 def _joint_prims(pxr: Pxr, stage: Stage) -> list[Any]:
     return [prim for prim in stage.Traverse() if prim.IsA(pxr.UsdPhysics.Joint)]
 
@@ -151,9 +173,9 @@ class _Joint:
         self.extras = extras
 
 
-def _joint_of(pxr: Pxr, prim: Prim) -> _Joint | None:
+def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
     joint = pxr.UsdPhysics.Joint(prim)
-    parent = _body_name(prim, "physics:body0")
+    parent = _body_name(prim, "physics:body0") or world
     child = _body_name(prim, "physics:body1")
     if parent is None or child is None:
         logger.warning(f"skipping joint {prim.GetPath()}: it does not name both bodies")
