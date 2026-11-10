@@ -58,30 +58,16 @@ def _lcm_bucket(seed: str) -> int:
 _run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
 
 
-# A private scouting group is not on its own enough. Two peers that never scout each other
-# still meet if something links them -- a router on `zenoh_connect`, gossip over that link --
-# and then every key expression is shared, so a `@shared_config` a running stack broadcasts
-# arrives at a module under test. That is how `test_the_engine_runs_the_robots_the_blueprint_
-# put_in_the_world` came to assert its one "dog" and be handed the three G1s out of a sim
-# running on this machine. `ZENOH_DOMAIN` puts the session's streams under
-# `dimos-domains/<id>/`, which is a different key expression rather than a different bus, so
-# it holds however the peers found each other.
-def _domain(seed: str) -> str:
-    return f"pytest-{hashlib.blake2b(seed.encode(), digest_size=6).hexdigest()}"
-
-
 if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
     os.environ["ZENOH_SCOUT_ADDR"] = f"224.0.0.224:{17700 + _BUCKET}"
-    os.environ["ZENOH_DOMAIN"] = _domain(f"{_run_id}:{_worker}")
     os.environ["MCPSERVER__PORT"] = str(20000 + _BUCKET)
     os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix=f"dimos-test-state-{_worker}-")
 else:
     _BUCKET = _lcm_bucket(_run_id)
     os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
     os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
-    os.environ.setdefault("ZENOH_DOMAIN", _domain(_run_id))
     os.environ.setdefault("MCPSERVER__PORT", str(20000 + _BUCKET))
 
 # Render offscreen unless something has already chosen. MuJoCo's renderer picks GLFW when

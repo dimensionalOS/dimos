@@ -126,20 +126,9 @@ def test_make_pubsub_transport_plcm_uses_pLCMTransport() -> None:
     assert isinstance(t, pLCMTransport)
 
 
-def _undomained() -> GlobalConfig:
-    """A zenoh config with no domain, for the tests that pit a spelled-out URI against the default.
-
-    A domain prefixes the key expression the default naming produces
-    (`dimos-domains/<id>/<topic>/<type>`), and a key spelled out in a `zenoh:` URI keeps whatever
-    it says. These tests are about the two agreeing, so neither side may have one -- and the
-    pytest session does set one, to keep a running stack's streams out of its own.
-    """
-    return GlobalConfig(transport="zenoh", zenoh_domain="")
-
-
 def test_make_pubsub_transport_zenoh_matches_default_image_channel() -> None:
     t = make_pubsub_transport("zenoh:dimos/color_image", msg_type=Image)
-    default = make_transport("color_image", Image, g=_undomained())
+    default = make_transport("color_image", Image, g=GlobalConfig(transport="zenoh"))
 
     assert isinstance(t, ZenohTransport)
     assert t.channel == default.channel == "dimos/color_image/sensor_msgs.Image"
@@ -210,7 +199,7 @@ def test_zenoh_uri_receives_image_from_standard_publisher(uri, msg_type, session
         arrived.set()
 
     with ExitStack() as cleanup:
-        publisher = make_transport("registry_image", msg_type, g=_undomained())
+        publisher = make_transport("registry_image", msg_type, g=GlobalConfig(transport="zenoh"))
         cleanup.callback(publisher.stop)
         subscriber, unsub = subscribe_pubsub_uri(uri, on_image, msg_type=msg_type)
         cleanup.callback(subscriber.stop)
