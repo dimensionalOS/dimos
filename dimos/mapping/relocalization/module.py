@@ -14,8 +14,8 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-The base loads ``map_file`` into ``self.premap`` (the last ``map_stream`` cloud of a
-``.db``/``.mcap`` recording), publishes accepted ``world -> map`` fixes on ``tf`` and the
+The base loads ``map_file`` into ``self.premap`` (the last cloud of the map a ``.db``/``.mcap``
+recording holds, or of ``cloud_stream`` when one is named), publishes accepted ``world -> map`` fixes on ``tf`` and the
 premap on ``loaded_map`` once a fix lands. An implementation reads ``self.premap`` after
 ``super().start()`` (``None`` when no map is configured), picks its inputs, decides when a
 fix is good enough, and hands it to :meth:`PremapModule.submit`. See ``lidar/module.py``.
@@ -149,7 +149,7 @@ def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str | None
     else:
         raise ValueError(
             f"{len(named)} maps in the recording ({', '.join(sorted(named))}): "
-            "pass map_stream to say which"
+            "pass cloud_stream to say which"
         )
     frame = f"map/{name}"
     return named[name], frame, f"{frame}/named_locations"
@@ -196,10 +196,10 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 
 
 class Config(ModuleConfig):
-    # Premap: a `.db`/`.mcap` recording whose last `map_stream` cloud is the map; None never fixes
+    # Premap: the `.db`/`.mcap` recording holding the map; None never fixes
     map_file: str | None = None
-    # Stream holding the map cloud, overriding the recording's own `map/<name>/cloud`
-    map_stream: str | None = None
+    # Cloud to load, overriding the recording's own `map/<name>/cloud`
+    cloud_stream: str | None = None
     # Live fixed frame
     world_frame: str = "world"
     # Frame for the loaded premap
@@ -234,7 +234,7 @@ class PremapModule(Module):
         self._server_id = uuid.uuid4().hex
         self._revision = 0
         # Resolved from the map file at start(): its cloud stream, the map's name, its locations
-        self._map_stream: str | None = None
+        self._cloud_stream: str | None = None
         self._map_frame: str | None = None
         self._locations_stream: str | None = None
 
@@ -274,19 +274,19 @@ class PremapModule(Module):
         path = resolve_named_path(map_file, Path(map_file).suffix)
         with open_store(path, decode_metadata=True) as store:
             streams = store.list_streams()
-        self._map_stream, self._map_frame, self._locations_stream = resolve_map(
-            streams, self.config.map_stream
+        self._cloud_stream, self._map_frame, self._locations_stream = resolve_map(
+            streams, self.config.cloud_stream
         )
         logger.info(
             "map chosen",
-            stream=self._map_stream,
+            stream=self._cloud_stream,
             map_frame=self.map_frame,
             locations_stream=self._locations_stream,
         )
 
     def _load_premap(self, map_file: str) -> None:
-        assert self._map_stream is not None, "_resolve_map runs before this"
-        premap = load_premap(map_file, self._map_stream)
+        assert self._cloud_stream is not None, "_resolve_map runs before this"
+        premap = load_premap(map_file, self._cloud_stream)
 
         premap.frame_id = self.map_frame
         self.premap = premap

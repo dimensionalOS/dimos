@@ -26,7 +26,7 @@ Build and name the map out of that recording in the Map Editor, then come back t
 
     dtk run m20 --map-file <that recording>.db
 
-A recording holding more than one map needs ``--map-stream`` to say which.
+A recording holding more than one map needs ``--cloud-stream`` to say which.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
