@@ -69,8 +69,8 @@ class A750Connection(ConnectionModule):
 
     Joint targets come in on ``position_command`` in rad, the gripper as its
     joint ``finger`` in m (0.06 open). A joint left out keeps its last target.
-    ``joint_state`` goes out about 100 times a second. When commands stop, the
-    arm is told to hold where it is; the SDK stops sending targets 0.2 s later.
+    ``joint_state`` goes out about 100 times a second. From connecting until the
+    first command, and whenever commands stop, the arm holds where it is.
     """
 
     config: A750Config
@@ -87,6 +87,10 @@ class A750Connection(ConnectionModule):
         # The last targets sent: the joints' in rad, the finger's in m.
         self._targets: list[float] = []
         self._finger_target = 0.0
+        # While True, the read loop re-sends the targets: the SDK lets the arm go
+        # limp 0.2 s after the last one it was sent.
+        self._holding = False
+        self._send_lock = threading.Lock()
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
 
@@ -128,23 +132,29 @@ class A750Connection(ConnectionModule):
                 sdk.disconnect()
             raise ConnectionError(f"no A-750 answers at {path}: {error}") from error
         self._sdk = sdk
-        self._targets = _positions(state)
-        self._finger_target = float(state.gripper.pos_m)
+        with self._send_lock:
+            self._targets = _positions(state)
+            self._finger_target = float(state.gripper.pos_m)
+            self._holding = True
 
     def write(self, values: Values) -> None:
         targets = [values.get(f"{joint}/{Interface.POSITION}") for joint in self._joints]
-        self._targets = [
-            old if new is None else new for new, old in zip(targets, self._targets, strict=True)
-        ]
-        self._finger_target = values.get(
-            f"{self._finger}/{Interface.POSITION}", self._finger_target
-        )
-        self._send()
+        with self._send_lock:
+            self._targets = [
+                old if new is None else new for new, old in zip(targets, self._targets, strict=True)
+            ]
+            self._finger_target = values.get(
+                f"{self._finger}/{Interface.POSITION}", self._finger_target
+            )
+            self._holding = False
+            self._send()
 
     def halt(self) -> None:
         # The gripper keeps its last target, so it does not let go of what it holds.
-        self._targets = _positions(self._sdk.get_current_state())
-        self._send()
+        with self._send_lock:
+            self._targets = _positions(self._sdk.get_current_state())
+            self._holding = True
+            self._send()
 
     def _send(self) -> None:
         """Send the joints' and the finger's targets together: after a pause the
@@ -172,6 +182,12 @@ class A750Connection(ConnectionModule):
                 )
             except Exception as error:
                 self._report(f"reading failed: {type(error).__name__}: {error}")
+            with self._send_lock:
+                if self._holding:
+                    try:
+                        self._send()
+                    except Exception as error:
+                        self._report(f"holding failed: {type(error).__name__}: {error}")
 
 
 def _open_sdk(device_path: str) -> Any:

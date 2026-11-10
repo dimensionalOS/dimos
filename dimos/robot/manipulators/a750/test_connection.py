@@ -187,11 +187,12 @@ def test_joint_targets_and_the_finger_go_out_together(rig: Callable[..., Rig]) -
     r.move(joint1=0.2, finger=0.05)
     r.move(joint6=-0.1)
     # A joint left out keeps its last target, and the finger is sent every time.
-    assert r.sdk.sent("command_joint_positions") == [
+    # (Before the first command, the arm was held where it started.)
+    assert r.sdk.sent("command_joint_positions")[-2:] == [
         ([0.2, 0.0, 0.0, 0.0, 0.0, 0.0], 0.5),
         ([0.2, 0.0, 0.0, 0.0, 0.0, -0.1], 0.5),
     ]
-    assert r.sdk.sent("command_gripper_position") == [(0.05,), (0.05,)]
+    assert r.sdk.sent("command_gripper_position")[-2:] == [(0.05,), (0.05,)]
 
 
 def test_joint_state_names_each_joint_and_the_finger(rig: Callable[..., Rig]) -> None:
@@ -219,3 +220,6 @@ def test_no_command_within_the_deadman_holds_the_arm_where_it_is(
     # The joints are held where they were read; the finger keeps squeezing.
     assert r.sdk.sent("command_joint_positions")[-1] == ([0.3, 0, 0, 0, 0, 0], 1.0)
     assert r.sdk.sent("command_gripper_position")[-1] == (0.02,)
+    # The hold is sent again and again, so the SDK never lets the arm go limp.
+    held = len(r.sdk.sent("command_joint_positions"))
+    wait_until(lambda: len(r.sdk.sent("command_joint_positions")) > held + 2, timeout=2.0)
