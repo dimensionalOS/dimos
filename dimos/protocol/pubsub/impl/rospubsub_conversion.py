@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.msgs.helpers import lcm_msg_type
 from dimos.protocol.pubsub.codec import CDRCodec
-from dimos.protocol.pubsub.message_types import resolve_declared_message_type, resolve_message_type
+from dimos.protocol.pubsub.message_types import resolve_channel_message_type, resolve_message_type
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
@@ -73,7 +73,12 @@ def _is_generated(message_type: type) -> bool:
 
 
 def get_dimos_type(msg_name: str) -> type | None:
-    """Resolve a declared type name, generated first, legacy ``dimos.msgs`` second.
+    """Resolve a declared type name, legacy ``dimos.msgs`` first for dotted names.
+
+    Dotted names (``geometry_msgs.Vector3``) are what legacy channel suffixes and
+    native MCAP metadata carry, so the legacy class must win there and recorded
+    legacy data keeps decoding to the types it was written with. Canonical
+    generated names (``geometry_msgs/msg/Vector3``) resolve through the registry.
 
     Args:
         msg_name: Message name in format "package.MessageName" (e.g., "geometry_msgs.Vector3")
@@ -82,7 +87,7 @@ def get_dimos_type(msg_name: str) -> type | None:
     Returns:
         The dimos message type, or None if not found
     """
-    resolved = resolve_declared_message_type(msg_name)
+    resolved = resolve_channel_message_type(msg_name)
     if resolved is not None:
         return resolved
     if msg_name in _dimos_type_cache:
