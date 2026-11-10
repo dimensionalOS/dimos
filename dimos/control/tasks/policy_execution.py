@@ -506,7 +506,7 @@ class PolicyTask(BaseControlTask):
                         # A release/e-stop/preemption may have landed in reset.
                         if not self._guard.current(tick.epoch):
                             return None
-                command = self.act(tick)
+                command = np.asarray(self.act(tick), dtype=np.float32).reshape(-1)
             except Exception:
                 logger.exception("policy inference failed", task=self._name)
                 with self._lock:
