@@ -59,7 +59,7 @@ class DimosCliCall:
         if len(args) == 1:
             args = ["run", *args]
 
-        # Pin the MCP port for this test; an McpClient in the blueprint
+        # Pin the MCP port for this test; an Agent in the blueprint
         # discovers the server's endpoint from the McpServer module. Blueprints
         # without an McpServer ignore the override.
         global_overrides: list[str] = list(self.global_args)

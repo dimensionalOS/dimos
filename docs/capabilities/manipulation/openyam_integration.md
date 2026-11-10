@@ -69,11 +69,14 @@ preserving the native Damiao serial USB-CAN transport.
 
 ## Models and joint names
 
-The canonical planning assets retain their arm joint names. Shipped deployments
+The canonical planning model is the managed OpenYAM single-arm description from
+`dimensionalOS/dim_description` (`openyam_single`, pinned by commit). Its arm
+joints are mapped onto `yam_joint1` through `yam_joint6`. Shipped deployments
 use connection source `arm`, with `arm/yam_joint1` through `arm/yam_joint6` and
-`arm/joint7` for a single YAM. `joint7` is the URDF's finger joint, in metres:
-0 is closed and -0.04695 fully open, and `joint8` copies it. The gripper task
-maps its 0.0 (closed) to 1.0 (open) command onto that range. Dual YAM uses
+`arm/joint7` for a single YAM. `joint7` is the managed model's driven finger
+joint, in metres: 0.0594641 is closed and 0.01081 fully open, and `joint8`
+copies it. The gripper task maps its 0.0 (closed) to 1.0 (open) command onto
+that range. Dual YAM uses
 `arm/left_joint1` through `arm/left_joint6`, `arm/right_joint1` through
 `arm/right_joint6`, then `arm/left_gripper` and `arm/right_gripper`. Its URDF has
 its finger joints fixed, so these two are openings from 0.0 closed to 1.0 open.
