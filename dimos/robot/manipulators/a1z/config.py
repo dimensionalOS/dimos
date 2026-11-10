@@ -29,13 +29,16 @@ from dimos.hardware.manipulators.galaxea_a1z.config import (
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     joint_names,
+    named_for_robot,
 )
 
 A1Z_DOF = 6
+#: How far the G1Z gripper's jaw opens, in metres.
+A1Z_GRIPPER_OPENING_M = A1ZGripperConfig().max_opening_m
 
 A1Z_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("arm_link2", "arm_link5"),
@@ -105,11 +108,52 @@ def a1z_hardware(
     )
 
 
+def a1z_model(gripper: bool = True, *, robot: str | None = None) -> RobotModel:
+    """The A1Z's URDF, as its connection module and coordinator drive it.
+
+    Args:
+        gripper: With the G1Z gripper, driven as a joint ``gripper``: the jaw
+            opening, from 0 m (closed) to 0.1 m (open). Its URDF fingers are fixed.
+        robot: Name the moving joints under this robot, e.g. "arm" gives
+            "arm/arm_joint1" and "arm/gripper". Links keep their names.
+    """
+    if not gripper:
+        model = RobotModel.from_file(A1Z_FLANGE_MODEL_PATH, package_paths=A1Z_PACKAGE_PATHS)
+    else:
+        model = RobotModel.from_file(
+            A1Z_G1Z_MODEL_PATH, package_paths=A1Z_PACKAGE_PATHS
+        ).with_added_joints(
+            JointDescription(
+                name="gripper",
+                type="prismatic",
+                parent_link="arm_link6",
+                child_link="gripper_control_link",
+                lower=0.0,
+                upper=A1Z_GRIPPER_OPENING_M,
+                velocity=0.0,
+                effort=0.0,
+            )
+        )
+    if not robot:
+        return model
+    moving = [*joint_names(A1Z_DOF, prefix="arm_joint"), *(["gripper"] if gripper else [])]
+    return model.with_renamed_joints({joint: f"{robot}/{joint}" for joint in moving})
+
+
 def make_a1z_model_config(
     *,
     has_gripper: bool = True,
     home_joints: list[float] | None = None,
+    robot: str | None = None,
 ) -> RobotModelConfig:
+    """The A1Z's planning model.
+
+    Args:
+        has_gripper: With the G1Z gripper; the planner aims its jaw centre.
+        home_joints: The arm's home, in rad; all zeros if not given.
+        robot: Name the arm joints under this robot, e.g. "arm" gives
+            "arm/arm_joint1", as a coordinator driving ``A1ZConnection`` names them.
+    """
     model_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
     model = RobotModel.from_file(
         A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
@@ -121,7 +165,7 @@ def make_a1z_model_config(
             "arm_link6",
             xyz=(0.0727, 0.0, 0.0),
         )
-    return RobotModelConfig(
+    config = RobotModelConfig(
         model=model,
         joint_names=model_joint_names,
         base_link="base_link",
@@ -137,3 +181,4 @@ def make_a1z_model_config(
         collision_exclusion_pairs=A1Z_COLLISION_EXCLUSIONS,
         home_joints=home_joints or [0.0] * A1Z_DOF,
     )
+    return named_for_robot(config, robot)
