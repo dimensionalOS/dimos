@@ -18,7 +18,7 @@ import pytest
 
 from dimos.control._control_test_helpers import fake_arm_model
 from dimos.control.connection.mock_joint_connection import MockJointConnection
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
@@ -46,13 +46,13 @@ def rig(mocker):
 def test_partial_commands_report_all_joints_and_deadman_holds_the_pose(rig):
     module, commands, readings = rig
     assert readings.sent[-1].name == ["arm/joint1", "arm/joint2"]
-    assert readings.sent[-1].position == [0.2, 0.4]
-    commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
-    wait_until(lambda: readings.sent[-1].position == [0.7, 0.4], timeout=2)
+    assert list(readings.sent[-1].position) == [0.2, 0.4]
+    commands.publish(joint_state_utils.from_mapping({"name": ["arm/joint1"], "position": [0.7]}))
+    wait_until(lambda: list(readings.sent[-1].position) == [0.7, 0.4], timeout=2)
     module._on_loop(lambda: module._deadman_expired(module._command_seq))
     wait_until(lambda: module.status().deadman_fired, timeout=2)
-    assert readings.sent[-1].position == [0.7, 0.4]
-    assert readings.sent[-1].velocity == readings.sent[-1].effort == [0.0, 0.0]
+    assert list(readings.sent[-1].position) == [0.7, 0.4]
+    assert list(readings.sent[-1].velocity) == list(readings.sent[-1].effort) == [0.0, 0.0]
     module.stop()
     assert not module.status().connected
     assert not module._reader.is_alive()
@@ -61,6 +61,6 @@ def test_partial_commands_report_all_joints_and_deadman_holds_the_pose(rig):
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), 100.0])
 def test_invalid_commands_do_not_change_mock_feedback(rig, bad):
     module, commands, readings = rig
-    commands.publish(JointState(name=["arm/joint1"], position=[bad]))
+    commands.publish(joint_state_utils.from_mapping({"name": ["arm/joint1"], "position": [bad]}))
     assert module.status().last_rejection
-    assert readings.sent[-1].position == [0.2, 0.4]
+    assert list(readings.sent[-1].position) == [0.2, 0.4]
