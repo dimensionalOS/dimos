@@ -134,9 +134,3 @@ class MetalStationKinematics:
             start = 6 + index * 9
             out[start : start + 9] = rotation.reshape(-1)
         return out
-
-    def tcp_positions(self, q: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]:
-        return self.pose24(q)[:6]
-
-    def tcp_rotations(self, q: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]:
-        return self.pose24(q)[6:].reshape(len(SIDES), 3, 3)

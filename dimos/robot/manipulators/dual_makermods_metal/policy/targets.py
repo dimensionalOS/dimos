@@ -68,8 +68,8 @@ def check_rotation(rotation: NDArray[np.float64], *, atol: float = 1e-5) -> NDAr
 
 
 @dataclass(frozen=True)
-class HandGoal:
-    """One TCP site goal in the station frame."""
+class RigidSample:
+    """A validated station-frame pose: finite position and a proper rotation."""
 
     position: tuple[float, float, float]
     rotation: tuple[tuple[float, float, float], ...]
@@ -77,7 +77,7 @@ class HandGoal:
     def __post_init__(self) -> None:
         position = tuple(float(v) for v in self.position)
         if len(position) != 3 or not np.isfinite(position).all():
-            raise GoalError("hand position must be a finite 3-vector")
+            raise GoalError("position must be a finite 3-vector")
         check_rotation(np.asarray(self.rotation, dtype=np.float64))
 
     @property
@@ -89,10 +89,20 @@ class HandGoal:
         cls,
         position: tuple[float, float, float] | NDArray[np.float64],
         quaternion_xyzw: tuple[float, float, float, float],
-    ) -> HandGoal:
+    ) -> RigidSample:
         matrix = quaternion_xyzw_to_matrix(quaternion_xyzw)
         xyz = np.asarray(position, dtype=np.float64).reshape(3)
         return cls((float(xyz[0]), float(xyz[1]), float(xyz[2])), tuple(map(tuple, matrix)))
+
+
+class HandGoal(RigidSample):
+    """One TCP site goal in the station frame."""
+
+
+class ControllerPose(RigidSample):
+    """One WebXR controller pose in the station frame at the current instant."""
+
+    from_pose = RigidSample.from_quaternion
 
 
 @dataclass(frozen=True)
@@ -142,32 +152,6 @@ class DualHandGoal:
             self.right if side == "left" else HandGoal(tuple(moved.tolist()), hand.rotation),
             frame=self.frame,
         )
-
-
-@dataclass(frozen=True)
-class ControllerPose:
-    """One WebXR controller pose in the station frame at the current instant."""
-
-    position: tuple[float, float, float]
-    rotation: tuple[tuple[float, float, float], ...]
-
-    def __post_init__(self) -> None:
-        position = tuple(float(v) for v in self.position)
-        if len(position) != 3 or not np.isfinite(position).all():
-            raise GoalError("controller position must be a finite 3-vector")
-        check_rotation(np.asarray(self.rotation, dtype=np.float64))
-
-    @property
-    def matrix(self) -> NDArray[np.float64]:
-        return np.asarray(self.rotation, dtype=np.float64)
-
-    @classmethod
-    def from_pose(
-        cls,
-        position: tuple[float, float, float],
-        quaternion_xyzw: tuple[float, float, float, float],
-    ) -> ControllerPose:
-        return cls(position, tuple(map(tuple, quaternion_xyzw_to_matrix(quaternion_xyzw))))
 
 
 class WebXRGoalMapper:

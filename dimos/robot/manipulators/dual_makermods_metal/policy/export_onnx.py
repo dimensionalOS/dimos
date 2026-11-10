@@ -45,6 +45,8 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     NORMALIZER_EPS,
     POLICY_HZ,
     SCHEMA,
+    CheckpointSpec,
+    ModelSpec,
     PolicyManifest,
     sha256_file,
 )
@@ -189,12 +191,13 @@ def export_checkpoint(
 
     manifest = PolicyManifest(
         name=name,
-        checkpoint_sha256=checkpoint_sha,
-        checkpoint_iteration=iteration,
-        checkpoint_source_sha256=str(checkpoint.get("source_sha256", "")),
-        recipe_variant=str((contract.get("recipe_variant") or {}).get("name", "")),
-        onnx_sha256=onnx_sha,
-        normalizer_sha256=normalizer_sha,
+        checkpoint=CheckpointSpec(
+            sha256=checkpoint_sha,
+            iteration=iteration,
+            source_sha256=str(checkpoint.get("source_sha256", "")),
+            recipe_variant=str((contract.get("recipe_variant") or {}).get("name", "")),
+        ),
+        model=ModelSpec(onnx_sha256=onnx_sha, normalizer_sha256=normalizer_sha),
         metadata={
             "onnx_file": onnx_path.name,
             "normalizer_file": normalizer_path.name,

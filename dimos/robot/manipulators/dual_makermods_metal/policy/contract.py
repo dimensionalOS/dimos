@@ -16,22 +16,24 @@
 
 Everything the runtime is allowed to assume about the trained controller lives
 here and in a versioned JSON manifest that pins the exact checkpoint lineage,
-observation layout, action decode order and station geometry. The runtime
-refuses to start when the manifest does not match the artifact hashes or when a
-field it does not understand appears, instead of silently falling back.
+observation layout, action decode order and station geometry. The manifest is a
+validated configuration model: unknown keys, wrong widths, non-finite values and
+mismatched trained layouts fail closed before the runtime starts.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Literal, overload
+from typing import Annotated, Any
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import AfterValidator, Field, ValidationError, model_validator
+
+from dimos.protocol.service.spec import BaseConfig
 
 SCHEMA = "dimos.metal_arm_policy.manifest/1"
 
@@ -94,40 +96,102 @@ FRAME_FIELDS: tuple[tuple[str, int], ...] = (
     ("goal_minus_tcp", 24),
 )
 
+#: Decode order is part of the trained contract; it is serialized verbatim.
+DECODE_ORDER: tuple[str, ...] = ("action_clip", "desired_clip", "low_pass", "slew_clip")
+
 
 class PolicyContractError(ValueError):
     """Raised when a manifest, artifact or observation violates the contract."""
 
 
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+class _ContractModel(BaseConfig):
+    model_config = {"extra": "forbid", "frozen": True, "arbitrary_types_allowed": True}
 
 
-@overload
-def _as_float_tuple(
-    values: Sequence[float], width: Literal[3], name: str
-) -> tuple[float, float, float]: ...
+def _finite(values: tuple[float, ...]) -> tuple[float, ...]:
+    if not all(np.isfinite(value) for value in values):
+        raise ValueError("contains a non-finite value")
+    return values
 
 
-@overload
-def _as_float_tuple(values: Sequence[float], width: int, name: str) -> tuple[float, ...]: ...
+Vec3 = Annotated[tuple[float, float, float], AfterValidator(_finite)]
+Vec12 = Annotated[tuple[float, ...], Field(min_length=12, max_length=12), AfterValidator(_finite)]
 
 
-def _as_float_tuple(values: Sequence[float], width: int, name: str) -> tuple[float, ...]:
-    out = tuple(float(v) for v in values)
-    if len(out) != width:
-        raise PolicyContractError(f"{name} must have {width} entries, got {len(out)}")
-    if not all(np.isfinite(out)):
-        raise PolicyContractError(f"{name} contains a non-finite value")
-    return out
+def _message(exc: ValidationError) -> str:
+    """Flatten a pydantic error into the one-line contract error style."""
+    errors = exc.errors()
+    loc = ".".join(str(part) for part in errors[0].get("loc", ()))
+    return f"{loc}: {errors[0]['msg']}" if loc else errors[0]["msg"]
 
 
-@dataclass(frozen=True)
-class StationGeometry:
+class FrameField(_ContractModel):
+    """One named, fixed-width slot of the 96-value observation frame."""
+
+    name: str
+    width: int
+
+
+class CheckpointSpec(_ContractModel):
+    """Lineage of the trained checkpoint the exported graph came from."""
+
+    sha256: str
+    iteration: int
+    source_sha256: str
+    recipe_variant: str
+
+
+class ModelSpec(_ContractModel):
+    """Exported ONNX graph and its learned normalizer."""
+
+    onnx_sha256: str
+    normalizer_sha256: str
+    input: str = "obs"
+    output: str = "action"
+    obs_dim: int = HISTORY_FRAMES * FRAME_DIM
+    action_dim: int = 12
+
+
+class ObservationSpec(_ContractModel):
+    """Observation history and the exact trained frame layout."""
+
+    history_frames: int = HISTORY_FRAMES
+    frame_dim: int = FRAME_DIM
+    dq_scale: float = DQ_SCALE
+    joint_order: tuple[str, ...] = JOINT_ORDER
+    frame_fields: tuple[FrameField, ...] = tuple(
+        FrameField(name=n, width=w) for n, w in FRAME_FIELDS
+    )
+
+
+class ActionSpec(_ContractModel):
+    """Action-to-command decode contract, in execution order."""
+
+    home: Vec12 = HOME
+    lower: Vec12 = TRAIN_LOWER
+    upper: Vec12 = TRAIN_UPPER
+    action_scale: float = ACTION_SCALE
+    clamp_margin: float = CLAMP_MARGIN
+    low_pass_alpha: float = LOW_PASS_ALPHA
+    slew_limit: float = SLEW_LIMIT
+    decode_order: tuple[str, ...] = DECODE_ORDER
+
+
+class TimingSpec(_ContractModel):
+    """Policy rate and the training plant's stepping."""
+
+    policy_hz: float = POLICY_HZ
+    physics_dt: float = PHYSICS_DT
+    control_substeps: int = CONTROL_SUBSTEPS
+
+
+class NormalizerSpec(_ContractModel):
+    """rsl_rl empirical normalizer epsilon."""
+
+    eps: float = NORMALIZER_EPS
+
+
+class StationGeometry(_ContractModel):
     """Mount and TCP geometry of the trained bimanual station.
 
     The training plant mounts each arm on the station base at
@@ -138,148 +202,83 @@ class StationGeometry:
     verified against the recorded station poses.
     """
 
-    left_mount_xyz: tuple[float, float, float] = (0.0, -0.345, 0.008)
-    right_mount_xyz: tuple[float, float, float] = (0.0, 0.345, 0.008)
-    left_mount_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    right_mount_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    tcp_offset_xyz: tuple[float, float, float] = (0.0, 0.0, 0.06)
     frame: str = "station"
+    left_mount_xyz: Vec3 = (0.0, -0.345, 0.008)
+    right_mount_xyz: Vec3 = (0.0, 0.345, 0.008)
+    left_mount_rpy: Vec3 = (0.0, 0.0, 0.0)
+    right_mount_rpy: Vec3 = (0.0, 0.0, 0.0)
+    tcp_offset_xyz: Vec3 = (0.0, 0.0, 0.06)
 
     def mount(self, side: str) -> tuple[float, float, float]:
         return self.left_mount_xyz if side == "left" else self.right_mount_xyz
 
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "frame": self.frame,
-            "left_mount_xyz": list(self.left_mount_xyz),
-            "right_mount_xyz": list(self.right_mount_xyz),
-            "left_mount_rpy": list(self.left_mount_rpy),
-            "right_mount_rpy": list(self.right_mount_rpy),
-            "tcp_offset_xyz": list(self.tcp_offset_xyz),
-        }
 
-    @classmethod
-    def from_json(cls, payload: Mapping[str, Any]) -> StationGeometry:
-        return cls(
-            left_mount_xyz=_as_float_tuple(payload["left_mount_xyz"], 3, "left_mount_xyz"),
-            right_mount_xyz=_as_float_tuple(payload["right_mount_xyz"], 3, "right_mount_xyz"),
-            left_mount_rpy=_as_float_tuple(payload["left_mount_rpy"], 3, "left_mount_rpy"),
-            right_mount_rpy=_as_float_tuple(payload["right_mount_rpy"], 3, "right_mount_rpy"),
-            tcp_offset_xyz=_as_float_tuple(payload["tcp_offset_xyz"], 3, "tcp_offset_xyz"),
-            frame=str(payload.get("frame", "station")),
-        )
+class PolicyManifest(_ContractModel):
+    """Validated manifest document for one exported policy artifact.
 
+    The nested shape is the versioned on-disk schema itself, so serialization
+    and validation need no hand-written bidirectional mapping.
+    """
 
-@dataclass(frozen=True)
-class PolicyManifest:
-    """Validated description of one exported policy artifact."""
-
+    schema_: str = Field(default=SCHEMA, alias="schema")
     name: str
-    checkpoint_sha256: str
-    checkpoint_iteration: int
-    checkpoint_source_sha256: str
-    recipe_variant: str
-    onnx_sha256: str
-    normalizer_sha256: str
-    obs_dim: int = HISTORY_FRAMES * FRAME_DIM
-    action_dim: int = 12
-    home: tuple[float, ...] = HOME
-    lower: tuple[float, ...] = TRAIN_LOWER
-    upper: tuple[float, ...] = TRAIN_UPPER
-    action_scale: float = ACTION_SCALE
-    clamp_margin: float = CLAMP_MARGIN
-    low_pass_alpha: float = LOW_PASS_ALPHA
-    slew_limit: float = SLEW_LIMIT
-    history_frames: int = HISTORY_FRAMES
-    frame_dim: int = FRAME_DIM
-    policy_hz: float = POLICY_HZ
-    physics_dt: float = PHYSICS_DT
-    control_substeps: int = CONTROL_SUBSTEPS
-    dq_scale: float = DQ_SCALE
-    normalizer_eps: float = NORMALIZER_EPS
-    joint_order: tuple[str, ...] = JOINT_ORDER
-    frame_fields: tuple[tuple[str, int], ...] = FRAME_FIELDS
-    station: StationGeometry = field(default_factory=StationGeometry)
-    onnx_input: str = "obs"
-    onnx_output: str = "action"
-    metadata: dict[str, Any] = field(default_factory=dict)
+    checkpoint: CheckpointSpec
+    model: ModelSpec
+    observation: ObservationSpec = ObservationSpec()
+    action: ActionSpec = ActionSpec()
+    timing: TimingSpec = TimingSpec()
+    normalizer: NormalizerSpec = NormalizerSpec()
+    station: StationGeometry = StationGeometry()
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        if self.action_dim != len(self.joint_order):
-            raise PolicyContractError(
-                f"action_dim {self.action_dim} != {len(self.joint_order)} joint names"
+    def __init__(self, **data: Any) -> None:
+        try:
+            super().__init__(**data)
+        except ValidationError as exc:
+            raise PolicyContractError(_message(exc)) from exc
+
+    @model_validator(mode="after")
+    def _validate_trained_layout(self) -> PolicyManifest:
+        observation, action, model = self.observation, self.action, self.model
+        if observation.joint_order != JOINT_ORDER:
+            raise ValueError("manifest joint order differs from the trained order")
+        fields = tuple((field.name, field.width) for field in observation.frame_fields)
+        if fields != FRAME_FIELDS:
+            raise ValueError("manifest observation layout differs from the trained frame layout")
+        if model.action_dim != len(observation.joint_order):
+            raise ValueError(
+                f"action_dim {model.action_dim} != {len(observation.joint_order)} joint names"
             )
-        for values, name in ((self.home, "home"), (self.lower, "lower"), (self.upper, "upper")):
-            _as_float_tuple(values, self.action_dim, name)
-        if any(lo >= hi for lo, hi in zip(self.lower, self.upper, strict=True)):
-            raise PolicyContractError("joint lower limit must be below the upper limit")
+        if any(lo >= hi for lo, hi in zip(action.lower, action.upper, strict=True)):
+            raise ValueError("joint lower limit must be below the upper limit")
         if any(
-            not lo <= h <= hi for h, lo, hi in zip(self.home, self.lower, self.upper, strict=True)
+            not lo <= home <= hi
+            for home, lo, hi in zip(action.home, action.lower, action.upper, strict=True)
         ):
-            raise PolicyContractError("home pose must lie inside the joint limits")
-        if self.history_frames < 1 or self.frame_dim < 1:
-            raise PolicyContractError("history_frames and frame_dim must be positive")
-        if sum(width for _, width in self.frame_fields) != self.frame_dim:
-            raise PolicyContractError("observation frame fields do not sum to frame_dim")
-        if self.obs_dim != self.history_frames * self.frame_dim:
-            raise PolicyContractError("obs_dim must equal history_frames * frame_dim")
-        if not 0.0 < self.low_pass_alpha <= 1.0:
-            raise PolicyContractError("low_pass_alpha must be in (0, 1]")
-        if self.slew_limit <= 0.0 or self.action_scale <= 0.0:
-            raise PolicyContractError("slew_limit and action_scale must be positive")
-        if self.clamp_margin < 0.0:
-            raise PolicyContractError("clamp_margin must not be negative")
-        if self.policy_hz <= 0.0:
-            raise PolicyContractError("policy_hz must be positive")
+            raise ValueError("home pose must lie inside the joint limits")
+        if observation.history_frames < 1 or observation.frame_dim < 1:
+            raise ValueError("history_frames and frame_dim must be positive")
+        if sum(width for _, width in fields) != observation.frame_dim:
+            raise ValueError("observation frame fields do not sum to frame_dim")
+        if model.obs_dim != observation.history_frames * observation.frame_dim:
+            raise ValueError("obs_dim must equal history_frames * frame_dim")
+        if not 0.0 < action.low_pass_alpha <= 1.0:
+            raise ValueError("low_pass_alpha must be in (0, 1]")
+        if action.slew_limit <= 0.0 or action.action_scale <= 0.0:
+            raise ValueError("slew_limit and action_scale must be positive")
+        if action.clamp_margin < 0.0:
+            raise ValueError("clamp_margin must not be negative")
+        if self.timing.policy_hz <= 0.0:
+            raise ValueError("policy_hz must be positive")
+        return self
 
     @property
     def tick_period_s(self) -> float:
-        return 1.0 / self.policy_hz
+        return 1.0 / self.timing.policy_hz
 
     def to_json(self) -> dict[str, Any]:
-        return {
-            "schema": SCHEMA,
-            "name": self.name,
-            "checkpoint": {
-                "sha256": self.checkpoint_sha256,
-                "iteration": self.checkpoint_iteration,
-                "source_sha256": self.checkpoint_source_sha256,
-                "recipe_variant": self.recipe_variant,
-            },
-            "model": {
-                "onnx_sha256": self.onnx_sha256,
-                "normalizer_sha256": self.normalizer_sha256,
-                "input": self.onnx_input,
-                "output": self.onnx_output,
-                "obs_dim": self.obs_dim,
-                "action_dim": self.action_dim,
-            },
-            "observation": {
-                "history_frames": self.history_frames,
-                "frame_dim": self.frame_dim,
-                "dq_scale": self.dq_scale,
-                "joint_order": list(self.joint_order),
-                "frame_fields": [{"name": n, "width": w} for n, w in self.frame_fields],
-            },
-            "action": {
-                "home": list(self.home),
-                "lower": list(self.lower),
-                "upper": list(self.upper),
-                "action_scale": self.action_scale,
-                "clamp_margin": self.clamp_margin,
-                "low_pass_alpha": self.low_pass_alpha,
-                "slew_limit": self.slew_limit,
-                "decode_order": ["action_clip", "desired_clip", "low_pass", "slew_clip"],
-            },
-            "timing": {
-                "policy_hz": self.policy_hz,
-                "physics_dt": self.physics_dt,
-                "control_substeps": self.control_substeps,
-            },
-            "normalizer": {"eps": self.normalizer_eps},
-            "station": self.station.to_json(),
-            "metadata": dict(self.metadata),
-        }
+        """The versioned manifest document."""
+        return self.model_dump(by_alias=True)
 
     @classmethod
     def from_json(cls, payload: Mapping[str, Any]) -> PolicyManifest:
@@ -287,67 +286,14 @@ class PolicyManifest:
             raise PolicyContractError(
                 f"unsupported manifest schema {payload.get('schema')!r}, expected {SCHEMA!r}"
             )
-        known = {
-            "schema",
-            "name",
-            "checkpoint",
-            "model",
-            "observation",
-            "action",
-            "timing",
-            "normalizer",
-            "station",
-            "metadata",
-        }
-        unknown = set(payload) - known
+        allowed = {field.alias or name for name, field in cls.model_fields.items()}
+        unknown = set(payload) - allowed
         if unknown:
             raise PolicyContractError(f"manifest has unknown keys: {sorted(unknown)}")
-
-        checkpoint = payload["checkpoint"]
-        model = payload["model"]
-        observation = payload["observation"]
-        action = payload["action"]
-        timing = payload["timing"]
-        fields_payload = observation["frame_fields"]
-        fields = tuple((str(f["name"]), int(f["width"])) for f in fields_payload)
-        if fields != FRAME_FIELDS:
-            raise PolicyContractError(
-                "manifest observation layout differs from the trained frame layout"
-            )
-        joint_order = tuple(str(j) for j in observation["joint_order"])
-        if joint_order != JOINT_ORDER:
-            raise PolicyContractError("manifest joint order differs from the trained order")
-        return cls(
-            name=str(payload["name"]),
-            checkpoint_sha256=str(checkpoint["sha256"]),
-            checkpoint_iteration=int(checkpoint["iteration"]),
-            checkpoint_source_sha256=str(checkpoint["source_sha256"]),
-            recipe_variant=str(checkpoint["recipe_variant"]),
-            onnx_sha256=str(model["onnx_sha256"]),
-            normalizer_sha256=str(model["normalizer_sha256"]),
-            obs_dim=int(model.get("obs_dim", cls.obs_dim)),
-            action_dim=int(model.get("action_dim", cls.action_dim)),
-            onnx_input=str(model.get("input", "obs")),
-            onnx_output=str(model.get("output", "action")),
-            home=_as_float_tuple(action["home"], 12, "home"),
-            lower=_as_float_tuple(action["lower"], 12, "lower"),
-            upper=_as_float_tuple(action["upper"], 12, "upper"),
-            action_scale=float(action["action_scale"]),
-            clamp_margin=float(action["clamp_margin"]),
-            low_pass_alpha=float(action["low_pass_alpha"]),
-            slew_limit=float(action["slew_limit"]),
-            history_frames=int(observation["history_frames"]),
-            frame_dim=int(observation["frame_dim"]),
-            dq_scale=float(observation["dq_scale"]),
-            policy_hz=float(timing["policy_hz"]),
-            physics_dt=float(timing["physics_dt"]),
-            control_substeps=int(timing["control_substeps"]),
-            normalizer_eps=float(payload["normalizer"]["eps"]),
-            joint_order=joint_order,
-            frame_fields=fields,
-            station=StationGeometry.from_json(payload["station"]),
-            metadata=dict(payload.get("metadata") or {}),
-        )
+        try:
+            return cls.model_validate(payload)
+        except ValidationError as exc:
+            raise PolicyContractError(_message(exc)) from exc
 
     def dump(self, path: str | Path) -> Path:
         out = Path(path)
@@ -369,8 +315,8 @@ class PolicyManifest:
             "normalizer_file", "metal_arm_policy.normalizer.npz"
         )
         for path, expected, label in (
-            (onnx_path, self.onnx_sha256, "ONNX actor"),
-            (normalizer_path, self.normalizer_sha256, "observation normalizer"),
+            (onnx_path, self.model.onnx_sha256, "ONNX actor"),
+            (normalizer_path, self.model.normalizer_sha256, "observation normalizer"),
         ):
             if not path.is_file():
                 raise PolicyContractError(f"{label} not found: {path}")
@@ -380,6 +326,14 @@ class PolicyManifest:
                     f"{label} hash mismatch at {path}: {actual} != manifest {expected}"
                 )
         return onnx_path, normalizer_path
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_normalizer(path: str | Path) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
@@ -405,8 +359,8 @@ def load_normalizer(path: str | Path) -> tuple[NDArray[np.float32], NDArray[np.f
 
 def check_observation(obs: NDArray[np.float32], manifest: PolicyManifest) -> None:
     """Fail closed on malformed, wrongly shaped or non-finite observations."""
-    if obs.shape != (1, manifest.obs_dim):
-        raise PolicyContractError(f"observation shape {obs.shape} != (1, {manifest.obs_dim})")
+    if obs.shape != (1, manifest.model.obs_dim):
+        raise PolicyContractError(f"observation shape {obs.shape} != (1, {manifest.model.obs_dim})")
     if not np.isfinite(obs).all():
         raise PolicyContractError("observation contains non-finite values")
 
@@ -415,16 +369,18 @@ def check_feedback(
     q: NDArray[np.float32], dq: NDArray[np.float32], manifest: PolicyManifest
 ) -> None:
     """Reject incomplete or out-of-range joint feedback before it reaches the actor."""
+    action, observation = manifest.action, manifest.observation
+    action_dim = manifest.model.action_dim
     for values, name in ((q, "joint positions"), (dq, "joint velocities")):
-        if values.shape != (manifest.action_dim,):
-            raise PolicyContractError(f"{name} shape {values.shape} != ({manifest.action_dim},)")
+        if values.shape != (action_dim,):
+            raise PolicyContractError(f"{name} shape {values.shape} != ({action_dim},)")
         if not np.isfinite(values).all():
             raise PolicyContractError(f"{name} contain non-finite values")
     slack = 1e-3
     outside = [
-        manifest.joint_order[i]
-        for i in range(manifest.action_dim)
-        if not manifest.lower[i] - slack <= q[i] <= manifest.upper[i] + slack
+        observation.joint_order[i]
+        for i in range(action_dim)
+        if not action.lower[i] - slack <= q[i] <= action.upper[i] + slack
     ]
     if outside:
         raise PolicyContractError(f"measured joints outside the trained limits: {outside}")

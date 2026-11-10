@@ -58,23 +58,27 @@ class ActionDecoder:
 
     def __init__(self, manifest: PolicyManifest) -> None:
         self.manifest = manifest
-        self._issued = np.asarray(manifest.home, dtype=np.float32).copy()
-        self._previous_action = np.zeros(manifest.action_dim, dtype=np.float32)
-        self._lower = np.asarray(manifest.lower, dtype=np.float32) + manifest.clamp_margin
-        self._upper = np.asarray(manifest.upper, dtype=np.float32) - manifest.clamp_margin
-        self._home = np.asarray(manifest.home, dtype=np.float32)
+        self._issued = np.asarray(manifest.action.home, dtype=np.float32).copy()
+        self._previous_action = np.zeros(manifest.model.action_dim, dtype=np.float32)
+        self._lower = (
+            np.asarray(manifest.action.lower, dtype=np.float32) + manifest.action.clamp_margin
+        )
+        self._upper = (
+            np.asarray(manifest.action.upper, dtype=np.float32) - manifest.action.clamp_margin
+        )
+        self._home = np.asarray(manifest.action.home, dtype=np.float32)
 
     def reset(self, q_measured: NDArray[np.float32] | NDArray[np.float64] | None = None) -> None:
         """Clear the command state; with a measured pose, start from it (never home)."""
         if q_measured is not None:
             values = np.asarray(q_measured, dtype=np.float32).reshape(-1)
-            if values.shape != (self.manifest.action_dim,):
+            if values.shape != (self.manifest.model.action_dim,):
                 raise ValueError(
-                    f"expected {self.manifest.action_dim} joint angles, got {values.shape}"
+                    f"expected {self.manifest.model.action_dim} joint angles, got {values.shape}"
                 )
             check_feedback(values, np.zeros_like(values), self.manifest)
             self._issued = values.copy()
-        self._previous_action = np.zeros(self.manifest.action_dim, dtype=np.float32)
+        self._previous_action = np.zeros(self.manifest.model.action_dim, dtype=np.float32)
 
     def seed(self, issued: NDArray[np.float32], previous_action: NDArray[np.float32]) -> None:
         """Restore command state, e.g. when re-anchoring a session."""
@@ -92,15 +96,19 @@ class ActionDecoder:
     def decode(self, action: NDArray[np.float32]) -> NDArray[np.float32]:
         manifest = self.manifest
         clipped = np.clip(np.asarray(action, dtype=np.float32).reshape(-1), -1.0, 1.0)
-        if clipped.shape != (manifest.action_dim,):
-            raise PolicyContractError(f"action shape {clipped.shape} != ({manifest.action_dim},)")
+        if clipped.shape != (manifest.model.action_dim,):
+            raise PolicyContractError(
+                f"action shape {clipped.shape} != ({manifest.model.action_dim},)"
+            )
         if not np.isfinite(clipped).all():
             raise PolicyContractError("action contains non-finite values")
-        desired = np.clip(self._home + manifest.action_scale * clipped, self._lower, self._upper)
+        desired = np.clip(
+            self._home + manifest.action.action_scale * clipped, self._lower, self._upper
+        )
         step = np.clip(
-            manifest.low_pass_alpha * (desired - self._issued),
-            -manifest.slew_limit,
-            manifest.slew_limit,
+            manifest.action.low_pass_alpha * (desired - self._issued),
+            -manifest.action.slew_limit,
+            manifest.action.slew_limit,
         )
         self._issued = (self._issued + step).astype(np.float32)
         self._previous_action = clipped.astype(np.float32)
@@ -125,8 +133,8 @@ class MetalArmPolicyRuntime:
         self._actor = OnnxActor(
             onnx_path,
             providers=providers or ["CPUExecutionProvider"],
-            input_name=manifest.onnx_input,
-            output_name=manifest.onnx_output,
+            input_name=manifest.model.input,
+            output_name=manifest.model.output,
         )
         if kinematics is None:
             from dimos.robot.manipulators.dual_makermods_metal.policy.station import (
@@ -137,7 +145,6 @@ class MetalArmPolicyRuntime:
         self._kinematics = kinematics
         self._frames: list[NDArray[np.float32]] = []
         self._decoder = ActionDecoder(manifest)
-        self._last_action: NDArray[np.float32] | None = None
 
     # ------------------------------------------------------------------ state
     def reset(self, q_measured: NDArray[np.float32] | NDArray[np.float64] | None = None) -> None:
@@ -148,15 +155,10 @@ class MetalArmPolicyRuntime:
         """
         self._frames.clear()
         self._decoder.reset(q_measured)
-        self._last_action = None
 
     @property
     def issued(self) -> NDArray[np.float32]:
         return self._decoder.issued
-
-    @property
-    def previous_action(self) -> NDArray[np.float32]:
-        return self._decoder.previous_action
 
     @property
     def decoder(self) -> ActionDecoder:
@@ -166,10 +168,6 @@ class MetalArmPolicyRuntime:
     def kinematics(self) -> Any:
         """Station FK used for the observation's current-TCP slots."""
         return self._kinematics
-
-    @property
-    def history_length(self) -> int:
-        return len(self._frames)
 
     # ------------------------------------------------------------- observation
     def build_frame(
@@ -191,11 +189,11 @@ class MetalArmPolicyRuntime:
         current = np.asarray(self._kinematics.pose24(q_arr), dtype=np.float64)
         if not np.isfinite(current).all():
             raise PolicyContractError("forward kinematics produced a non-finite pose")
-        home = np.asarray(manifest.home, dtype=np.float32)
+        home = np.asarray(manifest.action.home, dtype=np.float32)
         frame = np.concatenate(
             [
                 q_arr - home,
-                (dq_arr / manifest.dq_scale).astype(np.float32),
+                (dq_arr / manifest.observation.dq_scale).astype(np.float32),
                 self._decoder.issued - home,
                 self._decoder.previous_action,
                 current[:6].astype(np.float32),
@@ -203,9 +201,9 @@ class MetalArmPolicyRuntime:
                 (goal - current).astype(np.float32),
             ]
         ).astype(np.float32)
-        if frame.shape != (manifest.frame_dim,):
+        if frame.shape != (manifest.observation.frame_dim,):
             raise PolicyContractError(
-                f"observation frame has {frame.shape[0]} values, expected {manifest.frame_dim}"
+                f"observation frame has {frame.shape[0]} values, expected {manifest.observation.frame_dim}"
             )
         return np.asarray(frame, dtype=np.float32)
 
@@ -218,17 +216,17 @@ class MetalArmPolicyRuntime:
         """Append one frame to the causal history, keeping at most six."""
         frame = self.build_frame(q, dq, goal_pose24)
         self._frames.append(frame)
-        if len(self._frames) > self.manifest.history_frames:
-            del self._frames[: len(self._frames) - self.manifest.history_frames]
+        if len(self._frames) > self.manifest.observation.history_frames:
+            del self._frames[: len(self._frames) - self.manifest.observation.history_frames]
         return frame
 
     def observation(self) -> NDArray[np.float32]:
         """Flattened actor input; missing history is zero-padded at the front."""
         manifest = self.manifest
-        frames = list(self._frames[-(manifest.history_frames) :])
-        while len(frames) < manifest.history_frames:
-            frames.insert(0, np.zeros(manifest.frame_dim, dtype=np.float32))
-        obs = np.concatenate(frames).reshape(1, manifest.obs_dim).astype(np.float32)
+        frames = list(self._frames[-(manifest.observation.history_frames) :])
+        while len(frames) < manifest.observation.history_frames:
+            frames.insert(0, np.zeros(manifest.observation.frame_dim, dtype=np.float32))
+        obs = np.concatenate(frames).reshape(1, manifest.model.obs_dim).astype(np.float32)
         check_observation(obs, manifest)
         return obs
 
@@ -241,9 +239,9 @@ class MetalArmPolicyRuntime:
         """
         check_observation(observation, self.manifest)
         action = self._actor.run(observation)
-        if action.shape != (self.manifest.action_dim,):
+        if action.shape != (self.manifest.model.action_dim,):
             raise PolicyContractError(
-                f"actor returned {action.shape}, expected ({self.manifest.action_dim},)"
+                f"actor returned {action.shape}, expected ({self.manifest.model.action_dim},)"
             )
         if not np.isfinite(action).all():
             raise PolicyContractError("actor returned non-finite actions")
@@ -251,14 +249,8 @@ class MetalArmPolicyRuntime:
 
     def decode_action(self, action: NDArray[np.float32]) -> NDArray[np.float32]:
         """Training-contract decode: clip, bounded target, low-pass, slew clamp."""
-        command = self._decoder.decode(action)
-        self._last_action = self._decoder.previous_action
-        return command
+        return self._decoder.decode(action)
 
     def act(self) -> NDArray[np.float32]:
         """Infer from the current history and return the new joint position command."""
         return self.decode_action(self.infer(self.observation()))
-
-    @property
-    def last_action(self) -> NDArray[np.float32] | None:
-        return None if self._last_action is None else self._last_action.copy()

@@ -26,18 +26,22 @@ state from the measured joints so an engagement at an arbitrary pose does not
 jump toward the training home. A release, fault, timeout, preemption or e-stop
 closes the session and clears the pending request, so recovery always needs a
 new goal and a new ``engage()``.
+
+Operator input (WebXR poses, buttons, deadman and freshness) and its goal
+mapping live in :class:`MetalTeleop`; the execution cadence, hold, dry-run and
+cancellation boundaries live in :class:`PolicyTask`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import model_validator
 
 from dimos.control.task import (
     CoordinatorState,
@@ -57,10 +61,12 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import (
     MetalArmPolicyRuntime,
 )
 from dimos.robot.manipulators.dual_makermods_metal.policy.targets import (
-    ControllerPose,
     DualHandGoal,
     HandGoal,
-    WebXRGoalMapper,
+)
+from dimos.robot.manipulators.dual_makermods_metal.policy.teleop import (
+    MetalTeleop,
+    StationKinematics,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -96,12 +102,6 @@ class PolicyRuntime(Protocol):
     def issued(self) -> NDArray[np.float32]: ...
 
 
-class StationKinematics(Protocol):
-    """Station-frame FK used to anchor teleoperation goals."""
-
-    def pose24(self, q: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]: ...
-
-
 class PolicyTaskFault(str, Enum):
     """Why the last session ended; kept for diagnostics, never auto-cleared."""
 
@@ -116,8 +116,7 @@ class PolicyTaskFault(str, Enum):
     RESET = "reset"
 
 
-@dataclass(frozen=True)
-class MetalArmPolicyTaskConfig:
+class MetalArmPolicyTaskConfig(BaseConfig):
     """Everything the task needs to open a session and run the runtime.
 
     ``joint_names`` must be the coordinator's names for the checkpoint's
@@ -139,7 +138,8 @@ class MetalArmPolicyTaskConfig:
     teleop: bool = False
     dry_run: bool = False
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def _validate_joints_and_timeouts(self) -> MetalArmPolicyTaskConfig:
         if len(self.joint_names) != len(JOINT_ORDER):
             raise ValueError(
                 f"metal_arm_policy requires {len(JOINT_ORDER)} joint names "
@@ -160,6 +160,7 @@ class MetalArmPolicyTaskConfig:
             raise ValueError("intent_timeout_s must be positive")
         if self.goal_timeout_s is not None and self.goal_timeout_s <= 0.0:
             raise ValueError("goal_timeout_s must be positive when set")
+        return self
 
 
 class MetalArmPolicyTask(PolicyTask):
@@ -173,21 +174,19 @@ class MetalArmPolicyTask(PolicyTask):
         runtime: PolicyRuntime,
         kinematics: StationKinematics,
         feedback_fresh: Callable[[], bool] | None = None,
-        teleop_mapper: WebXRGoalMapper | None = None,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
         manifest = runtime.manifest
-        if manifest.policy_hz <= 0.0:
+        if manifest.timing.policy_hz <= 0.0:
             raise ValueError("policy manifest has a non-positive policy_hz")
         self._config = config
         self._runtime = runtime
-        self._kinematics = kinematics
         self._feedback_fresh = feedback_fresh or _always_fresh
         self._robot = config.joint_names[0].split("/", 1)[0]
         super().__init__(
             name,
             config.joint_names,
-            scheduler=PolicyTickScheduler.at_hz(manifest.policy_hz),
+            scheduler=PolicyTickScheduler.at_hz(manifest.timing.policy_hz),
             priority=config.priority,
             dry_run=config.dry_run,
         )
@@ -201,12 +200,7 @@ class MetalArmPolicyTask(PolicyTask):
         self._goal: NDArray[np.float64] | None = None
         self._goal_received_at: float | None = None
 
-        self._mapper = teleop_mapper
-        if config.teleop and self._mapper is None:
-            self._mapper = WebXRGoalMapper()
-        self._controller_poses: dict[str, tuple[ControllerPose, float]] = {}
-        self._grips = (False, False)
-        self._buttons_time: float | None = None
+        self._teleop = MetalTeleop(kinematics) if config.teleop else None
 
     # ----------------------------------------------------------- coordinator API
     def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
@@ -341,7 +335,7 @@ class MetalArmPolicyTask(PolicyTask):
                 "last_command": self.held_positions,
                 "issued": self._runtime.issued.tolist(),
                 "teleop": self._config.teleop,
-                "mapper_engaged": bool(self._mapper and self._mapper.engaged),
+                "mapper_engaged": bool(self._teleop and self._teleop.engaged),
             }
 
     def start(self) -> None:
@@ -356,15 +350,13 @@ class MetalArmPolicyTask(PolicyTask):
     # -------------------------------------------------------------- teleop entry
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
         """Deadman: both grips held requests engagement; either release closes."""
-        if not self._config.teleop:
+        if self._teleop is None:
             return False
-        grips = (bool(msg.left_grip), bool(msg.right_grip))
         with self._lock:
             if self._estop:
                 return True
-            self._grips = grips
-            self._buttons_time = t_now
-            if not (grips[0] and grips[1]):
+            self._teleop.input.on_buttons(msg, t_now)
+            if not self._teleop.input.deadman:
                 if self.session_active or self._session_requested:
                     self._invalidate_locked(PolicyTaskFault.RELEASED)
                 return True
@@ -380,29 +372,14 @@ class MetalArmPolicyTask(PolicyTask):
         """Store the right controller pose; it only matters while mapping is engaged."""
         return self._on_controller_pose("right", pose, t_now)
 
-    @staticmethod
-    def _controller_pose(pose: Pose | PoseStamped) -> ControllerPose:
-        quaternion = pose.orientation
-        return ControllerPose.from_pose(
-            tuple(pose.position),
-            (
-                float(quaternion.x),
-                float(quaternion.y),
-                float(quaternion.z),
-                float(quaternion.w),
-            ),
-        )
-
     def _on_controller_pose(self, side: str, pose: Pose | PoseStamped, t_now: float) -> bool:
-        if not self._config.teleop:
+        if self._teleop is None:
             return False
-        sample = self._controller_pose(pose)
         with self._lock:
             if self._estop:
                 return True
-            self._controller_poses[side] = (sample, t_now)
-            if self._mapper is not None and self._mapper.engaged:
-                self._refresh_teleop_goal_locked(t_now)
+            self._teleop.input.on_pose(side, pose, t_now)
+            self._refresh_teleop_goal_locked(t_now)
         return True
 
     def _input_timeout_s(self) -> float:
@@ -410,44 +387,17 @@ class MetalArmPolicyTask(PolicyTask):
         timeout = self._config.goal_timeout_s
         return timeout if timeout is not None else self._config.intent_timeout_s
 
-    def _teleop_input_ages_locked(self, now: float) -> tuple[float, float, float] | None:
-        """Ages of buttons and both poses, or ``None`` if any source is missing."""
-        left = self._controller_poses.get("left")
-        right = self._controller_poses.get("right")
-        if self._buttons_time is None or left is None or right is None:
-            return None
-        return (now - self._buttons_time, now - left[1], now - right[1])
-
     def _teleop_inputs_fresh_locked(self, now: float) -> bool:
-        """Every WebXR source must be fresh: both poses, buttons and both grips.
-
-        One live controller can never reauthorize a stale one, and a held grip
-        cannot outlive its button message.
-        """
-        ages = self._teleop_input_ages_locked(now)
-        if ages is None or not (self._grips[0] and self._grips[1]):
-            return False
-        bound = self._input_timeout_s()
-        return all(age <= bound for age in ages)
+        """Every WebXR source must be fresh: both poses, buttons and both grips."""
+        return self._teleop is not None and self._teleop.input.fresh(now, self._input_timeout_s())
 
     def _refresh_teleop_goal_locked(self, now: float) -> None:
-        mapper = self._mapper
-        if mapper is None or not mapper.engaged:
+        if self._teleop is None:
             return
-        if not self._teleop_inputs_fresh_locked(now):
-            # Never rebuild a goal from a mixture of live and stale sources.
-            return
-        left = self._controller_poses.get("left")
-        right = self._controller_poses.get("right")
-        if left is None or right is None:
-            return
-        try:
-            goal = mapper.update(left[0], right[0])
-        except ValueError:
-            return
-        self._goal = goal.to_pose24()
-        # The older source bounds the goal's age; a live side cannot mask it.
-        self._goal_received_at = min(left[1], right[1])
+        updated = self._teleop.update(now, self._input_timeout_s())
+        if updated is not None:
+            # The older source bounds the goal's age; a live side cannot mask it.
+            self._goal, self._goal_received_at = updated
 
     # ------------------------------------------------------------------ compute
     def prepare(self, state: CoordinatorState) -> PolicyTick | JointCommandOutput | None:
@@ -500,8 +450,10 @@ class MetalArmPolicyTask(PolicyTask):
         q, dq = feedback
         goal = self._goal
         if self._config.teleop:
-            ages = self._teleop_input_ages_locked(now)
-            if ages is None or not (self._grips[0] and self._grips[1]):
+            if self._teleop is None:
+                return None
+            ages = self._teleop.input.ages(now)
+            if ages is None or not self._teleop.input.deadman:
                 # An incomplete deadman is not a fault yet: wait for it, and
                 # let the engage request's own age bound expire it.
                 return None
@@ -517,7 +469,7 @@ class MetalArmPolicyTask(PolicyTask):
 
         epoch = self.begin_session_locked(now)
         self._fault = PolicyTaskFault.NONE
-        q_home = np.asarray(self._runtime.manifest.home, dtype=np.float32)
+        q_home = np.asarray(self._runtime.manifest.action.home, dtype=np.float32)
         logger.info(
             "MetalArmPolicyTask session opened",
             task=self._name,
@@ -530,22 +482,13 @@ class MetalArmPolicyTask(PolicyTask):
     def _anchor_teleop_goal_locked(
         self, q: NDArray[np.float32], t_now: float
     ) -> NDArray[np.float64] | None:
-        mapper = self._mapper
-        left = self._controller_poses.get("left")
-        right = self._controller_poses.get("right")
-        if mapper is None or left is None or right is None:
+        if self._teleop is None:
             return None
-        if not self._teleop_inputs_fresh_locked(t_now):
+        anchored = self._teleop.anchor(q, t_now, self._input_timeout_s())
+        if anchored is None:
             return None
-        try:
-            current = DualHandGoal.from_pose24(self._kinematics.pose24(q))
-            mapper.engage(current, left[0], right[0])
-        except (ValueError, RuntimeError):
-            return None
-        anchor = current.to_pose24()
-        self._goal = anchor
-        self._goal_received_at = min(left[1], right[1])
-        return anchor
+        self._goal, self._goal_received_at = anchored
+        return anchored[0]
 
     def _prepare_tick_locked(
         self, state: CoordinatorState
@@ -620,26 +563,10 @@ class MetalArmPolicyTask(PolicyTask):
         """Drop everything tied to the closed session; runs under the lock."""
         self._goal = None
         self._goal_received_at = None
-        if self._config.teleop:
+        if self._teleop is not None:
             # A new session needs new samples: never replay the ones that were
             # live when this one was invalidated.
-            self._controller_poses.clear()
-            self._grips = (False, False)
-            self._buttons_time = None
-        if self._mapper is not None:
-            self._mapper.release()
-
-
-class MetalArmPolicyTaskParams(BaseConfig):
-    """Serialized task parameters carried by ``TaskConfig.params``."""
-
-    model_dir: str
-    manifest_path: str
-    feedback_timeout_s: float = 0.2
-    intent_timeout_s: float = 0.5
-    goal_timeout_s: float | None = None
-    teleop: bool = False
-    dry_run: bool = False
+            self._teleop.release()
 
 
 def create_task(
@@ -653,7 +580,9 @@ def create_task(
     order and artifact hash mismatches fail here, before the coordinator runs.
     """
     del hardware
-    params = MetalArmPolicyTaskParams.model_validate(cfg.params)
+    params = MetalArmPolicyTaskConfig(
+        joint_names=tuple(cfg.joint_names), priority=cfg.priority, **cfg.params
+    )
     manifest = PolicyManifest.load(params.manifest_path)
     runtime = MetalArmPolicyRuntime(manifest, params.model_dir)
 
@@ -667,20 +596,9 @@ def create_task(
 
         freshness = _fresh
 
-    config = MetalArmPolicyTaskConfig(
-        joint_names=tuple(cfg.joint_names),
-        model_dir=params.model_dir,
-        manifest_path=params.manifest_path,
-        priority=cfg.priority,
-        feedback_timeout_s=params.feedback_timeout_s,
-        intent_timeout_s=params.intent_timeout_s,
-        goal_timeout_s=params.goal_timeout_s,
-        teleop=params.teleop,
-        dry_run=params.dry_run,
-    )
     return MetalArmPolicyTask(
         cfg.name,
-        config,
+        params,
         runtime=runtime,
         kinematics=runtime.kinematics,
         feedback_fresh=freshness,

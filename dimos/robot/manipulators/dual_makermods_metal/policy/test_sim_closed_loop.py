@@ -187,7 +187,7 @@ def test_checkpoint_actor_and_onnx_runtime_follow_the_same_causal_goal():
     torch = pytest.importorskip("torch")
     manifest = _manifest()
     checkpoint_path = os.path.join(MODEL_DIR, CHECKPOINT_FILE)
-    assert sha256_file(checkpoint_path) == manifest.checkpoint_sha256
+    assert sha256_file(checkpoint_path) == manifest.checkpoint.sha256
     kinematics = MetalStationKinematics(manifest.station)
     actor = _reference_actor()
     goals = _goals()

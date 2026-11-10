@@ -14,7 +14,6 @@
 
 """The manifest is the deployment contract: unknown or mismatched input fails closed."""
 
-from dataclasses import replace
 import json
 
 import numpy as np
@@ -24,6 +23,9 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
     JOINT_ORDER,
     SCHEMA,
+    ActionSpec,
+    CheckpointSpec,
+    ModelSpec,
     PolicyContractError,
     PolicyManifest,
     check_feedback,
@@ -33,16 +35,19 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
 
 
 def _manifest(**overrides) -> PolicyManifest:
-    base = PolicyManifest(
-        name="metal_arm_policy",
-        checkpoint_sha256="a" * 64,
-        checkpoint_iteration=38000,
-        checkpoint_source_sha256="b" * 64,
-        recipe_variant="cmdlp005-ori10-rawex001-v1",
-        onnx_sha256="c" * 64,
-        normalizer_sha256="d" * 64,
+    return PolicyManifest(
+        **{
+            "name": "metal_arm_policy",
+            "checkpoint": CheckpointSpec(
+                sha256="a" * 64,
+                iteration=38000,
+                source_sha256="b" * 64,
+                recipe_variant="cmdlp005-ori10-rawex001-v1",
+            ),
+            "model": ModelSpec(onnx_sha256="c" * 64, normalizer_sha256="d" * 64),
+            **overrides,
+        }
     )
-    return replace(base, **overrides) if overrides else base
 
 
 def test_manifest_round_trips_through_json(tmp_path):
@@ -82,12 +87,12 @@ def test_manifest_rejects_foreign_frame_layout():
 
 def test_manifest_rejects_home_outside_limits():
     with pytest.raises(PolicyContractError, match="home pose"):
-        _manifest(lower=(-0.1,) * 12, upper=(0.1,) * 12)
+        _manifest(action=ActionSpec(lower=(-0.1,) * 12, upper=(0.1,) * 12))
 
 
 def test_manifest_rejects_inconsistent_observation_dimensions():
     with pytest.raises(PolicyContractError, match="obs_dim"):
-        _manifest(obs_dim=96)
+        _manifest(model=ModelSpec(onnx_sha256="c" * 64, normalizer_sha256="d" * 64, obs_dim=96))
 
 
 def test_artifact_hashes_are_verified(tmp_path):
@@ -96,10 +101,8 @@ def test_artifact_hashes_are_verified(tmp_path):
     normalizer = tmp_path / "metal_arm_policy.normalizer.npz"
     onnx.write_bytes(b"not-a-real-graph")
     np.savez(normalizer, mean=np.zeros(576, np.float32), std=np.ones(576, np.float32))
-    manifest = replace(
-        manifest,
-        onnx_sha256=sha256_file(onnx),
-        normalizer_sha256=sha256_file(normalizer),
+    manifest = _manifest(
+        model=ModelSpec(onnx_sha256=sha256_file(onnx), normalizer_sha256=sha256_file(normalizer))
     )
     assert manifest.verify_artifacts(tmp_path) == (onnx, normalizer)
     onnx.write_bytes(b"tampered")

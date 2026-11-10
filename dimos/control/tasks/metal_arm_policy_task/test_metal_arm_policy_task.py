@@ -40,6 +40,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
     JOINT_ORDER,
+    CheckpointSpec,
+    ModelSpec,
     PolicyContractError,
     PolicyManifest,
 )
@@ -54,12 +56,10 @@ DQ0 = np.full(12, 0.01, dtype=np.float32)
 def make_manifest() -> PolicyManifest:
     return PolicyManifest(
         name="test-policy",
-        checkpoint_sha256="0" * 64,
-        checkpoint_iteration=38000,
-        checkpoint_source_sha256="1" * 64,
-        recipe_variant="test",
-        onnx_sha256="2" * 64,
-        normalizer_sha256="3" * 64,
+        checkpoint=CheckpointSpec(
+            sha256="0" * 64, iteration=38000, source_sha256="1" * 64, recipe_variant="test"
+        ),
+        model=ModelSpec(onnx_sha256="2" * 64, normalizer_sha256="3" * 64),
     )
 
 
@@ -644,133 +644,76 @@ def test_teleop_recovery_needs_fresh_samples_on_both_sides():
 # ------------------------------------------- responsive cancellation
 
 
-def _blocked_inference(task: MetalArmPolicyTask) -> tuple[threading.Event, threading.Event]:
+def _blocked(
+    task: MetalArmPolicyTask, *, during_reset: bool = False
+) -> tuple[threading.Event, threading.Event]:
+    """Make the next runtime call block so a concurrent cancel is observable."""
     entered, finish = threading.Event(), threading.Event()
     runtime = task._runtime
     assert isinstance(runtime, FakeRuntime)
 
-    def on_act() -> None:
+    def block() -> None:
         entered.set()
         finish.wait(5)
 
-    runtime.on_act = on_act
+    if during_reset:
+        runtime.on_reset = block
+    else:
+        runtime.on_act = block
     return entered, finish
 
 
-def _run_compute(
-    task: MetalArmPolicyTask, state: CoordinatorState
-) -> tuple[threading.Thread, list[JointCommandOutput | None]]:
-    outputs: list[JointCommandOutput | None] = []
-
-    def run() -> None:
-        outputs.append(task.compute(state))
-
+def _thread(run: Callable[[], None]) -> threading.Thread:
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    return worker, outputs
+    return worker
 
 
-def test_release_is_responsive_during_inference_and_drops_the_result():
+@pytest.mark.parametrize("during_reset", [False, True], ids=["inference", "reset"])
+@pytest.mark.parametrize(
+    ("cancel", "fault"),
+    [
+        (lambda task: task.release(), PolicyTaskFault.RELEASED),
+        (lambda task: task.set_estop(True), PolicyTaskFault.ESTOP),
+        (
+            lambda task: task.on_preempted("safety", frozenset({"arm/left_joint1"})),
+            PolicyTaskFault.PREEMPTED,
+        ),
+    ],
+    ids=["release", "estop", "preempt"],
+)
+def test_cancellation_is_responsive_and_drops_the_result(cancel, fault, during_reset):
+    """A cancel during act()/reset() must not wait, and its result must be dropped."""
     task = make_task()
     assert task.set_goal_pose24(goal24(), t_now=0.95)
     assert task.engage(t_now=0.95)
-    entered, finish = _blocked_inference(task)
-    worker, outputs = _run_compute(task, make_state(1.0))
+    entered, finish = _blocked(task, during_reset=during_reset)
+    outputs: list[JointCommandOutput | None] = []
+    worker = _thread(lambda: outputs.append(task.compute(make_state(1.0))))
     assert entered.wait(2)
-    released = threading.Event()
+    cancelled = threading.Event()
 
-    def release() -> None:
-        task.release()
-        released.set()
+    def run_cancel() -> None:
+        cancel(task)
+        cancelled.set()
 
-    releaser = threading.Thread(target=release, daemon=True)
-    releaser.start()
-    assert released.wait(2), "release blocked on the in-flight actor"
+    canceller = _thread(run_cancel)
+    assert cancelled.wait(2), "cancellation blocked on the in-flight call"
     finish.set()
     worker.join(2)
-    releaser.join(2)
+    canceller.join(2)
     assert outputs == [None]
     assert _session(task) == "disengaged"
-    assert task.state_snapshot()["fault"] == PolicyTaskFault.RELEASED.value
-
-
-def test_estop_is_responsive_during_inference_and_drops_the_result():
-    task = make_task()
-    assert task.set_goal_pose24(goal24(), t_now=0.95)
-    assert task.engage(t_now=0.95)
-    entered, finish = _blocked_inference(task)
-    worker, outputs = _run_compute(task, make_state(1.0))
-    assert entered.wait(2)
-    stopped = threading.Event()
-
-    def estop() -> None:
-        task.set_estop(True)
-        stopped.set()
-
-    stopper = threading.Thread(target=estop, daemon=True)
-    stopper.start()
-    assert stopped.wait(2), "e-stop blocked on the in-flight actor"
-    finish.set()
-    worker.join(2)
-    stopper.join(2)
-    assert outputs == [None]
-    assert _session(task) == "disengaged"
-    assert task.state_snapshot()["fault"] == PolicyTaskFault.ESTOP.value
-
-
-def test_preemption_during_inference_drops_the_result():
-    task = make_task()
-    assert task.set_goal_pose24(goal24(), t_now=0.95)
-    assert task.engage(t_now=0.95)
-    entered, finish = _blocked_inference(task)
-    worker, outputs = _run_compute(task, make_state(1.0))
-    assert entered.wait(2)
-    task.on_preempted("safety", frozenset({"arm/left_joint1"}))
-    finish.set()
-    worker.join(2)
-    assert outputs == [None]
-    assert _session(task) == "disengaged"
-    assert task.state_snapshot()["fault"] == PolicyTaskFault.PREEMPTED.value
-
-
-def test_release_is_responsive_during_runtime_reset():
-    task = make_task()
-    assert task.set_goal_pose24(goal24(), t_now=0.95)
-    assert task.engage(t_now=0.95)
-    entered, finish = threading.Event(), threading.Event()
-    runtime = task._runtime
-    assert isinstance(runtime, FakeRuntime)
-
-    def on_reset() -> None:
-        entered.set()
-        finish.wait(5)
-
-    runtime.on_reset = on_reset
-    worker, outputs = _run_compute(task, make_state(1.0))
-    assert entered.wait(2)
-    released = threading.Event()
-
-    def release() -> None:
-        task.release()
-        released.set()
-
-    releaser = threading.Thread(target=release, daemon=True)
-    releaser.start()
-    assert released.wait(2), "release blocked on the runtime reset"
-    finish.set()
-    worker.join(2)
-    releaser.join(2)
-    assert outputs == [None]
-    assert _session(task) == "disengaged"
-    assert task.state_snapshot()["fault"] == PolicyTaskFault.RELEASED.value
+    assert task.state_snapshot()["fault"] == fault.value
 
 
 def test_reengagement_after_cancelled_inference_seeds_from_measured_q():
     task = make_task()
     assert task.set_goal_pose24(goal24(), t_now=0.95)
     assert task.engage(t_now=0.95)
-    entered, finish = _blocked_inference(task)
-    worker, outputs = _run_compute(task, make_state(1.0))
+    entered, finish = _blocked(task)
+    outputs: list[JointCommandOutput | None] = []
+    worker = _thread(lambda: outputs.append(task.compute(make_state(1.0))))
     assert entered.wait(2)
     assert task.release()
     finish.set()
@@ -796,24 +739,23 @@ def test_reengagement_after_cancelled_inference_seeds_from_measured_q():
 # ------------------------------------------------ receipt-time clocks
 
 
-def test_untimestamped_goal_is_stamped_at_receipt_not_first_tick():
+@pytest.mark.parametrize(
+    ("tick_at", "session"),
+    [(100.0, "disengaged"), (1.01, "active")],
+    ids=["stale-at-first-tick", "prompt-first-tick"],
+)
+def test_untimestamped_goal_is_stamped_at_receipt(tick_at: float, session: str):
     clock = FakeClock(1.0)
     task = make_task(clock=clock)
     assert task.set_goal_pose24(goal24())  # no timestamp: stamp receipt now
-    clock.set(2.0)  # it sat for a second before anyone engaged
+    if session == "disengaged":
+        clock.set(2.0)  # it sat for a second before anyone engaged
     assert task.engage()
-    assert task.compute(make_state(100.0)) is None
-    assert _session(task) == "disengaged"
-    assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
-
-
-def test_untimestamped_goal_is_accepted_when_the_first_tick_is_prompt():
-    clock = FakeClock(1.0)
-    task = make_task(clock=clock)
-    assert task.set_goal_pose24(goal24())
-    assert task.engage()
-    assert task.compute(make_state(1.01)) is not None
-    assert _session(task) == "active"
+    output = task.compute(make_state(tick_at))
+    assert (output is not None) == (session == "active")
+    assert _session(task) == session
+    if session == "disengaged":
+        assert task.state_snapshot()["fault"] == PolicyTaskFault.INTENT.value
 
 
 def test_delayed_engage_is_rejected():

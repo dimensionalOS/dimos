@@ -23,6 +23,8 @@ import pytest
 
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
+    CheckpointSpec,
+    ModelSpec,
     PolicyContractError,
     PolicyManifest,
 )
@@ -30,16 +32,19 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import ActionD
 
 
 def _manifest(**overrides) -> PolicyManifest:
-    base = PolicyManifest(
-        name="metal_arm_policy",
-        checkpoint_sha256="a" * 64,
-        checkpoint_iteration=38000,
-        checkpoint_source_sha256="b" * 64,
-        recipe_variant="cmdlp005-ori10-rawex001-v1",
-        onnx_sha256="c" * 64,
-        normalizer_sha256="d" * 64,
+    return PolicyManifest(
+        **{
+            "name": "metal_arm_policy",
+            "checkpoint": CheckpointSpec(
+                sha256="a" * 64,
+                iteration=38000,
+                source_sha256="b" * 64,
+                recipe_variant="cmdlp005-ori10-rawex001-v1",
+            ),
+            "model": ModelSpec(onnx_sha256="c" * 64, normalizer_sha256="d" * 64),
+            **overrides,
+        }
     )
-    return PolicyManifest(**{**base.__dict__, **overrides})
 
 
 def test_zero_action_holds_home():
@@ -54,7 +59,9 @@ def test_action_scale_and_low_pass_are_applied_in_order():
     decoder = ActionDecoder(manifest)
     command = decoder.decode(np.ones(12, np.float32))
     desired_step = np.clip(
-        manifest.low_pass_alpha * manifest.action_scale, -manifest.slew_limit, manifest.slew_limit
+        manifest.action.low_pass_alpha * manifest.action.action_scale,
+        -manifest.action.slew_limit,
+        manifest.action.slew_limit,
     )
     expected = np.asarray(HOME) + desired_step
     assert np.allclose(command, expected, atol=1e-6)
@@ -74,7 +81,7 @@ def test_per_tick_slew_limit_caps_every_joint():
     decoder = ActionDecoder(manifest)
     previous = decoder.issued
     command = decoder.decode(np.ones(12, np.float32))
-    assert np.all(np.abs(command - previous) <= manifest.slew_limit + 1e-6)
+    assert np.all(np.abs(command - previous) <= manifest.action.slew_limit + 1e-6)
 
 
 def test_desired_target_stays_inside_training_limits_with_margin():
@@ -83,8 +90,12 @@ def test_desired_target_stays_inside_training_limits_with_margin():
     for _ in range(400):
         decoder.decode(np.ones(12, np.float32))
     command = decoder.issued
-    assert np.all(command <= np.asarray(manifest.upper) - manifest.clamp_margin + 1e-5)
-    assert np.all(command >= np.asarray(manifest.lower) + manifest.clamp_margin - 1e-5)
+    assert np.all(
+        command <= np.asarray(manifest.action.upper) - manifest.action.clamp_margin + 1e-5
+    )
+    assert np.all(
+        command >= np.asarray(manifest.action.lower) + manifest.action.clamp_margin - 1e-5
+    )
 
 
 def test_reset_seeds_from_measured_pose_not_home():
