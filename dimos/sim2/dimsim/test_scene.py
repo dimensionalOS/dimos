@@ -23,6 +23,11 @@ from dimos.sim2.assets.logistics_props import LOGISTICS_PROPS
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.dimsim.scene import dimsim_bodies
 
+# Every body here is read out of a USD layer, and the test runners that have no usd-core
+# cannot read one: without this the three scene tests fail on an ImportError that says so,
+# which is how CI reports it. The rest of the repo's USD tests skip the same way.
+pytest.importorskip("pxr")
+
 
 def _by_name(usd: UsdModel, exclude: tuple[str, ...] = ()) -> dict:
     bodies, _meshes = dimsim_bodies(usd, exclude=exclude)
