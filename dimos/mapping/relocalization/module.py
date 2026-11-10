@@ -14,34 +14,21 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-The base loads ``map_file`` into ``self.premap`` (the last cloud of the map a ``.db``/``.mcap``
-recording holds, or of ``cloud_stream`` when one is named), publishes accepted ``world -> map`` fixes on ``tf`` and the
-premap on ``loaded_map`` once a fix lands. An implementation reads ``self.premap`` after
-``super().start()`` (``None`` when no map is configured), picks its inputs, decides when a
-fix is good enough, and hands it to :meth:`PremapModule.submit`. See ``lidar/module.py``.
+The base loads ``map_file`` into ``self.premap``, publishes accepted ``world -> map`` fixes on
+``tf``, and the premap on ``loaded_map`` once a fix lands. An implementation reads
+``self.premap`` after ``super().start()`` and hands a fix it believes to
+:meth:`PremapModule.submit`. See ``lidar/module.py``.
 
-Named locations live here too, in the ``map`` frame, so every new fix moves them with the old
-map. They are not tf frames: the list on ``named_locations`` is where they are read from.
+Named locations live here too, in the ``map`` frame, so every fix moves them with the old map.
+``named_locations`` carries the whole list both ways: anyone may publish one, any list that is
+not a no-op is applied and republished a revision on, and listeners take what comes back, so
+last writer wins and the echo agrees everyone. ``named_locations_request`` resends it, for a
+page or a recording that started after this module did. They are not tf frames, and going to one
+is the viewer's job: it sends the pose on the planner's ``goal`` in ``map_frame``.
 
-``named_locations_request`` resends the list, which is how a page or a recording that starts
-later gets a snapshot of it.
-
-``named_locations`` is in and out: the whole list, as an ``InteractiveMarkerUpdate`` whose
-``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
-publish it and everyone who does also listens, so adding, moving, renaming and deleting are
-one operation -- a new whole list. Any update that is not a no-op is applied and republished as
-the next revision, and listeners replace their cache with what comes back, so the browser page,
-this module and the Controller's backend converge by hearing each other. ``server_id``/``seq_num``
-name the run and the revision so an out-of-order echo can be ignored; they do not gate an edit.
-Last writer wins, so a publisher that has not yet heard a deletion can bring a location back for
-one propagation delay, then hears the list it caused and agrees. Going to a location is the
-viewer's job: it sends the pose on the planner's ``goal`` in ``map_frame``, which the planner
-re-expresses through tf every replan so the goal follows a later fix.
-
-Locations are seeded from the last ``map/<name>/named_locations`` snapshot of the ``map_file``
-recording -- the map is the only place they live. A recording of ``named_locations`` keeps them for the next
-run, so **an edit made with no recording running is for this session only**. With no map and
-``new_map`` set, this run's world frame is the map: the module submits an identity fix itself.
+The locations come from the map's own ``named_locations`` snapshot in ``map_file`` -- the map is
+the only place they live, so **an edit made with no recording running is for this session only**.
+With no map and ``new_map`` set, this run's world frame is the map.
 """
 
 from __future__ import annotations
