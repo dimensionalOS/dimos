@@ -48,6 +48,7 @@ from dimos.robot.assets.usd_assets import (
     describe_unopenable_assets,
     publish_usd_assets,
     require_asset_hashes,
+    require_fetched_assets,
     resolve_usd_assets,
     unopenable_assets,
 )
@@ -274,18 +275,19 @@ class UrdfManager(Module):
         self._refuse_a_cycle(chain)
         root, scene = await self._compose(chain)
         where = root[ASSET_ROOT] or None
-        await asyncio.to_thread(self._report_unopenable_assets, scene, where)
+        await asyncio.to_thread(self._check_scene_assets, scene, where)
         published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
         self._published_assets = assets
         self._scene = published
         return ["", published]
 
-    def _report_unopenable_assets(self, scene: str, root: str | None) -> None:
+    def _check_scene_assets(self, scene: str, root: str | None) -> None:
         unopenable = unopenable_assets(scene, root)
-        if unopenable:
-            logger.warning(
-                describe_unopenable_assets(unopenable, what=f"the scene of {self._scene_identity}")
-            )
+        if not unopenable:
+            return
+        what = f"the scene of {self._scene_identity}"
+        require_fetched_assets(unopenable, root, what=what)
+        logger.warning(describe_unopenable_assets(unopenable, root, what=what))
 
     @rpc
     async def get_asset(self, name: str) -> bytes:
