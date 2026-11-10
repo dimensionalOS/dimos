@@ -343,8 +343,15 @@ def test_a_real_worker_pair_runs_the_direct_cycle(hosted_system: ModuleCoordinat
     trajectory = JointTrajectory(
         joint_names=MOCK_JOINTS,
         points=[
-            TrajectoryPoint(positions=[now[joint] for joint in MOCK_JOINTS]),
-            TrajectoryPoint(positions=TARGET, time_from_start=0.3),
+            TrajectoryPoint(
+                positions=[now[joint] for joint in MOCK_JOINTS],
+                velocities=[0.0] * len(MOCK_JOINTS),
+            ),
+            TrajectoryPoint(
+                positions=TARGET,
+                velocities=[0.0] * len(MOCK_JOINTS),
+                time_from_start=0.3,
+            ),
         ],
     )
     result = coordinator.execute_trajectory(trajectory)
