@@ -36,6 +36,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.control.tasks.policy_execution import OnnxActor
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     PolicyContractError,
     PolicyManifest,
@@ -43,10 +44,6 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     check_observation,
     load_normalizer,
 )
-
-
-def _preferred_providers(providers: list[str] | None) -> list[str]:
-    return list(providers) if providers else ["CPUExecutionProvider"]
 
 
 class ActionDecoder:
@@ -125,9 +122,12 @@ class MetalArmPolicyRuntime:
         self._model_dir = Path(model_dir)
         onnx_path, normalizer_path = manifest.verify_artifacts(self._model_dir)
         self._mean, self._std = load_normalizer(normalizer_path)
-        self._session = self._load_session(onnx_path, _preferred_providers(providers))
-        self._input_name = manifest.onnx_input
-        self._output_name = manifest.onnx_output
+        self._actor = OnnxActor(
+            onnx_path,
+            providers=providers or ["CPUExecutionProvider"],
+            input_name=manifest.onnx_input,
+            output_name=manifest.onnx_output,
+        )
         if kinematics is None:
             from dimos.robot.manipulators.dual_makermods_metal.policy.station import (
                 MetalStationKinematics,
@@ -138,17 +138,6 @@ class MetalArmPolicyRuntime:
         self._frames: list[NDArray[np.float32]] = []
         self._decoder = ActionDecoder(manifest)
         self._last_action: NDArray[np.float32] | None = None
-
-    @staticmethod
-    def _load_session(path: Path, providers: list[str]) -> Any:
-        try:
-            import onnxruntime as ort
-        except ImportError as exc:
-            raise RuntimeError(
-                "MetalArmPolicyRuntime requires onnxruntime; install the repository's "
-                "inference extras (onnxruntime is a base dependency)"
-            ) from exc
-        return ort.InferenceSession(str(path), providers=providers)
 
     # ------------------------------------------------------------------ state
     def reset(self, q_measured: NDArray[np.float32] | NDArray[np.float64] | None = None) -> None:
@@ -251,11 +240,7 @@ class MetalArmPolicyRuntime:
         normalization, so the raw 576-value observation is the input.
         """
         check_observation(observation, self.manifest)
-        outputs = self._session.run(
-            [self._output_name],
-            {self._input_name: np.ascontiguousarray(observation, dtype=np.float32)},
-        )
-        action = np.asarray(outputs[0], dtype=np.float32).reshape(-1)
+        action = self._actor.run(observation)
         if action.shape != (self.manifest.action_dim,):
             raise PolicyContractError(
                 f"actor returned {action.shape}, expected ({self.manifest.action_dim},)"

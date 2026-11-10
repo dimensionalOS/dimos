@@ -46,6 +46,11 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.control.tasks.policy_execution import (
+    PolicyCommandHold,
+    PolicySessionGuard,
+    PolicyTickScheduler,
+)
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
@@ -99,13 +104,6 @@ class StationKinematics(Protocol):
     """Station-frame FK used to anchor teleoperation goals."""
 
     def pose24(self, q: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]: ...
-
-
-class SessionState(str, Enum):
-    """Lifecycle of one policy session."""
-
-    DISENGAGED = "disengaged"
-    ACTIVE = "active"
 
 
 class _PolicyTick(NamedTuple):
@@ -208,8 +206,9 @@ class MetalArmPolicyTask(BaseControlTask):
         self._joint_names = list(config.joint_names)
         self._joint_set = frozenset(config.joint_names)
         self._robot = config.joint_names[0].split("/", 1)[0]
-        self._period_s = 1.0 / manifest.policy_hz
-        self._dry_run = config.dry_run
+        self._scheduler = PolicyTickScheduler.at_hz(manifest.policy_hz)
+        self._hold = PolicyCommandHold(self._joint_names)
+        self._hold.set_dry_run(config.dry_run)
         # Session state: only ever held for short, non-blocking sections.
         self._lock = threading.Lock()
         # Runtime ownership: one observe/act (or reset) at a time. This lock
@@ -220,9 +219,8 @@ class MetalArmPolicyTask(BaseControlTask):
         # the coordinator's ``time.perf_counter``; tests inject a fake one.
         self._clock = clock
 
-        self._session: SessionState = SessionState.DISENGAGED
+        self._guard = PolicySessionGuard()
         self._fault = PolicyTaskFault.NONE
-        self._epoch = 0
         self._estop = False
 
         self._goal: NDArray[np.float64] | None = None
@@ -230,8 +228,6 @@ class MetalArmPolicyTask(BaseControlTask):
         self._engage_requested = False
         self._engage_requested_at: float | None = None
 
-        self._last_command: list[float] | None = None
-        self._next_tick: float | None = None
         self._policy_ticks = 0
 
         self._mapper = teleop_mapper
@@ -261,7 +257,7 @@ class MetalArmPolicyTask(BaseControlTask):
         ``engage()`` must keep the task in the loop until it can decide.
         """
         with self._lock:
-            return self._session is SessionState.ACTIVE or self._engage_requested
+            return self._guard.active or self._engage_requested
 
     def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
         """No published TF frames: the TCP sites are internal policy state."""
@@ -333,7 +329,7 @@ class MetalArmPolicyTask(BaseControlTask):
     def set_dry_run(self, enabled: bool) -> None:
         """Run the runtime but withhold commands, for pre-go inspection."""
         with self._lock:
-            self._dry_run = bool(enabled)
+            self._hold.set_dry_run(enabled)
 
     def set_estop(self, estopped: bool) -> None:
         """Latch or clear the emergency stop; clearing never resumes a session."""
@@ -354,8 +350,8 @@ class MetalArmPolicyTask(BaseControlTask):
         """
         with self._lock:
             had_state = (
-                self._session is SessionState.ACTIVE
-                or self._last_command is not None
+                self._guard.active
+                or self._hold.positions is not None
                 or self._goal is not None
                 or self._engage_requested
             )
@@ -387,14 +383,14 @@ class MetalArmPolicyTask(BaseControlTask):
         with self._lock:
             return {
                 "task": self._name,
-                "session": self._session.value,
+                "session": "active" if self._guard.active else "disengaged",
                 "fault": self._fault.value,
                 "estop": self._estop,
-                "epoch": self._epoch,
+                "epoch": self._guard.epoch,
                 "engage_requested": self._engage_requested,
                 "goal_set": self._goal is not None,
                 "policy_ticks": self._policy_ticks,
-                "last_command": None if self._last_command is None else list(self._last_command),
+                "last_command": self._hold.positions,
                 "issued": self._runtime.issued.tolist(),
                 "teleop": self._config.teleop,
                 "mapper_engaged": bool(self._mapper and self._mapper.engaged),
@@ -419,10 +415,10 @@ class MetalArmPolicyTask(BaseControlTask):
             self._grips = grips
             self._buttons_time = t_now
             if not (grips[0] and grips[1]):
-                if self._session is SessionState.ACTIVE or self._engage_requested:
+                if self._guard.active or self._engage_requested:
                     self._invalidate_locked(PolicyTaskFault.RELEASED)
                 return True
-            if self._session is SessionState.DISENGAGED and not self._engage_requested:
+            if not self._guard.active and not self._engage_requested:
                 self._engage_requested = True
                 self._engage_requested_at = t_now
         return True
@@ -514,7 +510,7 @@ class MetalArmPolicyTask(BaseControlTask):
         """
         with self._lock:
             plan: _PolicyTick | JointCommandOutput | None
-            if self._session is SessionState.DISENGAGED:
+            if not self._guard.active:
                 plan = self._prepare_activation_locked(state)
             else:
                 plan = self._prepare_tick_locked(state)
@@ -583,23 +579,22 @@ class MetalArmPolicyTask(BaseControlTask):
         if goal is None:
             return None
 
-        self._session = SessionState.ACTIVE
+        self._guard.begin()
         self._fault = PolicyTaskFault.NONE
-        self._epoch += 1
         self._engage_requested = False
         self._engage_requested_at = None
-        self._last_command = None
+        self._hold.clear()
+        self._scheduler.reset(now)
         self._policy_ticks = 0
-        self._next_tick = now
         q_home = np.asarray(self._runtime.manifest.home, dtype=np.float32)
         logger.info(
             "MetalArmPolicyTask session opened",
             task=self._name,
-            epoch=self._epoch,
+            epoch=self._guard.epoch,
             non_home_engagement=bool(np.abs(q - q_home).max() > 1e-3),
             dq_max=float(np.abs(dq).max()),
         )
-        return _PolicyTick(self._epoch, q, dq, goal, now, True)
+        return _PolicyTick(self._guard.epoch, q, dq, goal, now, True)
 
     def _anchor_teleop_goal_locked(
         self, q: NDArray[np.float32], t_now: float
@@ -653,37 +648,36 @@ class MetalArmPolicyTask(BaseControlTask):
             self._invalidate_locked(PolicyTaskFault.INTENT)
             return None
 
-        next_tick = self._next_tick
-        if next_tick is not None and now + 1e-9 < next_tick:
-            return self._hold_locked()
-        return _PolicyTick(self._epoch, q, dq, goal, now, False)
+        if not self._scheduler.poll(now):
+            return self._hold.hold()
+        return _PolicyTick(self._guard.epoch, q, dq, goal, now, False)
 
     def _run_policy(self, plan: _PolicyTick) -> JointCommandOutput | None:
         """Run the actor under runtime ownership, then hand off only if still current."""
         with self._inference_lock:
             with self._lock:
-                if self._epoch != plan.epoch or self._session is not SessionState.ACTIVE:
+                if not self._guard.current(plan.epoch):
                     return None
             try:
                 if plan.reset:
                     self._runtime.reset(plan.q)
                     with self._lock:
                         # A release/e-stop/preemption may have landed during reset.
-                        if self._epoch != plan.epoch or self._session is not SessionState.ACTIVE:
+                        if not self._guard.current(plan.epoch):
                             return None
                 self._runtime.observe(plan.q, plan.dq, plan.goal)
                 command = self._runtime.act()
             except Exception:
                 logger.exception("MetalArmPolicyTask inference failed", task=self._name)
                 with self._lock:
-                    if self._epoch == plan.epoch:
+                    if self._guard.current(plan.epoch):
                         self._invalidate_locked(PolicyTaskFault.INFERENCE)
                 return None
 
         # Output handoff boundary: a command from an invalidated or superseded
         # session is dropped, never emitted and never replayed.
         with self._lock:
-            if self._epoch != plan.epoch or self._session is not SessionState.ACTIVE:
+            if not self._guard.current(plan.epoch):
                 return None
             if not self._feedback_fresh():
                 self._invalidate_locked(PolicyTaskFault.FEEDBACK)
@@ -696,45 +690,19 @@ class MetalArmPolicyTask(BaseControlTask):
                 return None
 
             self._policy_ticks += 1
-            values_list = values.tolist()
-            self._last_command = values_list
-            next_tick = self._next_tick
-            now = plan.t_now
-            scheduled = (next_tick if next_tick is not None else now) + self._period_s
-            if scheduled <= now:
-                scheduled = now + self._period_s
-            self._next_tick = scheduled
-
-            if self._dry_run:
-                return None
-            return JointCommandOutput(
-                joint_names=list(self._joint_names),
-                positions=list(values_list),
-                mode=ControlMode.SERVO_POSITION,
-            )
-
-    def _hold_locked(self) -> JointCommandOutput | None:
-        if self._dry_run or self._last_command is None:
-            return None
-        return JointCommandOutput(
-            joint_names=list(self._joint_names),
-            positions=list(self._last_command),
-            mode=ControlMode.SERVO_POSITION,
-        )
+            self._scheduler.mark(plan.t_now)
+            return self._hold.emit(values)
 
     def _invalidate_locked(self, reason: PolicyTaskFault) -> None:
-        was_active = self._session is SessionState.ACTIVE
-        self._session = SessionState.DISENGAGED
+        self._guard.invalidate()
         if reason is not PolicyTaskFault.NONE:
             self._fault = reason
-        if was_active:
-            self._epoch += 1
         self._goal = None
         self._goal_received_at = None
         self._engage_requested = False
         self._engage_requested_at = None
-        self._last_command = None
-        self._next_tick = None
+        self._hold.clear()
+        self._scheduler.reset()
         self._policy_ticks = 0
         if self._config.teleop:
             # A new session needs new samples: never replay the ones that were
