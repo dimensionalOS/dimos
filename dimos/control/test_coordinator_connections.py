@@ -26,8 +26,8 @@ worker processes.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from pathlib import Path
 import math
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -49,7 +49,7 @@ from dimos.control.contract.convert import (
     motor_joints,
 )
 from dimos.control.contract.keys import Interface
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -490,9 +490,9 @@ def test_aggregate_state_waits_for_complete_initial_readings(rig: Callable[..., 
     r.tick()
 
     assert len(published) == 1
-    assert published[0][1].name == MOCK_JOINTS
-    assert published[0][1].position == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2))]
-    assert r.positions_sent()[-1] == published[0][1].position
+    assert published[0][1].name == [*MOCK_JOINTS, *GO2_BASE_AXES]
+    assert published[0][1].position == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2)), 0.0, 0.0, 0.0]
+    assert r.positions_sent()[-1] == published[0][1].position[: len(MOCK_JOINTS)]
 
 
 def test_a_reading_arriving_after_the_snapshot_waits_for_the_next_tick(
@@ -580,7 +580,15 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
         joint_names=["mock/drive_joint"],
         params={"open_at": "lower"},
     )
-    r = rig(ArmCoordinator, model=RobotModel.from_file(urdf), tasks=[gripper])
+    declaration = ConnectionConfig(
+        source="mock",
+        model=RobotModel.from_file(urdf),
+        joint_commands={
+            "mock/joint1": (Interface.POSITION,),
+            "mock/drive_joint": (Interface.POSITION,),
+        },
+    )
+    r = rig(ArmCoordinator, connections=[declaration], tasks=[gripper])
 
     r.report(
         "mock_joint_state",

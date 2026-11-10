@@ -24,8 +24,12 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
     )
 
+from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.limits import limits
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
+from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks.gripper_task.gripper_task import GripperControlTask
+from dimos.control.tasks.registry import control_task_registry
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import (
@@ -41,10 +45,11 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm7,
     keyboard_teleop_xarm6,
     keyboard_teleop_xarm7,
-    xarm6_keyboard_teleop,
-    xarm7_keyboard_teleop,
+    xarm6_teleop,
+    xarm7_teleop,
 )
 from dimos.robot.manipulators.xarm.connection import XArmConfig, XArmConnection
+from dimos.robot.urdf_manager import UrdfManager
 
 # Each blueprint's gripper joint: the adapter's "arm/gripper", or the URDF's
 # drive_joint behind XArmConnection.
@@ -102,7 +107,7 @@ def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     assert "arm/gripper" in trajectory.joint_names
 
 
-@pytest.mark.parametrize("blueprint", [xarm6_keyboard_teleop, xarm7_keyboard_teleop])
+@pytest.mark.parametrize("blueprint", [xarm6_teleop, xarm7_teleop])
 def test_connection_blueprint_shares_the_contract_declaration(blueprint: Blueprint) -> None:
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={}, overrides={"xarmconnection": {"ip": "192.0.2.1"}}
@@ -116,3 +121,20 @@ def test_connection_blueprint_shares_the_contract_declaration(blueprint: Bluepri
     assert len(config.connections) == 1
     assert limits(config.connections[0]) == limits(driver)
     assert config.connections[0].model == driver.model
+
+    assert "model" not in ControlCoordinatorConfig.model_fields
+    assert any(atom.module is UrdfManager for atom in blueprint.blueprints)
+    gripper_cfg = next(task for task in _coordinator_tasks(blueprint) if task.type == "gripper")
+    assert gripper_cfg.joint_names == ["arm/drive_joint"]
+    assert gripper_cfg.stream_bind == {"gripper_command": "right_gripper_command"}
+    source = ConnectionSource(
+        config.connections[0], ["position_command", "velocity_command"], ["joint_state"], 1.0
+    )
+    gripper = control_task_registry.create("gripper", gripper_cfg, connections={"arm": source})
+    assert isinstance(gripper, GripperControlTask)
+    state = CoordinatorState(joints=JointStateSnapshot(), t_now=0.0)
+    for opening, target in [(1.0, 0.0), (0.0, 0.85)]:
+        assert gripper.set_normalized([opening])
+        output = gripper.compute(state)
+        assert output is not None
+        assert output.positions == pytest.approx([target])

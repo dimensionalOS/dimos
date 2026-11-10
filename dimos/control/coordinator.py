@@ -384,7 +384,6 @@ class ControlCoordinator(Module):
             cfg,
             hardware=self._hardware,
             connections=self._connections,
-            model=self.config.model,
         )
 
     def _frame_pose_port(self) -> Out[TFMessage]:

@@ -200,7 +200,9 @@ class ConnectionSource:
             )
         unknown = frozenset(zero_stiffness_joints) - set(keys)
         if unknown:
-            raise ValueError(f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}")
+            raise ValueError(
+                f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}"
+            )
         self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
         imu = f"{robot}{SEPARATOR}imu"
         self._sensors = (
@@ -268,6 +270,17 @@ class ConnectionSource:
             joint.name: frozenset(Interface(key) for key in joint.command_keys)
             for joint in self._joints
         }
+
+    def position_limit(self, joint_name: str) -> Limits:
+        """The declared position-command bounds for one fully qualified joint.
+
+        Raises ValueError if the joint does not accept position commands.
+        The returned limit is immutable and independent of feedback freshness.
+        """
+        key = f"{joint_name}/{Interface.POSITION}"
+        if key not in self._limits:
+            raise ValueError(f"{joint_name!r} has no declared position command")
+        return self._limits[key]
 
     @property
     def command_ports(self) -> list[str]:
