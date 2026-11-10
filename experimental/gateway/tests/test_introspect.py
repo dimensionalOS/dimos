@@ -31,6 +31,7 @@ from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
     blueprint_modules,
+    field_args,
     module_args,
     rpcs,
     run_child,
@@ -170,6 +171,16 @@ class NeedsArgs(Module):
     @classmethod
     def blueprint(cls, **kwargs):  # type: ignore[no-untyped-def, override]
         return super().blueprint(**{"must": kwargs["must"]})
+
+
+def test_config_fields_are_read_without_launches_and_its_newer_dimos_imports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # a checkout older than this gateway lacks what launches.py imports from dimos (DIM-630: every config was a 500)
+    monkeypatch.setitem(sys.modules, "experimental.gateway.launches", None)
+    args = field_args(NeedsArgsConfig.model_fields, set())
+    assert args["rate_hz"]["default"] == 1.0
+    assert args["rate_hz"]["secret"] is False
 
 
 def test_a_module_whose_blueprint_needs_arguments_still_lists_its_config() -> None:

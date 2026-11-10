@@ -381,12 +381,20 @@ def json_safe(kind: Any, value: Any) -> bool:
         return False
 
 
+# here, not in launches.py: this file runs in a served checkout's python, where launches.py's dimos imports may not exist
+def is_secret_name(path: str) -> bool:
+    name = path.rsplit(".", 1)[-1].lower()
+    return (
+        name == "key"
+        or name.endswith("_key")
+        or any(word in name for word in ("secret", "token", "password", "passwd"))
+    )
+
+
 def field_args(
     fields: dict[str, Any], base: set[str], values: dict[str, Any] | None = None
 ) -> dict[str, dict[str, Any]]:
     """Each config field's type, default, description and choices, by name; `value` is what the blueprint itself sets."""
-    from experimental.gateway.launches import is_secret_name
-
     args = {}
     for name, field in fields.items():
         required, kind = field.is_required(), field.annotation

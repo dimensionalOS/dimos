@@ -36,6 +36,7 @@ from dimos.core.coordination.process_lifecycle import is_pid_alive
 from dimos.core.run_registry import get_most_recent, list_runs, stop_entry
 from experimental.gateway import constants, shared_config, store
 from experimental.gateway.errors import ApiError, StatusError
+from experimental.gateway.introspect import is_secret_name
 
 ModuleValues = dict[str, dict[str, Any]]
 
@@ -129,15 +130,6 @@ def parse(raw: Any) -> LaunchConfig:
         raise LaunchConfigError("overrides.secrets must be a list of paths")
     return LaunchConfig(
         dict(global_), {module: dict(fields) for module, fields in modules.items()}, secrets
-    )
-
-
-def is_secret_name(path: str) -> bool:
-    name = path.rsplit(".", 1)[-1].lower()
-    return (
-        name == "key"
-        or name.endswith("_key")
-        or any(word in name for word in ("secret", "token", "password", "passwd"))
     )
 
 
