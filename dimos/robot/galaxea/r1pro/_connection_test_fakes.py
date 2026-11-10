@@ -25,7 +25,6 @@ checked against what the vendor stack would see.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
 import sys
 import time
 import types
@@ -81,28 +80,18 @@ class RosImu:
     header: RosHeader = field(default_factory=RosHeader)
 
 
-def odometry_feedback(
-    x: float = 0.0,
-    y: float = 0.0,
-    yaw: float = 0.0,
-    vx: float = 0.0,
-    vy: float = 0.0,
-    wz: float = 0.0,
-    ts: float | None = None,
-) -> Any:
-    stamp = time.time() if ts is None else ts
-    ns = types.SimpleNamespace
-    return ns(
-        header=RosHeader(RosTime(int(stamp), int((stamp % 1) * 1e9)), "odom"),
-        child_frame_id="base_link",
-        pose=ns(
-            pose=ns(
-                position=RosVector3(x, y, 0.0),
-                orientation=ns(x=0.0, y=0.0, z=math.sin(yaw / 2), w=math.cos(yaw / 2)),
-            )
-        ),
-        twist=ns(twist=RosTwist(RosVector3(vx, vy, 0.0), RosVector3(0.0, 0.0, wz))),
-    )
+CHASSIS_FEEDBACK_TOPIC = "/motion_control/chassis_speed"
+
+
+def feed_chassis_interval(fake: FakeRos, turn: float = 0.0) -> None:
+    """Two real-topic measured samples, defining origin then integrating a turn.
+
+    The accelerated turn is test data, not a position injection or command.
+    """
+    now = time.time()
+    start = now - 0.1
+    fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.0, 0.0, 0.0, start))
+    fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.0, 0.0, turn / (now - start), now))
 
 
 def joint_feedback(positions: list[float], ts: float | None = None) -> RosJointState:
@@ -246,13 +235,6 @@ def install_fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
     geometry_msgs.msg = geometry_msg  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "geometry_msgs", geometry_msgs)
     monkeypatch.setitem(sys.modules, "geometry_msgs.msg", geometry_msg)
-
-    nav_msgs = types.ModuleType("nav_msgs")
-    nav_msg = types.ModuleType("nav_msgs.msg")
-    nav_msg.Odometry = type("Odometry", (), {})  # type: ignore[attr-defined]
-    nav_msgs.msg = nav_msg  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "nav_msgs", nav_msgs)
-    monkeypatch.setitem(sys.modules, "nav_msgs.msg", nav_msg)
 
     rospubsub = types.ModuleType("dimos.protocol.pubsub.impl.rospubsub")
     rospubsub.RawROS = fake._raw_ros  # type: ignore[attr-defined]

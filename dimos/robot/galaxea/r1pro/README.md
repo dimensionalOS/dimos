@@ -64,17 +64,23 @@ the registered `twist_velocity` task `vel_chassis` → ordinary joint arbitratio
 `angular.z`; measured `r1pro/base_yaw` rotates raw body intent each compute,
 without refreshing its 0.2 s input timeout. Teleop and nav publishers are unchanged.
 
-**Measured planar feedback.** Set `--r1proconnection.odometry-topic` to a real
-ROS `nav_msgs/Odometry` publisher (default `/odom` is a configurable deployment
-convention, not an assertion that every vendor profile publishes it). The input
-must have pose in `odom` and body twist in `base_link`. The connection publishes
-actual planar positions and world-frame joint velocities, not an integration
-from assumed yaw zero. Nonzero chassis output requires a finite unit quaternion
-and both source timestamp and receipt less than 0.2 s old. Arm/IMU traffic and
-the joint publish timer cannot renew that authority. Missing/invalid/stale
-odometry rejects a mixed batch before arm targets are sent; halt and zero
-velocity still work without odometry. Confirm the deployed publisher and frame
-conventions before enabling motion; hardware timing has not been validated here.
+**Measured planar feedback.** The unchanged vendor ROS input is
+`/motion_control/chassis_speed` (`geometry_msgs/TwistStamped`), not a new
+`/odom` subscription. Measured body vx/vy/wz are integrated into local wheel
+odometry, as in the original driver. The first valid sample defines the local
+origin `(x, y, yaw) = (0, 0, 0)` and anchors time; only a subsequent valid
+interval publishes planar positions and world-frame joint velocities and
+authorizes nonzero commands. This is relative dead reckoning, not absolute
+map localization. Commands are never integrated as feedback.
+
+Nonzero chassis output requires finite feedback-derived yaw and both source
+timestamp and independent receipt less than 0.2 s old. Arm/IMU traffic and the
+joint publish timer cannot renew that authority. Invalid data, backwards or
+duplicate timestamps, and gaps over 1 s revoke authority without resetting the
+accumulated pose or inventing motion across the gap. Fresh measured intervals
+are required to recover. Missing/invalid/stale feedback rejects a mixed batch
+before arm targets are sent; halt and zero velocity still work without it.
+Hardware timing and dead-reckoning accuracy have not been validated here.
 
 **Deadman.** While the coordinator runs it sends a complete command every
 tick, so the deadman stays quiet. When commands stop, estop, or the

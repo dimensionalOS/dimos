@@ -50,14 +50,16 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.galaxea.r1pro._connection_test_fakes import (
+    CHASSIS_FEEDBACK_TOPIC,
     MEASURED_Q,
     FakeRos,
     LocalTransport,
     RosHeader,
     RosImu,
+    chassis_speed,
     feed_all_segments,
+    feed_chassis_interval,
     install_fake_ros,
-    odometry_feedback,
 )
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     R1ProCoordinator,
@@ -161,9 +163,16 @@ class Rig:
 
         while not stop.is_set() and not subscribed():
             stop.wait(0.01)
+        feed_chassis_interval(self.fake, turn=self.yaw)
+        previous_yaw = self.yaw
+        previous_ts = time.time()
+        self.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.0, 0.0, 0.0, previous_ts))
         while not stop.is_set():
             feed_all_segments(self.fake, q=streamed[0])
-            self.fake.control.feed("/odom", odometry_feedback(yaw=self.yaw))
+            ts, yaw = time.time(), self.yaw
+            wz = (yaw - previous_yaw) / (ts - previous_ts)
+            self.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.0, 0.0, wz, ts))
+            previous_ts, previous_yaw = ts, yaw
             # The coordinator's source is ready only once the IMU reports too.
             self.fake.sensors.feed(
                 "/hdas/imu_chassis", RosImu(header=RosHeader(frame_id="imu_chassis"))

@@ -35,6 +35,7 @@ from dimos.control.contract.limits import limits
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro import connection as connection_module
 from dimos.robot.galaxea.r1pro._connection_test_fakes import (
+    CHASSIS_FEEDBACK_TOPIC,
     LEFT_Q,
     MEASURED_Q,
     RIGHT_Q,
@@ -43,10 +44,11 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     LocalTransport,
     RosHeader,
     RosImu,
+    chassis_speed,
     feed_all_segments,
+    feed_chassis_interval,
     install_fake_ros,
     joint_feedback,
-    odometry_feedback,
 )
 from dimos.robot.galaxea.r1pro.connection import (
     R1PRO_BASE_JOINTS,
@@ -101,7 +103,7 @@ class Rig:
 
     def drive(self, vx: float, vy: float, wz: float) -> None:
         """Send world-frame ordinary joint velocities, using measured yaw."""
-        self.fake.control.feed("/odom", odometry_feedback())
+        feed_chassis_interval(self.fake)
         self.ports["velocity_command"].publish(
             JointState(name=R1PRO_BASE_JOINTS, velocity=[vx, vy, wz])
         )
@@ -365,27 +367,37 @@ def test_the_imus_are_republished_once_feedback_is_flowing(rig: Callable[..., Ri
     assert r.ports["imu_torso"].sent[-1].frame_id == "torso_imu"
 
 
-def test_actual_odometry_is_decoded_with_world_joint_velocities(rig: Callable[..., Rig]) -> None:
+def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
+    rig: Callable[..., Rig],
+) -> None:
     r = rig()
-    r.fake.control.feed("/odom", odometry_feedback(x=0.2, yaw=math.pi / 2, vx=0.4, vy=0.1, wz=0.3))
+    assert CHASSIS_FEEDBACK_TOPIC in r.fake.control.subs
+    assert "/odom" not in r.fake.control.subs
+    feed_chassis_interval(r.fake, turn=math.pi / 2)
+    ts = time.time()
+    previous = r.module._odom_last_ts
+    assert previous is not None
+    r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.4, 0.1, 0.0, ts))
     base = [s for s in r.readings() if list(s.name) == R1PRO_BASE_JOINTS][-1]
-    assert list(base.position) == pytest.approx([0.2, 0.0, math.pi / 2])
-    assert list(base.velocity) == pytest.approx([-0.1, 0.4, 0.3])
+    assert list(base.position) == pytest.approx(
+        [-0.1 * (ts - previous), 0.4 * (ts - previous), math.pi / 2]
+    )
+    assert list(base.velocity) == pytest.approx([-0.1, 0.4, 0.0])
 
     wait_until(lambda: bool(r.ports["odometry"].sent), timeout=5.0)
     odom = r.ports["odometry"].sent[-1]
     assert odom.frame_id == "odom"
     assert odom.child_frame_id == "base_link"
-    assert odom.pose.position.x == pytest.approx(0.2)
+    assert odom.pose.position.x == pytest.approx(base.position[0])
     assert odom.twist.linear.x == pytest.approx(0.4)
     # The pose and tf share the same gate.
-    assert r.ports["odom"].sent[-1].position.x == pytest.approx(0.2)
+    assert r.ports["odom"].sent[-1].position.x == pytest.approx(base.position[0])
     assert r.ports["tf"].sent
 
 
 def test_the_odom_pose_and_tf_follow_their_gate(rig: Callable[..., Rig]) -> None:
     r = rig(publish_odom_tf=False)
-    r.fake.control.feed("/odom", odometry_feedback(vx=0.4))
+    feed_chassis_interval(r.fake)
 
     wait_until(lambda: bool(r.ports["odometry"].sent), timeout=5.0)
     assert r.ports["odom"].sent == []
@@ -410,7 +422,7 @@ def test_status_reports_the_session_commands_and_rejections(rig: Callable[..., R
 
 def test_world_velocity_uses_nonzero_actual_yaw(rig: Callable[..., Rig]) -> None:
     r = rig()
-    r.fake.control.feed("/odom", odometry_feedback(yaw=math.pi / 2))
+    feed_chassis_interval(r.fake, turn=math.pi / 2)
     r.ports["velocity_command"].publish(
         JointState(name=R1PRO_BASE_JOINTS, velocity=[0.2, 0.5, 0.7])
     )
@@ -419,26 +431,56 @@ def test_world_velocity_uses_nonzero_actual_yaw(rig: Callable[..., Rig]) -> None
 
 
 @pytest.mark.parametrize(
-    "invalid", ["absent", "old_stamp", "stale_receipt", "nan", "nonunit", "frame"]
+    "invalid",
+    [
+        "absent",
+        "first",
+        "old_stamp",
+        "future",
+        "zero_stamp",
+        "stale_receipt",
+        "nan",
+        "bad_stamp",
+        "backwards",
+        "duplicate",
+        "long_gap",
+        "bad_yaw",
+    ],
 )
 def test_yaw_authority_is_independent_of_arm_imu_and_publish_traffic(
     rig: Callable[..., Rig],
     invalid: str,
 ) -> None:
     r = rig()
-    msg = odometry_feedback(yaw=0.8)
+    if invalid not in ("absent", "first"):
+        feed_chassis_interval(r.fake, turn=0.8)
+    msg = chassis_speed(0.1, 0.0, 0.0, time.time())
     if invalid == "old_stamp":
-        msg = odometry_feedback(ts=time.time() - 1)
+        msg = chassis_speed(0.1, 0.0, 0.0, time.time() - 1)
+    elif invalid == "future":
+        msg = chassis_speed(0.1, 0.0, 0.0, time.time() + 1)
+    elif invalid == "zero_stamp":
+        msg = chassis_speed(0.1, 0.0, 0.0, 0.0)
     elif invalid == "nan":
-        msg.pose.pose.orientation.z = float("nan")
-    elif invalid == "nonunit":
-        msg.pose.pose.orientation.w = 2.0
-    elif invalid == "frame":
-        msg.header.frame_id = "wrong"
+        msg.twist.linear.x = float("nan")
+    elif invalid == "bad_stamp":
+        msg.header.stamp.sec = float("nan")
+    elif invalid == "backwards":
+        msg = chassis_speed(0.1, 0.0, 0.0, time.time() - 0.05)
+    elif invalid == "duplicate":
+        assert r.module._odom_last_ts is not None
+        msg = chassis_speed(0.1, 0.0, 0.0, r.module._odom_last_ts)
+    elif invalid == "long_gap":
+        time.sleep(1.02)
+        msg = chassis_speed(0.1, 0.0, 0.0, time.time())
     if invalid != "absent":
-        r.fake.control.feed("/odom", msg)
+        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
+    if invalid == "bad_yaw":
+        assert r.module._base_state is not None
+        r.module._base_state.position[2] = float("nan")
     if invalid == "stale_receipt":
-        time.sleep(0.22)
+        # Keep the source stamp fresh: receipt freshness must gate independently.
+        r.module._odom_received_mono = time.monotonic() - 1.0
     r.feed()
     r.fake.sensors.feed("/hdas/imu_chassis", RosImu(header=RosHeader()))
     time.sleep(0.02)  # The arm publish timer has run, but cannot refresh yaw.
@@ -462,3 +504,48 @@ def test_zero_velocity_and_halt_need_no_odometry(rig: Callable[..., Rig]) -> Non
     assert r.module.status().last_error is None
     r.module.halt()
     assert all(m.twist.linear.x == m.twist.linear.y == m.twist.angular.z == 0 for m in r.speeds())
+
+
+@pytest.mark.parametrize("invalid", ["nan", "backwards", "duplicate", "long_gap"])
+def test_invalid_interval_preserves_local_pose_and_recovers_only_on_measured_interval(
+    rig: Callable[..., Rig], monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    r = rig(start=False)
+    r.module.connect()
+    clock = [100.0]
+    monkeypatch.setattr(connection_module.time, "time", lambda: clock[0])
+
+    def receive(ts: float, vx: float = 0.4, wz: float = 0.0) -> None:
+        clock[0] = ts
+        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(vx, 0.0, wz, ts))
+
+    receive(100.0)
+    assert r.module._base_state is None
+    assert not r.readings()  # A frame origin is not fabricated feedback.
+    receive(100.1, wz=1.0)
+    before = r.readings()[-1]
+    assert list(before.position) == pytest.approx([0.04, 0.0, 0.1])
+    count = len(r.readings())
+    if invalid == "nan":
+        receive(100.2, vx=float("nan"))
+        receive(100.3)  # New anchor only after invalid input.
+    elif invalid == "backwards":
+        receive(100.05)
+    elif invalid == "duplicate":
+        receive(100.1)
+    else:
+        receive(102.0)
+    assert r.module._base_state is None
+    assert len(r.readings()) == count
+    assert [r.module._odom_x, r.module._odom_y, r.module._odom_yaw] == pytest.approx(
+        before.position
+    )
+    with pytest.raises(ValueError, match="fresh measured odometry"):
+        r.module.write({f"{R1PRO_BASE_JOINTS[0]}/velocity": 0.2})
+    receive(clock[0] + 0.1)
+    state = r.readings()[-1]
+    assert state.position[0] == pytest.approx(0.04 + math.cos(0.1) * 0.04)
+    assert state.position[1] == pytest.approx(math.sin(0.1) * 0.04)
+    r.module.write({f"{R1PRO_BASE_JOINTS[0]}/velocity": 0.2})
+    assert r.speeds()[-1].twist.linear.x == pytest.approx(math.cos(0.1) * 0.2)
+    assert len(r.readings()) == count + 1  # Commands never integrate/publish pose.

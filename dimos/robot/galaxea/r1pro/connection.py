@@ -24,8 +24,8 @@ vendor's: see ``r1pro_lidar_odometry``.
 
 Commands arrive as standard messages and go through ``command``: checked
 against the model limits (out-of-range speeds are rejected), then forwarded
-by ``write``. Measured odometry supplies planar positions and rotates the
-vendor body velocity into world derivatives; fresh measured yaw rotates
+by ``write``. Existing measured chassis speeds integrate local wheel odometry
+and rotate vendor body velocity into world derivatives; fresh feedback yaw rotates
 outgoing velocities back to the vendor body frame. Once a command was accepted, going
 ``deadman_timeout_s`` without another halts the robot: zero chassis speed
 and the arms held where they were last measured.
@@ -160,10 +160,9 @@ class R1ProConnectionConfig(ConnectionConfig):
     planar joints take velocities bounded by ``R1PRO_PLANAR_BASE.velocity_limits``.
 
     Attributes:
-        odometry_topic: ROS nav_msgs/Odometry input. Configure this to the
-            deployed vendor/localization topic, with odom -> base_link frames.
-            No speed-integrated or assumed-zero-yaw fallback is used.
-        odometry_timeout_s: Independent pose timestamp and receipt age limit.
+        odometry_timeout_s: Independent measured chassis timestamp and receipt
+            age limit. Wheel odometry integrates /motion_control/chassis_speed
+            in a local relative frame, not an externally localized map frame.
         tracking_speed: rad/s the on-board tracker follows targets at.
         publish_odom_tf: Gates wheel odometry's odom -> base_link tf and the
             `odom` pose; `odometry` always goes out.
@@ -190,7 +189,7 @@ class R1ProConnectionConfig(ConnectionConfig):
         **dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, (Interface.POSITION,)),
         **dict.fromkeys(R1PRO_BASE_JOINTS, (Interface.VELOCITY,)),
     }
-    odometry_topic: str = "/odom"
+
     odometry_timeout_s: float = Field(default=0.2, gt=0)
     publish_rate_hz: float = Field(default=100.0)
     tracking_speed: float = Field(default=0.5)
@@ -275,7 +274,12 @@ class R1ProConnection(ConnectionModule):
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
 
-        # Only actual validated odometry authorizes world -> body commands.
+        # Local wheel frame origin; no authority until measured intervals arrive.
+        self._odom_x = 0.0
+        self._odom_y = 0.0
+        self._odom_yaw = 0.0
+        self._odom_last_ts: float | None = None
+        # Only actual validated feedback authorizes world -> body commands.
         self._base_state: JointState | None = None
         self._odom_received_mono: float | None = None
 
@@ -400,6 +404,7 @@ class R1ProConnection(ConnectionModule):
             self._latest_imu_torso = None
             self._base_state = None
             self._odom_received_mono = None
+            self._odom_last_ts = None
 
     # The control contract
 
@@ -433,6 +438,8 @@ class R1ProConnection(ConnectionModule):
                 ):
                     raise ValueError("fresh measured odometry yaw is required")
                 yaw = float(state.position[2])
+                if not math.isfinite(yaw):
+                    raise ValueError("fresh measured odometry yaw is required")
                 cy, sy = math.cos(yaw), math.sin(yaw)
                 base_packet = (cy * vx + sy * vy, -sy * vx + cy * vy, wz)
         # Validate/compute the whole batch before any arm SDK send.
@@ -511,7 +518,6 @@ class R1ProConnection(ConnectionModule):
 
     def _setup_control_topics(self) -> None:
         from geometry_msgs.msg import TwistStamped
-        from nav_msgs.msg import Odometry as RosOdometry
         from sensor_msgs.msg import JointState as RosJointState
 
         from dimos.protocol.pubsub.impl.rospubsub import RawROSTopic
@@ -545,11 +551,11 @@ class R1ProConnection(ConnectionModule):
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
 
-        # A real measured pose is required; do not integrate speed from yaw=0.
+        # Existing vendor executed-speed feedback, not the outgoing command topic.
         self._control_unsubs.append(
             self._ros.subscribe(
-                RawROSTopic(self.config.odometry_topic, RosOdometry, qos=qos),
-                self._on_odometry,
+                RawROSTopic("/motion_control/chassis_speed", TwistStamped, qos=qos),
+                self._on_chassis_speed,
             )
         )
 
@@ -736,50 +742,60 @@ class R1ProConnection(ConnectionModule):
             ne = min(len(msg.effort), len(eff_dst))
             eff_dst[:ne] = msg.effort[:ne]
 
-    # Measured vendor odometry: world pose, body-frame twist.
+    # Local wheel odometry from measured vendor chassis speed, never commands.
 
-    def _on_odometry(self, msg: Any, _topic: Any) -> None:
+    def _on_chassis_speed(self, msg: Any, _topic: Any) -> None:
         from dimos.msgs.geometry_msgs.Pose import Pose
         from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
         try:
             ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-            p, q = msg.pose.pose.position, msg.pose.pose.orientation
-            v, w = msg.twist.twist.linear, msg.twist.twist.angular
-            numbers = (ts, p.x, p.y, p.z, q.x, q.y, q.z, q.w, v.x, v.y, v.z, w.x, w.y, w.z)
-            if not all(math.isfinite(x) for x in numbers):
-                raise ValueError("non-finite odometry")
-            if not math.isclose(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w, 1.0, abs_tol=1e-3):
-                raise ValueError("odometry quaternion must be unit length")
-            if not 0 <= time.time() - ts <= self.config.odometry_timeout_s:
-                raise ValueError("stale odometry timestamp")
-            if (
-                msg.header.frame_id != self.config.odom_frame_id
-                or msg.child_frame_id != self.config.frame_id
-            ):
-                raise ValueError("odometry frame mismatch")
-            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            v, w = msg.twist.linear, msg.twist.angular
+            vx, vy, wz = v.x, v.y, w.z
+            if not all(math.isfinite(x) for x in (ts, v.x, v.y, v.z, w.x, w.y, w.z)):
+                raise ValueError("non-finite chassis feedback")
+            if ts <= 0 or not 0 <= time.time() - ts <= self.config.odometry_timeout_s:
+                raise ValueError("stale chassis timestamp")
+        except (AttributeError, TypeError, ValueError):
+            with self._lock:
+                self._base_state = None
+                self._odom_received_mono = None
+                self._odom_last_ts = None
+            return
+        with self._lock:
+            previous = self._odom_last_ts
+            self._odom_last_ts = ts
+            if previous is None or not 0 < ts - previous <= 1.0:
+                # Establish/rebase the time anchor, not the accumulated local pose.
+                # No invented motion across invalid, backwards or missing intervals.
+                self._base_state = None
+                self._odom_received_mono = None
+                return
+            dt = ts - previous
+            cy, sy = math.cos(self._odom_yaw), math.sin(self._odom_yaw)
+            x = self._odom_x + (cy * vx - sy * vy) * dt
+            y = self._odom_y + (sy * vx + cy * vy) * dt
+            yaw = self._odom_yaw + wz * dt
+            if not all(math.isfinite(n) for n in (x, y, yaw)):
+                self._base_state = None
+                self._odom_received_mono = None
+                self._odom_last_ts = None
+                return
+            self._odom_x, self._odom_y, self._odom_yaw = x, y, yaw
             cy, sy = math.cos(yaw), math.sin(yaw)
             state = JointState(
                 ts=ts,
                 frame_id=self.config.odom_frame_id,
                 name=R1PRO_BASE_JOINTS,
-                position=[p.x, p.y, yaw],
-                velocity=[cy * v.x - sy * v.y, sy * v.x + cy * v.y, w.z],
+                position=[x, y, yaw],
+                velocity=[cy * vx - sy * vy, sy * vx + cy * vy, wz],
             )
-        except (AttributeError, TypeError, ValueError):
-            # Invalid traffic must neither refresh nor retain output authority.
-            with self._lock:
-                self._base_state = None
-                self._odom_received_mono = None
-            return
-        with self._lock:
             self._base_state = state
             self._odom_received_mono = time.monotonic()
-        # Publish only on real odometry receipts, never from the arm timer.
+        # Only measured receipts publish planar state; arm timers cannot refresh it.
         self.joint_state.publish(state)
-        position = Vector3(p.x, p.y, p.z)
-        orientation = Quaternion(q.x, q.y, q.z, q.w)
+        position = Vector3(x, y, 0.0)
+        orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
         pose = PoseStamped(
             ts=ts, frame_id=self.config.odom_frame_id, position=position, orientation=orientation
         )
@@ -789,7 +805,7 @@ class R1ProConnection(ConnectionModule):
                 frame_id=self.config.odom_frame_id,
                 child_frame_id=self.config.frame_id,
                 pose=Pose(position, orientation),
-                twist=Twist(Vector3(v.x, v.y, v.z), Vector3(w.x, w.y, w.z)),
+                twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
             )
         )
         if self.config.publish_odom_tf:
