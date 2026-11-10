@@ -100,14 +100,31 @@ def _handle_initialize(req_id: Any) -> dict[str, Any]:
     )
 
 
+def _tool_names(skills: list[SkillInfo]) -> list[str]:
+    """The name the agent calls each skill by, in the order of ``skills``.
+
+    A skill's name is its method name. When modules of more than one class have
+    a skill by the same name, as every grasp generator has propose_grasps_for,
+    each of those is ``<class name>__<method name>`` instead, so none hides
+    another.
+    """
+    classes: dict[str, set[str]] = {}
+    for s in skills:
+        classes.setdefault(s.func_name, set()).add(s.class_name)
+    return [
+        s.func_name if len(classes[s.func_name]) == 1 else f"{s.class_name}__{s.func_name}"
+        for s in skills
+    ]
+
+
 def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
     tools = []
 
-    for s in skills:
+    for s, name in zip(skills, _tool_names(skills), strict=True):
         schema = json.loads(s.args_schema)
         description = schema.pop("description", None)
         schema.pop("title", None)
-        tool: dict[str, Any] = {"name": s.func_name, "inputSchema": schema}
+        tool: dict[str, Any] = {"name": name, "inputSchema": schema}
         if description:
             tool["description"] = description
         if s.uses or s.lifecycle != "instant":
@@ -415,12 +432,11 @@ class McpServer(Module):
         # its call on the langchain import.
         per_module = safe_thread_map(modules, lambda module: module.get_skills() or [])
         app.state.skills = [skill_info for skills in per_module for skill_info in skills]
-        app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
+        names = _tool_names(app.state.skills)
+        app.state.skills_by_name = dict(zip(names, app.state.skills, strict=True))
         app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
-            )
-            for skill_info in app.state.skills
+            name: RpcCall(None, self.rpc, skill_info.func_name, skill_info.class_name, [])
+            for name, skill_info in app.state.skills_by_name.items()
         }
 
     @skill
@@ -436,7 +452,7 @@ class McpServer(Module):
             {
                 "pid": pid,
                 "modules": modules,
-                "skills": [s.func_name for s in skills],
+                "skills": _tool_names(skills),
             }
         )
 
