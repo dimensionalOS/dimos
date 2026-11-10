@@ -120,16 +120,7 @@ def compile_world(
         prefix = f"{robot.robot_id}/"
         standing = resolved([body.name for body in world.bodies], prefix + robot.root_body)
         if standing is not None:
-            root = world.body(standing)
-            # The frame places the robot, not the source asset -- the same rule the attach
-            # branch below states by zeroing the root it is about to attach. A composed scene
-            # grafts the robot under a frame of its own, and the robot's layer still carries
-            # the offset from its root up to this body (0.793 m, for a G1's pelvis). Left in,
-            # the two add: the frame says where the robot stands and the robot then hangs that
-            # much above it, dropping the moment physics begins.
-            root.pos = (0.0, 0.0, 0.0)
-            root.quat = (1.0, 0.0, 0.0, 0.0)
-            _configure(world, robot, root=root, prefix=prefix)
+            _configure(world, robot, root=world.body(standing), prefix=prefix)
             continue
         layer = usd_layer(robot.model)
         _register_usd_reader(layer)

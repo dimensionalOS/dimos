@@ -23,7 +23,7 @@ from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
+from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.sim import sim_module
@@ -84,19 +84,17 @@ def _walker(name: str) -> Blueprint:
 
 
 SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
-    # At HOME_HEIGHT, which is where a G1's pelvis is when it stands in the pose it starts in.
-    # The frame says where the robot stands and nothing else does: `compile_world` zeroes the
-    # offset the robot's own layer carries from its root up to its pelvis, in this branch as in
-    # the other, so the two no longer add. They did once, and the robot hung 0.76 m in the air:
+    # On the floor. A mount frame in a composed scene says where the robot's *asset* goes, not
+    # where its pelvis goes -- `graft_usd` puts the layer's root prim there and the layer's own
+    # offsets place everything above it -- so a frame on the floor is a G1 drawn standing, pelvis
+    # at the 0.793 its layer carries. HOME_HEIGHT here would add the two and hang it 0.76 m up.
     #
-    #     freejoint on /office_555/main   z = 0.755   (this frame)
-    #                  main/pelvis        z = 1.548   (0.755 + the robot's own 0.793)
-    #
-    # and the fix of putting this frame on the floor only halved the error -- the pelvis then
-    # started at 0.793, which is where the layer draws it with every joint at zero, 38 mm above
-    # where the same robot's pelvis sits once its knees are bent into the home pose. Zeroing the
-    # root is what makes HOME_HEIGHT mean what it says.
-    {name: ("office_555", (x, y, HOME_HEIGHT), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
+    # It does start 38 mm above where it finishes: 0.793 is the pose the layer is drawn in, every
+    # joint at zero, and the home pose bends the knees, which lowers the pelvis to about 0.755
+    # without lowering the feet. Nothing is wrong with that -- the drop is 0.09 s of free fall and
+    # the policies are already driving by the time the world steps (see `startup_delay`). The old
+    # path hid it by adding a keyframe's base height to this frame; there is no keyframe now.
+    {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
 
