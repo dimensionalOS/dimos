@@ -45,6 +45,7 @@ BLUEPRINT_METHODS = {
 }
 _EXCLUDED_MODULE_NAMES = {
     "AgentModule",
+    "BaseAgent",
     "Module",
     "ModuleBase",
     "StreamModule",
