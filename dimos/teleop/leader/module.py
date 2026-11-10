@@ -105,7 +105,7 @@ class LeaderTeleopModuleConfig(ModuleConfig):
             raise ValueError("enabled_sides must not contain duplicate sides")
         if self.command_filter_cutoff_hz is not None and self.command_filter_cutoff_hz <= 0.0:
             raise ValueError("command_filter_cutoff_hz must be positive or None")
-        for side in self.sides():
+        for side in self._configured_sides():
             if side not in self.mappings:
                 raise ValueError(f"no mapping configured for the {side} leader")
         return self
@@ -123,18 +123,25 @@ class LeaderTeleopModuleConfig(ModuleConfig):
             raise ValueError(f"port_{side} must be configured for leader teleop")
         return port
 
-    def sides(self) -> tuple[LeaderSide, ...]:
-        """Leader sides in runtime order; the ports given select them."""
+    def _configured_sides(self) -> tuple[LeaderSide, ...]:
         if self.enabled_sides is not None:
             return self.enabled_sides
         if self.reader == "mock":
             return tuple(side for side in LEADER_SIDES if side in self.mappings)
-        configured = tuple(
+        return tuple(
             side for side in LEADER_SIDES if (self.port_left if side == "left" else self.port_right)
         )
-        if not configured:
+
+    def sides(self) -> tuple[LeaderSide, ...]:
+        """Leader sides in runtime order; the ports given select them.
+
+        Ports arrive on the command line, so a config without any is valid
+        until the module connects.
+        """
+        sides = self._configured_sides()
+        if not sides:
             raise ValueError("configure port_left and/or port_right (or enabled_sides)")
-        return configured
+        return sides
 
 
 class LeaderTeleopModule(Module):
