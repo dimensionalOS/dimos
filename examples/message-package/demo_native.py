@@ -20,14 +20,13 @@ from pathlib import Path
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
-import tomllib
 
 from dimos_cdrgen.native_build import prepare_cpp, write_cmake_toolchain
 from dimos_cdrgen.registry import decode, encode
-
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.std_msgs.msg import Header
 from dimos_messages_schemas.provider import package_root  # type: ignore[import-untyped]
+import tomllib
 
 
 def _stage_cargo_project(project: Path, sources: Path) -> None:

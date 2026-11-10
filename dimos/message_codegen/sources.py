@@ -33,8 +33,8 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import shutil
-from tempfile import TemporaryDirectory
 import tarfile
+from tempfile import TemporaryDirectory
 
 PROJECT = Path(__file__).resolve().parents[2] / "packages/dimos-messages"
 INTERFACES = PROJECT / "interfaces"

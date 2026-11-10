@@ -19,8 +19,6 @@ from pathlib import Path
 import sys
 
 from dimos_cdrgen.registry import decode, encode
-import numpy as np
-
 import dimos_messages
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
@@ -28,6 +26,7 @@ from dimos_messages.geometry_msgs.msg import Point
 from dimos_messages.sensor_msgs.msg import Image
 from dimos_messages.std_msgs.msg import Header
 from dimos_messages_schemas.provider import message_types, package_root
+import numpy as np
 
 
 def main() -> None:
@@ -37,7 +36,9 @@ def main() -> None:
     assert installed.is_relative_to(Path(sys.prefix).resolve()), installed
     owner = distribution("dimos")
     assert "dimos_messages/std_msgs/msg/__init__.py" in {str(p) for p in owner.files or ()}
-    assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_messages"]) == 1
+    assert (
+        len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_messages"]) == 1
+    )
     print(f"Installed package: {installed}")
     print(f"Generated Python messages: {installed.parent}")
     print(f"Packaged schemas and native sources: {package_root()}")

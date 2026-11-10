@@ -17,13 +17,12 @@
 from importlib.metadata import distribution
 from importlib.util import find_spec
 
+from acme_telemetry.demo_msgs.msg import Reading
+from acme_telemetry_schemas.provider import package_root as external_root
 from dimos_cdrgen.registry import decode, encode
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.std_msgs.msg import Header
 from dimos_messages_schemas.provider import package_root
-
-from acme_telemetry.demo_msgs.msg import Reading
-from acme_telemetry_schemas.provider import package_root as external_root
 
 
 def main() -> None:
@@ -36,7 +35,9 @@ def main() -> None:
     assert (external_root() / "schemas/std_msgs/msg/Header.msg").is_file()
     assert (external_root() / "schemas/demo_msgs/msg/Reading.msg").is_file()
     assert not (external_root() / "cpp/demo_msgs").exists()
-    assert all("dimos-generated" not in req for req in distribution("acme-telemetry").requires or ())
+    assert all(
+        "dimos-generated" not in req for req in distribution("acme-telemetry").requires or ()
+    )
     print(f"Reused built-in schemas from: {package_root()}")
     print("PASS: external Reading message shares the installed dimos_messages Header identity")
 
