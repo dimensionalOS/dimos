@@ -25,14 +25,7 @@ import onnxruntime as ort
 import pytest
 
 from dimos.control.task import CoordinatorState
-from dimos.control.tasks.policy_execution import (
-    OnnxActor,
-    PolicyCommandHold,
-    PolicySessionGuard,
-    PolicyTask,
-    PolicyTick,
-    PolicyTickScheduler,
-)
+from dimos.control.tasks.policy_execution import OnnxActor, PolicyTask, PolicyTick
 
 
 class _StubSession:
@@ -101,47 +94,53 @@ def test_onnx_actor_defaults_to_cpu_without_cuda_preference(stub_ort: list[_Stub
     assert actor.providers == ["CPUExecutionProvider"]
 
 
+class _CadenceTask(PolicyTask):
+    """Bare task used to exercise the cadence helpers without an actor."""
+
+    def __init__(self, *, every_n_ticks: int | None = None, hz: float | None = None) -> None:
+        super().__init__("cadence", ["a/1"], priority=1, every_n_ticks=every_n_ticks, hz=hz)
+
+
 def test_decimation_scheduler_runs_every_nth_poll_from_reset() -> None:
-    scheduler = PolicyTickScheduler.every(3)
+    task = _CadenceTask(every_n_ticks=3)
 
-    assert [scheduler.poll(0.0) for _ in range(6)] == [False, False, True, False, False, True]
-    assert scheduler.tick_count == 6
+    assert [task._cadence_due(0.0) for _ in range(6)] == [False, False, True, False, False, True]
 
-    scheduler.reset()
-    assert [scheduler.poll(0.0) for _ in range(3)] == [False, False, True]
+    task._reset_cadence()
+    assert [task._cadence_due(0.0) for _ in range(3)] == [False, False, True]
 
 
 def test_rate_scheduler_runs_immediately_and_advances_only_when_marked() -> None:
-    scheduler = PolicyTickScheduler.at_hz(20.0)
-    scheduler.reset(t_now=100.0)
+    task = _CadenceTask(hz=20.0)
+    task._reset_cadence(100.0)
 
-    assert scheduler.poll(100.0)
-    scheduler.mark(100.0)
-    assert not scheduler.poll(100.02)
-    assert scheduler.poll(100.05)
-    scheduler.mark(100.05)
-    assert not scheduler.poll(100.06)
+    assert task._cadence_due(100.0)
+    task._mark_cadence(100.0)
+    assert not task._cadence_due(100.02)
+    assert task._cadence_due(100.05)
+    task._mark_cadence(100.05)
+    assert not task._cadence_due(100.06)
 
     # A missed deadline retries until a result is actually used.
-    assert scheduler.poll(100.20)
-    assert scheduler.poll(100.21)
-    scheduler.mark(100.21)
-    assert not scheduler.poll(100.22)
-    assert scheduler.poll(100.26)
+    assert task._cadence_due(100.20)
+    assert task._cadence_due(100.21)
+    task._mark_cadence(100.21)
+    assert not task._cadence_due(100.22)
+    assert task._cadence_due(100.26)
 
 
 def test_rate_scheduler_never_bursts_after_a_stall() -> None:
-    scheduler = PolicyTickScheduler.at_hz(10.0)
-    scheduler.reset(t_now=0.0)
-    assert scheduler.poll(0.0)
-    scheduler.mark(0.0)
+    task = _CadenceTask(hz=10.0)
+    task._reset_cadence(0.0)
+    assert task._cadence_due(0.0)
+    task._mark_cadence(0.0)
 
     # The robot stalled for a second; the next inference is scheduled from now,
     # not replayed once per missed period.
-    assert scheduler.poll(1.0)
-    scheduler.mark(1.0)
-    assert not scheduler.poll(1.05)
-    assert scheduler.poll(1.1)
+    assert task._cadence_due(1.0)
+    task._mark_cadence(1.0)
+    assert not task._cadence_due(1.05)
+    assert task._cadence_due(1.1)
 
 
 def test_rate_scheduler_matches_the_legacy_20hz_indices_at_100hz() -> None:
@@ -160,13 +159,13 @@ def test_rate_scheduler_matches_the_legacy_20hz_indices_at_100hz() -> None:
         return indices
 
     times = [index * 0.01 for index in range(101)]
-    scheduler = PolicyTickScheduler.at_hz(20.0)
-    scheduler.reset(times[0])
+    task = _CadenceTask(hz=20.0)
+    task._reset_cadence(times[0])
     actual: list[int] = []
     for index, now in enumerate(times):
-        if scheduler.poll(now):
+        if task._cadence_due(now):
             actual.append(index)
-            scheduler.mark(now)
+            task._mark_cadence(now)
 
     assert legacy_indices(times, 0.05) == list(range(0, 101, 5))
     assert actual == legacy_indices(times, 0.05)
@@ -199,98 +198,48 @@ def test_rate_scheduler_matches_the_legacy_oracle_for_late_ticks(interval: float
         1.0,
         *[1.0 + index * interval for index in range(1, 41)],
     ]
-    scheduler = PolicyTickScheduler.at_hz(20.0)
-    scheduler.reset(times[0])
+    task = _CadenceTask(hz=20.0)
+    task._reset_cadence(times[0])
     actual = []
     for now in times:
-        if scheduler.poll(now):
+        if task._cadence_due(now):
             actual.append(now)
-            scheduler.mark(now)
+            task._mark_cadence(now)
     assert actual == legacy(times, 0.05)
 
 
 def test_decimation_scheduler_is_unaffected_by_the_rate_tolerance() -> None:
-    scheduler = PolicyTickScheduler.every(5)
-    assert [scheduler.poll(index * 0.01) for index in range(11)] == [
+    task = _CadenceTask(every_n_ticks=5)
+    assert [task._cadence_due(index * 0.01) for index in range(11)] == [
         index % 5 == 4 for index in range(11)
     ]
 
 
 def test_scheduler_rejects_ambiguous_or_invalid_cadence() -> None:
     with pytest.raises(ValueError):
-        PolicyTickScheduler()
+        _CadenceTask()
     with pytest.raises(ValueError):
-        PolicyTickScheduler(every_n_ticks=2, hz=10.0)
+        _CadenceTask(every_n_ticks=2, hz=10.0)
     with pytest.raises(ValueError):
-        PolicyTickScheduler.every(0)
+        _CadenceTask(every_n_ticks=0)
     with pytest.raises(ValueError):
-        PolicyTickScheduler.at_hz(0.0)
+        _CadenceTask(hz=0.0)
 
 
-def test_command_hold_reemits_and_respects_dry_run() -> None:
-    hold = PolicyCommandHold(["a/1", "a/2"])
-    assert hold.hold() is None
-    assert hold.output() is None
+def test_session_epoch_advances_across_sessions_and_stops_on_inactive_close() -> None:
+    task = _StubPolicyTask()
+    task.start()
+    task.request_session(0.0)
+    assert task.compute(_state(0.0)) is not None
+    first = task.session_epoch
 
-    hold.set([0.1, 0.2])
-    held = hold.hold()
-    assert held is not None
-    assert held.joint_names == ["a/1", "a/2"]
-    np.testing.assert_allclose(held.positions or [], [0.1, 0.2])
+    task.end_session()
+    task.end_session()  # closing an inactive session keeps the generation
+    assert task.session_epoch == first + 1
 
-    hold.set_dry_run(True)
-    assert hold.hold() is None
-    assert hold.emit([0.3, 0.4]) is None
-    np.testing.assert_allclose(hold.positions or [], [0.3, 0.4])
-
-    hold.set_dry_run(False)
-    emitted = hold.emit([0.5, 0.6])
-    assert emitted is not None
-    np.testing.assert_allclose(emitted.positions or [], [0.5, 0.6])
-
-    hold.clear()
-    assert hold.positions is None
-    assert hold.hold() is None
-    hold.set_dry_run(False)
-    emitted = hold.emit([0.5, 0.6])
-    assert emitted is not None
-    np.testing.assert_allclose(emitted.positions or [], [0.5, 0.6])
-
-    hold.clear()
-    assert hold.positions is None
-    assert hold.hold() is None
-
-
-def test_session_guard_tracks_the_active_generation() -> None:
-    guard = PolicySessionGuard()
-    assert not guard.active
-    assert not guard.current(0)
-
-    first = guard.begin()
-    assert guard.active
-    assert guard.current(first)
-    assert not guard.current(first - 1)
-
-    guard.invalidate()
-    assert not guard.active
-    assert not guard.current(first)
-
-    second = guard.begin()
-    assert second == first + 2
-    assert guard.current(second)
-    assert not guard.current(first)
-
-
-def test_session_guard_invalidating_an_inactive_session_keeps_the_epoch() -> None:
-    guard = PolicySessionGuard()
-    guard.invalidate()
-    assert guard.epoch == 0
-
-    epoch = guard.begin()
-    guard.invalidate()
-    assert guard.epoch == epoch + 1
-    guard.invalidate()
-    assert guard.epoch == epoch + 1
+    task.request_session(1.0)
+    assert task.compute(_state(1.0)) is not None
+    assert task.session_epoch == first + 2
 
 
 class _StubPolicyTask(PolicyTask):
@@ -300,8 +249,8 @@ class _StubPolicyTask(PolicyTask):
         super().__init__(
             "stub_policy",
             ["a/1", "a/2"],
-            scheduler=PolicyTickScheduler.at_hz(hz),
             priority=7,
+            hz=hz,
             dry_run=dry_run,
         )
         self.acts = 0
@@ -316,10 +265,10 @@ class _StubPolicyTask(PolicyTask):
         if not self.session_active:
             if not self._session_requested:
                 return None
-            self.begin_session_locked(state.t_now)
+            self.begin_session(state.t_now)
             return PolicyTick(self.session_epoch, state.t_now, reset=True)
-        if not self._scheduler.poll(state.t_now):
-            return self._hold.hold()
+        if not self._cadence_due(state.t_now):
+            return self._held_command()
         return PolicyTick(self.session_epoch, state.t_now)
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
@@ -381,7 +330,7 @@ def test_policy_task_cancellation_drops_an_in_flight_result() -> None:
     worker = threading.Thread(target=lambda: outputs.append(task.compute(_state(0.0))), daemon=True)
     worker.start()
     assert entered.wait(2)
-    task.invalidate_session()
+    task.end_session()
     finish.set()
     worker.join(2)
     assert outputs == [None]
@@ -401,7 +350,7 @@ def test_policy_task_cancellation_is_responsive_during_reset() -> None:
     done = threading.Event()
 
     def stop() -> None:
-        task.invalidate_session()
+        task.end_session()
         done.set()
 
     stopper = threading.Thread(target=stop, daemon=True)
