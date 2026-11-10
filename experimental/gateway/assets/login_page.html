@@ -84,8 +84,7 @@
             <p id="error" class="bad" hidden></p>
         </div>
         <script>
-            // a plain page without dim-app's zenoh client, so it can't hear cloud-login events: it asks GET /cloud/account instead
-            const LOGIN_POLL_MS = 1500
+            // a plain page without dim-app's zenoh client, so it can't hear cloud-login events: GET /cloud/account?loginNot= answers when the login moves on
             const LIGHT_SKIN = "research"
             const DARK_SKIN = "portal"
 
@@ -102,7 +101,8 @@
             document.documentElement.dataset.skin = savedSkin || (theme === "light" ? LIGHT_SKIN : DARK_SKIN)
 
             const base = location.pathname.replace(/\/login\/page\/?$/, "")
-            let poll = null
+            // the login state a watch waits to move on from; null while not watching
+            let watching = null
 
             const show = (which) => ["checking", "in", "out", "pending"].forEach((id) => (byId(id).hidden = id !== which))
             const fail = (message) => {
@@ -129,8 +129,7 @@
             }
 
             function stopWatching() {
-                clearInterval(poll)
-                poll = null
+                watching = null
             }
 
             function showAccount(account) {
@@ -150,9 +149,8 @@
                     byId("code").textContent = login.code || ""
                     byId("url").textContent = login.url || ""
                     byId("open").href = login.urlComplete || login.url || "#"
-                    const seconds = login.expiresAt ? Math.max(0, Math.round((login.expiresAt - Date.now()) / 1000)) : null
-                    const minutesSeconds = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
-                    byId("left").textContent = seconds == null ? "" : `(code expires in ${minutesSeconds})`
+                    const expires = login.expiresAt ? new Date(login.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null
+                    byId("left").textContent = expires ? `(code expires at ${expires})` : ""
                     return true
                 }
                 stopWatching()
@@ -169,10 +167,9 @@
 
             /** Shows the account, or the login in progress; true while that login waits for approval. */
             function showAccountOrLogin(account) {
-                const watching = poll !== null
                 const login = account.login || { state: "idle" }
                 // a login's end is news only to a page that watched it; a fresh page shows the account
-                if (["starting", "pending"].includes(login.state) || (watching && login.state !== "idle")) {
+                if (["starting", "pending"].includes(login.state) || (watching !== null && login.state !== "idle")) {
                     return showLogin(login)
                 }
                 stopWatching()
@@ -180,9 +177,25 @@
                 return false
             }
 
-            function watch() {
-                if (poll === null) {
-                    poll = setInterval(() => call("GET", "/account").then(showAccountOrLogin, failWith), LOGIN_POLL_MS)
+            /** Waits for the login to move on from `state`, shows it, and waits again while it's still pending. */
+            async function watch(state) {
+                watching = state
+                while (watching === state) {
+                    let account
+                    try {
+                        account = await call("GET", `/account?loginNot=${encodeURIComponent(state)}`)
+                    } catch (error) {
+                        stopWatching()
+                        failWith(error)
+                        return
+                    }
+                    if (watching !== state) {
+                        return
+                    }
+                    if (!showAccountOrLogin(account)) {
+                        return
+                    }
+                    state = watching = account.login.state
                 }
             }
 
@@ -190,7 +203,7 @@
                 try {
                     const account = await call("GET", fresh ? "/account?fresh=1" : "/account")
                     if (showAccountOrLogin(account)) {
-                        watch()
+                        watch(account.login.state)
                     }
                 } catch (error) {
                     show("out")
@@ -202,8 +215,9 @@
                 fail("")
                 byId("start").disabled = true
                 try {
-                    if (showLogin(await call("POST", "/login"))) {
-                        watch()
+                    const login = await call("POST", "/login")
+                    if (showLogin(login)) {
+                        watch(login.state)
                     }
                 } catch (error) {
                     failWith(error)

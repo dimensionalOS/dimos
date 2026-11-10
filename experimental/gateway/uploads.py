@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
+from contextlib import suppress
 from dataclasses import dataclass
 import json
 import math
@@ -275,6 +276,8 @@ class Uploads:
         # held while a login attempt checks it is still current and stores its key, and while one is cancelled
         self.login_lock = threading.RLock()
         self.login_changed = threading.Event()
+        # GET /cloud/login/next's requests, each answered when the login next changes
+        self.login_waiters: list[asyncio.Future[None]] = []
         self.account_cache: tuple[float, dict[str, Any]] | None = None
         # the account lookup in flight, shared by every caller waiting on one
         self.account_call: asyncio.Future[dict[str, Any]] | None = None
@@ -448,6 +451,24 @@ class Uploads:
         self.login.update(change)
         self.login_changed.set()
         self.bus.send({"type": "cloud-login", "login": dict(self.login)})
+        for waiter in list(self.login_waiters):
+            with suppress(RuntimeError):  # its loop closed: nobody is waiting
+                waiter.get_loop().call_soon_threadsafe(
+                    lambda waiter=waiter: waiter.done() or waiter.set_result(None)
+                )
+
+    async def next_login(self, state: str) -> dict[str, Any]:
+        """The login once its state isn't `state` (at once when it already isn't)."""
+        while True:
+            # listed before the check, so a change from the login thread between the two isn't missed
+            waiter = asyncio.get_running_loop().create_future()
+            self.login_waiters.append(waiter)
+            try:
+                if self.login_state()["state"] != state:
+                    return self.login_state()
+                await waiter
+            finally:
+                self.login_waiters.remove(waiter)
 
     def _is_current(self, cancel: threading.Event) -> bool:
         return self.login_cancel is cancel and not cancel.is_set()
