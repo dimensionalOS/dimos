@@ -3,7 +3,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./react": "./src/react.ts",
-    "./internal/teleop": "./src/internal/teleopMachine.ts"
+    "./internal/teleop": "./src/internal/teleopMachine.ts",
+    "./internal/topics": "./src/topics.ts"
   },
   "tasks": {
     "test": "deno run -A npm:vitest run",

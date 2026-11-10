@@ -236,7 +236,7 @@ jobs:
     needs: cachix-build-check
     timeout-minutes: 300
     environment: cachix
-    runs-on: macos-14  # GitHub-hosted Apple silicon → runner.arch is ARM64
+    runs-on: macos-latest
     permissions:
       contents: read  # For checkout
 
@@ -889,6 +889,15 @@ jobs:
     container: ${{ matrix.container }}
 
     steps:
+      - name: Remove stale git lock files
+        # The workspace persists between jobs on these runners. A job killed
+        # mid-write (a new push to the PR cancels the run in progress) leaves
+        # git's lock file behind, and every later checkout on the runner, from
+        # any workflow, fails with "could not lock config file
+        # .git/config.worktree: File exists". actions/checkout only clears
+        # index.lock and shallow.lock itself; nothing else runs at this point,
+        # so every lock is stale.
+        run: if [ -d .git ]; then find .git -type f -name '*.lock' -print -delete; fi
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:

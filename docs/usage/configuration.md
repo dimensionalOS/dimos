@@ -100,8 +100,8 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 | `rerun_host` | `rerunbridgemodule.host` and `rerunwebsocketserver.host`, independently; both default to `g.listen_host` |
 | `rerun_websocket_server_port` | `rerunwebsocketserver.port`; a `RerunBridgeModule` in the same blueprint takes the viewer URL from that server. `rerunbridgemodule.websocket_url` is only for a server elsewhere |
 | `memory_limit` | Removed unused global. The existing `rerunbridgemodule.memory_limit` controls viewer memory. |
-| `mcp_port` | `mcpserver.port`; an `McpClient` in the same blueprint takes the endpoint from that server. `mcpclient.mcp_server_url` is only for a server elsewhere |
-| `mcp_timeout` | `McpAdapter(timeout=...)` or `dimos mcp call --timeout ...`; `McpClient.timeout` remains independent |
+| `mcp_port` | `mcpserver.port`; an `Agent` in the same blueprint takes the endpoint from that server. `agent.mcp_server_url` is only for a server elsewhere |
+| `mcp_timeout` | `McpAdapter(timeout=...)` or `dimos mcp call --timeout ...`; the `Agent`'s own MCP calls use a fixed 120 s |
 | `robot_id`, `relay_ca`, `relay_key` | `relaybridgemodule` config, with the same field names |
 | `xarm7_ip`, `xarm6_ip`, `lite6_ip`, `can_port`, `device_path` | `controlcoordinator.addresses`, keyed by hardware id (see below) |
 | `mujoco_scene` | `mujocosimmodule.address`; the coordinator's simulated arm attaches to that scene |
@@ -109,7 +109,7 @@ Scoped module environment variables are resolved by `BlueprintConfigParser`, inc
 
 For example, `UNITREE_AES_128_KEY` becomes `GO2CONNECTION__AES_128_KEY`, and `RERUN_OPEN` becomes `RERUNBRIDGEMODULE__RERUN_OPEN`. Configure each connection separately when a stack has multiple robot connections. The legacy websocket dashboard follows the Rerun bridge's `web` or `both` mode by default; `websocketvismodule.open_browser` and `show_rerun_dashboard` override that behavior independently.
 
-MCP's bound endpoint is stored in run metadata, so `dimos mcp` finds the newest running server on any host or port, and an `McpClient` asks the `McpServer` in its blueprint for the endpoint:
+MCP's bound endpoint is stored in run metadata, so `dimos mcp` finds the newest running server on any host or port, and an `Agent` asks the `McpServer` in its blueprint for the endpoint:
 
 ```bash skip
 dimos run unitree-go2-agentic --mcpserver.port 9992
@@ -124,7 +124,7 @@ A coordinator's `hardware` list names each device's adapter. Device addresses (a
 ```
 
 ```bash skip
-dimos run xarm-grasp-agent --config robot.json
+dimos run coordinator-xarm6 --config robot.json
 CONTROLCOORDINATOR__ADDRESSES='{"arm": "192.0.2.10"}' dimos run coordinator-xarm7
 dimos run keyboard-teleop-piper --controlcoordinator.addresses '{"arm": "can0"}'
 ```
