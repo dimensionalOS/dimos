@@ -905,6 +905,28 @@ def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
     assert "/opt/arm/desc/meshes/arm.stl" in said[0]
 
 
+def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
+    make_manager: Callable[..., UrdfManager],
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("pxr")
+    (tmp_path / "meshes").mkdir()
+    (tmp_path / "meshes" / "arm.stl").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
+    )
+    module = make_manager(mounts={"arm": _FakeArm})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh="meshes/arm.stl")
+    module._subtree_clients["_FakeArm"] = cast(
+        "Any", _FakeClient(subtree, asset_root=str(tmp_path))
+    )
+
+    with pytest.raises(FileNotFoundError) as error:
+        _scene(module)
+
+    assert "arm.stl" in str(error.value)
+    assert "git lfs checkout" in str(error.value)
+
+
 def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
