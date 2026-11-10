@@ -37,6 +37,14 @@ class SharedConfig:
     recordings_dir: str | None
     zenoh_namespace: str | None
     zenoh_connect: str | None
+    # the blueprint view's remaining timers (config.yaml `blueprint-view:`), served to it by GET /config
+    view_rates_poll_s: float = (
+        2.0  # Desktop's topic rates have no event, so they're asked for this often
+    )
+    view_poll_without_events_s: float = (
+        3.0  # without zenoh, the launch, stats and log are asked for this often
+    )
+    view_log_max_records: int = 5000  # a run's log keeps at most this many lines in the page
 
 
 def _app_env() -> dict[str, Any]:
@@ -80,4 +88,13 @@ def shared_config() -> SharedConfig:
         recordings_dir=pick("recordingsDir", "recordings", "dir"),
         zenoh_namespace=pick("zenohNamespace", "zenoh", "namespace"),
         zenoh_connect=pick("zenohConnect", "zenoh", "connect"),
+        **{
+            name: kind(value)
+            for name, kind, key in (
+                ("view_rates_poll_s", float, "rates-poll-s"),
+                ("view_poll_without_events_s", float, "poll-without-events-s"),
+                ("view_log_max_records", int, "log-max-records"),
+            )
+            if (value := pick(None, "blueprint-view", key)) is not None
+        },
     )

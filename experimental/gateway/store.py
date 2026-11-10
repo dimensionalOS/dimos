@@ -59,9 +59,15 @@ def recordings_dir(dimos_dir: Path | None = None) -> Path:
 
 def shared_settings() -> dict[str, Any]:
     """`GET /config` and the `config` event: the settings, read again when config.yaml changes (socket and namespace are fixed at start: `GET /info`)."""
+    config = shared_config.shared_config()
     return {
-        "path": str(shared_config.shared_config().home / "config.yaml"),
+        "path": str(config.home / "config.yaml"),
         "recordingsDir": str(recordings_dir()),
+        "blueprintView": {
+            "ratesPollS": config.view_rates_poll_s,
+            "pollWithoutEventsS": config.view_poll_without_events_s,
+            "logMaxRecords": config.view_log_max_records,
+        },
     }
 
 

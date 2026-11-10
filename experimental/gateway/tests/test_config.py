@@ -25,6 +25,7 @@ from dimos.core.run_registry import RunEntry
 from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import annotations as annotation_file, catalog, constants, launches
 from experimental.gateway.__main__ import serve
+from experimental.gateway.shared_config import SharedConfig
 from experimental.gateway.state import API_VERSION, ApiError, State
 
 ARG = {
@@ -114,10 +115,20 @@ def test_config_answers_the_shared_settings_the_gateway_reads(
     client: TestClient, home: Path
 ) -> None:
     (home / "dimos_home").mkdir(parents=True, exist_ok=True)
-    (home / "dimos_home" / "config.yaml").write_text("recordings:\n  dir: /tmp/elsewhere\n")
+    (home / "dimos_home" / "config.yaml").write_text(
+        "recordings:\n  dir: /tmp/elsewhere\nblueprint-view:\n  rates-poll-s: 5\n"
+    )
+    defaults = SharedConfig(
+        home=home, socket=None, recordings_dir=None, zenoh_namespace=None, zenoh_connect=None
+    )
     assert client.get("/config").json() == {
         "path": str(home / "dimos_home" / "config.yaml"),
         "recordingsDir": "/tmp/elsewhere",
+        "blueprintView": {
+            "ratesPollS": 5.0,
+            "pollWithoutEventsS": defaults.view_poll_without_events_s,
+            "logMaxRecords": defaults.view_log_max_records,
+        },
     }
 
 

@@ -66,11 +66,20 @@ class Info(Body):
     server: ServerInfo
 
 
+class BlueprintViewConfig(Body):
+    """The blueprint view's timers, from config.yaml's `blueprint-view:` (rates-poll-s, poll-without-events-s, log-max-records)."""
+
+    ratesPollS: float
+    pollWithoutEventsS: float
+    logMaxRecords: int
+
+
 class SharedConfig(Body):
     """The shared config.yaml's settings as this gateway reads them, re-read on a `config` event."""
 
     path: str
     recordingsDir: str
+    blueprintView: BlueprintViewConfig
 
 
 class Stopping(Body):
