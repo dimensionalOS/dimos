@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation as R
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -28,7 +28,7 @@ from dimos.messages.geometry_msgs.msg import (
     TwistStamped,
     Vector3,
 )
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils import transform_utils
 
 

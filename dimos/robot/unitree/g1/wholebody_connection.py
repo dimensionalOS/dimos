@@ -44,11 +44,11 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import POS_STOP, VEL_STOP
 from dimos.message_utils import time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs.msg import Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

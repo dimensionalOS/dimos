@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
 
 
 def make_path_mask(

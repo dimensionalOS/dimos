@@ -42,9 +42,9 @@ from scipy.spatial.transform import Rotation, Slerp
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import geometry as geometry_utils, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger

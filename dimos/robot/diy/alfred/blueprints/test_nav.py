@@ -1,10 +1,10 @@
 # Copyright 2026 Dimensional Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.diy.alfred.blueprints._nav import _path_colored
 
 

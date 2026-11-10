@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.messages.nav_msgs.msg import Path as NavPath
+from dimos_messages.nav_msgs.msg import Path as NavPath
 from dimos.navigation.embodiment.alfred import ALFRED
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override

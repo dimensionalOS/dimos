@@ -25,8 +25,8 @@ from dimos.manipulation.planning.groups.utils import filter_joint_state_to_selec
 from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 
 
 @dataclass(frozen=True)

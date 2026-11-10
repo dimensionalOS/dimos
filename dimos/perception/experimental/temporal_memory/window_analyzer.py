@@ -35,7 +35,7 @@ from dimos.perception.experimental.temporal_memory.temporal_utils.prompts import
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
     from dimos.models.vl.base import VlModel
     from dimos.perception.experimental.temporal_memory.frame_window_accumulator import Frame
 

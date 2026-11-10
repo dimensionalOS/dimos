@@ -32,9 +32,9 @@ from dimos.control.tasks.pose_target_ik import (
 from dimos.manipulation.planning.kinematics.pink_solver import _PinkSolverCore
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
 

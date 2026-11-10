@@ -32,9 +32,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.std_msgs.msg import Bool, Int32, UInt32
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.std_msgs.msg import Bool, Int32, UInt32
 from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_CHARGING,
     CHARGE_COMMAND_START,

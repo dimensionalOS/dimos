@@ -29,9 +29,9 @@ from dimos.message_utils import (
     image as image_utils,
     time as message_time,
 )
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, RegionOfInterest
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 

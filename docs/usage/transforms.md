@@ -8,7 +8,7 @@ chain then places those points in the robot or world frame.
 ![Coordinate frame tree](assets/transforms_tree.svg)
 
 Transforms use `TransformStamped`, `PoseStamped`, and
-`TFMessage` values from `dimos.messages`. Frame names and source time live in
+`TFMessage` values from `dimos_messages`. Frame names and source time live in
 `header.frame_id` and `header.stamp`; `child_frame_id` names the child frame.
 Geometry operations live in `dimos.message_utils.geometry`.
 
@@ -94,7 +94,7 @@ transport owns the encoding; callers publish generated values.
 from contextlib import ExitStack
 
 from dimos.core.transport import LCMTransport
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.protocol.tf.tf import TF
 
@@ -125,7 +125,7 @@ The generated stream selects the CDR codec through normal mem2 configuration.
 ```python
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.tf import StreamTF
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 
 with MemoryStore() as store:

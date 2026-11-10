@@ -14,8 +14,8 @@
 # limitations under the License.
 
 from dimos.core.transport import ROSTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 unitree_go2_ros = unitree_go2.transports(

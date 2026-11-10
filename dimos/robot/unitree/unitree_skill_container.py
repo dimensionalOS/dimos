@@ -26,8 +26,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Vector3
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Vector3
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec

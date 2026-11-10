@@ -36,7 +36,7 @@ from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.messages.geometry_msgs.msg import Twist
+from dimos_messages.geometry_msgs.msg import Twist
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 

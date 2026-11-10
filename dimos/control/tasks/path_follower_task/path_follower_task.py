@@ -53,9 +53,9 @@ from dimos.control.tasks.velocity_tracking_pid import (
 )
 from dimos.core.global_config import global_config as _gc
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Float32, Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Float32, Header
 from dimos.navigation.go2.replanning_a_star.controllers import PController
 from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
 from dimos.protocol.service.spec import BaseConfig

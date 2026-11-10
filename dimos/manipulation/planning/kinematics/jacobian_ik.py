@@ -49,8 +49,8 @@ from dimos.utils.transform_utils import pose_to_matrix
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from dimos.messages.geometry_msgs.msg import PoseStamped, Transform, Twist, Vector3
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import PoseStamped, Transform, Twist, Vector3
+from dimos_messages.sensor_msgs.msg import JointState
 
 logger = setup_logger()
 

@@ -38,10 +38,10 @@ import numpy as np
 
 from dimos.memory.transform import Transformer
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.detection.type.detection3d.imageDetections3D import ImageDetections3D
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_detect import (

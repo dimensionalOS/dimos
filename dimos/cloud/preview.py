@@ -51,9 +51,9 @@ from dimos.cloud.constants import (
 )
 from dimos.message_utils import geometry, image, pointcloud
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped, TransformStamped
-from dimos.messages.sensor_msgs.msg import Image, Joy, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped, TransformStamped
+from dimos_messages.sensor_msgs.msg import Image, Joy, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store

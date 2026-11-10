@@ -29,8 +29,8 @@ from dimos.message_utils import (
     pointcloud,
     time as message_time,
 )
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -40,9 +40,9 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry, Path
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry, Path
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _g1_nav_path,
     _g1_real_odometry_root,

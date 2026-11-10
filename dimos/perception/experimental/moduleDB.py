@@ -22,10 +22,10 @@ from reactivex.observable import Observable
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import pointcloud as pointcloud_utils
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC

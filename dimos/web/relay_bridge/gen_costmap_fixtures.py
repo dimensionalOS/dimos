@@ -34,9 +34,9 @@ from typing import Any
 import numpy as np
 
 from dimos.message_utils import geometry, occupancy, time
-from dimos.messages.geometry_msgs.msg import Point, Pose
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 from dimos.web.relay_bridge.builtin_codecs import encode_costmap
 from dimos.web.relay_bridge.locate import find_web_dir
 

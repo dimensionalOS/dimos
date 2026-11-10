@@ -24,9 +24,9 @@ import numpy as np
 
 from dimos.memory.tf import StreamTF
 from dimos.message_utils import geometry, image as image_utils, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,

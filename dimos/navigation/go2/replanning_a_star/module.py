@@ -22,9 +22,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import PointStamped, Pose, PoseStamped, Quaternion, Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
-from dimos.messages.std_msgs.msg import Bool, String
+from dimos_messages.geometry_msgs.msg import PointStamped, Pose, PoseStamped, Quaternion, Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos_messages.std_msgs.msg import Bool, String
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
 from dimos.utils.logging_config import setup_logger

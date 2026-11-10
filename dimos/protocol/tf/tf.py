@@ -21,15 +21,15 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
     Quaternion,
     Transform,
     TransformStamped,
     Vector3,
 )
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.types.timestamped import to_human_readable
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore

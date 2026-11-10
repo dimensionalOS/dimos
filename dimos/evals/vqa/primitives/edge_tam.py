@@ -26,7 +26,7 @@ from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBB
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenterCompatible
     from dimos.models.vl.base import VlModel
 

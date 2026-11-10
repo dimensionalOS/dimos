@@ -31,8 +31,8 @@ from dimos.core.stream import In
 from dimos.experimental.robot.bosdyn.spot.config import CAMERA_STREAM_SUFFIXES
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.memory.type.recording import OnExisting
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
 
 # jpeg codec quantises depth it to ~25cm and adds block artifacts (horrible)
 LOSSLESS_CODEC = "lz4+lcm"

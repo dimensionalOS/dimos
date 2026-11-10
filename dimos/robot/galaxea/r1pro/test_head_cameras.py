@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 
 from dimos.core.transport import LCMTransport
-from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage
+from dimos_messages.sensor_msgs.msg import CameraInfo, CompressedImage
 from dimos.robot.galaxea.r1pro import head_cameras
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection

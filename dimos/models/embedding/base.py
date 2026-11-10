@@ -26,7 +26,7 @@ from dimos.models.base import HuggingFaceModelConfig
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
 
 class HuggingFaceEmbeddingModelConfig(HuggingFaceModelConfig):

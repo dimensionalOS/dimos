@@ -31,7 +31,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.message_utils import time as message_time
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview import (
     r1pro_planar_preview,

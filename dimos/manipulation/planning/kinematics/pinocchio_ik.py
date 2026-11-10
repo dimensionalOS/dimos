@@ -44,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
 
 logger = setup_logger()
 

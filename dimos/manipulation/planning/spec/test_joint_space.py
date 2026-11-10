@@ -26,8 +26,8 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointCoordinate
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 

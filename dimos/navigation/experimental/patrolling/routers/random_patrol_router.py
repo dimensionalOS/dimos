@@ -17,8 +17,8 @@ from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
 from dimos.message_utils import occupancy as occupancy_utils
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 from dimos.navigation.experimental.patrolling.routers.base_patrol_router import BasePatrolRouter
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
 

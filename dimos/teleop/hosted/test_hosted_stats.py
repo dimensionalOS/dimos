@@ -26,8 +26,8 @@ import pytest
 
 from dimos.core.module import Module
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 

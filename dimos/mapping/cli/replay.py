@@ -41,7 +41,7 @@ from dimos.memory.utils.progress import progress
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.sensor_msgs.msg import PointCloud2
 
 TIMELINE = "ts"
 
@@ -187,9 +187,9 @@ def main(
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.memory.cli.dataset import open_store, resolve_dataset, stream_payload_types
     from dimos.memory.transform import throttle
-    from dimos.messages.geometry_msgs.msg import PoseStamped
-    from dimos.messages.nav_msgs.msg import Odometry
-    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos_messages.geometry_msgs.msg import PoseStamped
+    from dimos_messages.nav_msgs.msg import Odometry
+    from dimos_messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.robot.unitree.go2.calibration import front_camera_calibration
     from dimos.visualization.rerun.cdr import camera_pinhole, cloud_archetype, image_archetype
 

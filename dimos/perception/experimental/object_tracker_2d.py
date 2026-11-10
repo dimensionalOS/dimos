@@ -26,12 +26,12 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 
 # Generated detection values
-from dimos.messages.vision_msgs.msg import (
+from dimos_messages.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D,
     Detection2DArray,

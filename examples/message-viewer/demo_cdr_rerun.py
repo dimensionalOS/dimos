@@ -33,9 +33,9 @@ import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos.core.transport import ZenohTransport
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import EntityMarker, EntityMarkers
+from dimos_messages.geometry_msgs.msg import (
     Point,
     PointStamped,
     Pose,
@@ -48,8 +48,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry, Path as MessagePath
-from dimos.messages.sensor_msgs.msg import (
+from dimos_messages.nav_msgs.msg import Odometry, Path as MessagePath
+from dimos_messages.sensor_msgs.msg import (
     CameraInfo,
     CompressedImage,
     Image,
@@ -57,8 +57,8 @@ from dimos.messages.sensor_msgs.msg import (
     PointField,
     RegionOfInterest,
 )
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.rpc.zenohrpc import ZenohRPC

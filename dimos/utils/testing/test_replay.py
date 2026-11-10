@@ -18,7 +18,7 @@ import pytest
 from reactivex import operators as ops
 
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data

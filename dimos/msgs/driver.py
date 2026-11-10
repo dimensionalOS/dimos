@@ -19,14 +19,14 @@ from copy import deepcopy
 import numpy as np
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Quaternion,
     Transform as CdrTransform,
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import (
+from dimos_messages.sensor_msgs.msg import (
     CameraInfo as CdrCameraInfo,
     Image as CdrImage,
     Imu as CdrImu,
@@ -34,7 +34,7 @@ from dimos.messages.sensor_msgs.msg import (
     PointField,
     RegionOfInterest,
 )
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image

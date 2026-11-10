@@ -20,9 +20,9 @@ import math
 from typing import Any
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.experimental.dannav.local_planner.module import (
     DanLocalPlannerConfig,
     _ReplanGate,

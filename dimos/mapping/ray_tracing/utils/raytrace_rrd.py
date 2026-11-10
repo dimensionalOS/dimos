@@ -42,7 +42,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.message_utils import pointcloud
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.data import resolve_named_path
 
 TIMELINE = "ts"

@@ -27,10 +27,10 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import Contact, Contacts, LineSegments3D
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.dimos_msgs.msg import Contact, Contacts, LineSegments3D
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import String
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2
 from dimos.simulation.go2_sim.world import GO2, MID360, MOUNT_R, SHAPE, SimGo2World

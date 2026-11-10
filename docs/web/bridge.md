@@ -46,7 +46,7 @@ An installed generated type can be sent as CDR with its complete ROS2 definition
 in the manifest. Generated classes select CDR by default. An explicit encoding is also supported:
 
 ```python
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 from dimos.web.cockpit import Channel, cockpit
 
 viewer = cockpit(channels=[Channel(
@@ -215,8 +215,8 @@ When `encoding` is omitted, a registered generated class selects CDR. Other supp
 The built-in channel names keep their codecs. For example, `Channel("odom", PoseStamped)` raises because the `odom` port requires `pose.json.v1`; specify that encoding for this built-in port.
 
 ```python
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel
 
 print(Channel("pose", PoseStamped).encoding)
@@ -237,7 +237,7 @@ json.v1
 ```python skip
 import struct
 
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.nav_msgs.msg import Path
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import EncodedPayload, web_encoder
 

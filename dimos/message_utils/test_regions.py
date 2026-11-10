@@ -23,16 +23,16 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import (
+from dimos_messages.dimos_msgs.msg import (
     LineSegment3D,
     LineSegments3D,
     LineSegments3DRegion,
     PointCloudRegion,
     RegionBounds,
 )
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 
 def region_values(region_id):

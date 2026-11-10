@@ -16,7 +16,7 @@ import threading
 
 from dimos_cdrgen.registry import encode
 
-from dimos.messages.std_msgs.msg import Int32, String
+from dimos_messages.std_msgs.msg import Int32, String
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
 
 

@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from dimos.core.stream import In
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 
 
 class Go2Mid360Recorder(PointlioRecorder):

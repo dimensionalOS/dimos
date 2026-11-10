@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 
 if TYPE_CHECKING:
     from collections.abc import Callable

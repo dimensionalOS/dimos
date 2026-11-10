@@ -70,11 +70,11 @@ from dimos.hardware.drive_trains.spec import (
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Float32, Header
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Float32, Header
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 from dimos.robot.assets.model import RobotModel
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger

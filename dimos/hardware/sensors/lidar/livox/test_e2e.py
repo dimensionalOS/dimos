@@ -46,7 +46,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
 from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
 from dimos.message_utils import pointcloud
 from dimos.message_utils.time import to_seconds
-from dimos.messages.sensor_msgs.msg import Imu, PointCloud2
+from dimos_messages.sensor_msgs.msg import Imu, PointCloud2
 from dimos.utils.data import get_data
 
 _LIDAR = DIMOS_PROJECT_ROOT / "dimos" / "hardware" / "sensors" / "lidar"

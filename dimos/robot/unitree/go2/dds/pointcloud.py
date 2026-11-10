@@ -10,8 +10,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.message_utils import pointcloud
-from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import PointCloud2, PointField
+from dimos_messages.std_msgs.msg import Header
 
 
 def sensor_cloud(

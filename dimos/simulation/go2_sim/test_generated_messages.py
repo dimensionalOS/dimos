@@ -19,9 +19,9 @@ from types import SimpleNamespace
 import numpy as np
 
 from dimos.core.module import Module
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.simulation.go2_sim.world import ODOM_FRAME_ID, SENSOR_FRAME_ID, SimGo2World
 
 

@@ -53,7 +53,7 @@ class ImageFile(Environment):
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
-        from dimos.messages.sensor_msgs.msg import Image
+        from dimos_messages.sensor_msgs.msg import Image
 
         image = image_utils.from_file(self.config.path, header=header_now())
         recording = MemoryStore()

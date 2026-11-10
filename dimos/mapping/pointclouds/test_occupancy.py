@@ -26,8 +26,8 @@ from dimos.mapping.pointclouds.occupancy import (
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.message_utils import image, pointcloud, time as message_time
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment

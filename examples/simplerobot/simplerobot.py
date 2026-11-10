@@ -31,8 +31,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.std_msgs.msg import Header
 
 
 def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:

@@ -31,10 +31,10 @@ from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.whole_body.spec import MotorCommand
 from dimos.hardware.whole_body.transport.adapter import TransportWholeBodyAdapter
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection, _stamp_nanoseconds

@@ -43,7 +43,7 @@ from typing import Protocol
 import numpy as np
 
 from dimos.control.tasks.velocity_profiler import VelocityProfiler
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.nav_msgs.msg import Path
 
 # Go2 Rung-1 saturation envelope (mirrors runner.VX_MAX / WZ_MAX).
 GO2_VX_MAX = 1.0  # m/s

@@ -15,7 +15,7 @@
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils.time import header_now
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos.simulation.dimsim.scene_client import SceneClient
 
 

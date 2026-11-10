@@ -3,7 +3,7 @@
 ## Detections
 
 Detectors accept `Image` messages from
-`dimos.messages.sensor_msgs.msg`. Detection collections remain local Python
+`dimos_messages.sensor_msgs.msg`. Detection collections remain local Python
 application objects; `to_ros_detection2d_array()` produces a generated
 `Detection2DArray` for typed ports, recording and CDR transport.
 
@@ -74,9 +74,9 @@ OpenCV contrib dependency, but no camera, model download, network or API key:
 import cv2
 import numpy as np
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.message_utils import camera_info
 from dimos.message_utils import image as image_utils
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image

@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from dimos.memory.backend import Backend
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.messages.geometry_msgs.msg import Transform
+    from dimos_messages.geometry_msgs.msg import Transform
 
 
 def pose_fill(
@@ -66,7 +66,7 @@ def pose_fill(
     """
     from dimos.memory.type.observation import _to_tuple
     from dimos.message_utils import geometry
-    from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
+    from dimos_messages.geometry_msgs.msg import Quaternion, Transform, Vector3
 
     def _fill(pair_obs: Observation[Any]) -> Observation[Any]:
         primary, secondary = cast(

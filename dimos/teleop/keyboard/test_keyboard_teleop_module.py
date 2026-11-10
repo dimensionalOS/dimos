@@ -18,7 +18,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import TwistStamped
+from dimos_messages.geometry_msgs.msg import TwistStamped
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
     KeyboardTeleopModule,

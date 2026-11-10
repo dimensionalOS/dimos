@@ -21,7 +21,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 

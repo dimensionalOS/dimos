@@ -26,8 +26,8 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseArray,
@@ -35,9 +35,9 @@ from dimos.messages.geometry_msgs.msg import (
     Quaternion,
     TransformStamped,
 )
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Float32, Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Float32, Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.go2.loop_closure.pgo import PGOConfig
 from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO, PGOMap
 from dimos.navigation.go2.loop_closure.premap import MAP_SUFFIX, Premap

@@ -25,8 +25,8 @@ from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.message_utils import occupancy, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.visitation_history import VisitationHistory
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped

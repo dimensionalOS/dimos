@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 import rerun as rr
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CompressedImage
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import CompressedImage
+from dimos_messages.std_msgs.msg import Header
 from dimos.visualization.rerun.cdr import image_archetype
 
 

@@ -26,7 +26,7 @@ from __future__ import annotations
 from xml.etree import ElementTree
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.diy.alfred.config import ALFRED_URDF
 

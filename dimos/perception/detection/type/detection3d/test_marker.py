@@ -17,8 +17,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.marker import Detection3DMarker
 from dimos.perception.fiducial.marker_pose import marker_reprojection_error
 

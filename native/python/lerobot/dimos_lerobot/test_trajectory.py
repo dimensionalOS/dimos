@@ -11,8 +11,8 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 def test_policy_chunk_preserves_joint_order_values_and_duration_on_wire():

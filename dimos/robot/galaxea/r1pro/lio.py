@@ -23,8 +23,8 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, Transform, TransformStamped, Vector3
-from dimos.messages.nav_msgs.msg import Odometry
+from dimos_messages.geometry_msgs.msg import PoseStamped, Transform, TransformStamped, Vector3
+from dimos_messages.nav_msgs.msg import Odometry
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL

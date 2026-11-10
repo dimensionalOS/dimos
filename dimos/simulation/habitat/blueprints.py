@@ -30,7 +30,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.navigation.embodiment.habitat import HABITAT
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import (
     MLSPlannerNative,

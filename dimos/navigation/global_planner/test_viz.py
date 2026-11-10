@@ -21,10 +21,10 @@ import rerun as rr
 
 from dimos.mapping.ray_tracing.viz import render_map_region
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.global_planner import viz
 from dimos.navigation.global_planner.mls_planner.viz import render_surface_region
 from dimos.protocol.encode.cbor import decode, encode

@@ -20,7 +20,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.message_utils import pointcloud
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]

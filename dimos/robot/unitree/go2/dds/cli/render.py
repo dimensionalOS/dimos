@@ -40,7 +40,7 @@ import typer
 from dimos.memory.transform import throttle
 from dimos.memory.utils.progress import progress
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -50,8 +50,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistStamped,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds.extrinsics import LIDAR_TO_BASE
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from dimos.memory.type.observation import Observation
-    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 
 WORLD = "world"
 

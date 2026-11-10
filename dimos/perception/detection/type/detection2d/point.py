@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.message_utils import image as image_utils
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
-from dimos.messages.vision_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
+from dimos_messages.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
     ObjectHypothesis,
@@ -32,7 +32,7 @@ from dimos.messages.vision_msgs.msg import (
 from dimos.perception.detection.type.detection2d.base import Detection2D
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
 
 @dataclass

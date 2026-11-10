@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from typing import Any
 
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openarm.config import OPENARM_DESCRIPTION_ROOT
 from dimos.utils.data import LfsPath

@@ -39,7 +39,7 @@ from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, Joi
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

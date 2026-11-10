@@ -27,7 +27,7 @@ from scipy.spatial import cKDTree
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseWithCovariance,
@@ -38,8 +38,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.go2.base import Go2BaseConfig

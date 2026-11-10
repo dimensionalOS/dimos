@@ -75,7 +75,7 @@ from dimos.experimental.robot.bosdyn.spot.utils import (
 )
 from dimos.message_utils import geometry
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseWithCovariance,
@@ -85,10 +85,10 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.utils.logging_config import setup_logger
 

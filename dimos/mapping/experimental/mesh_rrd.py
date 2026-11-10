@@ -31,7 +31,7 @@ from dimos.memory.transform import FnTransformer
 from dimos.memory.type.observation import Observation
 from dimos.memory.utils.progress import progress
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.utils.data import get_data
 from dimos.visualization.rerun.cdr import image_archetype
 

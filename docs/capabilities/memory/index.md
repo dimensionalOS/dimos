@@ -95,7 +95,7 @@ So knowing above, we can create embeddings for the full stream,
 
 ```python title="Python" session=mem skip
 from dimos.models.embedding.clip import CLIPModel
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils
 from dimos.memory.transform import QualityWindow
 from dimos.memory.embed import EmbedImages

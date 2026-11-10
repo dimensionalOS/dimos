@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from dimos.message_utils.time import to_seconds
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, PointStamped
+from dimos_messages.std_msgs.msg import Header
 from dimos.types.timestamped import TimestampedBufferCollection
 
 

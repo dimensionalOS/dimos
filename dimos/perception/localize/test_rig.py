@@ -20,11 +20,11 @@ import pytest
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import camera_info, image as image_utils, pointcloud, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.perception.detection.project import _world_to_optical, sees
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.association import Groups

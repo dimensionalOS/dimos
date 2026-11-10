@@ -45,8 +45,8 @@ from dimos.message_utils import (
     pointcloud as pointcloud_utils,
     time as message_time,
 )
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 

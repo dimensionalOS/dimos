@@ -30,8 +30,8 @@ from dimos_lcm import (
 )
 import pytest
 
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.web.codecs import default_encoding
 from dimos.web.lcm_codec import (
     check_lcm_params,

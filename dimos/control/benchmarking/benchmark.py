@@ -69,9 +69,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist
-from dimos.messages.nav_msgs.msg import Path as NavPath
-from dimos.messages.std_msgs.msg import Float32, Header, Int8
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist
+from dimos_messages.nav_msgs.msg import Path as NavPath
+from dimos_messages.std_msgs.msg import Float32, Header, Int8
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

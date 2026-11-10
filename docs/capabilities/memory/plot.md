@@ -364,7 +364,7 @@ from dimos.robot.unitree.go2.connection import (
     BASE_TO_OPTICAL,
 )
 from dimos.memory.vis.space.elements import Box3D
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 from dimos.message_utils import geometry
 
 # TODO We need a nicer way to get optical transform for image streams

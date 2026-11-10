@@ -39,8 +39,8 @@ from unitree_webrtc_connect.webrtc_driver import (
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.message_utils import geometry, image, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped, Twist
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped, TransformStamped, Twist
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 from dimos.robot.unitree.go2.constants import CMD_VEL_TIMEOUT
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,

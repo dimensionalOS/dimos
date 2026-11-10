@@ -35,7 +35,7 @@ from dimos.control.tasks.pose_target_ik import (
     string_tuple_converter,
 )
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped, TwistStamped
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

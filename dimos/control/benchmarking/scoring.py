@@ -16,7 +16,7 @@
 
 Source-agnostic: an :class:`ExecutedTrajectory` from sim and from hardware
 score identically. Scoring is purely geometric against the reference
-:class:`~dimos.messages.nav_msgs.msg.Path` (cross-track error, heading error,
+:class:`~dimos_messages.nav_msgs.msg.Path` (cross-track error, heading error,
 arrival) — no time-parameterized reference is needed.
 
 Heading error is measured against the path's COMMANDED per-pose yaw,
@@ -35,8 +35,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.nav_msgs.msg import Path
 from dimos.utils.trigonometry import angle_diff
 
 

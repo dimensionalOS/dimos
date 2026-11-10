@@ -34,9 +34,9 @@ from dimos.memory.vis.space.elements import (
     position,
 )
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, Vector3
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.visualization.rerun.cdr import (
     camera_pinhole,
     cloud_archetype,
@@ -342,7 +342,7 @@ def render(space: Space, app_id: str = "space", spawn: bool = True) -> None:
 
 def _as_image(data: Any) -> Any | None:
     """Return an Image if data is an Image or ImageDetections, else None."""
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
     from dimos.perception.detection.type.imageDetections import ImageDetections
 
     if isinstance(data, Image):

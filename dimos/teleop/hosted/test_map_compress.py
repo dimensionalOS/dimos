@@ -28,9 +28,9 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import geometry, occupancy, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 from dimos.teleop.hosted.map_compress import MapCompressModule
 
 

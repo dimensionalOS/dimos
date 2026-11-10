@@ -28,8 +28,8 @@ if TYPE_CHECKING:
 
     import rerun.blueprint as rrb
 
-    from dimos.messages.sensor_msgs.msg import CameraInfo
-    from dimos.messages.tf2_msgs.msg import TFMessage
+    from dimos_messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.tf2_msgs.msg import TFMessage
     from dimos.visualization.rerun.bridge import RerunData
 
 # Optical tf frame_id (SpotHighLevelConfig defaults) -> stream-name suffix.

@@ -23,7 +23,7 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.experimental.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative

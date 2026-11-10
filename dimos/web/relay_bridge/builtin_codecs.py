@@ -32,10 +32,10 @@ import numpy as np
 from dimos.mapping.voxels.keys import KEY_OFFSET, pack_indices, unpack_keys
 from dimos.message_utils import geometry, image, occupancy, pointcloud, time as message_time
 from dimos.message_utils.occupancy import block_max_reduce
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, PoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, PoseStamped
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Bool
 from dimos.utils.generic import finite_number
 from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
 

@@ -14,7 +14,7 @@
 import numpy as np
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.types.vector import Vector, to_list, to_tuple
 
 

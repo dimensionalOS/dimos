@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 
 @pytest.mark.self_hosted_large

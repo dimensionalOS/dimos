@@ -29,8 +29,8 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.visualization.rerun.cdr import cloud_archetype
 from dimos.visualization.vis_module import vis_module

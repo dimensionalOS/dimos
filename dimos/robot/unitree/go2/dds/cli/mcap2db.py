@@ -36,9 +36,9 @@ import numpy as np
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import time as message_time
-from dimos.messages.control_msgs.msg import DynamicJointState, InterfaceValue
-from dimos.messages.sensor_msgs.msg import Imu, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.control_msgs.msg import DynamicJointState, InterfaceValue
+from dimos_messages.sensor_msgs.msg import Imu, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds import ros
 from dimos.robot.unitree.go2.dds.codec import GO2_CODECS, CdrStructCodec, FnCodec
 from dimos.robot.unitree.go2.dds.msgs.LowCmd import LowCmd
@@ -107,8 +107,8 @@ def _dynamic_joint_state(ts: float, rows: list[tuple[str, dict[str, float]]]) ->
 def add_std_streams(store: SqliteStore) -> None:
     """Standard ROS-typed views of lowstate/lowcmd. The raw Go2 streams stay as the lossless source."""
 
-    from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
-    from dimos.messages.sensor_msgs.msg import BatteryState, JointState
+    from dimos_messages.geometry_msgs.msg import Quaternion, Vector3
+    from dimos_messages.sensor_msgs.msg import BatteryState, JointState
 
     js, ms = store.stream("joint_state", JointState), store.stream("motor_state", DynamicJointState)
     imu, bat = store.stream("body_imu", Imu), store.stream("battery", BatteryState)

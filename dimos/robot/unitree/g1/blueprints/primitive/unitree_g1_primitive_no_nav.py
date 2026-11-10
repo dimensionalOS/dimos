@@ -26,16 +26,16 @@ from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
     Transform,
     TransformStamped,
     Twist,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry, Path
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.nav_msgs.msg import Odometry, Path
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.std_msgs.msg import Bool
 from dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )

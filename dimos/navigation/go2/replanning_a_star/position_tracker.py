@@ -19,7 +19,7 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 _max_points_per_second = 1000
 

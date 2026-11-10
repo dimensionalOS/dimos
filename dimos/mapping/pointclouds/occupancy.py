@@ -23,9 +23,9 @@ from numpy.typing import NDArray
 from scipy import ndimage
 
 from dimos.message_utils import occupancy as occupancy_utils, pointcloud
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Callable

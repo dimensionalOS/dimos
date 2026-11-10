@@ -21,8 +21,8 @@ hardware. The underlying coordinator blueprints branch on `global_config.simulat
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
 from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
 from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper

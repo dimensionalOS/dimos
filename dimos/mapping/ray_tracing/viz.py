@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
-    from dimos.messages.dimos_msgs.msg import PointCloudRegion
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.dimos_msgs.msg import PointCloudRegion
+    from dimos_messages.sensor_msgs.msg import PointCloud2
     from dimos.visualization.rerun.bridge import RerunMulti
 
 # rerun is imported inside the renderers: it is heavy and only viewers load it.

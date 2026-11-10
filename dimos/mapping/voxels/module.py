@@ -27,7 +27,7 @@ from dimos.memory.module import StreamModule
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

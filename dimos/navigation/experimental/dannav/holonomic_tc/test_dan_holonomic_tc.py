@@ -27,9 +27,9 @@ import pytest
 
 from dimos.core.stream import Stream, Transport
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.module import DanHolonomicTC
 
