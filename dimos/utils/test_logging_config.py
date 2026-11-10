@@ -19,9 +19,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 
 import pytest
 
+from dimos.core.log_viewer import format_line
 from dimos.utils import logging_config
 from dimos.utils.logging_config import _compact_console_processor
 
@@ -71,3 +73,27 @@ def test_module_key_leads_the_kv_tail(monkeypatch: pytest.MonkeyPatch) -> None:
         },
     )
     assert line.endswith("tick module=planner alpha=1")
+
+
+@pytest.fixture
+def tokyo_time(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_console_time_is_local(monkeypatch: pytest.MonkeyPatch, tokyo_time: None) -> None:
+    monkeypatch.setattr(logging_config, "_CONSOLE_USE_COLORS", False)
+    line = _compact_console_processor(
+        None,
+        "info",
+        {"timestamp": "2026-08-17T12:00:00.123Z", "level": "info", "logger": "x.py", "event": "e"},
+    )
+    assert line.startswith("21:00:00.123 ")
+
+
+def test_log_viewer_time_is_local(tokyo_time: None) -> None:
+    raw = json.dumps({"timestamp": "2026-08-17T12:00:00.123456Z", "level": "info", "event": "e"})
+    assert format_line(raw).startswith("21:00:00 ")

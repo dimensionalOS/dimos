@@ -171,7 +171,8 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
     timestamp = event_dict.pop("timestamp", "")
     if timestamp:
         try:
-            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            # The record stamp is UTC. Print local time, like run ids and the agent output.
+            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone()
             time_str = dt.strftime("%H:%M:%S") + f".{dt.microsecond // 1000:03d}"
         except (ValueError, AttributeError):
             time_str = str(timestamp)[:12]
