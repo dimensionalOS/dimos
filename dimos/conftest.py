@@ -91,7 +91,8 @@ else:
 # fails for a reason that has nothing to do with it. EGL is the headless path that works on
 # this hardware; setting it here rather than in the one test that renders keeps the next one
 # from meeting the same wall.
-os.environ.setdefault("MUJOCO_GL", "egl")
+if not os.environ.get("MUJOCO_GL"):
+    os.environ["MUJOCO_GL"] = "egl"
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
