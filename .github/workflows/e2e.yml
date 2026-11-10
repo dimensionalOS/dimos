@@ -37,6 +37,9 @@ jobs:
       id-token: write  # For codecov-action's OIDC upload
 
     steps:
+      - name: Remove stale git lock files
+        # See the ci.yml self-hosted-tests job.
+        run: if [ -d .git ]; then sudo find .git -type f -name '*.lock' -print -delete; fi
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
@@ -241,6 +244,9 @@ jobs:
       contents: read  # For checkout
 
     steps:
+      - name: Remove stale git lock files
+        # See the ci.yml self-hosted-tests job.
+        run: if [ -d .git ]; then find .git -type f -name '*.lock' -print -delete; fi
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
