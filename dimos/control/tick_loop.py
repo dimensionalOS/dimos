@@ -353,8 +353,8 @@ class TickLoop:
                     continue
 
                 try:
-                    claim = task.claim()
                     output = task.compute(state)
+                    claim = task.claim()
                     results.append((task, claim, output))
                 except Exception as e:
                     logger.error(f"Task {task.name} compute error: {e}")
@@ -378,6 +378,14 @@ class TickLoop:
         winners: dict[str, JointWinner] = {}  # joint_name -> current winner
         preemptions: dict[str, dict[str, str]] = {}  # loser_task -> {joint: winner_task}
 
+        # A task can reserve a resource without issuing an unsupported command.
+        # This is normal task metadata: no task-type special case or wire token.
+        inhibitors: dict[str, tuple[int, str]] = {}
+        for task, claim, _ in commands:
+            for joint in claim.inhibited_joints:
+                if joint not in inhibitors or claim.priority > inhibitors[joint][0]:
+                    inhibitors[joint] = (claim.priority, task.name)
+
         for task, claim, output in commands:
             if output is None:
                 continue
@@ -387,6 +395,14 @@ class TickLoop:
                 continue
 
             for i, joint_name in enumerate(output.joint_names):
+                inhibitor = inhibitors.get(joint_name)
+                if (
+                    inhibitor is not None
+                    and inhibitor[0] >= claim.priority
+                    and inhibitor[1] != task.name
+                ):
+                    preemptions.setdefault(task.name, {})[joint_name] = inhibitor[1]
+                    continue
                 candidate = JointWinner(claim.priority, values[i], output.mode, task.name)
 
                 # First claim on this joint

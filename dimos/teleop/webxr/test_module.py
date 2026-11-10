@@ -35,7 +35,13 @@ from dimos.teleop.webxr.controller_types import (
     ThumbstickState,
     WebXRControllerState,
 )
-from dimos.teleop.webxr.extensions import ArmTeleopModule, Go2TeleopModule, HandTeleopModule
+from dimos.teleop.webxr.extensions import (
+    ArmTeleopModule,
+    ArmThumbstickTeleopModule,
+    Go2TeleopModule,
+    HandTeleopModule,
+    thumbstick_twist,
+)
 from dimos.teleop.webxr.module import WebXRTeleopModule, _ws_send_text
 
 
@@ -498,6 +504,70 @@ def test_zero_button_moves_every_group_to_zero(mocker: pytest_mock.MockerFixture
     manipulation.execute.assert_called_once_with(
         blocking=False, plan_id=manipulation.plan_to_joints.return_value.plan.plan_id
     )
+
+
+def test_thumbstick_twist_maps_sticks_to_body_frame() -> None:
+    """The one shared stick→Twist mapping: left stick translates, right yaws."""
+    left = WebXRControllerState(thumbstick=ThumbstickState(x=0.25, y=-0.75))
+    right = WebXRControllerState(thumbstick=ThumbstickState(x=-0.5, y=0.0))
+    twist = thumbstick_twist(left, right, deadzone=0.1, linear_speed=1.0, angular_speed=2.0)
+    assert twist.linear.x == pytest.approx(0.75)  # push forward → +x
+    assert twist.linear.y == pytest.approx(-0.25)  # push right → −y
+    assert twist.angular.z == pytest.approx(1.0)  # push left → +yaw
+    assert twist.linear.z == 0.0
+
+
+def test_thumbstick_twist_deadzone_and_absent_controllers_are_zero() -> None:
+    noisy = WebXRControllerState(thumbstick=ThumbstickState(x=0.05, y=-0.05))
+    centered = thumbstick_twist(noisy, noisy, deadzone=0.1, linear_speed=1.0, angular_speed=2.0)
+    absent = thumbstick_twist(None, None, deadzone=0.1, linear_speed=1.0, angular_speed=2.0)
+    assert (centered.linear.x, centered.linear.y, centered.angular.z) == (0.0, 0.0, 0.0)
+    assert (absent.linear.x, absent.linear.y, absent.angular.z) == (0.0, 0.0, 0.0)
+
+
+def test_arm_thumbstick_publishes_zero_when_sticks_are_centred(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """The base never keeps the last speed: a centred tick publishes zeros."""
+    module = ArmThumbstickTeleopModule(linear_speed=1.0, angular_speed=2.0)
+    publish = mocker.patch.object(module.cmd_vel, "publish")
+    try:
+        left = WebXRControllerState(thumbstick=ThumbstickState(x=0.0, y=-1.0))
+        right = WebXRControllerState(thumbstick=ThumbstickState(x=0.0, y=0.0))
+        module._publish_button_state(left, right)
+        assert publish.call_args.args[0].linear.x == pytest.approx(1.0)
+        module._publish_button_state(left, None)
+        assert publish.call_args.args[0].linear.x == pytest.approx(1.0)
+        module._publish_button_state(None, None)
+        twist = publish.call_args.args[0]
+        assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+        # The safe command is a zero Twist as well.
+        module._publish_safe_command()
+        twist = publish.call_args.args[0]
+        assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+    finally:
+        module.stop()
+
+
+def test_arm_thumbstick_still_publishes_the_arm_inputs(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Base twist is added to, not instead of, the inherited arm streams."""
+    module = ArmThumbstickTeleopModule(linear_speed=1.0, angular_speed=2.0)
+    pose_publish = mocker.patch.object(module.left_controller_output, "publish")
+    twist_publish = mocker.patch.object(module.cmd_vel, "publish")
+    try:
+        with module._lock:
+            module._current_poses[Hand.LEFT] = PoseStamped(
+                ts=1.0, frame_id="left", position=[0.3, 0.1, 1.2]
+            )
+        module._publish_msg(Hand.LEFT, module._current_poses[Hand.LEFT])
+        assert pose_publish.called
+        assert not twist_publish.called
+        module._publish_button_state(None, None)
+        assert twist_publish.called
+    finally:
+        module.stop()
 
 
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:

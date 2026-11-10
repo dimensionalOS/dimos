@@ -590,6 +590,8 @@ def test_every_r1pro_blueprint_is_registered_and_importable() -> None:
         "r1pro-nav",
         "r1pro-planar-preview",
         "r1pro-teleop",
+        "r1pro-vr-teleop",
+        "r1pro-vr-teleop-real",
     ]
     for name in names:
         module_path, _, attr = all_blueprints[name].partition(":")

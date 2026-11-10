@@ -44,7 +44,67 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-vr-teleop        # Quest VR: both arms + torso, safe fake backend
 ```
+
+## Quest VR teleop
+
+`r1pro-vr-teleop` is the operator stack for a Meta Quest browser: both
+controllers drive both arms and the top torso pitch/yaw joints through one
+`teleop_ik` task. The lower two pitch joints stay at measured positions;
+`full_torso=True` explicitly enables all 18 upper-body joints. Top pitch has
+5× posture cost and a 0.15 rad/s velocity cap; arm and yaw costs are unchanged. Each trigger drives its own jaw through
+a separate feedback-gated gripper task; the jaws never enter the IK model or a
+trajectory. Left thumbstick controls forward/lateral velocity and right
+thumbstick x controls yaw, reusing Go2's thumbstick mapping and deadzone.
+`ArmThumbstickTeleopModule.cmd_vel` feeds the coordinator's `twist_command`
+input. Its explicit `twist_velocity` task maps body input using measured yaw
+onto `r1pro_velocity_command: JointState` and the selected connection. The same
+path applies to fake and real, with limits ±1/±1 m/s and ±2 rad/s. Centred,
+missing or stale sticks command zero; arm poses and triggers never drive the
+chassis. Thumbsticks do not require the arm grips. No keyboard/nav input is wired.
+Operator hold arbitrates arm positions and zero base speeds, excluding the
+command-only jaws. E-stop clear leaves the hold latched until acknowledged.
+
+It starts on the **fake backend by default** — `FakeR1ProConnection`, an
+in-memory closed loop on the same contract (`position_command`, `velocity_command`,
+`joint_state`, the same 18-joint order, limits and metres for jaw openings).
+It pulls in no ROS 2, vendor stack, camera, lidar, CAN or robot; the Quest
+input visibly moves the simulated joints and jaws through the coordinator's
+`joint_state` feedback and the viewer. Selecting the real robot is explicit
+and only assembles the stack; starting it against hardware is a separate,
+deliberate operation:
+
+```bash
+dimos run r1pro-vr-teleop                       # fake, safe anywhere
+# real (assembly only, does NOT start hardware):
+#   python -c "from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop \
+#       import make_r1pro_vr_teleop; make_r1pro_vr_teleop(backend='real')"
+```
+
+Both backends share the Quest input module, the task set, the IK model and
+the coordinator; only the connection module differs. Opening
+`https://<host>:8443/teleop` in the headset connects the browser; the actual
+headset session is verified by a human, not by CI.
+
+In fake mode, `FakeR1ProConnection.base_state()` reads the in-memory integrated
+chassis x/y/yaw and vx/vy/wz over RPC (`dimos shell`); joint feedback is also
+available on `coordinator_joint_state`. No physical base driver is started.
+
+**Deadman and session teardown.** Middle-finger grips engage both hands and
+capture the controller references. Releasing either grip, controller input
+going stale, or a coordinator E-STOP ends the session and clears the
+references, so the next engagement starts from a fresh capture and no old
+intent replays. A jaw whose feedback drops out loses its emitted target; a
+target latched *during* the outage has never been sent and goes out on the
+first tick whose feedback covers the jaw again: it is fresh input that was
+never emitted, not an automatic resend of a previously emitted target.
+
+**Stop is not a cancel.** As with the rest of the R1 Pro stack, stopping the
+coordinator, the deadman, or an E-STOP only stops *us* from sending new
+targets. None of it is a vendor cancel or a physical E-stop; a command the
+vendor controller already accepted can keep executing. Use the robot's own
+E-stop hardware for a real emergency stop.
 
 ## Control path
 

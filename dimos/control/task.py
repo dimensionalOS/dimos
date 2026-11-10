@@ -60,10 +60,13 @@ class ResourceClaim:
     joints: frozenset[JointName]
     priority: int = 0
     mode: ControlMode = ControlMode.POSITION
+    # Explicit reservations suppress lower-priority commands without inventing a
+    # position command for velocity-only joints. Sources then apply normal idle.
+    inhibited_joints: frozenset[JointName] = frozenset()
 
     def conflicts_with(self, other: ResourceClaim) -> bool:
-        """Check if two claims compete for the same joints."""
-        return bool(self.joints & other.joints)
+        """Check if command ownership or explicit reservations overlap."""
+        return bool((self.joints | self.inhibited_joints) & (other.joints | other.inhibited_joints))
 
 
 @dataclass
