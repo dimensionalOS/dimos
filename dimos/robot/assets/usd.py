@@ -403,7 +403,7 @@ def _carry_outside_references(
     the referenced prims along under names the scene has not taken. Arcs that point back
     inside the subtree just move with it.
     """
-    inside = pxr.Sdf.Path(source)
+    inside, landed = pxr.Sdf.Path(source), pxr.Sdf.Path(target)
     carried: dict[str, str] = {}
     pending = [target]
     while pending:
@@ -412,7 +412,7 @@ def _carry_outside_references(
                 arcs = list(getattr(spec.referenceList, field))
                 moved = [
                     _moved_reference(
-                        pxr, arc, sub_layer, root_layer, inside, source, target, carried, pending
+                        pxr, arc, sub_layer, root_layer, inside, landed, carried, pending
                     )
                     for arc in arcs
                 ]
@@ -426,8 +426,7 @@ def _moved_reference(
     sub_layer: Layer,
     root_layer: Layer,
     inside: Any,
-    source: str,
-    target: str,
+    landed: Any,
     carried: dict[str, str],
     pending: list[str],
 ) -> Any:
@@ -435,13 +434,13 @@ def _moved_reference(
         # A file of its own, which brings its own namespace with it.
         return arc
     if arc.primPath.HasPrefix(inside):
-        at = str(arc.primPath).replace(source, target, 1)
+        at = str(arc.primPath.ReplacePrefix(inside, landed))
+    elif str(arc.primPath) in carried:
+        at = carried[str(arc.primPath)]
     else:
-        at = carried.get(str(arc.primPath)) or ""
-        if not at:
-            at = _carry_one(pxr, sub_layer, arc.primPath, root_layer)
-            carried[str(arc.primPath)] = at
-            pending.append(at)
+        at = _carry_one(pxr, sub_layer, arc.primPath, root_layer)
+        carried[str(arc.primPath)] = at
+        pending.append(at)
     return pxr.Sdf.Reference(arc.assetPath, at, arc.layerOffset, arc.customData)
 
 
