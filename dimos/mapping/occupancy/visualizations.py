@@ -66,28 +66,14 @@ def _draw_path(occupancy_grid: OccupancyGrid, bgr_image: NDArray[np.uint8], path
 
 
 def rainbow_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
-    """Convert the occupancy grid to a rainbow-colored Image.
-
-    Color scheme:
-    - -1 (unknown): black
-    - 100 (occupied): magenta
-    - 0-99: rainbow from blue (0) to red (99)
-
-    Returns:
-        Image with rainbow visualization of the occupancy grid
-    """
     import cv2
 
-    # Create a copy of the grid for visualization
-    # Map values to 0-255 range for colormap
     height, width = grid.shape
     vis_grid = np.zeros((height, width), dtype=np.uint8)
 
-    # Handle 0-99: map to colormap range
     gradient_mask = (grid >= 0) & (grid < 100)
     vis_grid[gradient_mask] = ((grid[gradient_mask] / 99.0) * 255).astype(np.uint8)
 
-    # Apply JET colormap (blue to red) - returns BGR
     bgr_image = cv2.applyColorMap(vis_grid, cv2.COLORMAP_JET)
 
     unknown_mask = grid == -1
@@ -100,33 +86,14 @@ def rainbow_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
 
 
 def turbo_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
-    """Convert the occupancy grid to a turbo-colored Image.
-
-    Returns:
-        Image with turbo visualization of the occupancy grid
-    """
     color_lut = _turbo_lut()
 
-    # -1 -> 255, 0-100 -> 0-100. The index array is built as uint8 from the start rather than cast
-    # afterwards: numpy 2 will not weigh a Python 255 against an int8 array and raises "Python
-    # integer 255 out of bounds for int8".
     lookup_indices = np.where(grid == -1, np.uint8(255), np.clip(grid, 0, 100).astype(np.uint8))
 
-    # Create BGR image using lookup table (vectorized operation)
     return color_lut[lookup_indices]
 
 
 def _interpolate_turbo(t: float) -> tuple[int, int, int]:
-    """D3's interpolateTurbo colormap implementation.
-
-    Based on Anton Mikhailov's Turbo colormap using polynomial approximations.
-
-    Args:
-        t: Value in [0, 1]
-
-    Returns:
-        RGB tuple (0-255 range)
-    """
     t = max(0.0, min(1.0, t))
 
     r = 34.61 + t * (1172.33 - t * (10793.56 - t * (33300.12 - t * (38394.49 - t * 14825.05))))
@@ -147,19 +114,6 @@ def generate_rgba_texture(
     cost_range: tuple[int, int] | None = None,
     background: str | None = None,
 ) -> NDArray[np.uint8]:
-    """Generate RGBA texture for an occupancy grid.
-
-    Args:
-        grid: OccupancyGrid to render.
-        colormap: Optional matplotlib colormap name.
-        opacity: Blend factor (0.0 to 1.0). Blends towards background color.
-        cost_range: Optional (min, max) cost range. Cells outside range use background.
-        background: Hex color for background (e.g. "#484981"). Default is black.
-
-    Returns:
-        RGBA numpy array of shape (height, width, 4).
-        Note: NOT flipped - caller handles orientation.
-    """
     if background is not None:
         bg = background.lstrip("#")
         bg_rgb = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.float32)
@@ -204,7 +158,6 @@ def generate_rgba_texture(
 
         return vis
 
-    # Default: Foxglove-style coloring
     vis = np.zeros((grid.height, grid.width, 4), dtype=np.uint8)
 
     free_mask = grid.grid == 0
@@ -236,11 +189,9 @@ def generate_rgba_texture(
 
 @lru_cache(maxsize=1)
 def _turbo_lut() -> NDArray[np.uint8]:
-    # Pre-compute lookup table for all possible values (-1 to 100)
     color_lut = np.zeros((256, 3), dtype=np.uint8)
 
     for value in range(-1, 101):
-        # Normalize to [0, 1] range based on domain [-1, 100]
         t = (value + 1) / 101.0
 
         if value == -1:
@@ -250,7 +201,6 @@ def _turbo_lut() -> NDArray[np.uint8]:
         else:
             rgb = _interpolate_turbo(t * 2 - 1)
 
-        # Map -1 to index 255, 0-100 to indices 0-100
         idx = 255 if value == -1 else value
         color_lut[idx] = [rgb[2], rgb[1], rgb[0]]
 

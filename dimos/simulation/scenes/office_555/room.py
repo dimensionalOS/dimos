@@ -13,12 +13,6 @@
 # limitations under the License.
 
 
-"""The office_555 room, converted once from its MJCF and committed beside this file.
-
-The path and nothing else: every blueprint that wants the room builds its own `UsdModel`,
-because it has frames of its own to add.
-"""
-
 from pathlib import Path
 
 SCENE = Path(__file__).parent / "scene.usda"

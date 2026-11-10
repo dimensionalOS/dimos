@@ -12,13 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The committed layer is the robot: what both ends read off it, with nothing else on disk.
-
-The properties: the layer loads, it carries the frames the module advertises mounts at, and
-every file it names is there to be served. Reading the layer rather than running the sim, so a
-broken vendoring is caught in a second instead of as a robot missing from a scene thirteen
-minutes in.
-"""
 
 from __future__ import annotations
 
@@ -37,7 +30,6 @@ from dimos.robot.assets.usd_assets import hash_of_file
 pytest.importorskip("pxr")
 mujoco = pytest.importorskip("mujoco")
 
-# The robots, each with the mounts its module adds, and the root the description names.
 _ROBOTS = ("g1", "go2")
 
 
@@ -52,7 +44,6 @@ def _module(robot: str) -> Any:
 
 
 def _mount_frames(module: Any) -> list[str]:
-    """Every frame the module says a sensor may be mounted at."""
     return [
         getattr(module, name)
         for name in ("lidar_mount_frame", "l1_mount_frame", "camera_mount_frame")
@@ -72,9 +63,7 @@ def test_the_layer_names_every_frame_a_sensor_mounts_at(robot: str) -> None:
 
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_every_file_the_layer_names_is_beside_it_and_hashes(robot: str) -> None:
-    """A mesh that is a git-lfs pointer reads as a mesh with no faces, much later and elsewhere."""
     module = _module(robot)
-    # The committed layer, not the mounted one: the mounts add frames, never files.
     source = Path(module.usd.source_path)
     layer = UsdModel.from_file(source)
 
@@ -88,9 +77,6 @@ def test_every_file_the_layer_names_is_beside_it_and_hashes(robot: str) -> None:
 
 @pytest.mark.parametrize("robot", _ROBOTS)
 def test_mujoco_simulates_the_robot_off_the_layer_alone(robot: str) -> None:
-    """Loads, has the actuators its servos drive, and steps without flying apart."""
-    # Importing it is what registers MuJoCo's USD reader; without it the layer goes to the MJCF
-    # parser and comes back as "syntax error: line 1, column 0".
     import mujoco._usd
 
     from dimos.sim2.usd_layer import usd_layer
@@ -107,14 +93,6 @@ def test_mujoco_simulates_the_robot_off_the_layer_alone(robot: str) -> None:
 
 
 def test_mujoco_keeps_its_actuators_when_usd_core_went_first() -> None:
-    """Writing a layer with usd-core must not cost MuJoCo the physics prims when it reads one.
-
-    Whichever of the two OpenUSD runtimes initialises first owns the plugin registry, so with
-    usd-core first MuJoCo's ``mjcPhysics`` schemas go unregistered and every ``MjcActuator`` is
-    dropped -- the G1 came up as a complete robot with no actuators at all.
-
-    In a subprocess, because what is tested is the order a *process* first touches each runtime.
-    """
     source = textwrap.dedent("""
         from dimos.robot.unitree.g1.sim2 import G1Sim
         from dimos.sim2.usd_layer import usd_layer

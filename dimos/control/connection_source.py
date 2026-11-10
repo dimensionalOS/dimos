@@ -12,16 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The coordinator's record of one robot it drives through a connection module.
-
-A connection module reports a robot's readings and takes its commands as
-standard messages (``JointState``, ``TwistStamped``, ``PoseStamped``, ``Imu``)
-on its ports. The coordinator keeps one ``ConnectionSource`` per robot it
-finds among its own ports. It turns each reading into named values with the
-shared converters in ``dimos.control.contract.convert``, keeps the latest, and
-builds each tick's complete command and the messages that carry it, each
-addressed to the kind of port it goes out on.
-"""
 
 from __future__ import annotations
 
@@ -73,16 +63,12 @@ ODOM = "odom"
 BASE_VELOCITY = "base_velocity"
 IMU = "imu"
 
-#: The kinds of port a coordinator sends a robot commands on, each with the
-#: message it carries. A coordinator names such a port ``<robot>_<kind>``.
 COMMAND_PORTS: Mapping[str, type] = {
     POSITION_COMMAND: JointState,
     VELOCITY_COMMAND: JointState,
     MOTOR_COMMAND: MotorCommandArray,
     CMD_VEL: Twist,
 }
-#: The kinds of port a coordinator reads a robot's readings from, each with
-#: the message it carries. Named ``<robot>_<kind>`` too.
 READING_PORTS: Mapping[str, type] = {
     JOINT_STATE: JointState,
     ODOM: PoseStamped,
@@ -90,10 +76,8 @@ READING_PORTS: Mapping[str, type] = {
     IMU: Imu,
 }
 
-#: The kinds of port that carry joints; a robot with one has joints to read from the model.
 _JOINT_PORTS = frozenset({POSITION_COMMAND, VELOCITY_COMMAND, MOTOR_COMMAND, JOINT_STATE})
 
-# Which part of a joint each task control mode drives.
 _INTERFACE_BY_MODE: dict[ControlMode, str] = {
     ControlMode.POSITION: Interface.POSITION,
     ControlMode.SERVO_POSITION: Interface.POSITION,
@@ -104,28 +88,12 @@ _INTERFACE_BY_MODE: dict[ControlMode, str] = {
 
 @dataclass(frozen=True, slots=True)
 class PortMessage:
-    """One command message and the kind of port it goes out on.
-
-    Attributes:
-        port: The port kind, e.g. "cmd_vel"; the coordinator sends it on its
-            ``<robot>_cmd_vel`` port.
-        message: The message to send on it, e.g. a ``Twist``.
-    """
-
     port: str
     message: Any
 
 
 @dataclass(frozen=True, slots=True)
 class _SensorReading:
-    """One number a sensor reports.
-
-    Attributes:
-        sensor: The sensor's full name, e.g. "g1/imu".
-        reading: What it measures, e.g. "qw".
-        key: Its full key, e.g. "g1/imu/qw".
-    """
-
     sensor: str
     reading: str
     key: str
@@ -133,8 +101,6 @@ class _SensorReading:
 
 @dataclass(frozen=True, slots=True)
 class _Joint:
-    """One joint's name, the keys it may report and accept, and its position limit."""
-
     name: str
     state_keys: dict[str, str]
     command_keys: dict[str, str]
@@ -142,31 +108,6 @@ class _Joint:
 
 
 class ConnectionSource:
-    """One robot behind a connection module, as the coordinator's tick loop sees it.
-
-    Each tick the robot gets a complete command: what tasks asked for, and
-    for every other joint velocity 0 if tasks drive it by velocity this
-    tick, else a hold at its last commanded or reported position, kept
-    within its limit. A base is told 0 on every axis. A robot whose newest
-    reading is older than ``reading_timeout_s`` is not commanded, and is
-    held where it is once readings return. Does no I/O.
-
-    Args:
-        robot: The robot's name, the first part of its joint names, e.g. "arm".
-        commands: Port kinds it is commanded on, from ``COMMAND_PORTS``.
-        readings: Port kinds it is read from, from ``READING_PORTS``.
-        model: Its joints and position limits, named ``<robot>/...``; ``None``
-            for a robot with no joint ports.
-        reading_timeout_s: How old its newest reading may be, in seconds.
-        zero_stiffness_joints: Joints the connection commands with zero
-            stiffness, so tasks such as hand guiding may follow them by hand.
-
-    Raises:
-        ValueError: If the coordinator cannot drive it: no reading port, a
-            motor port, joints that can neither take a velocity nor be held
-            at a position they report, or joint ports without a model.
-    """
-
     def __init__(
         self,
         robot: str,
@@ -227,7 +168,6 @@ class ConnectionSource:
             raise ValueError(
                 f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}"
             )
-        #: Joints this robot's connection commands with zero stiffness.
         self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
         imu = f"{robot}{SEPARATOR}imu"
         self._sensors = (
@@ -236,9 +176,6 @@ class ConnectionSource:
             else []
         )
 
-        # Each reading port: how to read its messages, and the keys that show
-        # it has reported in full, as groups of which one must be present
-        # (for joints, any key of each joint).
         self._readers: dict[str, Callable[[Any], Values]] = {}
         self._needed: dict[str, list[tuple[str, ...]]] = {}
         own: set[str] = set()
@@ -264,39 +201,27 @@ class ConnectionSource:
             own.update(key for group in groups for key in group)
         self._own_keys = frozenset(own)
 
-        # Guards the readings and flags below, which readings change and the
-        # tick loop reads.
         self._lock = threading.Lock()
         self._latest: Values = {}
-        # The ports whose readings are all in _latest.
         self._reported: frozenset[str] = frozenset()
-        # The ports that have ever reported in full.
         self._heard: set[str] = set()
         self._received_at = 0.0
-        # When the last reading arrived, by time.monotonic().
         self._freshness = Freshness()
-        # Readings came back after stopping for longer than the timeout, or
-        # after drop_holds. The tick loop drops the holds when it sees this.
         self._resumed = False
-        # Set by drop_holds: the next reading starts afresh, as after a silence.
         self._restart = False
-        # Joint name -> the position it is held at. Only the tick loop touches it.
         self._holds: dict[str, float] = {}
         self._last_warned = float("-inf")
 
     @property
     def robot(self) -> str:
-        """The robot's name, e.g. "arm"."""
         return self._robot
 
     @property
     def joint_names(self) -> list[str]:
-        """Every joint, e.g. ["arm/joint1", "arm/joint2"]."""
         return [joint.name for joint in self._joints]
 
     @property
     def command_ports(self) -> list[str]:
-        """The kinds of port commands go out on, e.g. ["position_command", "cmd_vel"]."""
         ports = list(self._joint_ports.values())
         if self._base_port is not None:
             ports.append(self._base_port)
@@ -304,24 +229,13 @@ class ConnectionSource:
 
     @property
     def reading_ports(self) -> list[str]:
-        """The kinds of port readings come in on, e.g. ["joint_state"]."""
         return list(self._readers)
 
     @property
     def reading_timeout_s(self) -> float:
-        """How old the newest reading may be, in seconds, before the robot is no longer commanded."""
         return self._timeout
 
     def on_message(self, port: str, msg: Any) -> None:
-        """Take one reading message from the robot's ``port``, e.g. "joint_state".
-
-        Every message counts: a connection module may send several per tick,
-        e.g. one for joints that report effort and one for a gripper that
-        does not. Values for other robots, which share a topic with this one,
-        are ignored. A message that cannot be read is dropped and logged at
-        most once a second; if they keep coming, the robot's readings go
-        stale and it is no longer commanded.
-        """
         try:
             values = self._readers[port](msg)
         except ValueError as error:
@@ -338,12 +252,9 @@ class ConnectionSource:
             latest, reported = self._latest, self._reported
             last = self._freshness.last_receipt
             if self._restart or (last is not None and now - last > self._timeout):
-                # Back after a silence, or holds dropped: wait for a whole new
-                # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
                 self._resumed = True
                 self._restart = False
-            # Replaced whole, so the tick loop never sees half of one update.
             latest = {**latest, **mine}
             if port not in reported and all(
                 any(key in latest for key in group) for group in self._needed[port]
@@ -351,10 +262,6 @@ class ConnectionSource:
                 reported = reported | {port}
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
-            # When the robot says the reading was taken, not when it landed here. In sim those differ: the
-            # world stamps sim time, which runs slower than the wall whenever the box is loaded, and a
-            # reading restamped on arrival is minutes away from the pose it describes. Everything
-            # downstream inherits it, down to the joint transforms a scan is placed against.
             stamp = getattr(msg, "ts", None)
             self._received_at = (
                 float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else time.time()
@@ -362,20 +269,11 @@ class ConnectionSource:
             self._freshness.mark(now)
 
     def drop_holds(self) -> None:
-        """Send nothing until the robot reports again, then hold each joint
-        where that new reading has it, not where it was last told to be."""
         with self._lock:
             self._reported = frozenset()
             self._restart = True
 
     def ready_for_control(self, now: float | None = None) -> bool:
-        """Whether a command can be sent: every reading port has reported (a
-        joint port, for every joint) and the newest reading is no older than
-        ``reading_timeout_s``.
-
-        Args:
-            now: The current ``time.monotonic()``, in seconds. Defaults to now.
-        """
         if now is None:
             now = time.monotonic()
         with self._lock:
@@ -384,17 +282,10 @@ class ConnectionSource:
             )
 
     def unreported(self) -> list[str]:
-        """The reading ports nothing has ever arrived on, e.g. ["odom"]. A
-        joint port counts until every joint has reported."""
         with self._lock:
             return [port for port in self._needed if port not in self._heard]
 
     def read_joints(self) -> JointStateSnapshot:
-        """The joints' latest positions, velocities and efforts.
-
-        A joint that does not report something is left out of that lookup,
-        rather than given a zero that looks like a real reading.
-        """
         latest = self._latest
         snapshot = JointStateSnapshot(timestamp=self._received_at)
         for joint in self._joints:
@@ -409,7 +300,6 @@ class ConnectionSource:
         return snapshot
 
     def read_sensors(self) -> dict[str, dict[str, float]]:
-        """Each sensor's latest readings, e.g. ``{"g1/imu": {"qw": 1.0, ...}}``."""
         latest = self._latest
         readings: dict[str, dict[str, float]] = {}
         for each in self._sensors:
@@ -418,29 +308,12 @@ class ConnectionSource:
         return readings
 
     def command(self, winners: Mapping[str, float], mode: ControlMode | None) -> Values:
-        """The complete command to send the robot this tick, by key.
-
-        Args:
-            winners: What tasks asked for, by joint name, e.g.
-                ``{"arm/joint1": 0.3}``. Only this robot's joints.
-            mode: How the winners drive their joints. ``None`` when no task
-                drives this robot this tick.
-
-        Raises:
-            ValueError: If a task drives a joint in a way it does not accept,
-                e.g. by velocity when it only takes a position, or tells it a
-                position outside its limit. The robot then gets no command
-                this tick and its holds are left as they were.
-        """
         with self._lock:
             latest = self._latest
             if self._resumed:
                 self._resumed = False
                 self._holds.clear()
         interface = _INTERFACE_BY_MODE.get(mode) if mode is not None else None
-        # Check every task value first: the connection module refuses the
-        # whole message if one is out of range, so no hold may change unless
-        # all of them are sendable.
         for joint in self._joints:
             if joint.name not in winners:
                 continue
@@ -476,15 +349,6 @@ class ConnectionSource:
         return values
 
     def command_messages(self, values: Mapping[str, float], ts: float) -> list[PortMessage]:
-        """The messages that carry ``values``, each with the kind of port to send it on.
-
-        One per port: a ``JointState`` on each joint port, of the joints told
-        that port's kind of value, and a ``Twist`` on the base port.
-
-        Args:
-            values: A command from ``command``.
-            ts: When it was made, in Unix seconds.
-        """
         messages: list[PortMessage] = []
         for interface, port in self._joint_ports.items():
             joints = [j.name for j in self._joints if f"{j.name}{SEPARATOR}{interface}" in values]
@@ -495,13 +359,6 @@ class ConnectionSource:
         return messages
 
     def _hold(self, joint: _Joint, latest: Values) -> float | None:
-        """Where to hold ``joint``, inside its position limit, or ``None`` if
-        it cannot be told a position or its position is unknown.
-
-        Args:
-            joint: The joint to hold.
-            latest: The robot's latest reading, to start a new hold from.
-        """
         if Interface.POSITION not in joint.command_keys:
             return None
         held = self._holds.get(joint.name)
@@ -520,11 +377,6 @@ class ConnectionSource:
 
 
 def _robot_joints(robot: str, model: RobotModel) -> dict[str, Limits]:
-    """The model's movable joints named ``<robot>/...``, each with its position limit.
-
-    Raises:
-        ValueError: If there are none, or the model lacks a joint's position range.
-    """
     prefix = f"{robot}{SEPARATOR}"
     joints = {
         joint.name: model_limit(joint, Interface.POSITION)
@@ -544,7 +396,6 @@ def _read_joint_state(msg: Any) -> Values:
 
 
 def _within(value: float, limit: Limits) -> bool:
-    """Whether ``value`` is a finite number inside ``limit``'s bounds."""
     return (
         math.isfinite(value)
         and (limit.lo is None or value >= limit.lo)
@@ -555,14 +406,6 @@ def _within(value: float, limit: Limits) -> bool:
 def _reader(
     convert: Callable[[Any, str], Values], part: str, robot: str
 ) -> Callable[[Any], Values]:
-    """``convert(msg, part)`` for a message in one of this robot's frames.
-
-    Raises:
-        ValueError: If the message's frame belongs to another robot: a frame
-            with a namespace must start with the robot's name ("go2b/odom");
-            one without a namespace ("odom") is taken as this robot's.
-    """
-
     def read(msg: Any) -> Values:
         frame = getattr(msg, "frame_id", "")
         if SEPARATOR in frame and not frame.startswith(f"{robot}{SEPARATOR}"):

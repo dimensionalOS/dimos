@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WholeBodyAdapter protocol for joint-level (q/dq/kp/kd/tau) motor control."""
 
 from __future__ import annotations
 
@@ -21,39 +20,28 @@ from typing import Protocol, runtime_checkable
 
 from dimos.hardware.spec import JointLimits
 
-# Unitree SDK sentinels meaning "no command" for that DOF.
 POS_STOP: float = 2.146e9
 VEL_STOP: float = 16000.0
 
 
 @dataclass(frozen=True)
 class MotorCommand:
-    """Command for one joint in that joint's declared coordinate system.
-
-    Angular joints use radians/radians per second/Nm. Other joints may define
-    another coordinate; for example, a gripper may use normalized opening.
-    """
-
-    q: float = POS_STOP  # target position in the joint's coordinate
-    dq: float = VEL_STOP  # target velocity in the joint's coordinate per second
-    kp: float = 0.0  # position gain
-    kd: float = 0.0  # velocity gain
-    tau: float = 0.0  # feedforward torque (Nm)
+    q: float = POS_STOP
+    dq: float = VEL_STOP
+    kp: float = 0.0
+    kd: float = 0.0
+    tau: float = 0.0
 
 
 @dataclass(frozen=True)
 class MotorState:
-    """Feedback for one joint in that joint's declared coordinate system."""
-
-    q: float = 0.0  # position in the joint's coordinate
-    dq: float = 0.0  # velocity in the joint's coordinate per second
-    tau: float = 0.0  # estimated torque (Nm)
+    q: float = 0.0
+    dq: float = 0.0
+    tau: float = 0.0
 
 
 @dataclass(frozen=True)
 class IMUState:
-    """IMU feedback."""
-
     quaternion: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
     gyroscope: tuple[float, float, float] = (0.0, 0.0, 0.0)
     accelerometer: tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -62,39 +50,18 @@ class IMUState:
 
 @dataclass(frozen=True)
 class WholeBodyConfig:
-    """Whole-body-specific component config.
-
-    Lives on ``HardwareComponent.wb_config`` for components of type WHOLE_BODY.
-    Keeps PD gains (and any future whole-body-only knobs) off the generic
-    HardwareComponent shared by all hardware kinds.
-
-    Attributes:
-        kp: Per-joint position gains used by ConnectedWholeBody when
-            translating position commands to MotorCommand. Length must
-            match the component's ``joints`` list when set.
-        kd: Per-joint velocity gains. Same length constraint.
-    """
-
     kp: tuple[float, ...] | None = None
     kd: tuple[float, ...] | None = None
 
 
 @runtime_checkable
 class WholeBodyAdapter(Protocol):
-    """Joint-level whole-body IO using each joint's declared coordinate."""
-
     def connect(self) -> bool: ...
     def disconnect(self) -> None: ...
     def is_connected(self) -> bool: ...
     def read_motor_states(self) -> list[MotorState]: ...
     def has_motor_states(self) -> bool: ...
     def motor_states_ts(self) -> float | None:
-        """When the latest motor states were taken, or None where the robot does not say.
-
-        On hardware this is the wall clock and the same as now. In sim it is sim time, which runs
-        slower than the wall whenever the box is loaded, so a reading restamped on arrival describes a
-        pose the robot left long ago -- down to the joint transforms on tf a scan is placed against.
-        """
         return None
 
     def read_imu(self) -> IMUState: ...
