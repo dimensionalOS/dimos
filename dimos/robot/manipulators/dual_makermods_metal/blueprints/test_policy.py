@@ -37,7 +37,7 @@ from dimos.robot.manipulators.dual_makermods_metal.config import ALL_ARM_JOINTS,
 from dimos.robot.manipulators.dual_makermods_metal.connection import DualMetalConnection
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
-    PolicyManifest,
+    load_manifest,
 )
 from dimos.robot.manipulators.dual_makermods_metal.policy.station import MetalStationKinematics
 from dimos.utils.testing.waiting import wait_until
@@ -198,7 +198,7 @@ def test_shipped_fake_blueprint_workers_close_the_loop():
             assert initial[name] == pytest.approx(0.0, abs=1e-9)
 
         # The goal is the ship-time FK of the measured pose, offset in x.
-        policy_manifest = PolicyManifest.load(manifest)
+        policy_manifest = load_manifest(manifest)
         goal = MetalStationKinematics(policy_manifest.station).pose24(
             np.asarray([initial[name] for name in arm_names], dtype=np.float32)
         )

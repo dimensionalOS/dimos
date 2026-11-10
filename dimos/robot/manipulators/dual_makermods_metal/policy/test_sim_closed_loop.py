@@ -39,6 +39,7 @@ import pytest
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     JOINT_ORDER,
     PolicyManifest,
+    load_manifest,
     sha256_file,
 )
 from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import (
@@ -146,7 +147,7 @@ class _Rollout:
 
 def _manifest() -> PolicyManifest:
     assert MODEL_DIR is not None
-    return PolicyManifest.load(os.path.join(MODEL_DIR, "metal_arm_policy.manifest.json"))
+    return load_manifest(os.path.join(MODEL_DIR, "metal_arm_policy.manifest.json"))
 
 
 def _reference_actor() -> Any:

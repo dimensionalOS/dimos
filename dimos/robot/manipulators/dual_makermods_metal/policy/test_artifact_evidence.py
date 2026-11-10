@@ -32,7 +32,7 @@ import time
 import numpy as np
 import pytest
 
-from dimos.robot.manipulators.dual_makermods_metal.policy.contract import PolicyManifest
+from dimos.robot.manipulators.dual_makermods_metal.policy.contract import load_manifest
 from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import MetalArmPolicyRuntime
 from dimos.robot.manipulators.dual_makermods_metal.policy.station import MetalStationKinematics
 
@@ -52,7 +52,7 @@ INFERENCE_P95_BUDGET_MS = 5.0
 
 @pytest.fixture(scope="module")
 def runtime() -> MetalArmPolicyRuntime:
-    manifest = PolicyManifest.load(os.path.join(MODEL_DIR, "metal_arm_policy.manifest.json"))
+    manifest = load_manifest(os.path.join(MODEL_DIR, "metal_arm_policy.manifest.json"))
     assert manifest.checkpoint.iteration == 38000
     return MetalArmPolicyRuntime(
         manifest, MODEL_DIR, kinematics=MetalStationKinematics(manifest.station)
