@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 class PackedVoxels:
@@ -48,7 +50,11 @@ class PackedVoxels:
         return (vox + np.float32(0.5)) * np.float32(self._voxel_size)
 
     def add_frame(self, frame: PointCloud2) -> None:
-        pts = frame.points_f32()
+        self.add_points(
+            pointcloud.xyz(frame).astype(np.float32), message_time.to_seconds(frame.header.stamp)
+        )
+
+    def add_points(self, pts: NDArray[np.float32], timestamp: float | None = None) -> None:
         if not len(pts):
             return
         new = np.unique(self._pack(pts))

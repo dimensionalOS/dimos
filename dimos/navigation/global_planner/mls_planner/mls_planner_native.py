@@ -27,19 +27,22 @@ from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.core.stream import IO, In, Out
+from dimos.message_utils import time as message_time
+from dimos_messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion, RegionBounds
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation import spec
 
 
 def reports_goal(msg: GoalStatus, goal: PointStamped) -> bool:
     """Whether a nav_status report is about this goal, which its stamp says."""
-    return [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] == goal.ros_timestamp()
+    return [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] == [
+        goal.header.stamp.sec,
+        goal.header.stamp.nanosec,
+    ]
 
 
 def holds_goal(status: int) -> bool:
@@ -104,19 +107,20 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
 
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
-    region_bounds: In[PoseStamped]
+    region_bounds: In[RegionBounds]
     # A seeded map's regions as RayTracingVoxelMap lands them, applied through
     # the region pipeline between live updates. Live updates keep priority.
-    seed_map: In[PointCloud2]
-    seed_bounds: In[PoseStamped]
+    seed_map: In[PointCloudRegion]
+    seed_bounds: In[RegionBounds]
     goal: In[PointStamped]
-    tf: In[TFMessage]
+    tf: IO[TFMessage]
+    tf_static: In[TFMessage]
 
     path: Out[Path]
     nav_status: Out[GoalStatus]
-    surface_map: Out[PointCloud2]
+    surface_map: Out[PointCloudRegion]
     nodes: Out[PointCloud2]
-    node_edges: Out[LineSegments3D]
+    node_edges: Out[LineSegments3DRegion]
 
     _goal: PointStamped | None = None
     """The goal of the go_to under way."""
@@ -177,8 +181,12 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
             return f"No goal sent: no {self.config.world_frame} -> {self.config.base_frame} on tf."
 
         # The planner picks the surface nearest the goal's z, so send the floor height under the robot.
-        floor_z = pose.z - self.config.start_z_offset_m
-        goal = PointStamped(x, y, floor_z, frame_id=self.config.world_frame)
+        floor_z = pose.pose.position.z - self.config.start_z_offset_m
+        # Its stamp names the goal in the nav_status reports that follow.
+        goal = PointStamped(
+            header=message_time.header_now(self.config.world_frame),
+            point=Point(x, y, floor_z),
+        )
         with self._goal_lock:
             self._goal = goal
         self.goal.transport.publish(goal)
@@ -197,15 +205,20 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner):
         if pose is None:
             where = "robot position unknown"
         else:
-            distance = math.dist((goal.x, goal.y), (pose.x, pose.y))
-            where = f"robot at ({pose.x:.2f}, {pose.y:.2f}), {distance:.2f} m from the target"
+            at = pose.pose.position
+            distance = math.dist((goal.point.x, goal.point.y), (at.x, at.y))
+            where = f"robot at ({at.x:.2f}, {at.y:.2f}), {distance:.2f} m from the target"
         self.tool_update("go_to", f"{outcome}; {where}.")
         self.stop_tool("go_to")
         if cancel:
             self._cancel()
 
     def _cancel(self) -> None:
-        self.goal.transport.publish(PointStamped(math.nan, math.nan, math.nan))
+        self.goal.transport.publish(
+            PointStamped(
+                header=message_time.header_now(), point=Point(math.nan, math.nan, math.nan)
+            )
+        )
 
     @skill
     async def stop_navigation(self) -> str:

@@ -15,8 +15,8 @@
 from typing import Protocol
 
 from dimos.core.stream import Out
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 class GlobalPointcloud(Protocol):
