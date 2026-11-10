@@ -16,15 +16,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import re
 
 from pydantic import ValidationError
 import pytest
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.perception.depth2depth_cloud import module
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloudConfig
 
-RUST_MODULE = DIMOS_PROJECT_ROOT / "dimos/perception/depth2depth_cloud/rust/src/module.rs"
+RUST_MODULE = Path(__file__).with_name("rust") / "src/module.rs"
 
 
 def test_every_field_the_rust_config_requires_is_sent():
@@ -59,8 +60,6 @@ def test_a_jpeg_scale_the_decoder_cannot_do_is_refused():
 
 
 def test_an_nvidia_gpu_builds_tensorrt_and_anything_else_the_cpu_build(monkeypatch):
-    from dimos.perception.depth2depth_cloud import module
-
     monkeypatch.setattr(module, "has_nvidia_gpu", lambda: False)
     assert Depth2DepthCloudConfig().build_command == "nix build -L path:."
     monkeypatch.setattr(module, "has_nvidia_gpu", lambda: True)

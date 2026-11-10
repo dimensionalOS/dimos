@@ -37,7 +37,8 @@ import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, image, pointcloud, time as message_time
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.association import (
@@ -161,15 +162,15 @@ def _lift(
     detections: ImageDetections2D[Any], rig: Rig, params: LocalizeParams, plane: SupportPlane | None
 ) -> list[Detection3DPC]:
     """Lift a frame's detections through its camera's geometry and gate them."""
-    transform = rig.world_to_optical(detections.ts, detections.image.frame_id)
+    transform = rig.world_to_optical(detections.ts, detections.image.header.frame_id)
     lifted = rig.lift(detections, transform) if transform is not None else None
     if transform is None or lifted is None:
         return []
-    camera = (-transform).translation.to_numpy()
+    camera = geometry.vector_array(geometry.inverse_transform(transform).transform.translation)
 
     valid: list[Detection3DPC] = []
     for det3d in lifted:
-        points = np.asarray(det3d.pointcloud.pointcloud.points)
+        points = pointcloud.xyz(det3d.pointcloud)
         if len(points) < params.min_points:
             continue
         if float((points.max(axis=0) - points.min(axis=0)).max()) > params.max_object_extent_m:
@@ -196,17 +197,17 @@ def index_frames(
     cam_hz = camera_hz(feed)
     if cam_hz is not None:
         hz = min(hz, cam_hz)
-    lit = feed.filter(lambda obs: obs.data.brightness > 0.1)
+    lit = feed.filter(lambda obs: image.brightness(obs.data) > 0.1)
     slotted = (
         lit
         if cam_hz is not None and hz >= cam_hz
-        else lit.transform(QualityWindow(lambda img: img.sharpness, window=1.0 / hz))
+        else lit.transform(QualityWindow(image.sharpness, window=1.0 / hz))
     )
     return slotted.map(
         lambda obs: obs.derive(
             data=obs.data,
-            pose=rig.camera_pose(obs.ts, obs.data.frame_id),
-            tags={**obs.tags, "camera": obs.data.frame_id},
+            pose=rig.camera_pose(obs.ts, obs.data.header.frame_id),
+            tags={**obs.tags, "camera": obs.data.header.frame_id},
         )
     ).filter(lambda obs: obs.pose is not None)
 
@@ -239,7 +240,7 @@ def embed_index(
         feed.transform(EmbedImages(embedder))
         .map(
             lambda obs: obs.derive(
-                data=IndexFrame(obs.ts, obs.data.frame_id, float(obs.data.sharpness))
+                data=IndexFrame(obs.ts, obs.data.header.frame_id, image.sharpness(obs.data))
             )
         )
         .materialize()
@@ -385,7 +386,7 @@ def detect(
                         class_id=j,
                         confidence=float(score),
                         name=queries[j],
-                        ts=img.ts,
+                        ts=message_time.to_seconds(img.header.stamp),
                         image=img,
                     )
                     if det.is_valid():
