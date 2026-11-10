@@ -314,6 +314,24 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
         assert filtered.frame_id == "world" and filtered.ts == cloud.ts
 
 
+def test_a_description_with_no_joint_state_source_still_offers_its_fixed_edges(make_filter):
+    """The office scene has no controller, so nothing ever calls add_joint_state for it."""
+    module = make_filter()
+
+    edges = module.static_transforms()
+
+    assert [(e.frame_id, e.child_frame_id) for e in edges] == [("base", "arm")]
+    assert module.tfbuffer.get("base", "arm", time_point=1.0, time_tolerance=0.001) is None, (
+        "nothing has been published yet; the edge is only offered"
+    )
+
+
+def test_a_moving_joint_is_left_out_of_the_fixed_edges(make_filter):
+    module = make_filter(urdf_xml=_joint_robot("prismatic"))
+
+    assert module.static_transforms() == [], "a prismatic joint needs a joint state"
+
+
 def test_the_joint_state_is_published_as_one_tf_edge_per_joint(make_filter):
     module = make_filter(urdf_xml=_joint_robot("prismatic"))
     module.add_joint_state(JointState(ts=1.0, name=["shoulder"], position=[0.3]))
