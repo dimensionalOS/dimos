@@ -403,9 +403,9 @@ class PolicyTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
-        """Active while the loop runs or a requested session may still open."""
+        """Active while the loop runs, a session runs, or a request is pending."""
         with self._lock:
-            return self._loop_active or self._session_requested
+            return self._loop_active or self._session_requested or self._guard.active
 
     @property
     def dry_run(self) -> bool:
@@ -486,7 +486,7 @@ class PolicyTask(BaseControlTask):
     # ------------------------------------------------------------- execution
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Prepare under the session lock, then run outside it and commit."""
-        if not self._loop_active and not self._session_requested:
+        if not (self._loop_active or self._session_requested or self._guard.active):
             return None
         with self._lock:
             plan = self.prepare(state)
