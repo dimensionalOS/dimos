@@ -337,7 +337,7 @@ def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: 
 
     from dimos.robot.assets.usd_to_urdf import usd_to_urdf
 
-    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.3, 0.0, 0.7), (0.0, 0.0, 0.0))})
 
     urdf = ElementTree.fromstring(usd_to_urdf(scene))
     links = {link.get("name") for link in urdf.findall("link")}
@@ -348,6 +348,14 @@ def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: 
 
     assert "toy" in links, "the scene root is a link even though it is not a rigid body"
     assert parent_of["spot"] == "toy", "a body0-less weld hangs off the scene root"
+    origin = next(
+        joint.find("origin")
+        for joint in urdf.findall("joint")
+        if joint.find("child").get("link") == "spot"
+    )
+    assert [float(value) for value in origin.get("xyz").split()] == [0.3, 0.0, 0.7], (
+        "the weld carries where the frame actually sits, not the joint's zero offset"
+    )
     assert "spot" not in {name for name in links if name not in parent_of}, (
         "the frame is no longer a root of its own disconnected tree"
     )
