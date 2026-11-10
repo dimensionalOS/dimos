@@ -26,8 +26,10 @@ import threading
 
 import pytest
 
+from dimos.core import dynamic_module
 from dimos.core.coordination.blueprints import BlueprintAtom, StreamRef, autoconnect
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.dynamic_module import PortSpec
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, PeekNotFound
 from dimos.core.stream import In, Out, RemoteIn
@@ -39,7 +41,6 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import Channel, cockpit
-from dimos.web.relay_bridge import dynamic
 from dimos.web.relay_bridge.config import RelayBridgeConfig
 from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
 from dimos.web.relay_bridge.e2e_support import stop_module
@@ -116,8 +117,8 @@ def local_modules():
 def test_class_name_is_deterministic_and_importable():
     generated = make_relay_bridge_class(_MAIN_SPECS)
     again = make_relay_bridge_class(tuple(reversed(_MAIN_SPECS)))
-    assert re.fullmatch(r"DynamicRelayBridge_[0-9a-f]{10}", generated.__name__)
-    assert generated.__module__ == "dimos.web.relay_bridge.dynamic"
+    assert re.fullmatch(r"DynamicRelayBridgeModule_[0-9a-f]{10}", generated.__name__)
+    assert generated.__module__ == "dimos.core.dynamic_module"
     assert generated.__qualname__ == generated.__name__
     assert again.__name__ == generated.__name__
 
@@ -126,7 +127,10 @@ def test_memoization_and_canonical_order():
     generated = make_relay_bridge_class(_MAIN_SPECS)
     again = make_relay_bridge_class(tuple(reversed(_MAIN_SPECS)))
     assert again is generated
-    assert generated.dynamic_port_specs == tuple(sorted(_MAIN_SPECS, key=lambda s: s.stream))
+    assert generated._dynamic_ports == (
+        PortSpec("operator_note", str, "out"),
+        PortSpec("sensor_ping", Vector3, "in"),
+    )
 
 
 def test_cbor_roundtrip_returns_identical_class_object():
@@ -147,14 +151,14 @@ def test_generated_class_is_published_for_reload_lookup():
     generated = make_relay_bridge_class(_MAIN_SPECS)
     # The coordinator's restart path reloads the module and looks the class
     # up again by name; the factory publishes it for exactly that.
-    assert getattr(sys.modules["dimos.web.relay_bridge.dynamic"], generated.__name__) is generated
+    assert getattr(sys.modules["dimos.core.dynamic_module"], generated.__name__) is generated
 
 
 def test_republish_after_memo_reset_returns_published_class(monkeypatch):
     generated = make_relay_bridge_class([DynamicPortSpec("memo_reset_feed", Vector3, "rx")])
-    # A reload of dynamic.py rebinds _memo to a fresh dict while published
+    # A reload of dynamic_module.py rebinds _memo to a fresh dict while published
     # classes survive in the module namespace; identity must be restored.
-    monkeypatch.setattr(dynamic, "_memo", {})
+    monkeypatch.setattr(dynamic_module, "_memo", {})
     again = make_relay_bridge_class([DynamicPortSpec("memo_reset_feed", Vector3, "rx")])
     assert again is generated
 
@@ -162,8 +166,8 @@ def test_republish_after_memo_reset_returns_published_class(monkeypatch):
 def test_digest_name_collision_with_different_specs_raises(monkeypatch):
     shape_a = make_relay_bridge_class([DynamicPortSpec("collide_a", Vector3, "rx")])
     shape_b = make_relay_bridge_class([DynamicPortSpec("collide_b", Vector3, "rx")])
-    monkeypatch.setattr(dynamic, "_memo", {})
-    monkeypatch.setattr(dynamic, shape_a.__name__, shape_b)
+    monkeypatch.setattr(dynamic_module, "_memo", {})
+    monkeypatch.setattr(dynamic_module, shape_a.__name__, shape_b)
     with pytest.raises(ValueError, match="digest collision"):
         make_relay_bridge_class([DynamicPortSpec("collide_a", Vector3, "rx")])
 
@@ -176,17 +180,17 @@ import dimos.web.relay_bridge.dynamic as dynamic
 
 C = dynamic.make_relay_bridge_class([dynamic.DynamicPortSpec("reload_feed", Vector3, "rx")])
 data = encode(C)
-mod = importlib.reload(sys.modules["dimos.web.relay_bridge.dynamic"])
+mod = importlib.reload(sys.modules["dimos.core.dynamic_module"])
 assert getattr(mod, C.__name__) is C, "restart getattr lost the class"
 assert decode(data) is C, "pre-reload payload lost identity"
 assert decode(encode(C)) is C, "re-encode after reload failed"
-again = mod.make_relay_bridge_class([mod.DynamicPortSpec("reload_feed", Vector3, "rx")])
+again = dynamic.make_relay_bridge_class([dynamic.DynamicPortSpec("reload_feed", Vector3, "rx")])
 assert again is C, "factory lost identity after reload"
 """
 
 
 def test_reload_then_reencode_preserves_identity():
-    """The coordinator's restart path reloads dynamic.py and then re-deploys
+    """The coordinator's restart path reloads dynamic_module.py and then re-deploys
     the surviving class object, which re-encodes it. Runs in a subprocess so
     the reload cannot poison this process's module state."""
     result = subprocess.run(
@@ -405,7 +409,7 @@ def test_cockpit_channels_blueprint_deploys_through_forkserver(worker_manager, d
         ]
     )
     (atom,) = blueprint.blueprints
-    assert atom.module.__name__.startswith("DynamicRelayBridge_")
+    assert atom.module.__name__.startswith("DynamicRelayBridgeModule_")
     proxy = worker_manager.deploy(atom.module, global_config, atom.kwargs)
     deployed_proxies.append(proxy)
 
