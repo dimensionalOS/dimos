@@ -86,8 +86,13 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
-from dimos.robot.planar import pose_from_values, pose_to_values, twist_from_values, twist_to_values
 from dimos.utils.testing.waiting import wait_until
+from dimos.utils.transform_utils import (
+    pose_from_values,
+    pose_to_values,
+    twist_from_values,
+    twist_to_values,
+)
 
 #: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
 MOCK_JOINTS = motor_joints(fake_arm_model(), "mock")
@@ -112,7 +117,6 @@ class FakeBaseConfig(ConnectionConfig):
     joint_commands: dict[str, tuple[Interface, ...]] = {
         name: (Interface.VELOCITY,) for name in BASE_JOINTS
     }
-    clamp_commands: frozenset[str] = frozenset(f"go2/{name}/velocity" for name in BASE_JOINTS)
     state_rate_hz: float = 100.0
     odometry_timeout_s: float = 0.2
     initial_yaw: float = 0.0
@@ -635,7 +639,7 @@ def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], targe
 
 
 def test_position_hold_scope_preserves_velocity_joint_feedback(rig: Callable[..., Rig]) -> None:
-    r = rig(WholeRobot, tasks=[operator_hold_task(joint_names=MOCK_JOINTS)])
+    r = rig(WholeRobot, tasks=[operator_hold_task()])
     hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
     assert isinstance(hold, OperatorHoldTask)
     r.report_arm(*AT_REST)

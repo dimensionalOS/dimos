@@ -140,9 +140,12 @@ my_robot = ControlCoordinator.blueprint(
 
 ## Operator Hold
 
-`operator_hold` (priority 100) freezes every joint where it is and waits for a
-person. It is not an e-stop: the e-stop cuts motion; the hold keeps position
-(zero velocity for a base). Add it with `operator_hold_task()` from
+`operator_hold` (priority 100) automatically freezes every joint that accepts
+position commands at its measured position and waits for a person. Velocity-only
+joints remain visible to other tasks but are not claimed by the hold, even when
+they report positions. `joint_names` optionally restricts the eligible subset.
+It is not an e-stop: the e-stop cuts motion; the hold keeps position.
+Add it with `operator_hold_task()` from
 `dimos/control/tasks/operator_hold_task/operator_hold_task.py`.
 
 ```python
@@ -164,6 +167,8 @@ The coordinator's `set_estop(True)` turns the hold on (route `failsafe`,
 reason `e-stop`). While stopped the hold commands nothing; after
 `set_estop(False)` it holds each joint where it is then, until acknowledged;
 acknowledge is refused while the e-stop is latched.
+
+Connection commands outside the model's declared bounds are rejected, not clamped.
 
 ## Control Modes
 

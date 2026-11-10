@@ -22,7 +22,7 @@ every command against this table.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import math
 from typing import TYPE_CHECKING
 
@@ -80,7 +80,7 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
 
     Only declared interfaces get keys, in model order. Declare PD_INTERFACES
     for joints driven by position, velocity, effort and gains together. Bounds
-    come from the model; clamping is opt-in per key through ``clamp_commands``.
+    come from the model; commands outside these bounds are rejected.
 
     Raises:
         ValueError: If joints are commanded without a model, no joint of the
@@ -108,12 +108,9 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
             key = Key(f"{full_name}/{interface}")
             if key.source != source:
                 raise ValueError(f"joint {name!r} belongs to another source than {source!r}")
-            bound = model_limit(joint, interface)
-            table[key] = replace(bound, clamp=True) if key in config.clamp_commands else bound
+            table[key] = model_limit(joint, interface)
     if not table:
         raise ValueError(f"{source!r} is told nothing: set joint_commands")
-    if config.clamp_commands - table.keys():
-        raise ValueError("clamp_commands contains undeclared keys")
     return table
 
 

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
+from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -267,10 +268,12 @@ class TickLoop:
         joint_positions: dict[str, float] = {}
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
+        joint_command_interfaces: dict[str, frozenset[Interface]] = {}
         per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
 
         with self._hardware_lock:
             for hw in self._hardware.values():
+                joint_command_interfaces.update(hw.joint_command_interfaces)
                 if not hw.ready_for_control():
                     continue
                 try:
@@ -290,12 +293,14 @@ class TickLoop:
                 joint_positions.update(joints.joint_positions)
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
+                joint_command_interfaces.update(joints.joint_command_interfaces)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
             joint_velocities=joint_velocities,
             joint_efforts=joint_efforts,
             timestamp=time.time(),
+            joint_command_interfaces=joint_command_interfaces,
         )
         return snapshot, per_hardware
 

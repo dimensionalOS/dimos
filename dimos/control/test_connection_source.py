@@ -322,6 +322,9 @@ def test_live_sensor_traffic_cannot_refresh_joint_feedback(monkeypatch: pytest.M
         source.on_message("imu", Imu(frame_id="imu"))
     assert not source.ready_for_control()
     assert source.read_joints().joint_positions["go2/base_x"] == 1.0
+    assert source.read_joints().joint_command_interfaces == {
+        name: frozenset({Interface.VELOCITY}) for name in source.joint_names
+    }
     source.on_message("joint_state", feedback)
     assert source.ready_for_control()
 
@@ -340,7 +343,6 @@ def test_declaration_not_ports_authorizes_interfaces() -> None:
             source="arm",
             model=ARM_MODEL,
             joint_commands={J1: (Interface.POSITION,), J2: (Interface.VELOCITY,)},
-            clamp_commands=frozenset({f"{J2}/velocity"}),
         ),
         ["position_command", "velocity_command"],
         ["joint_state"],
@@ -351,7 +353,8 @@ def test_declaration_not_ports_authorizes_interfaces() -> None:
         f"{J1}/position": 0.2,
         f"{J2}/velocity": 0.3,
     }
-    assert source.command({J2: (9.0, ControlMode.VELOCITY)})[f"{J2}/velocity"] == 2.0
+    with pytest.raises(ValueError, match="bound|range|above|outside"):
+        source.command({J2: (9.0, ControlMode.VELOCITY)})
     with pytest.raises(ValueError, match="cannot be told its velocity"):
         source.command({J1: (0.3, ControlMode.VELOCITY)})
 
