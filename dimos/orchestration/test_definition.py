@@ -14,6 +14,10 @@
 
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("cel_expr_python")
+
 from dimos.orchestration.definition import (
     ActionActivity,
     CallActivity,
