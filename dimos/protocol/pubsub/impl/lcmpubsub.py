@@ -20,7 +20,7 @@ import re
 import threading
 from typing import Any
 
-from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
+from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message, message_encoding
 from dimos.protocol.pubsub.encoders import CborEncoderMixin, MessageEncoderMixin
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub
@@ -35,19 +35,33 @@ class Topic:
     topic: str | re.Pattern[str] | Glob
     lcm_type: type[Any] | None = None
     message_type: type[Any] | None = field(default=None, kw_only=True)
-    message: MessageDescriptor[Any] | None = field(init=False, default=None, repr=False)
+    _message: MessageDescriptor[Any] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
-        if (
-            self.lcm_type is not None
-            and self.message_type is not None
-            and self.lcm_type is not self.message_type
-        ):
-            raise TypeError("Conflicting declared message types")
-        declared = self.message_type if self.message_type is not None else self.lcm_type
-        self.message = describe_message(declared) if declared is not None else None
+        # ``message_type=`` is the explicit binding API: describe it here so an
+        # unsupported type fails before any transport starts. The legacy
+        # positional ``lcm_type`` argument keeps its historical lazy semantics
+        # (pre-CDR code touched the type only when encoding or decoding), so
+        # existing blueprints that still pass a plain class keep building.
+        explicit = self.message_type is not None
+        if explicit:
+            if self.lcm_type is not None and self.lcm_type is not self.message_type:
+                raise TypeError("Conflicting declared message types")
+            declared = self.message_type
+            self._message = describe_message(declared) if declared is not None else None
+        else:
+            declared = self.lcm_type
         self.message_type = declared
         self.lcm_type = declared
+
+    @property
+    def message(self) -> MessageDescriptor[Any] | None:
+        """Bound codec descriptor; resolved on first use for legacy topics."""
+        if self._message is None and self.message_type is not None:
+            self._message = describe_message(self.message_type)
+        return self._message
 
     @property
     def is_pattern(self) -> bool:
@@ -76,7 +90,7 @@ class Topic:
         """
         from dimos.protocol.pubsub.message_types import resolve_channel_message_type
 
-        if default_lcm_type is not None and describe_message(default_lcm_type).encoding == "cdr":
+        if default_lcm_type is not None and message_encoding(default_lcm_type) == "cdr":
             return Topic(channel, message_type=default_lcm_type)
 
         if "#" not in channel:
