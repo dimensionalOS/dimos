@@ -1,0 +1,189 @@
+[machine]
+name = "m20_patrol"
+initial = "active"
+
+[params]
+low_battery = 0.20
+resume_battery = 0.90
+nav_retries = 2
+max_skips = 2
+dock_retries = 3
+waypoints = [
+  { x = 3.1, y = 0.2, z = 0.0 },
+  { x = 12.0, y = 4.5, z = 0.0 },
+  { x = 18.4, y = -2.0, z = 0.0 },
+]
+dock_approach = { x = 0.5, y = -1.0, z = 0.0, yaw = 1.57 }
+
+[vars]
+wp = 0
+tries = 0
+skips = 0
+dock_tries = 0
+why = ""
+
+[inputs]
+battery = "sensor_msgs.BatteryState"
+estop = "std_msgs.Bool"
+
+[outputs]
+notice = "std_msgs.String"
+
+[events]
+pause = {}
+resume = {}
+
+[[state]]
+name = "active"
+initial = "startup"
+
+[[state.transition]]
+event = "estop"
+if = "event.msg.data"
+to = "stopped"
+
+[[state.transition]]
+event = "pause"
+to = "paused"
+
+[[state]]
+name = "stopped"
+entry = [{ call = "robot.stop_movement" }]
+
+[[state.transition]]
+event = "estop"
+if = "!event.msg.data"
+to = "active"
+
+[[state]]
+name = "paused"
+entry = [{ call = "robot.stop_movement" }]
+
+[[state.transition]]
+event = "resume"
+to = "startup"
+
+[[state]]
+name = "startup"
+parent = "active"
+do = { call = "robot.charge_state", timeout = "5s" }
+
+[[state.transition]]
+event = "do.succeeded"
+if = "event.result == 'charging'"
+to = "charging"
+
+[[state.transition]]
+event = "do.succeeded"
+to = "patrol"
+
+[[state.transition]]
+event = "do.failed"
+to = "help"
+set = { why = "'startup: ' + event.reason" }
+
+[[state]]
+name = "patrol"
+parent = "active"
+initial = "goto"
+
+[[state.transition]]
+event = "battery"
+if = "event.msg.percentage < params.low_battery"
+to = "go_home"
+
+[[state]]
+name = "goto"
+parent = "patrol"
+do = { action = "nav.go_to_pose", timeout = "3m", args = { x = "params.waypoints[vars.wp].x", y = "params.waypoints[vars.wp].y", z = "params.waypoints[vars.wp].z" } }
+
+[[state.transition]]
+event = "do.succeeded"
+to = "goto"
+set = { wp = "(vars.wp + 1) % size(params.waypoints)", tries = 0, skips = 0 }
+
+[[state.transition]]
+event = "do.failed"
+if = "vars.tries < params.nav_retries"
+to = "goto"
+set = { tries = "vars.tries + 1" }
+
+[[state.transition]]
+event = "do.failed"
+if = "vars.skips < params.max_skips"
+to = "goto"
+set = { wp = "(vars.wp + 1) % size(params.waypoints)", tries = 0, skips = "vars.skips + 1" }
+
+[[state.transition]]
+event = "do.failed"
+to = "go_home"
+set = { tries = 0, skips = 0 }
+
+[[state]]
+name = "go_home"
+parent = "active"
+do = { action = "nav.go_to_pose", timeout = "5m", args = { x = "params.dock_approach.x", y = "params.dock_approach.y", z = "params.dock_approach.z", yaw = "params.dock_approach.yaw" } }
+
+[[state.transition]]
+event = "do.succeeded"
+to = "docking"
+
+[[state.transition]]
+event = "do.failed"
+to = "help"
+set = { why = "'could not reach the dock: ' + event.reason" }
+
+[[state]]
+name = "docking"
+parent = "active"
+do = { action = "robot.dock", timeout = "3m" }
+
+[[state.transition]]
+event = "do.succeeded"
+to = "charging"
+set = { dock_tries = 0 }
+
+[[state.transition]]
+event = "do.failed"
+if = "vars.dock_tries < params.dock_retries"
+to = "go_home"
+set = { dock_tries = "vars.dock_tries + 1" }
+
+[[state.transition]]
+event = "do.failed"
+to = "help"
+set = { why = "'docking failed: ' + event.reason" }
+
+[[state]]
+name = "charging"
+parent = "active"
+
+[[state.transition]]
+when = "inputs.battery.percentage >= params.resume_battery"
+to = "undocking"
+
+[[state]]
+name = "undocking"
+parent = "active"
+do = { action = "robot.undock", timeout = "1m" }
+
+[[state.transition]]
+event = "do.succeeded"
+to = "patrol"
+
+[[state.transition]]
+event = "do.failed"
+to = "help"
+set = { why = "'undocking failed: ' + event.reason" }
+
+[[state]]
+name = "help"
+parent = "active"
+entry = [
+  { call = "robot.stop_movement" },
+  { publish = "notice", value = "'M20 needs help: ' + vars.why" },
+]
+
+[[state.transition]]
+event = "resume"
+to = "startup"
