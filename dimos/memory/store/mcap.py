@@ -50,7 +50,6 @@ from dimos.memory.observationstore.base import ObservationStore, ObservationStor
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
-from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 from dimos.protocol.pubsub.message_types import resolve_message_type
 
@@ -84,16 +83,18 @@ class _DimosCodec:
     payload_type: type
 
     def decode(self, data: bytes) -> Any:
-        from dimos.memory.codecs.legacy import decode_lcm
-
-        return decode_lcm(data, self.payload_type)
+        return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
 
 
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
-    """Recognize historical ``dimos/<port>/<msg_name>`` topic suffixes.
+    """Split a dimos wire topic into its port name and message type.
 
-    New raw CDR channels obtain their type from the declared channel schema.
-    This reader still accepts old topic suffixes for recorded-data compatibility.
+    A legacy dimos topic embeds the type in its last segment,
+    ``dimos/<port>/<msg_name>`` (built by ``zenohpubsub.Topic.key_expr``), so
+    every dimos channel describes itself and no per-topic registry is needed.
+    None for anything that is not one, which leaves DDS and app channels to
+    the injected codecs. Raw CDR channels carry their type in the MCAP schema
+    instead (see the ``cdr``/``lz4+cdr`` arms below).
     """
     prefix, _, rest = topic.partition("/")
     port, _, msg_name = rest.rpartition("/")
@@ -257,7 +258,7 @@ class McapStore(Store):
                     # `streams=`, not something to guess at.
                     wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
                     if wire is not None and had is not None and wire[0] == had[0]:
-                        name = f"{name}_{describe_message(wire[1]).name.rsplit('/', 1)[-1]}"
+                        name = f"{name}_{wire[1].__name__}"
                     if self._stream_topic.get(name, ch.topic) != ch.topic:
                         raise ValueError(
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
@@ -315,7 +316,7 @@ class McapStore(Store):
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
                     kind = JsonCodec.payload_type
                     if ch.metadata.get("dimos.payload_type") in {
-                        kind.__msgtype__,
+                        getattr(kind, "__msgtype__", None),
                         f"{kind.__module__}.{kind.__qualname__}",
                     }:
                         self._codecs[ch.topic] = JsonCodec()

@@ -33,10 +33,12 @@ use crate::store::{Observation, RecordingStore};
 
 mod decoding;
 mod encoding;
+pub mod cdr;
 pub mod store;
 
 const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
 const IMAGE_PAYLOAD_TYPE: &str = "dimos.msgs.sensor_msgs.Image.Image";
+const TF_CDR_PAYLOAD_TYPE: &str = "tf2_msgs/msg/TFMessage";
 const QUEUE_CAPACITY: usize = 256;
 const WRITE_BATCH_SIZE: usize = 128;
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
@@ -49,6 +51,10 @@ pub enum Codec {
     Jpeg,
     #[serde(rename = "lz4+lcm")]
     Lz4Lcm,
+    /// Raw installed-message CDR: stored opaque, schema carried by `cdr_schema`.
+    Cdr,
+    #[serde(rename = "lz4+cdr")]
+    Lz4Cdr,
 }
 
 impl Codec {
@@ -58,6 +64,8 @@ impl Codec {
             Self::Json => "json",
             Self::Jpeg => "jpeg",
             Self::Lz4Lcm => "lz4+lcm",
+            Self::Cdr => "cdr",
+            Self::Lz4Cdr => "lz4+cdr",
         }
     }
 }
@@ -73,11 +81,18 @@ pub struct StreamConfig {
     pub timestamp_field: Option<String>,
     #[serde(default)]
     pub json_schema: Option<serde_json::Value>,
+    /// Complete ros2msg schema of an opaque CDR payload (required for CDR codecs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cdr_schema: Option<cdr::CdrSchema>,
+    /// Opt in to Header timestamps and per-edge TF splitting for typed CDR streams.
+    #[serde(default)]
+    pub source_timestamp: bool,
 }
 
 impl StreamConfig {
     pub fn is_tf(&self) -> bool {
         self.payload_type == TF_PAYLOAD_TYPE
+            || (self.source_timestamp && self.payload_type == TF_CDR_PAYLOAD_TYPE)
     }
 }
 
@@ -157,6 +172,26 @@ impl RecorderEngine {
                     || (stream.timestamp_field.is_none() && stream.json_schema.is_none()),
                 "JSON options require the json codec"
             );
+            if matches!(stream.codec, Codec::Cdr | Codec::Lz4Cdr) {
+                let schema = stream
+                    .cdr_schema
+                    .as_ref()
+                    .context("CDR codecs require the payload's complete ros2msg schema")?;
+                schema.validate()?;
+                anyhow::ensure!(
+                    schema.name == stream.payload_type,
+                    "CDR schema identity must match its stored payload"
+                );
+                anyhow::ensure!(
+                    !stream.source_timestamp,
+                    "source timestamps require typed CDR decoding, which this recorder does not do"
+                );
+            } else {
+                anyhow::ensure!(
+                    stream.cdr_schema.is_none(),
+                    "CDR schema requires a CDR storage codec"
+                );
+            }
         }
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);

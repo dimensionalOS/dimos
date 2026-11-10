@@ -34,7 +34,7 @@ from dimos.experimental.memory.cdr_schema import recording_schema
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
-from dimos_messages.sensor_msgs.msg import CompressedImage, Image
+from dimos.msgs.sensor_msgs.Image import Image as LegacyImage
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.utils.logging_config import setup_logger
 
@@ -120,9 +120,11 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
     for index, ((name, payload_type), transport) in enumerate(transports.items()):
         if name not in selected:
             continue
-        if not is_registered_message(payload_type):
+        generated = is_registered_message(payload_type)
+        legacy = hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode")
+        if not (generated or legacy):
             logger.info(
-                "--record: stream is not a registered generated message type; skipped",
+                "--record: stream is not a DimOS message type; skipped",
                 stream=name,
                 payload_type=str(payload_type),
             )
@@ -143,18 +145,25 @@ def make_plan(transports: dict[tuple[str, type], Any]) -> RustRecordingPlan:
 
         backends.add(backend)
         port = f"stream_{index}"
-        streams.append(
-            RustStreamSpec(
-                port=port,
-                name=name,
-                payload_type=describe_message(payload_type).name,
-                codec="cdrjpeg" if payload_type is Image else "cdr",
-                cdr_schema=recording_schema(
-                    CompressedImage if payload_type is Image else payload_type
-                ),
-                source_timestamp=True,
+        if generated:
+            streams.append(
+                RustStreamSpec(
+                    port=port,
+                    name=name,
+                    payload_type=describe_message(payload_type).name,
+                    codec="cdr",
+                    cdr_schema=recording_schema(payload_type),
+                )
             )
-        )
+        else:
+            streams.append(
+                RustStreamSpec(
+                    port=port,
+                    name=name,
+                    payload_type=f"{payload_type.__module__}.{payload_type.__qualname__}",
+                    codec="jpeg" if issubclass(payload_type, LegacyImage) else "lcm",
+                )
+            )
         topics[port] = transport.channel
         payload_types[name] = payload_type
 
