@@ -14,10 +14,6 @@
 
 """Two YAM leader arms drive the dual OpenYAM through the leader teleop module."""
 
-from dataclasses import replace
-
-from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -95,14 +91,6 @@ def dual_openyam_leader_velocity_limits() -> dict[str, float]:
     }
 
 
-def dual_openyam_leader_trajectory_task() -> TaskConfig:
-    # The coordinator runs one trajectory task and requires the canonical name.
-    task = leader_task(
-        DUAL_OPENYAM_LEADER_JOINTS, velocity_limits=dual_openyam_leader_velocity_limits()
-    )
-    return replace(task, name=JOINT_TRAJECTORY_TASK_NAME)
-
-
 def dual_openyam_leader_module() -> Blueprint:
     """The leader module; --simulation reads the mock leaders parked at the home pose."""
     if global_config.simulation:
@@ -126,8 +114,11 @@ def dual_openyam_leader_control() -> Blueprint:
             instance_name="ControlCoordinator",
             model=dual_openyam_control_model(robot="arm"),
             tasks=[
-                dual_openyam_leader_trajectory_task(),
-                *leader_gripper_tasks({side: f"arm/{side}_gripper" for side in LEADER_SIDES}),
+                leader_task(
+                    DUAL_OPENYAM_LEADER_JOINTS,
+                    velocity_limits=dual_openyam_leader_velocity_limits(),
+                ),
+                *leader_gripper_tasks(DualOpenYamConnection.robot.grippers),
             ],
             zero_stiffness_joints=[],
         ),

@@ -107,6 +107,7 @@ def test_teleop_blueprint_gives_the_leader_its_own_lane_above_the_planner() -> N
     for side in ("left", "right"):
         gripper = tasks[f"{side}_arm_gripper"]
         assert (gripper.type, gripper.joint_names) == ("gripper", [f"arm/{side}_gripper"])
+        assert gripper.params == {"open_at": "upper"}
         assert gripper.stream_bind == {"gripper_command": f"{side}_gripper_command"}
     leader_module = _atom(blueprint, LeaderTeleopModule)
     assert leader_module.kwargs["mappings"] == leader_teleop.MAPPINGS
