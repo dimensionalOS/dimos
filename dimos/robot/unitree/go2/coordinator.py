@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ADAPTER_FACTORIES = {
-    "transport_lcm": "dimos.hardware.drive_trains.transport.adapter:transport_lcm_factory",
-    "transport_ros": "dimos.hardware.drive_trains.transport.adapter:transport_ros_factory",
-}
+"""Go2 deployment ports for the canonical connection contract."""
+
+from dimos.control.path_following_coordinator import PathFollowingCoordinator
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+
+class Go2Coordinator(PathFollowingCoordinator):
+    go2_velocity_command: Out[JointState]
+    go2_joint_state: In[JointState]

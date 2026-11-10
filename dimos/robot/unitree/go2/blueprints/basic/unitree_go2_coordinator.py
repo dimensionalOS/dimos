@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree Go2 ControlCoordinator — GO2Connection + coordinator via LCM transport adapter.
+"""Unitree Go2 ControlCoordinator with concrete canonical joint connection ports.
 
 Usage:
     dimos run unitree-go2-coordinator
@@ -22,34 +22,36 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.connection.connection_module import ConnectionConfig as JointConnectionConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2_BASE_JOINTS, ConnectionConfig, GO2Connection
+from dimos.robot.unitree.go2.coordinator import Go2Coordinator
 
-_go2_joints = make_twist_base_joints("go2")
+_go2_joints = list(GO2_BASE_JOINTS)
 
 unitree_go2_coordinator = (
     autoconnect(
         GO2Connection.blueprint(obstacle_avoidance=False),
-        ControlCoordinator.blueprint(
-            hardware=[
-                HardwareComponent(
-                    hardware_id="go2",
-                    hardware_type=HardwareType.BASE,
-                    joints=_go2_joints,
-                    adapter_type="transport_lcm",
-                ),
+        Go2Coordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[
+                JointConnectionConfig(
+                    **ConnectionConfig().model_dump(include=set(JointConnectionConfig.model_fields))
+                )
             ],
             tasks=[
                 TaskConfig(
                     name="vel_go2",
                     type="twist_velocity",
                     joint_names=_go2_joints,
-                    params={"axes": ["linear.x", "linear.y", "angular.z"]},
+                    params={
+                        "axes": ["linear.x", "linear.y", "angular.z"],
+                        "yaw_joint": GO2_BASE_JOINTS[2],
+                    },
                     priority=10,
                 ),
             ],
@@ -58,6 +60,8 @@ unitree_go2_coordinator = (
     .remappings(
         [
             (GO2Connection, "cmd_vel", "go2_cmd_vel"),
+            (GO2Connection, "velocity_command", "go2_velocity_command"),
+            (Go2Coordinator, "go2_joint_state", "joint_state"),
             (GO2Connection, "odom", "go2_odom"),
         ]
     )

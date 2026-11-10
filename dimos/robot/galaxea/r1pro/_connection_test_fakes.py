@@ -12,15 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fakes for the R1 Pro's vendor ROS stack: no ROS 2, no robot, no vendor stack.
-
-``R1ProConnection`` imports its ROS pieces lazily (rclpy's QoS, the ROS
-message types, and dimos's RawROS wrapper), so installing these stand-ins in
-``sys.modules`` before ``start()`` runs the whole module in-process.
-``FakeRawROS`` records everything published to a vendor topic and lets a
-test feed feedback messages in, so both directions of the wiring are
-checked against what the vendor stack would see.
-"""
+"""Fakes for the R1 Pro's vendor ROS stack: no ROS 2, no robot, no vendor stack."""
 
 from __future__ import annotations
 
@@ -84,10 +76,7 @@ CHASSIS_FEEDBACK_TOPIC = "/motion_control/chassis_speed"
 
 
 def feed_chassis_interval(fake: FakeRos, turn: float = 0.0) -> None:
-    """Two real-topic measured samples, defining origin then integrating a turn.
-
-    The accelerated turn is test data, not a position injection or command.
-    """
+    """Two real-topic measured samples, defining origin then integrating a turn."""
     now = time.time()
     start = now - 0.1
     fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.0, 0.0, 0.0, start))
@@ -225,69 +214,46 @@ def install_fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
     """Point the connection's lazy ROS imports at the fakes; returns their registry."""
     fake = FakeRos()
 
-    rclpy = types.ModuleType("rclpy")
-    rclpy_qos = types.ModuleType("rclpy.qos")
-
     class QoSProfile:
         def __init__(self, **kwargs: Any) -> None:
             self.kwargs = kwargs
 
-    class ReliabilityPolicy:
-        BEST_EFFORT = 1
-
-    class DurabilityPolicy:
-        VOLATILE = 1
-
-    rclpy_qos.QoSProfile = QoSProfile  # type: ignore[attr-defined]
-    rclpy_qos.ReliabilityPolicy = ReliabilityPolicy  # type: ignore[attr-defined]
-    rclpy_qos.DurabilityPolicy = DurabilityPolicy  # type: ignore[attr-defined]
-    rclpy.qos = rclpy_qos  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "rclpy", rclpy)
-    monkeypatch.setitem(sys.modules, "rclpy.qos", rclpy_qos)
-
-    builtin_interfaces = types.ModuleType("builtin_interfaces")
-    builtin_msg = types.ModuleType("builtin_interfaces.msg")
-    builtin_msg.Time = RosTime  # type: ignore[attr-defined]
-    builtin_interfaces.msg = builtin_msg  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "builtin_interfaces", builtin_interfaces)
-    monkeypatch.setitem(sys.modules, "builtin_interfaces.msg", builtin_msg)
-
-    sensor_msgs = types.ModuleType("sensor_msgs")
-    sensor_msg = types.ModuleType("sensor_msgs.msg")
-    sensor_msg.JointState = RosJointState  # type: ignore[attr-defined]
-    sensor_msg.Image = type("Image", (), {})  # type: ignore[attr-defined]
-    sensor_msg.CompressedImage = type("CompressedImage", (), {})  # type: ignore[attr-defined]
-    sensor_msg.Imu = RosImu  # type: ignore[attr-defined]
-    sensor_msgs.msg = sensor_msg  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "sensor_msgs", sensor_msgs)
-    monkeypatch.setitem(sys.modules, "sensor_msgs.msg", sensor_msg)
-
-    geometry_msgs = types.ModuleType("geometry_msgs")
-    geometry_msg = types.ModuleType("geometry_msgs.msg")
-    geometry_msg.TwistStamped = RosTwistStamped  # type: ignore[attr-defined]
-    geometry_msgs.msg = geometry_msg  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "geometry_msgs", geometry_msgs)
-    monkeypatch.setitem(sys.modules, "geometry_msgs.msg", geometry_msg)
-
-    rospubsub = types.ModuleType("dimos.protocol.pubsub.impl.rospubsub")
-    rospubsub.RawROS = fake._raw_ros  # type: ignore[attr-defined]
-    rospubsub.RawROSTopic = FakeRawROSTopic  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "dimos.protocol.pubsub.impl.rospubsub", rospubsub)
-
-    hdas_msg = types.ModuleType("hdas_msg")
-    hdas_msg_msg = types.ModuleType("hdas_msg.msg")
-    hdas_msg_msg.FeedbackStatus = RosFeedbackStatus  # type: ignore[attr-defined]
-    hdas_msg.msg = hdas_msg_msg  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "hdas_msg", hdas_msg)
-    monkeypatch.setitem(sys.modules, "hdas_msg.msg", hdas_msg_msg)
-
-    conversion = types.ModuleType("dimos.protocol.pubsub.impl.rospubsub_conversion")
-    # The sensor workers convert ROS messages to dimos ones; the fake keeps
-    # the frame so a test can tell which message came through.
-    conversion.ros_to_dimos = lambda msg, cls: cls(  # type: ignore[attr-defined]
-        frame_id=getattr(getattr(msg, "header", None), "frame_id", "")
-    )
-    monkeypatch.setitem(sys.modules, "dimos.protocol.pubsub.impl.rospubsub_conversion", conversion)
+    # Real module objects preserve lazy import behavior without a ROS installation.
+    modules = {
+        "rclpy.qos": {
+            "QoSProfile": QoSProfile,
+            "ReliabilityPolicy": types.SimpleNamespace(BEST_EFFORT=1),
+            "DurabilityPolicy": types.SimpleNamespace(VOLATILE=1),
+        },
+        "builtin_interfaces.msg": {"Time": RosTime},
+        "sensor_msgs.msg": {
+            "JointState": RosJointState,
+            "Image": type("Image", (), {}),
+            "CompressedImage": type("CompressedImage", (), {}),
+            "Imu": RosImu,
+        },
+        "geometry_msgs.msg": {"TwistStamped": RosTwistStamped},
+        "hdas_msg.msg": {"FeedbackStatus": RosFeedbackStatus},
+        "dimos.protocol.pubsub.impl.rospubsub": {
+            "RawROS": fake._raw_ros,
+            "RawROSTopic": FakeRawROSTopic,
+        },
+        "dimos.protocol.pubsub.impl.rospubsub_conversion": {
+            "ros_to_dimos": lambda msg, cls: cls(
+                frame_id=getattr(getattr(msg, "header", None), "frame_id", "")
+            ),
+        },
+    }
+    for name, attrs in modules.items():
+        module = types.ModuleType(name)
+        for attr, value in attrs.items():
+            setattr(module, attr, value)
+        monkeypatch.setitem(sys.modules, name, module)
+        if not name.startswith("dimos."):
+            parent, child = name.rsplit(".", 1)
+            package = types.ModuleType(parent)
+            setattr(package, child, module)
+            monkeypatch.setitem(sys.modules, parent, package)
     return fake
 
 
@@ -328,11 +294,7 @@ MEASURED_Q = TORSO_Q + LEFT_Q + RIGHT_Q
 
 
 def feed_all_segments(fake: FakeRos, ts: float | None = None, q: list[float] | None = None) -> None:
-    """One feedback frame per segment, as the vendor stack publishes them.
-
-    ``q`` is the flat 18-joint layout (torso 4, left 7, right 7); it defaults
-    to ``MEASURED_Q``.
-    """
+    """One feedback frame per segment, as the vendor stack publishes them."""
     values = MEASURED_Q if q is None else q
     stamp = time.time() if ts is None else ts
     fake.control.feed("/hdas/feedback_torso", joint_feedback(values[0:4], stamp))

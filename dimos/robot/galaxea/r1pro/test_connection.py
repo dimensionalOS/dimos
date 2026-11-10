@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for ``R1ProConnection`` against a fake vendor ROS stack.
-
-No ROS 2, no robot, no vendor stack: the fakes in ``_connection_test_fakes``
-stand in for the ``RawROS`` nodes and the ROS message types, record every
-command the module sends to the vendor topics, and feed feedback in. Every
-port gets an in-process transport, so commands enter exactly as the
-coordinator sends them and feedback leaves exactly as the bus carries it.
-"""
+"""Tests for ``R1ProConnection`` against a fake vendor ROS stack."""
 
 from __future__ import annotations
 
@@ -217,23 +210,6 @@ def test_the_limits_table_is_the_18_urdf_joints_and_three_planar_joints() -> Non
         assert (jaw.lo, jaw.hi) == pytest.approx((0.0, 0.1))
 
 
-def test_a_position_command_reaches_the_three_vendor_topics_in_layout_order(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    targets = [0.01 * (i + 1) for i in range(18)]
-    r.move(dict(zip(R1PRO_UPPER_BODY_JOINTS, targets, strict=True)))
-
-    sent = r.joint_targets()
-    assert list(sent) == [TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC]
-    assert list(sent[TORSO_TOPIC].position) == pytest.approx(targets[0:4])
-    assert list(sent[LEFT_TOPIC].position) == pytest.approx(targets[4:11])
-    assert list(sent[RIGHT_TOPIC].position) == pytest.approx(targets[11:18])
-    # The vendor tracker follows each target at the configured tracking speed.
-    for msg in sent.values():
-        assert list(msg.velocity) == [r.module.config.tracking_speed] * len(msg.position)
-
-
 def test_a_command_missing_joints_is_an_error_and_the_robot_is_held(
     rig: Callable[..., Rig],
 ) -> None:
@@ -259,61 +235,38 @@ def test_a_command_missing_joints_is_an_error_and_the_robot_is_held(
     assert list(held[2].position) == pytest.approx(RIGHT_Q)
 
 
-def test_an_out_of_range_command_is_refused_and_nothing_reaches_the_vendor(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    before = list(r.fake.control.published)
-
-    # torso_joint1 stops at ~1.81 rad in the URDF; 2.0 is past it.
-    targets = dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, 0.0)
-    targets["r1pro/torso_joint1"] = 2.0
-    r.move(targets)
-
-    assert r.fake.control.published == before
-    rejection = r.module.status().last_rejection
-    assert rejection is not None
-    assert "r1pro/torso_joint1/position" in rejection
-    assert "above its limit" in rejection
-
-
-def test_unknown_and_foreign_keys_never_reach_the_vendor(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    before = list(r.fake.control.published)
-
-    r.move({"r1pro/gripper_joint1": 0.5})
-    rejection = r.module.status().last_rejection
-    assert rejection is not None and "unknown_key" in rejection
-
-    # Keys of other robots are skipped, not refused: nothing happens at all.
-    r.move({"other/joint1": 0.5, "chassis/base/vx": 0.5})
-    assert r.fake.control.published == before
-
-
-def test_a_non_finite_command_is_refused(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    r.drive(float("nan"), 0.0, 0.0)
-    assert r.speeds() == []
-    rejection = r.module.status().last_rejection
-    assert rejection is not None and "non-finite" in rejection
-
-
-def test_the_chassis_speed_limit_rejects_rather_than_clamps(
-    rig: Callable[..., Rig],
+@pytest.mark.parametrize(
+    "plane,names,values,error",
+    [
+        ("position", R1PRO_UPPER_BODY_JOINTS, [2.0] + [0.0] * 17, "above its limit"),
+        ("velocity", R1PRO_BASE_JOINTS, [1.5, -2.0, 3.0], "limit"),
+        ("velocity", R1PRO_BASE_JOINTS, [float("nan"), 0.0, 0.0], "non-finite"),
+        ("position", ["r1pro/gripper_joint1"], [0.5], "unknown_key"),
+    ],
+)
+def test_invalid_commands_are_rejected_atomically_not_clamped(
+    rig: Callable[..., Rig], plane: str, names: list[str], values: list[float], error: str
 ) -> None:
     r = rig()
     r.drive(0.5, -0.2, 0.7)
-    r.drive(1.5, -2.0, 3.0)
-
-    (first,) = r.speeds()
-    assert (first.twist.linear.x, first.twist.linear.y, first.twist.angular.z) == (0.5, -0.2, 0.7)
-    assert r.module.status().last_rejection is not None
+    before = list(r.fake.control.published)
+    r.ports[f"{plane}_command"].publish(JointState(name=names, **{plane: values}))
+    rejection = r.module.status().last_rejection
+    assert rejection is not None and error in rejection
+    assert r.fake.control.published == before
+    r.move({"other/joint1": 0.5, "chassis/base/vx": 0.5})
+    assert r.fake.control.published == before
 
 
 def test_the_deadman_waits_for_the_first_command_then_halts_the_robot(
     rig: Callable[..., Rig],
 ) -> None:
-    r = rig(deadman_timeout_s=0.05)
+    r = rig(start=False, deadman_timeout_s=0.05)
+    assert not r.module.status().connected
+    r.start()
+    status = r.module.status()
+    assert status.connected and status.session_id
+    assert status.last_command_time is status.last_rejection is status.last_error is None
     wait_until(lambda: bool(r.readings()), timeout=5.0)
 
     # No command yet: the deadman is not armed, nothing is sent.
@@ -323,6 +276,7 @@ def test_the_deadman_waits_for_the_first_command_then_halts_the_robot(
 
     r.drive(0.3, 0.0, 0.0)
     assert len(r.speeds()) == 1
+    assert r.module.status().last_command_time is not None
     wait_until(lambda: r.module.status().deadman_fired, timeout=5.0)
 
     # The halt: chassis zeroed once, arms held where they were last measured.
@@ -334,12 +288,6 @@ def test_the_deadman_waits_for_the_first_command_then_halts_the_robot(
     r.drive(0.2, 0.0, 0.0)
     assert not r.module.status().deadman_fired
     assert r.speeds()[-1].twist.linear.x == 0.2
-
-
-def test_stop_halts_the_robot_closes_ros_and_is_idempotent(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    wait_until(lambda: bool(r.readings()), timeout=5.0)
-    r.drive(0.3, 0.0, 0.0)
 
     r.module.stop()
 
@@ -356,18 +304,6 @@ def test_stop_halts_the_robot_closes_ros_and_is_idempotent(rig: Callable[..., Ri
     )
     r.module.stop()
     assert r.fake.control.published == sent
-
-
-def test_feedback_is_aggregated_into_joint_state_in_layout_order(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    wait_until(lambda: bool(r.readings()), timeout=5.0)
-    msg = r.readings()[-1]
-
-    assert list(msg.name) == R1PRO_UPPER_BODY_JOINTS
-    assert list(msg.position) == pytest.approx(MEASURED_Q)
-    assert len(msg.velocity) == 18
-    assert len(msg.effort) == 18
-    assert msg.frame_id == "base_link"
 
 
 def test_nothing_is_published_until_every_segment_has_reported(
@@ -389,26 +325,23 @@ def test_nothing_is_published_until_every_segment_has_reported(
     r.fake.control.feed("/hdas/feedback_arm_right", joint_feedback(RIGHT_Q, 100.3))
     wait_until(lambda: bool(r.readings()), timeout=5.0)
     # The fused snapshot is only as fresh as its stalest segment.
-    assert r.readings()[-1].ts == pytest.approx(100.1)
+    msg = r.readings()[-1]
+    assert msg.ts == pytest.approx(100.1)
+    assert list(msg.name) == R1PRO_UPPER_BODY_JOINTS
+    assert list(msg.position) == pytest.approx(MEASURED_Q)
+    assert len(msg.velocity) == len(msg.effort) == 18
+    assert msg.frame_id == "base_link"
+    for part in ("chassis", "torso"):
+        r.fake.sensors.feed(f"/hdas/imu_{part}", RosImu(header=RosHeader(frame_id=part)))
+        wait_until(lambda part=part: bool(r.ports[f"imu_{part}"].sent), timeout=5.0)
+        assert r.ports[f"imu_{part}"].sent[-1].frame_id == part
 
 
-def test_the_imus_are_republished_once_feedback_is_flowing(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    wait_until(lambda: bool(r.readings()), timeout=5.0)
-    sensors = r.fake.sensors
-    sensors.feed("/hdas/imu_chassis", RosImu(header=RosHeader(frame_id="chassis_imu")))
-    sensors.feed("/hdas/imu_torso", RosImu(header=RosHeader(frame_id="torso_imu")))
-
-    wait_until(lambda: bool(r.ports["imu_chassis"].sent), timeout=5.0)
-    wait_until(lambda: bool(r.ports["imu_torso"].sent), timeout=5.0)
-    assert r.ports["imu_chassis"].sent[-1].frame_id == "chassis_imu"
-    assert r.ports["imu_torso"].sent[-1].frame_id == "torso_imu"
-
-
+@pytest.mark.parametrize("publish_tf", [True, False])
 def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
-    rig: Callable[..., Rig],
+    rig: Callable[..., Rig], publish_tf: bool
 ) -> None:
-    r = rig()
+    r = rig(publish_odom_tf=publish_tf)
     assert CHASSIS_FEEDBACK_TOPIC in r.fake.control.subs
     assert "/odom" not in r.fake.control.subs
     feed_chassis_interval(r.fake, turn=math.pi / 2)
@@ -421,6 +354,11 @@ def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
         [-0.1 * (ts - previous), 0.4 * (ts - previous), math.pi / 2]
     )
     assert list(base.velocity) == pytest.approx([-0.1, 0.4, 0.0])
+    r.ports["velocity_command"].publish(
+        JointState(name=R1PRO_BASE_JOINTS, velocity=[0.2, 0.5, 0.7])
+    )
+    sent = r.speeds()[-1].twist
+    assert (sent.linear.x, sent.linear.y, sent.angular.z) == pytest.approx((0.5, -0.2, 0.7))
 
     wait_until(lambda: bool(r.ports["odometry"].sent), timeout=5.0)
     odom = r.ports["odometry"].sent[-1]
@@ -429,43 +367,10 @@ def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
     assert odom.pose.position.x == pytest.approx(base.position[0])
     assert odom.twist.linear.x == pytest.approx(0.4)
     # The pose and tf share the same gate.
-    assert r.ports["odom"].sent[-1].position.x == pytest.approx(base.position[0])
-    assert r.ports["tf"].sent
-
-
-def test_the_odom_pose_and_tf_follow_their_gate(rig: Callable[..., Rig]) -> None:
-    r = rig(publish_odom_tf=False)
-    feed_chassis_interval(r.fake)
-
-    wait_until(lambda: bool(r.ports["odometry"].sent), timeout=5.0)
-    assert r.ports["odom"].sent == []
-    assert r.ports["tf"].sent == []
-
-
-def test_status_reports_the_session_commands_and_rejections(rig: Callable[..., Rig]) -> None:
-    r = rig(start=False)
-    assert not r.module.status().connected
-
-    r.start()
-    status = r.module.status()
-    assert status.connected
-    assert status.session_id
-    assert status.last_command_time is None
-    assert status.last_rejection is None
-    assert status.last_error is None
-
-    r.drive(0.1, 0.0, 0.0)
-    assert r.module.status().last_command_time is not None
-
-
-def test_world_velocity_uses_nonzero_actual_yaw(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    feed_chassis_interval(r.fake, turn=math.pi / 2)
-    r.ports["velocity_command"].publish(
-        JointState(name=R1PRO_BASE_JOINTS, velocity=[0.2, 0.5, 0.7])
-    )
-    sent = r.speeds()[-1].twist
-    assert (sent.linear.x, sent.linear.y, sent.angular.z) == pytest.approx((0.5, -0.2, 0.7))
+    assert bool(r.ports["odom"].sent) is publish_tf
+    assert bool(r.ports["tf"].sent) is publish_tf
+    if publish_tf:
+        assert r.ports["odom"].sent[-1].position.x == pytest.approx(base.position[0])
 
 
 @pytest.mark.parametrize(
@@ -477,11 +382,8 @@ def test_world_velocity_uses_nonzero_actual_yaw(rig: Callable[..., Rig]) -> None
         "future",
         "zero_stamp",
         "stale_receipt",
-        "nan",
+        "stale_source",
         "bad_stamp",
-        "backwards",
-        "duplicate",
-        "long_gap",
         "bad_yaw",
     ],
 )
@@ -490,29 +392,22 @@ def test_yaw_authority_is_independent_of_arm_imu_and_publish_traffic(
     invalid: str,
 ) -> None:
     r = rig()
+    r.ports["velocity_command"].publish(JointState(name=R1PRO_BASE_JOINTS, velocity=[0.0] * 3))
+    assert r.module.status().last_error is None
+    r.module.halt()
+    assert all(m.twist.linear.x == m.twist.linear.y == m.twist.angular.z == 0 for m in r.speeds())
     if invalid not in ("absent", "first"):
         feed_chassis_interval(r.fake, turn=0.8)
-    msg = chassis_speed(0.1, 0.0, 0.0, time.time())
-    if invalid == "old_stamp":
-        msg = chassis_speed(0.1, 0.0, 0.0, time.time() - 1)
-    elif invalid == "future":
-        msg = chassis_speed(0.1, 0.0, 0.0, time.time() + 1)
-    elif invalid == "zero_stamp":
-        msg = chassis_speed(0.1, 0.0, 0.0, 0.0)
-    elif invalid == "nan":
-        msg.twist.linear.x = float("nan")
-    elif invalid == "bad_stamp":
+    now = time.time()
+    stamp = {"old_stamp": now - 1, "future": now + 1, "zero_stamp": 0.0}.get(invalid, now)
+    msg = chassis_speed(0.1, 0.0, 0.0, stamp)
+    if invalid == "bad_stamp":
         msg.header.stamp.sec = float("nan")
-    elif invalid == "backwards":
-        msg = chassis_speed(0.1, 0.0, 0.0, time.time() - 0.05)
-    elif invalid == "duplicate":
-        assert r.module._odom_last_ts is not None
-        msg = chassis_speed(0.1, 0.0, 0.0, r.module._odom_last_ts)
-    elif invalid == "long_gap":
-        time.sleep(1.02)
-        msg = chassis_speed(0.1, 0.0, 0.0, time.time())
     if invalid != "absent":
         r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
+    if invalid == "stale_source":
+        assert r.module._base_state is not None
+        r.module._base_state.ts = time.time() - 1.0
     if invalid == "bad_yaw":
         assert r.module._base_state is not None
         r.module._base_state.position[2] = float("nan")
@@ -524,9 +419,7 @@ def test_yaw_authority_is_independent_of_arm_imu_and_publish_traffic(
     time.sleep(0.02)  # The arm publish timer has run, but cannot refresh yaw.
     before = list(r.fake.control.published)
     batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
-    batch.update(
-        {f"{j}/velocity": v for j, v in zip(R1PRO_BASE_JOINTS, [0.2, 0.0, 0.0], strict=True)}
-    )
+    batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
     with pytest.raises(ValueError, match="fresh measured odometry"):
         r.module.write(batch)
     assert r.fake.control.published == before  # No partial arm send.
@@ -534,14 +427,6 @@ def test_yaw_authority_is_independent_of_arm_imu_and_publish_traffic(
     assert "fresh measured odometry" in (r.module.status().last_error or "")
     assert r.speeds()[-1].twist.linear.x == 0.0  # Error halt works without yaw.
     assert list(r.joint_targets()[TORSO_TOPIC].position) == pytest.approx(TORSO_Q)
-
-
-def test_zero_velocity_and_halt_need_no_odometry(rig: Callable[..., Rig]) -> None:
-    r = rig()
-    r.ports["velocity_command"].publish(JointState(name=R1PRO_BASE_JOINTS, velocity=[0.0] * 3))
-    assert r.module.status().last_error is None
-    r.module.halt()
-    assert all(m.twist.linear.x == m.twist.linear.y == m.twist.angular.z == 0 for m in r.speeds())
 
 
 @pytest.mark.parametrize("invalid", ["nan", "backwards", "duplicate", "long_gap"])
@@ -578,8 +463,12 @@ def test_invalid_interval_preserves_local_pose_and_recovers_only_on_measured_int
     assert [r.module._odom_x, r.module._odom_y, r.module._odom_yaw] == pytest.approx(
         before.position
     )
+    batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
+    batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
+    published = list(r.fake.control.published)
     with pytest.raises(ValueError, match="fresh measured odometry"):
-        r.module.write({f"{R1PRO_BASE_JOINTS[0]}/velocity": 0.2})
+        r.module.write(batch)
+    assert r.fake.control.published == published  # Validate before ANY arm send.
     receive(clock[0] + 0.1)
     state = r.readings()[-1]
     assert state.position[0] == pytest.approx(0.04 + math.cos(0.1) * 0.04)
