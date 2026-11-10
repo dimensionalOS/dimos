@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 from fastapi.testclient import TestClient
 import pytest
@@ -24,7 +25,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.deno import ensure_deno
-from experimental.gateway import web_view
+from experimental.gateway import launches, web_view
+from experimental.gateway.routes import web as web_routes
 from experimental.gateway.state import State
 
 ROUND_TRIP = """
@@ -79,6 +81,21 @@ def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: 
     assert client.get("/source?file=pyproject.toml").status_code == 400
     assert client.get("/source?file=../outside.py").status_code == 400
     assert client.get("/source?file=gone.py").status_code == 404
+
+
+def test_source_of_a_blueprint_live_from_another_checkout_reads_that_checkout(
+    client: TestClient, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (checkout / "mod.py").write_text("x = 1\n")
+    other = tmp_path / "branch"
+    other.mkdir()
+    (other / "mod.py").write_text("x = 2\n")
+    found = launches.RunSource(checkout=other, python=sys.executable, run_id="r1")
+    monkeypatch.setattr(
+        web_routes, "running_source", lambda state, name: found if name == "b" else None
+    )
+    assert client.get("/source?file=mod.py&blueprint=b").json()["text"] == "x = 2\n"
+    assert client.get("/source?file=mod.py&blueprint=other").json()["text"] == "x = 1\n"
 
 
 def test_login_page_calls_only_gateway_routes(client: TestClient) -> None:

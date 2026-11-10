@@ -16,7 +16,11 @@ export function CodePane({ where, onClose }: { where: Where; onClose: () => void
     let current = true;
     setText(null);
     setError(null);
-    getJson<{ text: string }>(`source?file=${encodeURIComponent(where.file)}`).then(
+    // with the blueprint, the gateway reads the file from the checkout its live run came from
+    const blueprint = new URLSearchParams(location.search).get("name") ?? "";
+    getJson<{ text: string }>(
+      `source?file=${encodeURIComponent(where.file)}&blueprint=${encodeURIComponent(blueprint)}`,
+    ).then(
       (answer) => current && setText(answer.text),
       (caught) => current && setError(errorText(caught)),
     );

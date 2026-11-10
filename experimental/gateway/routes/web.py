@@ -23,7 +23,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
 from experimental.gateway import msgs, responses, store, web_view
-from experimental.gateway.routes.catalog import check_blueprint
+from experimental.gateway.routes.catalog import check_blueprint, running_source
 from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
@@ -66,8 +66,10 @@ async def blueprint_view_file(file: str) -> Response:
 
 
 @router.get("/source", response_model=responses.SourceFile)
-async def source(state: GatewayState, file: str) -> dict[str, Any]:
-    root = state.dimos_dir.resolve()
+async def source(state: GatewayState, file: str, blueprint: str | None = None) -> dict[str, Any]:
+    # a blueprint live from another checkout was read from there (GET /catalog/blueprints/{name}), so are its files
+    live = await asyncio.to_thread(running_source, state, blueprint) if blueprint else None
+    root = (live.checkout if live else state.dimos_dir).resolve()
     path = (root / file).resolve()
     if path.suffix != ".py" or not path.is_relative_to(root):
         raise ApiError(400, f"not a .py file in the dimos checkout: {file}")
