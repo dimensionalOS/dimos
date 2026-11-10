@@ -553,9 +553,16 @@ class UsdManager(Module):
     def joint_transforms(self, state: JointState) -> list[Transform]:
         positions = dict(zip(state.name, state.position, strict=False))
         for joint in self._joints.values():
-            if joint.mimic is not None and joint.mimic[0] in positions:
-                leader, multiplier, offset = joint.mimic
-                positions[joint.name] = multiplier * positions[leader] + offset
+            if joint.mimic is None:
+                continue
+            # Both sides are description names, and `positions` is keyed the way the joint
+            # state spells them, so a copied joint has to be read and written through the
+            # same renaming as the joint it is drawn from.
+            leader, multiplier, offset = joint.mimic
+            followed = self.joint_state_name(leader)
+            if followed in positions:
+                position = multiplier * positions[followed] + offset
+                positions[self.joint_state_name(joint.name)] = position
         self._warn_if_nothing_matches(positions)
         return [
             Transform.from_matrix(
