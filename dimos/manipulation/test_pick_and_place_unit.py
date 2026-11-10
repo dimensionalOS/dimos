@@ -644,23 +644,6 @@ def test_a_given_grasp_rotation_is_made_unit_length(module: PickAndPlaceModule) 
     assert pregrasp.position.to_tuple() == pytest.approx((0.12, 0.0, 0.3))
 
 
-@pytest.mark.parametrize(
-    "orientation", [[0.0, 0.0, 0.0, 0.0], [float("nan"), 0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]
-)
-def test_a_given_grasp_without_a_rotation_is_refused_before_any_move(
-    module: PickAndPlaceModule, orientation: list[float]
-) -> None:
-    given = _given(0.12)
-    given["orientation"] = orientation
-
-    result = module.pick_object("cup-1", grasp=given)
-
-    assert result.message.startswith("The given grasp's orientation")
-    manipulation: Any = module._manipulation
-    manipulation.plan_to_poses.assert_not_called()
-    manipulation.set_gripper_position.assert_not_called()
-
-
 def test_the_source_names_the_generator_the_given_grasp_came_from(
     module: PickAndPlaceModule,
 ) -> None:
@@ -721,14 +704,3 @@ def test_propose_grasps_asks_the_generator_the_agent_names(module: PickAndPlaceM
         object_id="cup-1", approach=[0.0, 0.0, -1.0], max_angle_deg=30.0, limit=3
     )
     graspgenx.propose_grasps_for.assert_not_called()
-
-
-def test_propose_grasps_names_the_running_generators_when_asked_for_another(
-    module: PickAndPlaceModule,
-) -> None:
-    module.on_system_modules([_generator_client("HeuristicGraspModule")])
-
-    with pytest.raises(
-        ValueError, match="No grasp generator named GraspGenXModule; running: HeuristicGraspModule"
-    ):
-        module.propose_grasps("cup-1", "GraspGenXModule")

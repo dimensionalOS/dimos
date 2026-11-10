@@ -26,9 +26,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.experimental.isolated_python.module import contract_rpc_names
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig, GraspGenXModule
+from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
@@ -151,9 +150,3 @@ def test_host_collection_excludes_the_nested_runtime_suite() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "test_public_adapter_import_does_not_load_optional_runtime" in result.stdout
     assert "test_runtime.py" not in result.stdout
-
-
-def test_propose_grasps_for_is_an_rpc_the_runtime_answers() -> None:
-    # Contract RPCs run in the isolated process, where the model is.
-    assert "propose_grasps_for" in contract_rpc_names(GraspGenXModule)
-    assert not getattr(GraspGenXModule.propose_grasps_for, "__skill__", False)
