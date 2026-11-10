@@ -34,7 +34,7 @@ logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
 logging.getLogger("websockets.server").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
-_LOG_FILE_PATH = None
+_LOG_FILE_PATH: Path | None = None
 
 _RUN_LOG_DIR: Path | None = None
 
@@ -44,13 +44,15 @@ def set_run_log_dir(log_dir: str | Path) -> None:
 
     Updates the global path AND migrates any existing FileHandlers on
     stdlib loggers so that logs written after this call go to the new
-    directory.  Workers spawned after this call inherit the env var.
+    directory.  Records already written to the per-process file move there
+    too.  Workers spawned after this call inherit the env var.
     """
     global _RUN_LOG_DIR, _LOG_FILE_PATH
     log_dir = Path(log_dir)
     _RUN_LOG_DIR = log_dir
     _RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
     new_path = log_dir / "main.jsonl"
+    old_path = _LOG_FILE_PATH
     _LOG_FILE_PATH = new_path
     os.environ["DIMOS_RUN_LOG_DIR"] = str(log_dir)
 
@@ -60,16 +62,35 @@ def set_run_log_dir(log_dir: str | Path) -> None:
         for i, handler in enumerate(logger_obj.handlers):
             if isinstance(handler, logging.FileHandler) and handler.baseFilename != str(new_path):
                 handler.close()
-                new_handler = logging.handlers.RotatingFileHandler(
-                    new_path,
-                    mode="a",
-                    maxBytes=10 * 1024 * 1024,  # 10 MiB
-                    backupCount=20,
-                    encoding="utf-8",
-                )
+                new_handler = _file_handler(new_path)
                 new_handler.setLevel(handler.level)
                 new_handler.setFormatter(handler.formatter)
                 logger_obj.handlers[i] = new_handler
+
+    # Carry over what this process logged before the run directory existed,
+    # so it does not stay behind in a per-process file.
+    if old_path is not None and old_path != new_path and old_path.exists():
+        with new_path.open("a", encoding="utf-8") as f:
+            f.write(old_path.read_text(encoding="utf-8"))
+        old_path.unlink()
+
+
+def _file_handler(path: Path) -> logging.handlers.RotatingFileHandler:
+    # RotatingFileHandler with a size cap to prevent unbounded log growth.
+    # Multiple forkserver workers may each open their own handler to the same
+    # file. A concurrent rotate can lose a few lines, but that is far
+    # preferable to unbounded growth causing OOM on resource-constrained
+    # devices (cameras + LCM at 30 fps can write ~100 MB/min of JSON logs).
+    return logging.handlers.RotatingFileHandler(
+        path,
+        mode="a",
+        maxBytes=10 * 1024 * 1024,  # 10 MiB
+        backupCount=20,
+        encoding="utf-8",
+        # Open the file on the first record, so a process that logs nothing
+        # leaves no empty file behind.
+        delay=True,
+    )
 
 
 def get_run_log_dir() -> Path | None:
@@ -274,19 +295,7 @@ def setup_logger(*, level: int | None = None) -> Any:
     console_handler.setFormatter(console_formatter)
     stdlib_logger.addHandler(console_handler)
 
-    # RotatingFileHandler with a size cap to prevent unbounded log growth.
-    # Multiple forkserver workers may each open their own handler to the same
-    # file — a concurrent rotate can lose a few lines, but that is far
-    # preferable to unbounded growth causing OOM on resource-constrained
-    # devices (cameras + LCM at 30 fps can write ~100 MB/min of JSON logs).
-    file_handler = logging.handlers.RotatingFileHandler(
-        log_file_path,
-        mode="a",
-        maxBytes=10 * 1024 * 1024,  # 10 MiB
-        backupCount=20,
-        encoding="utf-8",
-    )
-
+    file_handler = _file_handler(log_file_path)
     file_handler.setLevel(level)
     file_formatter = structlog.stdlib.ProcessorFormatter(
         processor=structlog.processors.JSONRenderer(),

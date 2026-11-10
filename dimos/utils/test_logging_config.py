@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -97,3 +98,34 @@ def test_console_time_is_local(monkeypatch: pytest.MonkeyPatch, tokyo_time: None
 def test_log_viewer_time_is_local(tokyo_time: None) -> None:
     raw = json.dumps({"timestamp": "2026-08-17T12:00:00.123456Z", "level": "info", "event": "e"})
     assert format_line(raw).startswith("21:00:00 ")
+
+
+def test_log_file_is_created_on_the_first_record(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    log_file = tmp_path / "dimos.jsonl"
+    monkeypatch.setattr(logging_config, "_LOG_FILE_PATH", log_file)
+
+    logger = logging_config.setup_logger()
+    assert not log_file.exists()
+
+    logger.info("first record")
+    assert json.loads(log_file.read_text())["event"] == "first record"
+
+
+def test_set_run_log_dir_moves_earlier_records(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    early_file = tmp_path / "dimos.jsonl"
+    monkeypatch.setattr(logging_config, "_LOG_FILE_PATH", early_file)
+    monkeypatch.setattr(logging_config, "_RUN_LOG_DIR", None)
+    monkeypatch.delenv("DIMOS_RUN_LOG_DIR", raising=False)
+
+    logger = logging_config.setup_logger()
+    logger.info("before")
+    logging_config.set_run_log_dir(tmp_path / "run")
+    logger.info("after")
+
+    lines = (tmp_path / "run" / "main.jsonl").read_text().splitlines()
+    assert [json.loads(line)["event"] for line in lines] == ["before", "after"]
+    assert not early_file.exists()
