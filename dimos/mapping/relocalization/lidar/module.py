@@ -111,7 +111,7 @@ class CloudRelocalization(PremapModule):
         t0 = time.monotonic()
         try:
             tf = self._relocalizer.relocalize(
-                msg.pointcloud, self.config.world_frame, self.config.map_frame
+                msg.pointcloud, self.config.world_frame, self.map_frame
             )
         except Exception:
             logger.exception("relocalize() failed")

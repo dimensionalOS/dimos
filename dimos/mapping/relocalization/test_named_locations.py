@@ -18,7 +18,7 @@ from typing import Any, cast
 
 import pytest
 
-from dimos.mapping.relocalization.module import PremapModule
+from dimos.mapping.relocalization.module import PremapModule, map_names, resolve_map
 from dimos.mapping.relocalization.named_locations import load_locations
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -236,6 +236,109 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
     begin(relabelled)
     assert published[0].poses[0].header.frame_id == "premap"
     assert positions(published[0]) == {"dock": (1, 2)}
+
+
+def write_mcap(path, channels):
+    """An .mcap holding one message per (topic, type, message), the way a recorder writes them."""
+    mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start()
+        for topic, kind, message in channels:
+            channel = writer.register_channel(
+                topic=topic,
+                message_encoding="lcm",
+                schema_id=0,
+                metadata={
+                    "dimos.payload_type": f"{kind.__module__}.{kind.__name__}",
+                },
+            )
+            writer.add_message(
+                channel_id=channel, log_time=1, publish_time=1, data=message.lcm_encode()
+            )
+        writer.finish()
+
+
+def test_a_named_map_is_found_and_names_the_frame(make, tmp_path):
+    """One `map/<name>/cloud`: it is the map, `map/<name>` is the frame, its own locations load."""
+    import numpy as np
+
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    path = tmp_path / "walk.mcap"
+    cloud = PointCloud2.from_numpy(np.ones((7, 3), dtype=np.float32), timestamp=2.0)
+    write_mcap(
+        path,
+        [
+            ("map/v1/cloud", PointCloud2, cloud),
+            (
+                "map/v1/named_locations",
+                InteractiveMarkerUpdate,
+                InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map/v1"))]),
+            ),
+            # the flat streams an older build left behind are not what gets picked
+            (
+                "map_cloud",
+                PointCloud2,
+                PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=1.0),
+            ),
+            (
+                "named_locations",
+                InteractiveMarkerUpdate,
+                InteractiveMarkerUpdate([named_pose("desk", at(3, 4, "map"))]),
+            ),
+        ],
+    )
+
+    module, _ = make(map_file=str(path))
+    module.register_disposable = lambda d: d
+    module._resolve_map(str(path))
+    assert module.map_frame == "map/v1"
+    module.open_locations()
+    module._load_premap(str(path))
+    assert module.premap is not None and len(module.premap) == 7
+    assert module.premap.frame_id == "map/v1"
+    assert list(module._locations) == ["dock"]
+
+
+def test_which_map_to_load():
+    """resolve_map: a lone named map, a picked one, several, and a recording from before names."""
+    one = ["/tf", "map/v1/cloud", "map/v1/named_locations"]
+    assert map_names(one) == {"v1": "map/v1/cloud"}
+    assert resolve_map(one, None, "named_locations") == (
+        "map/v1/cloud",
+        "map/v1",
+        "map/v1/named_locations",
+    )
+    # a named map with no locations of its own falls back to the flat stream
+    assert resolve_map(["map/v1/cloud"], None, "named_locations") == (
+        "map/v1/cloud",
+        "map/v1",
+        "named_locations",
+    )
+    # nothing named: the one flat map, and no name to take a frame from
+    assert resolve_map(["map_cloud", "/tf"], None, "named_locations") == (
+        "map_cloud",
+        None,
+        "named_locations",
+    )
+    # several maps: neither is "the" map, so say so instead of guessing
+    two = ["map/v1/cloud", "map/v2/cloud"]
+    assert sorted(map_names(two)) == ["v1", "v2"]
+    with pytest.raises(ValueError, match="2 maps in the recording"):
+        resolve_map(two, None, "named_locations")
+    # ... unless one is asked for by name, which also still names the frame
+    assert resolve_map(two, "map/v2/cloud", "named_locations") == (
+        "map/v2/cloud",
+        "map/v2",
+        "named_locations",
+    )
+    # an .mcap topic keeps its leading slash
+    assert resolve_map(["/map/v3/cloud"], None, "named_locations") == (
+        "/map/v3/cloud",
+        "map/v3",
+        "named_locations",
+    )
 
 
 def test_a_missing_file_loads_nothing(tmp_path):
