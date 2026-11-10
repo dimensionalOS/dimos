@@ -168,6 +168,7 @@ def write_asset_info(pxr: Pxr, prim: Prim, filename: str, base_dir: Path | None)
 
 
 _LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+LFS_POINTER = "an unfetched Git LFS pointer, not the file itself"
 
 
 def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
@@ -188,17 +189,32 @@ def unopenable_assets(usd: str, root: Path | str | None) -> dict[str, str]:
             unopenable[asset] = f"{type(error).__name__}: {error.strerror or error}"
             continue
         if head == _LFS_POINTER_PREFIX:
-            unopenable[asset] = "an unfetched Git LFS pointer, not the file itself"
+            unopenable[asset] = LFS_POINTER
     return unopenable
 
 
-def describe_unopenable_assets(unopenable: Mapping[str, str], *, what: str) -> str:
+def require_fetched_assets(
+    unopenable: Mapping[str, str], root: Path | str | None, *, what: str
+) -> None:
+    stubs = {asset: why for asset, why in unopenable.items() if why == LFS_POINTER}
+    if not stubs:
+        return
+    raise FileNotFoundError(
+        f"{describe_unopenable_assets(stubs, root, what=what)}\nNothing has to be downloaded "
+        f"twice: a checkout under GIT_LFS_SKIP_SMUDGE=1 writes pointers, and `git lfs checkout` "
+        f"turns the objects already in .git/lfs/objects back into files."
+    )
+
+
+def describe_unopenable_assets(
+    unopenable: Mapping[str, str], root: Path | str | None, *, what: str
+) -> str:
     shown = "\n".join(f"  {asset}\n    {why}" for asset, why in sorted(unopenable.items())[:5])
     more = f"\n  ... and {len(unopenable) - 5} more" if len(unopenable) > 5 else ""
-    prefix = _common_prefix(unopenable)
+    where = _common_parent(unopenable, root)
     fetch = (
-        f'\nIf they are in this checkout: git lfs pull --include="{prefix}*"'
-        if any("LFS" in why for why in unopenable.values()) and prefix
+        f'\nFetch them with: git lfs checkout "{where}"'
+        if any(why == LFS_POINTER for why in unopenable.values()) and where
         else ""
     )
     return (
@@ -208,9 +224,17 @@ def describe_unopenable_assets(unopenable: Mapping[str, str], *, what: str) -> s
     )
 
 
-def _common_prefix(assets: Mapping[str, str]) -> str:
-    parents = {str(Path(asset).parent) for asset in assets}
-    return f"{parents.pop()}/" if len(parents) == 1 else ""
+def _common_parent(assets: Mapping[str, str], root: Path | str | None) -> str:
+    base = Path(root) if root else None
+    parents = {
+        str(
+            (base / asset).parent
+            if base is not None and not Path(asset).is_absolute()
+            else Path(asset).parent
+        )
+        for asset in assets
+    }
+    return parents.pop() if len(parents) == 1 else ""
 
 
 def referenced_asset_paths(usd: str, root: Path | str | None = None) -> set[str]:
