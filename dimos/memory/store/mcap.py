@@ -319,6 +319,14 @@ class McapStore(Store):
     def list_streams(self) -> list[str]:
         return sorted((set(self._available) | set(self._streams)) - set(self._ambiguous))
 
+    def ambiguous_streams(self) -> dict[str, str]:
+        """Names two topics fold to, and why each is left out of :meth:`list_streams`.
+
+        Reading one is an error, so they are not listed and the rest of the file still opens. A
+        whole-file pass (a conversion) has to say what it left behind rather than drop it quietly.
+        """
+        return dict(self._ambiguous)
+
     def summary(self) -> str:
         """Base summary, tagging codecless streams with ``[raw bytes: <schema>]``."""
         lines = []

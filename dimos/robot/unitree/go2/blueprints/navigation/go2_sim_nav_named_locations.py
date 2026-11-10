@@ -15,13 +15,16 @@
 
 """go2-sim-nav with named map locations that outlive the run, kept by the premap relocalizer.
 
-A new map, where the locations get named::
+A new map, where the locations get named (the run records into its own ``memory.db``)::
 
-    dtk run go2-sim-nav-named-locations --record walk.db
+    dtk run go2-sim-nav-named-locations --record sqlite --record-topics 'tf,global_map,named_locations'
 
-Back on that map, relocalized against the recording's map_cloud, with the locations named in it::
+Build and name a map out of that recording in the Map Editor, then come back to it::
 
-    dtk run go2-sim-nav-named-locations --localmaprelocalization.map-file walk.db
+    dtk run go2-sim-nav-named-locations --localmaprelocalization.map-file <that recording>.db
+
+The stack's own cloud is on ``global_map``, so loading a recording that has no named map in it needs
+``--localmaprelocalization.cloud-stream global_map``.
 """
 
 from dimos.core.coordination.blueprints import autoconnect

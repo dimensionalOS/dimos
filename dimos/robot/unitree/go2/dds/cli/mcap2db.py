@@ -63,6 +63,9 @@ EXTRA_STREAMS = {
 
 def copy_streams(mcap: Path, dst: SqliteStore) -> None:
     src = McapStore(path=str(mcap), codecs=CODECS, streams={**STREAMS, **EXTRA_STREAMS})
+    for name, why in src.ambiguous_streams().items():
+        # not copied, and a whole file is being converted: say so rather than lose them silently
+        print(f"[mcap2db]   {name:20s} NOT COPIED: {why}", flush=True)
     for name in src.list_streams():
         s: Stream[Any] = src.stream(name)
         first = s.first() if s.count() else None
