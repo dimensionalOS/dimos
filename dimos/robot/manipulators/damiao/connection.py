@@ -69,6 +69,11 @@ class DamiaoConnectionConfig(ConnectionConfig):
     teach: bool = False
     state_rate_hz: float = Field(default=100.0, gt=0, allow_inf_nan=False)
     deadman_timeout_s: float = Field(default=0.1, gt=0, allow_inf_nan=False)
+    #: How old a target may be and still be written, in seconds, checked
+    #: against its local receipt and, when the command carries one, its
+    #: source timestamp. Defaults to ``deadman_timeout_s``: a target older
+    #: than the silence that halts the robot is never executed.
+    command_max_age_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _position_only(self) -> Self:
@@ -93,6 +98,16 @@ class DamiaoConnection(ConnectionModule):
         self._state_frame = ""
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
+        # The one pending target, by key: value, local receipt (monotonic)
+        # and source timestamp (wall clock, if the command carried one).
+        # Bounded by the number of command keys; the owner thread writes the
+        # newest value of each key, never a FIFO backlog.
+        self._pending_lock = threading.Lock()
+        self._pending: dict[str, tuple[float, float, float | None]] = {}
+        # Most keys ever pending at once, for observability and tests.
+        self._pending_max = 0
+        # Set by an accepted command to wake the owning thread at once.
+        self._write_wake = threading.Event()
 
     @property
     def joint_names(self) -> list[str]:
@@ -132,6 +147,8 @@ class DamiaoConnection(ConnectionModule):
             Module.start(self)
             self._session_id = uuid.uuid4().hex
             self._limits = limits_of(self.config)
+            self._invalidate_pending()
+            self._pending_max = 0
             self.connect()
             with self._hardware_lock:
                 arm = self._arm
@@ -168,6 +185,7 @@ class DamiaoConnection(ConnectionModule):
     @rpc
     def stop(self) -> None:
         self._stop_reading.set()
+        self._invalidate_pending()
         if (
             self._reader is not None
             and self._reader.is_alive()
@@ -203,7 +221,89 @@ class DamiaoConnection(ConnectionModule):
         except ValueError as error:
             self._report(str(error), rejection=True)
             return
-        self.command(values)
+        self.command(values, ts=msg.ts)
+
+    def _accept(self, values: Values, *, ts: float | None = None) -> None:
+        """Merge the command into the one pending target and wake the owner.
+
+        The callback never touches the SDK or waits for the hardware lock:
+        an accepted periodic setpoint is merged by key (a complete setpoint
+        overwrites every pending key, a partial update only its own), the
+        owning thread is woken, and the callback returns. Acceptance, and
+        with it the deadman restart, still happens here; the actual SDK
+        write is asynchronous from the caller's point of view and only ever
+        carries the newest pending value of each key, not a FIFO backlog.
+        Commands for a disconnected or faulted robot are dropped as before.
+        """
+        if not self._connected or self._fault is not None:
+            return
+        self._record_command()
+        receipt = time.monotonic()
+        with self._pending_lock:
+            for key, value in values.items():
+                self._pending[key] = (value, receipt, ts)
+            self._pending_max = max(self._pending_max, len(self._pending))
+        self._write_wake.set()
+
+    def _has_pending(self) -> bool:
+        with self._pending_lock:
+            return bool(self._pending)
+
+    def _take_fresh(self) -> Values:
+        """Pop the pending target, keeping only keys still fresh enough to write.
+
+        A key is fresh when its age by local receipt and, when the command
+        carried one, by source timestamp is within ``command_max_age_s`` (the
+        deadman budget by default). Ages are measured from the original
+        receipt, never re-stamped at dequeue. The source timestamp is the
+        publisher's wall clock, so that check assumes the commander and this
+        connection share a host or synchronized clocks; local receipt alone
+        cannot see how long a command queued upstream. Expired keys are
+        dropped and reported instead of executed, and an expiry never
+        restarts the deadman.
+        """
+        with self._pending_lock:
+            pending, self._pending = self._pending, {}
+        if not pending:
+            return {}
+        max_age = self.config.command_max_age_s or self.config.deadman_timeout_s
+        now_mono = time.monotonic()
+        now_wall = time.time()
+        fresh: Values = {}
+        expired = 0
+        for key, (value, receipt, ts) in pending.items():
+            if now_mono - receipt > max_age or (ts is not None and now_wall - ts > max_age):
+                expired += 1
+            else:
+                fresh[key] = value
+        if expired:
+            self._report(
+                f"{expired} pending target(s) expired before write (older than {max_age:.3f} s)",
+                rejection=True,
+            )
+        return fresh
+
+    def _flush_pending(self) -> None:
+        """Write the newest fresh pending target once, on the owning thread."""
+        values = self._take_fresh()
+        if not values:
+            return
+        with self._hardware_lock:
+            if self._arm is None or not self._connected:
+                return
+            try:
+                self.write(values)
+            except Exception as error:
+                self._report(f"write failed: {type(error).__name__}: {error}")
+                self._on_loop(self._disarm_deadman)
+                self._call_halt()
+
+    def _invalidate_pending(self) -> None:
+        """Drop every pending target and wake the owner, so nothing accepted
+        before a stop, fault or disable is written after it."""
+        with self._pending_lock:
+            self._pending = {}
+        self._write_wake.set()
 
     def write(self, values: Values) -> None:
         if self._fault is not None:
@@ -237,6 +337,7 @@ class DamiaoConnection(ConnectionModule):
 
     def _feedback_failed(self, error: Exception) -> None:
         self._fault = f"feedback failed: {type(error).__name__}: {error}"
+        self._invalidate_pending()
         self._report(self._fault)
         arm = self._arm
         if arm is not None:
@@ -246,9 +347,29 @@ class DamiaoConnection(ConnectionModule):
                 self._report(f"{self._fault}; disable failed: {disable_error}")
 
     def _read_loop(self) -> None:
+        """The one runtime owner of the SDK: write the newest target, read, repeat.
+
+        Every runtime SDK call (target writes, scheduled reads, and through
+        the hardware lock any safety halt) is serialized on this thread, so
+        no write thread competes with the reader for the lock. An accepted
+        command wakes the write at once instead of waiting for the next
+        sampling tick; the read still runs at its configured rate, and
+        because one flush drains the whole pending target, a command flood
+        can neither starve the read nor spin the loop.
+        """
         period = 1.0 / self.config.state_rate_hz
+        next_read = time.monotonic()
         while not self._stop_reading.is_set():
+            if not self._has_pending():
+                self._write_wake.wait(max(0.0, next_read - time.monotonic()))
+                self._write_wake.clear()
+            if self._stop_reading.is_set():
+                return
+            self._flush_pending()
             started = time.monotonic()
+            if started < next_read:
+                continue
+            next_read = started + period
             try:
                 with self._hardware_lock:
                     if self._arm is None or not self._connected:
@@ -271,4 +392,3 @@ class DamiaoConnection(ConnectionModule):
                     if self._fault is None:
                         self._feedback_failed(error)
                 return
-            self._stop_reading.wait(max(0.0, period - (time.monotonic() - started)))
