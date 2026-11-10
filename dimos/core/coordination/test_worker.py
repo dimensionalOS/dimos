@@ -343,6 +343,57 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
     module3.stop()
 
 
+def test_deploy_parallel_keeps_a_group_on_one_worker(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
+    modules = worker_manager.deploy_parallel(
+        [
+            (SimpleModule, global_config, {}),
+            (AnotherModule, global_config, {}),
+            (ThirdModule, global_config, {}),
+        ],
+        groups=[0, 0, None],
+    )
+
+    # The two grouped modules share one worker; the ungrouped one is alone.
+    assert sorted(worker.module_count for worker in worker_manager._workers) == [1, 2]
+
+    for module in modules:
+        module.stop()
+
+
+def test_deploy_parallel_groups_after_dedicated_workers_claim_their_own(
+    create_worker_manager,
+):
+    worker_manager = create_worker_manager(n_workers=2)
+    modules = worker_manager.deploy_parallel(
+        [
+            (SimpleModule, global_config, {}),
+            (HeavyModule, global_config, {}),
+            (AnotherModule, global_config, {}),
+        ],
+        groups=[0, None, 0],
+    )
+
+    # The dedicated module keeps a worker of its own; the grouped pair lands
+    # on the other one, even though its second member sorts after it.
+    dedicated = [worker for worker in worker_manager._workers if worker.dedicated]
+    assert [worker.module_count for worker in dedicated] == [1]
+    assert sorted(worker.module_count for worker in worker_manager._workers) == [1, 2]
+
+    for module in modules:
+        module.stop()
+
+
+def test_deploy_parallel_rejects_a_group_per_spec_mismatch(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+
+    with pytest.raises(ValueError, match="one entry per spec"):
+        worker_manager.deploy_parallel(
+            [(SimpleModule, global_config, {})],
+            groups=[0, 1],
+        )
+
+
 def test_collect_stats(create_worker_manager):
     from dimos.core.resource_monitor.monitor import StatsMonitor
 

@@ -69,6 +69,10 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
+    coordinator_seeed_b601_dm,
+    seeed_b601_dm_planner_coordinator,
+)
 
 CASES = [
     ("coordinator-makermods-metal", coordinator_makermods_metal),
@@ -88,6 +92,8 @@ CASES = [
     ("openyam-connection-control", openyam_connection_control),
     ("openarm-connection-control", openarm_connection_control),
     ("makermods-metal-connection-control", makermods_metal_connection_control),
+    ("coordinator-seeed-b601-dm", coordinator_seeed_b601_dm),
+    ("seeed-b601-dm-planner-coordinator", seeed_b601_dm_planner_coordinator),
 ]
 
 
@@ -107,6 +113,12 @@ def test_retained_entry_routes_every_task_through_its_connection(name, blueprint
     connection, coordinator = connections[0], coordinators[0]
     assert connection.module.deployment == "python"
     assert connection.kwargs["source"] == "arm"
+    # The shipped stack drives this connection from the coordinator's cycle,
+    # in one worker process, rather than over command/reading streams.
+    assert connection.kwargs["hosted"] is True
+    assert coordinator.module.hosted_connections is True
+    [group] = [group for group in blueprint.process_groups if coordinator.name in group]
+    assert set(group) == {coordinator.name, connection.name}
     assert coordinator.kwargs.get("hardware", []) == []
     joints = {f"arm/{name}" for name in connection.module.robot.joint_names}
     for task in coordinator.kwargs["tasks"]:
@@ -128,6 +140,9 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         # joint7 is closed at 0 m and fully open at -0.05 m.
         assert coordinator.task_invoke("arm_gripper", "set_normalized", {"values": [0.6]})
         rig.tick()
+        # The hosted cycle computes on the reading taken at the start of the
+        # tick, so the write it commands shows up in the next tick's feedback.
+        rig.tick()
         assert rig.positions == {
             **{f"arm/joint{i}": 0.0 for i in range(1, 7)},
             "arm/joint7": pytest.approx(-0.03),
@@ -143,6 +158,8 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         rig.tick()
         clock.return_value = 101.0
         rig.tick()
+        # Read back what the previous tick wrote, as the hosted cycle does.
+        rig.tick()
         assert rig.positions["arm/joint2"] == pytest.approx(-0.02)
         assert rig.positions["arm/joint7"] == pytest.approx(-0.03)
 
@@ -154,6 +171,7 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
     assert mock.kwargs["source"] == "arm"
+    assert mock.kwargs["hosted"] is True
     assert list(mock.kwargs["initial_positions"]) == [
         *[f"left_joint{i}" for i in range(1, 7)],
         *[f"right_joint{i}" for i in range(1, 7)],
@@ -175,7 +193,7 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     ]
     assert connection.module is OpenYamConnection
-    assert connection.kwargs == {"source": "arm", "teach": False}
+    assert connection.kwargs == {"source": "arm", "teach": False, "hosted": True}
     assert coordinator.kwargs["model"] == make_openyam_model_config(robot="arm").model
     assert coordinator.kwargs["zero_stiffness_joints"] == []
     assert blueprint.remapping_map == {

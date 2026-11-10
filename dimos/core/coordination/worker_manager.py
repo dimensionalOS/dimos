@@ -43,7 +43,7 @@ class WorkerManager(Protocol):
     def deploy_parallel(
         self,
         specs: Sequence[ModuleSpec],
-        groups: Sequence["Hashable | None"] | None = None,
+        groups: Sequence[Hashable | None] | None = None,
     ) -> list[ModuleProxyProtocol]:
         """Deploy every spec, keeping specs that share a group in one worker.
 

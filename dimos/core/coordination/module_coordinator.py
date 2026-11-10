@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 import dataclasses
 import importlib
@@ -280,7 +280,7 @@ class ModuleCoordinator(Resource):
                 specs_by_deployment[dep],
                 groups=None if groups is None else [group_keys[i] for i in indices],
             )
-            for index, module in zip(indices, deployed):
+            for index, module in zip(indices, deployed, strict=True):
                 results[index] = module
 
         try:
@@ -1058,17 +1058,18 @@ def _deploy_all_modules(
     deployments_by_group: dict[int, set[str]] = {}
     for index, group in enumerate(blueprint.process_groups):
         for name in group:
+            # A disabled module is not deployed; the rest of its group still
+            # shares a worker, which is all the active modules need.
+            atom = deployed_atoms.get(name)
+            if atom is None:
+                continue
             group_of[name] = index
-            deployments_by_group.setdefault(index, set()).add(
-                deployed_atoms[name].module.deployment
-            )
+            deployments_by_group.setdefault(index, set()).add(atom.module.deployment)
     spanning = sorted(
         index for index, deployments in deployments_by_group.items() if len(deployments) > 1
     )
     if spanning:
-        groups = ", ".join(
-            "+".join(blueprint.process_groups[index]) for index in spanning
-        )
+        groups = ", ".join("+".join(blueprint.process_groups[index]) for index in spanning)
         raise ValueError(
             f"same_process group(s) {groups} mix deployment types; one worker process "
             "runs a single deployment type, so split the group"

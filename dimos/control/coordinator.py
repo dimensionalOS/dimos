@@ -513,7 +513,10 @@ class ControlCoordinator(Module):
         """The connection module serving ``robot`` in this process, if any."""
         for name in local_modules():
             module = local_module(name)
-            if isinstance(module, ConnectionModule) and getattr(module.config, "source", None) == robot:
+            if (
+                isinstance(module, ConnectionModule)
+                and getattr(module.config, "source", None) == robot
+            ):
                 return module
         return None
 

@@ -105,6 +105,7 @@ def _forget_local_module(module: "ModuleBase") -> None:
         if _local_modules.get(name) is module:
             del _local_modules[name]
 
+
 if sys.version_info >= (3, 13):
     from typing import TypeVar
 else:

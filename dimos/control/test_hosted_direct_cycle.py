@@ -25,6 +25,7 @@ in process and once with real worker processes.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+import os
 import threading
 import time
 from typing import Any
@@ -80,7 +81,9 @@ class RecordingTransport:
     def publish(self, value: Any) -> None:
         self.broadcast(None, value)
 
-    def subscribe(self, callback: Callable[[Any], Any], selfstream: Any = None) -> Callable[[], None]:
+    def subscribe(
+        self, callback: Callable[[Any], Any], selfstream: Any = None
+    ) -> Callable[[], None]:
         self.subscribers.append(callback)
         return lambda: self.subscribers.remove(callback)
 
@@ -314,7 +317,7 @@ class HostedRobots(ControlCoordinator):
 def hosted_system() -> Iterator[ModuleCoordinator]:
     blueprint = autoconnect(
         HostedRobots.blueprint(
-            instance_name="ControlCoordinator",
+            instance_name="HostedDirectCheck",
             model=MOCK_MODEL,
             reading_timeout_s=10.0,
             tasks=[joint_trajectory_task(MOCK_JOINTS)],
@@ -328,17 +331,33 @@ def hosted_system() -> Iterator[ModuleCoordinator]:
     )
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
     built = ModuleCoordinator.build(blueprint, parsed)
+    manager: Any = built._managers["python"]
+    pids = [worker.pid for worker in manager.workers if worker.pid is not None]
+    assert pids, "the hosted pair must run in real worker processes"
     yield built
     built.stop()
+    for pid in pids:
+        wait_until(lambda pid=pid: not _process_alive(pid), timeout=5.0)
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 def test_a_real_worker_pair_runs_the_direct_cycle(hosted_system: ModuleCoordinator) -> None:
     coordinator = hosted_system.get_instance(HostedRobots)
     arm = hosted_system.get_instance(FakeArm)
 
-    wait_until(
-        lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()), timeout=10.0
-    )
+    # Both modules run in the same worker: no RPC hop between the cycle and
+    # the hardware it reads and writes.
+    manager: Any = hosted_system._managers["python"]
+    assert [worker.module_count for worker in manager.workers if worker.module_count] == [2]
+
+    wait_until(lambda: set(MOCK_JOINTS) <= set(coordinator.get_joint_positions()), timeout=10.0)
     now = coordinator.get_joint_positions()
     trajectory = JointTrajectory(
         joint_names=MOCK_JOINTS,

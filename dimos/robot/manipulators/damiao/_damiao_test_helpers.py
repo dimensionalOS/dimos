@@ -47,6 +47,12 @@ class LocalTransport(Transport[T], Generic[T]):
             assert self._messages, "No message arrived on this transport"
             return self._messages[-1]
 
+    @property
+    def count(self) -> int:
+        """How many messages have been broadcast so far."""
+        with self._lock:
+            return len(self._messages)
+
     def broadcast(self, selfstream: Stream[T] | None, value: T) -> None:
         with self._lock:
             self._messages.append(value)
@@ -93,7 +99,13 @@ class MockConnectionRig:
 
     def tick(self) -> None:
         assert self.coordinator._tick_loop is not None
+        before = self.readings.count
         self.coordinator._tick_loop._tick()
+        if self.connection.config.hosted:
+            # The hosted cycle writes the connection directly and queues the
+            # reading, which a background thread publishes.
+            wait_until(lambda: self.readings.count > before, timeout=2)
+            return
         command = self.commands
         expected = dict(zip(command.name, command.position, strict=True))
         wait_until(
@@ -155,6 +167,7 @@ def mock_connection_rig(
                 source="arm",
                 deadman_timeout_s=10,
                 initial_positions=dict(zip(names, positions, strict=True)),
+                hosted=True,
             )
             coordinator.config.model = model.with_renamed_joints(
                 {name: f"arm/{name}" for name in names}
@@ -172,8 +185,11 @@ def mock_connection_rig(
             connection.set_transport("position_command", commands)
             coordinator.start()
             connection.start()
-            wait_until(lambda: coordinator._connections["arm"].ready_for_control(), timeout=2)
             rig = MockConnectionRig(coordinator, connection, inputs, readings, commands)
+            # A hosted connection publishes nothing until the cycle reads it,
+            # so the first tick is what makes the source ready to control.
+            rig.tick()
+            wait_until(lambda: coordinator._connections["arm"].ready_for_control(), timeout=2)
             rig.tick()
             yield rig
         finally:

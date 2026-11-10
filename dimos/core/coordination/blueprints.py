@@ -227,17 +227,26 @@ class Blueprint:
         if unknown:
             raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
         unknown_groups = sorted(
-            {
-                name
-                for group in self.process_groups
-                for name in group
-                if name not in module_names
-            }
+            {name for group in self.process_groups for name in group if name not in module_names}
         )
         if unknown_groups:
             raise ValueError(
                 f"same_process references unknown modules: {', '.join(unknown_groups)}"
             )
+        grouped: dict[str, int] = {}
+        for index, group in enumerate(self.process_groups):
+            if len(set(group)) < 2:
+                raise ValueError(
+                    f"same_process group {index + 1} needs at least two distinct modules; "
+                    f"got {', '.join(group) or 'none'}"
+                )
+            for name in group:
+                if name in grouped:
+                    raise ValueError(
+                        f"{name!r} is in more than one same_process group; a module "
+                        "deploys into one worker"
+                    )
+                grouped[name] = index
 
     def cbor_encode(self) -> dict[str, Any]:
         state = {f.name: getattr(self, f.name) for f in fields(self)}
@@ -326,9 +335,7 @@ class Blueprint:
         )
         return replace(self, hosted_placements=(*self.hosted_placements, placement))
 
-    def same_process(
-        self, *modules: type[ModuleBase] | str
-    ) -> "Blueprint":
+    def same_process(self, *modules: type[ModuleBase] | str) -> "Blueprint":
         """Deploy these modules into one worker process.
 
         Use it for a module that drives another module's hardware inside its
@@ -350,7 +357,7 @@ class Blueprint:
                 "same_process needs at least two distinct modules; "
                 f"got {', '.join(names) or 'none'}"
             )
-        return replace(self, process_groups=self.process_groups + (names,))
+        return replace(self, process_groups=(*self.process_groups, names))
 
     def remappings(
         self,
@@ -536,10 +543,12 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         atom for atom in all_blueprints if getattr(atom.module, "hosted_direct", False)
     ]
     if hosted_coordinators and direct_connections:
-        implied = tuple(
-            atom.name for atom in (*hosted_coordinators, *direct_connections)
-        )
-        if len(set(implied)) == len(implied) and len(implied) >= 2 and implied not in all_process_groups:
+        implied = tuple(atom.name for atom in (*hosted_coordinators, *direct_connections))
+        if (
+            len(set(implied)) == len(implied)
+            and len(implied) >= 2
+            and implied not in all_process_groups
+        ):
             all_process_groups = (*all_process_groups, implied)
 
     return Blueprint(

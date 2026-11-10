@@ -67,9 +67,7 @@ class LatestPublisher:
         self._lock = threading.Lock()
         self._ready = threading.Event()
         self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._run, daemon=True, name="connection-telemetry"
-        )
+        self._thread = threading.Thread(target=self._run, daemon=True, name="connection-telemetry")
         self._thread.start()
 
     def submit(self, msg: JointState) -> None:
