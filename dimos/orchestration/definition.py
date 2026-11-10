@@ -34,6 +34,8 @@ from pydantic import (
     model_validator,
 )
 
+from dimos.orchestration.expressions import Environment, ExpressionError, kind_of
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -220,15 +222,65 @@ def _ancestry(name: str, by_name: dict[str, State]) -> list[State]:
     return chain
 
 
-def _step_problems(where: str, steps: list[Step], definition: StateMachineDefinition) -> list[str]:
+def _expression_problems(
+    at: str, source: str, env: Environment, kind: str | None = None
+) -> list[str]:
+    try:
+        expression = env.compile(source)
+    except ExpressionError as error:
+        return [f"{at}: {error}"]
+    if kind is not None and expression.kind not in (kind, "dyn"):
+        return [f"{at}: gives {expression.kind}, expected {kind}"]
+    return []
+
+
+def _value_problems(
+    at: str, value: JsonValue, env: Environment, kind: str | None = None
+) -> list[str]:
+    if isinstance(value, str):
+        return _expression_problems(at, value, env, kind)
+    if kind is not None and kind_of(value) != kind:
+        return [f"{at}: {value!r} is {kind_of(value)}, expected {kind}"]
+    return []
+
+
+def _args_problems(at: str, args: dict[str, JsonValue], env: Environment) -> list[str]:
+    return [
+        problem
+        for name, value in args.items()
+        for problem in _value_problems(f"{at}: {name}", value, env)
+    ]
+
+
+def _set_problems(
+    at: str,
+    assignments: dict[str, JsonValue],
+    definition: StateMachineDefinition,
+    env: Environment,
+) -> list[str]:
+    problems: list[str] = []
+    for var, value in assignments.items():
+        if var not in definition.vars:
+            problems.append(f"{at}: undeclared var {var!r}")
+        else:
+            problems += _value_problems(f"{at}: {var}", value, env, kind_of(definition.vars[var]))
+    return problems
+
+
+def _step_problems(
+    where: str, steps: list[Step], definition: StateMachineDefinition, env: Environment
+) -> list[str]:
     problems: list[str] = []
     for index, step in enumerate(steps):
+        at = f"{where} {index}"
         if isinstance(step, SetStep):
-            for var in step.set:
-                if var not in definition.vars:
-                    problems.append(f"{where} {index}: set: undeclared var {var!r}")
-        elif isinstance(step, PublishStep) and step.publish not in definition.outputs:
-            problems.append(f"{where} {index}: publish: undeclared output {step.publish!r}")
+            problems += _set_problems(f"{at}: set", step.set, definition, env)
+        elif isinstance(step, PublishStep):
+            if step.publish not in definition.outputs:
+                problems.append(f"{at}: publish: undeclared output {step.publish!r}")
+            problems += _value_problems(f"{at}: value", step.value, env)
+        else:
+            problems += _args_problems(f"{at}: args", step.args, env)
     return problems
 
 
@@ -263,6 +315,7 @@ def _problems(definition: StateMachineDefinition) -> list[str]:
         problems.append(f"machine: initial: {initial!r} is not a top-level state")
 
     allowed_events = {*DO_EVENTS, *definition.inputs, *definition.events}
+    env = Environment(definition.params, definition.vars, definition.inputs)
     for state in definition.states:
         where = f"state {state.name!r}"
         kids = children.get(state.name, [])
@@ -281,8 +334,10 @@ def _problems(definition: StateMachineDefinition) -> list[str]:
             for transition in ancestor.transitions
         ):
             problems.append(f"{where}: do: no do.failed transition on this state or a parent")
-        problems += _step_problems(f"{where}: entry", state.entry, definition)
-        problems += _step_problems(f"{where}: exit", state.exit, definition)
+        if state.do is not None:
+            problems += _args_problems(f"{where}: do: args", state.do.args, env)
+        problems += _step_problems(f"{where}: entry", state.entry, definition, env)
+        problems += _step_problems(f"{where}: exit", state.exit, definition, env)
         for index, transition in enumerate(state.transitions):
             at = f"{where}: transition {index}"
             if transition.to is not None and transition.to not in by_name:
@@ -291,10 +346,12 @@ def _problems(definition: StateMachineDefinition) -> list[str]:
                 problems.append(
                     f"{at}: event: {transition.event!r} is not a do event, an input or a declared event"
                 )
-            for var in transition.set:
-                if var not in definition.vars:
-                    problems.append(f"{at}: set: undeclared var {var!r}")
-            problems += _step_problems(f"{at}: run", transition.run, definition)
+            if transition.guard is not None:
+                problems += _expression_problems(f"{at}: if", transition.guard, env, "bool")
+            if transition.when is not None:
+                problems += _expression_problems(f"{at}: when", transition.when, env, "bool")
+            problems += _set_problems(f"{at}: set", transition.set, definition, env)
+            problems += _step_problems(f"{at}: run", transition.run, definition, env)
     return problems
 
 

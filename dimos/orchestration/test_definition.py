@@ -21,6 +21,7 @@ from dimos.orchestration.definition import (
     PublishStep,
     load_definition,
 )
+from dimos.orchestration.expressions import Environment
 
 MACHINES = Path(__file__).parent / "cases" / "machines"
 
@@ -58,3 +59,20 @@ def test_m20_patrol_loads() -> None:
     stop, notice = states["help"].entry
     assert isinstance(stop, CallStep) and stop.call == "robot.stop_movement"
     assert isinstance(notice, PublishStep) and notice.publish == "notice"
+
+
+def test_m20_expressions_evaluate() -> None:
+    definition = load_definition(MACHINES / "m20_patrol.toml")
+    env = Environment(definition.params, definition.vars, definition.inputs)
+    scope = env.scope({**definition.vars, "wp": 2}, {}, {"reason": "blocked"})
+
+    assert env.compile("params.waypoints[vars.wp].x").evaluate(scope) == 18.4
+    assert env.compile("(vars.wp + 1) % size(params.waypoints)").assign(scope, 2) == 0
+    assert env.compile("'startup: ' + event.reason").evaluate(scope) == "startup: blocked"
+
+    resume = env.compile("inputs.battery.percentage >= params.resume_battery")
+    assert resume.test(scope) is False
+    charged = env.scope(definition.vars, {"battery": {"percentage": 0.95}}, {})
+    assert resume.test(charged) is True
+
+    assert env.compile("params.waypoints[0].x").assign(scope, 7) == 7
