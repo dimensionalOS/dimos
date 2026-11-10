@@ -1309,7 +1309,13 @@ class TestJointTrajectoryTask:
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
         refused = trajectory_task.execute(simple_trajectory, start)
         assert refused.status is TrajectoryExecutionStatus.ESTOPPED
-        streamed = JointState(name=["arm/joint1"], position=[0.1])
+        streamed = JointState(
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+            name=["arm/joint1"],
+            position=np.asarray([0.1], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
         assert not trajectory_task.on_joint_command(streamed, t_now=0.0)
 
         trajectory_task.set_estop(False)
