@@ -61,6 +61,8 @@ class GripperControlTaskConfig:
     priority: int = 10
     hold_duration: float = 0.0
     open_at: OpenAt = "upper"
+    require_feedback: bool = False
+    accept_broadcast: bool = True
 
 
 class GripperControlTask(BaseControlTask):
@@ -101,6 +103,7 @@ class GripperControlTask(BaseControlTask):
         # Commands without the coordinator clock are stamped on the next tick.
         self._stamp_pending = False
         self._estopped = False
+        self._target_emitted = False
         self._measured: dict[str, float] = {}
 
     def claim(self) -> ResourceClaim:
@@ -124,8 +127,19 @@ class GripperControlTask(BaseControlTask):
         }
 
         with self._lock:
-            if measured:
-                self._measured = measured
+            # Replace, never merge: a joint that fell out of the snapshot is
+            # gone from the readback too, not kept at its last value.
+            self._measured = measured
+            if self._config.require_feedback and len(measured) != len(self._joint_names):
+                if self._target is not None and self._target_emitted:
+                    logger.warning(
+                        "Dropping the gripper target: feedback missing",
+                        task=self._name,
+                        joints=[n for n in self._joint_names if n not in measured],
+                    )
+                    self._target = None
+                    self._stamp_pending = False
+                return None
             if self._estopped or self._target is None:
                 return None
             if self._stamp_pending:
@@ -135,8 +149,10 @@ class GripperControlTask(BaseControlTask):
             if hold > 0.0 and (state.t_now - self._target_set_at) > hold:
                 # Hold expired; ConnectedHardware keeps re-sending the last value.
                 self._target = None
+                self._target_emitted = False
                 return None
             target = list(self._target)
+            self._target_emitted = True
 
         return JointCommandOutput(
             joint_names=list(self._joint_names),
@@ -209,6 +225,8 @@ class GripperControlTask(BaseControlTask):
 
     def on_gripper_command(self, msg: Float32, t_now: float) -> bool:
         """Apply one normalized opening to every joint owned by the task."""
+        if not self._config.accept_broadcast:
+            return False
         return self.set_normalized([float(msg.data)] * len(self._joint_names), t_now)
 
     def _validate_values(
@@ -243,6 +261,7 @@ class GripperControlTask(BaseControlTask):
             if self._estopped:
                 return False
             self._target = target
+            self._target_emitted = False
             if t_now is None:
                 self._stamp_pending = True
             else:
@@ -256,6 +275,8 @@ class GripperControlTaskParams(BaseConfig):
 
     hold_duration: float = 0.0
     open_at: OpenAt = "upper"
+    require_feedback: bool = False
+    accept_broadcast: bool = True
 
 
 def _resolve_limits(
@@ -332,6 +353,8 @@ def create_task(
             priority=cfg.priority,
             hold_duration=params.hold_duration,
             open_at=params.open_at,
+            require_feedback=params.require_feedback,
+            accept_broadcast=params.accept_broadcast,
         ),
         limits=_resolve_limits(cfg, hardware, connections or {}),
     )

@@ -91,6 +91,26 @@ DEFAULT_TASKS = [
 ]
 
 
+#: The gripper tasks the manipulation blueprint wires: one per jaw,
+#: feedback-gated, refusing the unscoped broadcast.
+GRIPPER_TASKS = [
+    TaskConfig(
+        name="r1pro_left_gripper",
+        type="gripper",
+        joint_names=["r1pro/left_gripper"],
+        priority=10,
+        params={"require_feedback": True, "accept_broadcast": False},
+    ),
+    TaskConfig(
+        name="r1pro_right_gripper",
+        type="gripper",
+        joint_names=["r1pro/right_gripper"],
+        priority=10,
+        params={"require_feedback": True, "accept_broadcast": False},
+    ),
+]
+
+
 class Rig:
     """A hand-stepped ``R1ProCoordinator`` wired to ``R1ProConnection`` ports."""
 
@@ -103,6 +123,8 @@ class Rig:
         self.imus = LocalTransport()
         # The public twist bus, as teleop/nav publishers see it.
         self.twist_bus = LocalTransport()
+        self.gripper_bus = LocalTransport()
+        coordinator.set_transport("gripper_command", self.gripper_bus)  # type: ignore[arg-type]
         coordinator.set_transport("twist_command", self.twist_bus)  # type: ignore[arg-type]
         coordinator.set_transport("r1pro_position_command", self.position_commands)  # type: ignore[arg-type]
         coordinator.set_transport("r1pro_velocity_command", self.base_commands)  # type: ignore[arg-type]
@@ -229,9 +251,7 @@ def rig(mocker: Any, fake_ros: FakeRos) -> Iterator[Callable[..., Rig]]:
         coordinator = R1ProCoordinator(
             instance_name="ControlCoordinator",
             tick_rate=100,
-            connections=[R1ProConnectionConfig()],
-            tasks=list(DEFAULT_TASKS),
-            **config,
+            **{"connections": [R1ProConnectionConfig()], "tasks": list(DEFAULT_TASKS), **config},
         )
         made.append(Rig(coordinator, fake_ros))
         return made[-1]
@@ -251,7 +271,12 @@ def test_the_r1pro_is_one_connection_robot_with_18_joints_3_base_axes_and_no_ada
     r = rig()
     assert r.coordinator.list_hardware() == ["r1pro"]
     # The 18 upper-body joints in the flat vendor order, then the base axes.
-    assert r.coordinator.list_joints() == [*R1PRO_UPPER_BODY_JOINTS, *R1PRO_BASE_JOINTS]
+    assert set(r.coordinator.list_joints()) == {
+        *R1PRO_UPPER_BODY_JOINTS,
+        *R1PRO_BASE_JOINTS,
+        "r1pro/left_gripper",
+        "r1pro/right_gripper",
+    }
     # The shipped tasks are reused as-is: one trajectory task, one velocity task.
     assert set(r.coordinator._tasks) == {"joint_trajectory", "vel_chassis"}
 
@@ -571,14 +596,134 @@ def test_every_r1pro_blueprint_is_registered_and_importable() -> None:
         assert hasattr(importlib.import_module(module_path), attr)
 
 
-def test_no_gripper_enters_the_control_path() -> None:
+def test_grippers_are_command_only_contract_joints_and_stay_out_of_planning() -> None:
     from dimos.control.contract.limits import limits, movable_joints
+    from dimos.robot.galaxea.r1pro.config import R1PRO_CONTROL_MODEL
     from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
 
-    # The gripper fingers stay welded out of the model, so no key, task
-    # joint, or stream drives them.
+    # Planning stays 18 DOF: no gripper is a movable joint of the planning
+    # model, so no trajectory ever carries a jaw.
     assert not any("gripper" in joint.name for joint in movable_joints(R1PRO_MODEL))
-    assert not any("gripper" in key for key in limits(R1ProConnectionConfig()))
     assert not any("gripper" in joint for joint in R1PRO_UPPER_BODY_JOINTS)
+    # The contract carries the jaws with the vendor's real opening range.
+    table = limits(R1ProConnectionConfig())
+    assert (table["r1pro/left_gripper/position"].lo, table["r1pro/left_gripper/position"].hi) == (
+        pytest.approx(0.0),
+        pytest.approx(0.1),
+    )
+    assert "r1pro/right_gripper/position" in table
+    # The coordinator model exposes them so tasks can drive them...
+    assert {joint.name for joint in movable_joints(R1PRO_CONTROL_MODEL)} >= {
+        "r1pro/left_gripper",
+        "r1pro/right_gripper",
+    }
+    # ...but the shipped control blueprint's tasks never do: an idle stack
+    # sends the jaws nothing.
     for task in DEFAULT_TASKS:
         assert not any("gripper" in joint for joint in task.joint_names)
+
+
+def _gripper_rig(rig: Callable[..., Rig], **config: Any) -> Rig:
+    """A coordinator with the manipulation blueprint's gripper tasks wired."""
+
+    config.setdefault("tasks", [*DEFAULT_TASKS, *GRIPPER_TASKS])
+    return rig(**config)
+
+
+def test_a_gripper_task_drives_only_its_own_jaw_through_the_whole_chain(
+    rig: Callable[..., Rig],
+) -> None:
+    from dimos.robot.galaxea.r1pro._connection_test_fakes import gripper_feedback
+
+    r = _gripper_rig(rig)
+    r.attach()
+    r.tick_until(lambda: bool(r.positions_sent()))
+
+    # Idle: the jaws are command-only — no hold, no zero-fill, no vendor target.
+    assert all("gripper" not in name for msg in r.position_commands.sent for name in msg.name)
+    assert r.fake.control.sent_to("/motion_target/target_position_gripper_left") == []
+    assert r.fake.control.sent_to("/motion_target/target_position_gripper_right") == []
+
+    # The unscoped broadcast is refused: one message can never move both sides.
+    from dimos.msgs.std_msgs.Float32 import Float32
+
+    r.gripper_bus.publish(Float32(data=0.5))
+    r.tick()
+    r.tick()
+    assert r.fake.control.sent_to("/motion_target/target_position_gripper_left") == []
+    assert r.fake.control.sent_to("/motion_target/target_position_gripper_right") == []
+
+    # The measured openings flow back: vendor mm on the feedback topics, 0-1
+    # normalized at the task.
+    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
+    r.fake.control.feed("/hdas/feedback_gripper_right", gripper_feedback(40.0))
+    r.tick_until(
+        lambda: r.coordinator.task_invoke("r1pro_left_gripper", "get_normalized", {})
+        == [pytest.approx(0.2)]
+    )
+    assert r.coordinator.task_invoke("r1pro_right_gripper", "get_normalized", {}) == [
+        pytest.approx(0.4)
+    ]
+
+    # Command the left jaw half open: task -> source -> connection -> its own
+    # vendor topic, in mm. The right jaw is untouched.
+    assert r.coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
+    r.tick_until(
+        lambda: bool(r.fake.control.sent_to("/motion_target/target_position_gripper_left"))
+    )
+    sent = r.fake.control.sent_to("/motion_target/target_position_gripper_left")
+    assert list(sent[-1].position) == [50.0]
+    assert r.fake.control.sent_to("/motion_target/target_position_gripper_right") == []
+
+
+def test_a_jaw_whose_feedback_drops_loses_its_target_and_is_not_replayed(
+    rig: Callable[..., Rig],
+) -> None:
+    from dimos.robot.galaxea.r1pro._connection_test_fakes import gripper_feedback
+
+    r = _gripper_rig(rig, reading_timeout_s=0.1)
+    r.attach(gripper_feedback_timeout_s=0.1)
+    r.tick_until(lambda: bool(r.positions_sent()))
+
+    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
+    r.tick_until(
+        lambda: r.coordinator.task_invoke("r1pro_left_gripper", "get_normalized", {})
+        == [pytest.approx(0.2)]
+    )
+    assert r.coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
+    r.tick_until(
+        lambda: bool(r.fake.control.sent_to("/motion_target/target_position_gripper_left"))
+    )
+    sent = r.fake.control.sent_to("/motion_target/target_position_gripper_left")
+    assert len(sent) == 1
+
+    # The jaw's feedback stops (the fake streams only the arms); the readback
+    # ages out, the task drops its latched target, and the intent is withdrawn.
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        r.tick()
+        time.sleep(0.01)
+
+    # Feedback returns — a transient failure between ticks. The interrupted
+    # intent is not replayed, even though the task's last command is known.
+    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
+    deadline = time.monotonic() + 0.3
+    while time.monotonic() < deadline:
+        r.tick()
+        time.sleep(0.01)
+    assert len(r.fake.control.sent_to("/motion_target/target_position_gripper_left")) == 1
+
+    # An explicit new command at the same opening goes through (the feedback
+    # is kept alive while it is issued — a single frame ages out fast).
+    assert r.coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
+    deadline = time.monotonic() + 5.0
+    while len(r.fake.control.sent_to("/motion_target/target_position_gripper_left")) < 2:
+        if time.monotonic() > deadline:
+            raise TimeoutError("the explicit new command was never sent")
+        r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
+        r.tick()
+        time.sleep(0.01)
+    assert [
+        list(msg.position)
+        for msg in r.fake.control.sent_to("/motion_target/target_position_gripper_left")
+    ] == [[50.0], [50.0]]

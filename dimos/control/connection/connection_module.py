@@ -60,6 +60,8 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
+    # Joints driven only by explicit task intent: no idle/hold command, optional feedback.
+    command_only_joints: frozenset[str] = frozenset()
     deadman_timeout_s: float = 0.1
 
 

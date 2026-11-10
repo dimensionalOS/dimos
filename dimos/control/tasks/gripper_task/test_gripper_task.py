@@ -248,3 +248,58 @@ def test_connection_gripper_requires_a_bounded_position_command(
     connection = source("arm", position=position, continuous=continuous)
     with pytest.raises(ValueError, match="position command|bounded position range"):
         create_task(_cfg(["arm/jaw"]), {}, connections={"arm": connection})
+
+
+def _gated_task() -> GripperControlTask:
+    return GripperControlTask(
+        "tool",
+        GripperControlTaskConfig(
+            joint_names=["arm/tool_joint"], require_feedback=True, accept_broadcast=False
+        ),
+        limits=[(0.0, 850.0)],
+    )
+
+
+def test_require_feedback_drops_the_latched_target_and_never_replays_it() -> None:
+    task = _gated_task()
+    assert task.set_normalized([0.5])
+    output = task.compute(_state(**{"arm/tool_joint": 100.0}))
+    assert output is not None and output.positions == [425.0]
+
+    # A snapshot that lost the joint drops the latched target...
+    assert task.compute(_state()) is None
+    # ...and feedback returning does not replay it: a new command is required.
+    assert task.compute(_state(**{"arm/tool_joint": 100.0})) is None
+    assert task.get_normalized() is not None  # the readback itself still works
+
+    assert task.set_normalized([0.5])
+    output = task.compute(_state(**{"arm/tool_joint": 100.0}))
+    assert output is not None and output.positions == [425.0]
+
+
+def test_the_measured_snapshot_is_replaced_never_merged() -> None:
+    task = _task()  # require_feedback off: the target survives, the readback does not
+    task.compute(_state(**{"arm/tool_joint": 425.0}))
+    assert task.get_normalized() == [0.5]
+
+    task.compute(_state())
+    assert task.get_normalized() is None
+
+
+def test_a_broadcast_refusing_task_ignores_the_unscoped_stream() -> None:
+    task = _gated_task()
+    assert task.on_gripper_command(Float32(data=0.5), 0.0) is False
+    assert task.compute(_state(**{"arm/tool_joint": 0.0})) is None
+    # Addressed directly, the same value works.
+    assert task.set_normalized([0.5])
+
+
+def test_a_command_latched_during_an_outage_goes_out_when_feedback_returns() -> None:
+    task = _gated_task()
+    # Latched with no live feedback: never sent, so it is held, not dropped —
+    # this is the explicit new command a recovered gripper waits for.
+    assert task.set_normalized([0.5])
+    assert task.compute(_state()) is None
+    assert task.compute(_state()) is None
+    output = task.compute(_state(**{"arm/tool_joint": 100.0}))
+    assert output is not None and output.positions == [425.0]

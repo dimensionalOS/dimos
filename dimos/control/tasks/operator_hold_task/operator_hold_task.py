@@ -184,6 +184,7 @@ class OperatorHoldTask(BaseControlTask):
                 name
                 for name, interfaces in state.joints.joint_command_interfaces.items()
                 if Interface.POSITION in interfaces
+                and name not in state.joints.command_only_joints
                 and (self._joint_names is None or name in self._joint_names)
             }
             self._held = {name: value for name, value in self._held.items() if name in eligible}

@@ -236,6 +236,7 @@ def r1pro_control(
                         source=declaration.source,
                         model=declaration.model,
                         joint_commands=declaration.joint_commands,
+                        command_only_joints=declaration.command_only_joints,
                         deadman_timeout_s=declaration.deadman_timeout_s,
                     )
                 ],

@@ -437,3 +437,59 @@ def test_declared_zero_stiffness_joints_are_kept_for_tasks() -> None:
 def test_declared_zero_stiffness_joint_must_be_in_the_model() -> None:
     with pytest.raises(ValueError, match="zero-stiffness joints.*arm/missing"):
         arm(zero_stiffness_joints=["arm/missing"])
+
+
+def test_declared_command_only_policy_preserves_feedback_without_idle_or_hold(monkeypatch) -> None:
+    from dimos.control.task import CoordinatorState
+    from dimos.control.tasks.operator_hold_task.operator_hold_task import OperatorHoldTask
+
+    clock = [100.0]
+    monkeypatch.setattr("dimos.control.connection_source.time.monotonic", lambda: clock[0])
+    source = ConnectionSource(
+        ConnectionConfig(
+            source="arm",
+            model=GRIPPER_MODEL,
+            joint_commands={J1: (Interface.POSITION,), GRIPPER: (Interface.POSITION,)},
+            command_only_joints=frozenset({GRIPPER}),
+        ),
+        ["position_command"],
+        ["joint_state"],
+        TIMEOUT,
+    )
+    source.on_message("joint_state", JointState(name=[J1], position=[0.3]))
+    assert source.ready_for_control()  # Optional gripper feedback does not gate the arm.
+    assert source.command({}) == {f"{J1}/position": 0.3}
+    source.on_message("joint_state", JointState(name=[GRIPPER], position=[0.05]))
+    snapshot = source.read_joints()
+    assert snapshot.joint_positions == {J1: 0.3, GRIPPER: 0.05}
+    hold = OperatorHoldTask()
+    hold.request("manual")
+    output = hold.compute(CoordinatorState(joints=snapshot))
+    assert output is not None and output.joint_names == [J1]
+    assert GRIPPER not in hold.claim().joints
+    assert source.command({GRIPPER: (0.04, ControlMode.POSITION)}) == {
+        f"{J1}/position": 0.3,
+        f"{GRIPPER}/position": 0.04,
+    }
+    assert source.command({}) == {f"{J1}/position": 0.3}
+    clock[0] += TIMEOUT + 0.01
+    source.on_message("joint_state", JointState(name=[J1], position=[0.3]))
+    assert GRIPPER not in source.read_joints().joint_positions
+    source.on_message("joint_state", JointState(name=[GRIPPER], position=[0.02]))
+    assert source.read_joints().joint_positions[GRIPPER] == 0.02
+    assert source.command({}) == {f"{J1}/position": 0.3}
+
+
+def test_command_only_policy_must_name_declared_joint() -> None:
+    with pytest.raises(ValueError, match="command_only_joints not declared"):
+        ConnectionSource(
+            ConnectionConfig(
+                source="arm",
+                model=GRIPPER_MODEL,
+                joint_commands={J1: (Interface.POSITION,)},
+                command_only_joints=frozenset({GRIPPER}),
+            ),
+            ["position_command"],
+            ["joint_state"],
+            TIMEOUT,
+        )
