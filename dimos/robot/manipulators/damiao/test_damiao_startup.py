@@ -12,35 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Readiness covers the complete startup transaction, including stream setup."""
+"""Readiness covers the complete hosted startup transaction."""
 
 import pytest
 
-from dimos.robot.manipulators.damiao import connection as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.utils.testing.waiting import wait_until
 
 
-@pytest.mark.parametrize("phase", ["subscription", "reader"])
-def test_failed_stream_setup_never_reports_ready(connection_class, boundary, mocker, phase):
+def test_failed_telemetry_setup_never_reports_ready(connection_class, boundary, mocker):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = connection_class()
-    commands, readings = LocalTransport(), LocalTransport()
-    module.set_transport("position_command", commands)
+    readings = LocalTransport()
     module.set_transport("joint_state", readings)
     observed = []
 
-    def refuse(*args, **kwargs):
+    def refuse():
         observed.append(module.status().connected)
-        raise RuntimeError("stream setup refused")
+        raise RuntimeError("telemetry setup refused")
 
-    if phase == "subscription":
-        mocker.patch.object(commands, "subscribe", side_effect=refuse)
-    else:
-        mocker.patch.object(common.threading.Thread, "start", side_effect=refuse)
+    mocker.patch.object(module, "_start_telemetry", side_effect=refuse)
     try:
-        with pytest.raises(RuntimeError, match="stream setup refused"):
+        with pytest.raises(RuntimeError, match="telemetry setup refused"):
             module.start()
         assert observed == [False]
         assert readings.sent == []
@@ -51,32 +45,18 @@ def test_failed_stream_setup_never_reports_ready(connection_class, boundary, moc
         module.stop()
 
 
-def test_first_state_follows_stream_setup_and_ready_log(connection_class, boundary, mocker):
+def test_first_state_follows_telemetry_setup_and_ready_log(connection_class, boundary, mocker):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = connection_class()
-    commands, readings = LocalTransport(), LocalTransport()
-    module.set_transport("position_command", commands)
+    readings = LocalTransport()
     module.set_transport("joint_state", readings)
-    starting = []
-    publishing = []
-    start_thread = common.threading.Thread.start
-    info = mocker.spy(common.logger, "info")
-
-    def start_reader(thread):
-        starting.append(module.status().connected)
-        start_thread(thread)
-
-    def receive(message):
-        publishing.append(module.status().connected)
-
-    mocker.patch.object(common.threading.Thread, "start", autospec=True, side_effect=start_reader)
-    readings.subscribe(receive)
+    info = mocker.spy(__import__("dimos.robot.manipulators.damiao.connection", fromlist=["logger"]).logger, "info")
     try:
         module.start()
-        wait_until(lambda: bool(publishing), timeout=2)
-        assert starting == [False]
-        assert all(publishing)
+        reading = module.read_measured()
+        module.publish_measured(reading)
+        wait_until(lambda: bool(readings.sent), timeout=2)
         assert readings.sent[0].name == [
             "arm/joint1",
             "arm/joint2",

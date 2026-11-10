@@ -14,8 +14,15 @@
 
 """Every retained entry uses one connection and one consistent deployed schema."""
 
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
+import dimos
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -182,6 +189,52 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     assert mock.kwargs["initial_positions"]["right_gripper"] == 0.0
     assert mock.kwargs["initial_positions"]["left_joint1"] == pytest.approx(0.0)
     assert (mock.name, "position_command") not in blueprint.remapping_map
+
+
+def test_shipped_metal_blueprint_runs_the_direct_cycle_in_real_workers(tmp_path):
+    """The shipped stack, real workers, a fake native arm: one direct cycle.
+
+    Run in its own process: ``dimos/robot/manipulators/damiao/testing`` is put
+    first on ``PYTHONPATH`` so ``sitecustomize`` installs the fake CAN boundary
+    in the driver and, through the forkserver, in every worker before robot code
+    can run. The vendor transport constructors are sealed, so a boundary that
+    did not reach a worker fails there instead of touching hardware.
+    """
+    repo = Path(dimos.__file__).resolve().parents[1]
+    support = repo / "dimos/robot/manipulators/damiao/testing"
+    assert (support / "sitecustomize.py").is_file()
+    environment = dict(os.environ)
+    inherited = [part for part in environment.get("PYTHONPATH", "").split(os.pathsep) if part]
+    environment["PYTHONPATH"] = os.pathsep.join(
+        dict.fromkeys([str(support), str(repo), *inherited])
+    )
+    environment["DIMOS_FAKE_DAMIAO_LOG"] = str(tmp_path / "fake-native.jsonl")
+    environment["DIMOS_FAKE_DAMIAO_FAIL"] = str(tmp_path / "fake-native-fail")
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "dimos.robot.manipulators.damiao._shipped_worker_check"],
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-4000:]
+    lines = [line for line in completed.stdout.splitlines() if line.startswith("EVIDENCE:")]
+    assert lines, output[-4000:]
+    evidence = json.loads(lines[-1].removeprefix("EVIDENCE:"))
+
+    assert evidence["installed"] and evidence["fail_closed"]
+    assert evidence["module_counts"] == [2], evidence
+    assert evidence["same_cycle_and_thread"], evidence["read_write_pairs"]
+    assert len(evidence["writer_identities"]) == 1, evidence["writer_identities"]
+    assert evidence["wrote_target"]
+    assert evidence["status_connected"] and evidence["last_command_time"] is not None
+    assert evidence["last_error"] is None
+    assert evidence["deadman_fired_then_cleared"]
+    assert evidence["fault"].startswith("feedback failed:"), evidence["fault"]
+    assert evidence["workers_exited"]
 
 
 def test_blueprint_composition_is_coordinator_connection_and_remaps():

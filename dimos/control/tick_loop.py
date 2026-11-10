@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
+from dimos.control.connection.connection_module import ConnectionNotReady
 from dimos.control.connection_source import JOINT_STATE
 from dimos.control.task import (
     ControlTask,
@@ -313,6 +314,11 @@ class TickLoop:
                     continue
                 try:
                     reading = connection.read_measured()
+                except ConnectionNotReady:
+                    # The coordinator ticks as soon as it starts; the
+                    # connection in the same worker may still be connecting.
+                    logger.debug(f"{name} has not finished starting")
+                    continue
                 except Exception as e:
                     # The connection records the fault and stops commanding;
                     # its last reading stays in the state, as for a silence.

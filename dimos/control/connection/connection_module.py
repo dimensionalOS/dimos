@@ -155,6 +155,15 @@ class ConnectionStatus:
     last_error: str | None
 
 
+class ConnectionNotReady(RuntimeError):
+    """``read_measured`` was called before the connection finished starting.
+
+    A coordinator's cycle starts as soon as it can, and its worker starts the
+    connection in parallel, so the first reads can arrive while ``connect`` is
+    still running. That is not a hardware fault and must not latch one.
+    """
+
+
 class ConnectionModule(Module, ABC):
     """One robot: commands go through ``command``, and it halts when they stop.
 

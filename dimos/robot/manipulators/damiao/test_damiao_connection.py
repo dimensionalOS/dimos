@@ -281,7 +281,12 @@ def test_feedback_fault_reports_a_failing_disable(make_rig, boundary):
     module, _, _ = make_rig()
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].refresh_error = RuntimeError("lost feedback")
-    wait_until(lambda: module._fault is not None, timeout=2)
+    try:
+        module.read_measured()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("read_measured did not latch the feedback fault")
     assert "disable failed" in module.status().last_error
     boundary[0].disable_error = None
     boundary[0].refresh_error = None

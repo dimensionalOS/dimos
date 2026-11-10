@@ -7,8 +7,11 @@ adapters and registry entries. Seeed B601-DM and OpenYAM hand-guided collection
 use the same connection path: the generic Damiao whole-body adapter and its
 OpenYAM/Seeed compatibility factories are gone, so every Damiao robot now has
 one owner and one gain declaration.
-Direct-connection coordinators communicate through
-`position_command` and `joint_state` streams.
+Damiao connections are hosted directly: the coordinator in the same worker
+reads the connection at the start of each control tick and writes the
+arbitrated result in that same tick, with no command or reading message in
+between. `joint_state` remains the measured-telemetry port for other
+consumers.
 
 ## Run software tests first
 
@@ -66,8 +69,8 @@ The connection status must report `connected=True`, with no error or rejection.
 The coordinator must return 7 coordinates for Metal/YAM, or 16 for OpenArm.
 Mock mode echoes commanded positions. It does not simulate dynamics or contact.
 
-A connection reports ready only after calibration, feedback validation, command
-subscription, and reader startup succeed. Its ready log names the actual connection
+A connection reports ready only after calibration, feedback validation, and
+telemetry-publisher startup succeed. Its ready log names the actual connection
 class; `arm` is the deployed joint namespace. The coordinator waits for all initial
 connection readings before publishing aggregate state, so calibration does not send
 empty state frames to the planner.
@@ -111,8 +114,9 @@ app.ControlCoordinator.set_estop(True)
 app.MockJointConnection.status()
 ```
 
-The coordinator stops publishing commands. After the configured deadman
-interval, status reports `deadman_fired=True` and the mock holds its pose.
+The coordinator stops writing commands to the hosted connection. After the
+configured deadman interval, status reports `deadman_fired=True` and the mock
+holds its pose.
 `app.ControlCoordinator.set_estop(False)` resumes the command stream.
 
 Exit the shell, then stop the mock:

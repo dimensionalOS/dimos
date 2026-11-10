@@ -35,7 +35,12 @@ import uuid
 from pydantic import Field, model_validator
 from typing_extensions import Self
 
-from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule, Values
+from dimos.control.connection.connection_module import (
+    ConnectionConfig,
+    ConnectionModule,
+    ConnectionNotReady,
+    Values,
+)
 from dimos.control.contract.keys import Interface
 from dimos.control.contract.limits import limits as limits_of, movable_joints
 from dimos.core.core import rpc
@@ -201,6 +206,10 @@ class DamiaoConnection(ConnectionModule):
     def read_measured(self) -> JointState:
         """Read the arm's encoders now: the feedback a hosted cycle computes on."""
         with self._hardware_lock:
+            if not self._connected:
+                # The coordinator may tick while this module is still starting
+                # in the same worker. That is not a hardware fault.
+                raise ConnectionNotReady(f"{type(self).__name__} is not connected yet")
             if self._fault is not None:
                 raise RuntimeError(self._fault)
             reading = self._read_state()

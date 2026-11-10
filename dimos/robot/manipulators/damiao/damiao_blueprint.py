@@ -28,7 +28,7 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
@@ -40,6 +40,9 @@ class DamiaoCoordinator(ControlCoordinator):
     """One connection named arm, including a robot with two synchronized arms."""
 
     hosted_connections = True
+    #: Declares the position interface to ConnectionSource. A hosted cycle
+    #: writes the connection directly and does not publish commands here.
+    arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
@@ -49,6 +52,9 @@ class DamiaoTwistCoordinator(ArmTwistCoordinator):
     """End-effector twists and gripper inputs, with joint commands over streams."""
 
     hosted_connections = True
+    #: Declares the position interface to ConnectionSource. A hosted cycle
+    #: writes the connection directly and does not publish commands here.
+    arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
@@ -58,6 +64,7 @@ class DamiaoTeleopCoordinator(TeleopControlCoordinator):
     """WebXR inputs with a direct connection owning the robot."""
 
     hosted_connections = True
+    arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
 
 

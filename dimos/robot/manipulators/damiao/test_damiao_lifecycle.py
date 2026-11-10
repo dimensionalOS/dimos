@@ -39,6 +39,8 @@ from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
+from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.keys import Interface
 from dimos.utils.testing.waiting import wait_until
 
 _LFS = pytest.mark.self_hosted
@@ -97,7 +99,9 @@ def _rig(connection_type, ports, boundary, mocker, tmp_path, **kwargs):
         **kwargs,
     )
     commands, readings = LocalTransport(), LocalTransport()
-    module.set_transport("position_command", commands)
+    commands.subscribe(
+        lambda msg: module.command(joint_state_to_values(msg, (Interface.POSITION,)))
+    )
     module.set_transport("joint_state", readings)
     return module, commands, readings
 
@@ -116,6 +120,7 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
 
         module.start()
         assert "enable" in native.events
+        module.publish_measured(module.read_measured())
         wait_until(lambda: bool(readings.sent), timeout=2)
         assert readings.sent[0].name == [f"arm/{name}" for name in robot.joint_names]
 
@@ -140,7 +145,8 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
             assert rows[0, 4] == 0.0
         assert native.groups[jaw.name].commands[-1] == pytest.approx(0.5)
 
-        # The reader keeps publishing the fake feedback in declared order.
+        # A hosted read publishes the fake feedback in declared order.
+        module.publish_measured(module.read_measured())
         wait_until(lambda: len(readings.sent) > 1, timeout=2)
         assert readings.sent[-1].name == [f"arm/{name}" for name in robot.joint_names]
 
@@ -166,7 +172,12 @@ def test_fake_feedback_fault_disables_each_arm(connection_type, ports, boundary,
         commands.publish(
             JointState(name=[f"arm/{connection_type.robot.arm_joint_names[0]}"], position=[0.0])
         )
-        wait_until(lambda: module._fault is not None, timeout=2)
+        try:
+            module.read_measured()
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("read_measured did not latch the feedback fault")
         assert "feedback failed" in module._fault
         assert "disable" in native.events
         sent = sum(len(getattr(group, "commands", [])) for group in native.groups.values())

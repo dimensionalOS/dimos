@@ -30,6 +30,15 @@ from dimos.robot.manipulators.damiao.arm import DamiaoArm
 from dimos.utils.testing.waiting import wait_until
 
 
+def _read_until_fault(module):
+    """The hosted cycle is the only reader: one read must latch the fault."""
+    try:
+        module.read_measured()
+    except RuntimeError:
+        return
+    raise AssertionError("read_measured did not latch a feedback fault")
+
+
 def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, boundary):
     module, commands, readings = make_rig()
     native = boundary[0]
@@ -42,6 +51,8 @@ def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, bound
     assert native.groups["right_gripper"].commands == [pytest.approx(0.4)]
     commands.publish(JointState(name=["arm/joint1"], position=[0.6]))
     assert native.groups["left_arm"].commands[-1][1, 2] == -0.5
+    module.publish_measured(module.read_measured())
+    wait_until(lambda: readings.sent[-1].name[0] == "arm/joint1", timeout=2)
     assert readings.sent[-1].name == [
         "arm/joint1",
         "arm/joint2",
@@ -57,7 +68,7 @@ def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, bound
 def test_feedback_failure_disables_latches_and_blocks_commands(make_rig, boundary):
     module, commands, _ = make_rig()
     boundary[0].refresh_error = RuntimeError("lost feedback")
-    wait_until(lambda: module._fault is not None, timeout=2)
+    _read_until_fault(module)
     commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
     assert boundary[0].groups["left_arm"].commands == []
     assert "disable" in boundary[0].events
@@ -68,7 +79,7 @@ def test_feedback_failure_disables_latches_and_blocks_commands(make_rig, boundar
 def test_nonfinite_feedback_disables(make_rig, boundary, field):
     module, _, _ = make_rig()
     getattr(boundary[0].groups["left_arm"], field)[0] = float("nan")
-    wait_until(lambda: module._fault is not None, timeout=2)
+    _read_until_fault(module)
     assert "disable" in boundary[0].events
 
 
@@ -76,7 +87,7 @@ def test_gross_feedback_fault_disables_even_if_disable_fails(make_rig, boundary)
     module, _, _ = make_rig()
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].groups["left_arm"].q[0] = float("nan")
-    wait_until(lambda: module._fault is not None, timeout=2)
+    _read_until_fault(module)
     assert not module._arm.active
     boundary[0].disable_error = None
 
@@ -148,21 +159,21 @@ def test_write_failure_attempts_measured_hold(make_rig, boundary, mocker):
 def test_bad_gripper_feedback_latches(make_rig, boundary):
     module, _, _ = make_rig()
     boundary[0].groups["left_gripper"].opening = float("nan")
-    wait_until(lambda: module._fault is not None, timeout=2)
+    _read_until_fault(module)
     assert "invalid opening" in module._fault
 
 
 def test_wrong_feedback_length_latches(make_rig, boundary):
     module, _, _ = make_rig()
     boundary[0].groups["left_arm"].dq = np.zeros(1)
-    wait_until(lambda: module._fault is not None, timeout=2)
+    _read_until_fault(module)
     assert "wrong state length" in module._fault
 
 
 def test_tick_failure_latches_feedback_fault(make_rig, boundary):
     module, _, _ = make_rig()
     boundary[0].tick_error = RuntimeError("transport failed")
-    wait_until(lambda: module._fault is not None, timeout=2)
+    _read_until_fault(module)
     assert "transport failed" in module._fault
 
 
@@ -179,6 +190,7 @@ def test_a_reading_past_a_limit_is_published_as_measured(make_rig, boundary):
     module, _, readings = make_rig()
     past = math.pi + 0.001
     boundary[0].groups["left_arm"].q[0] = past
+    module.publish_measured(module.read_measured())
     wait_until(lambda: readings.sent[-1].position[0] == past, timeout=2)
     assert module._fault is None
     assert "disable" not in boundary[0].events
