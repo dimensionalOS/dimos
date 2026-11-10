@@ -37,7 +37,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from enum import Enum
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -51,7 +51,6 @@ from dimos.control.tasks.policy_execution import PolicyTask, PolicyTick
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     JOINT_ORDER,
-    PolicyManifest,
     load_manifest,
 )
 from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import (
@@ -75,28 +74,6 @@ if TYPE_CHECKING:
     from dimos.teleop.webxr.controller_types import Buttons
 
 logger = setup_logger()
-
-
-class PolicyRuntime(Protocol):
-    """The slice of :class:`MetalArmPolicyRuntime` the task depends on."""
-
-    manifest: PolicyManifest
-
-    def reset(
-        self, q_measured: NDArray[np.float32] | NDArray[np.float64] | None = None
-    ) -> None: ...
-
-    def observe(
-        self,
-        q: NDArray[np.float32] | NDArray[np.float64],
-        dq: NDArray[np.float32] | NDArray[np.float64],
-        goal_pose24: NDArray[np.float32] | NDArray[np.float64],
-    ) -> NDArray[np.float32]: ...
-
-    def act(self) -> NDArray[np.float32]: ...
-
-    @property
-    def issued(self) -> NDArray[np.float32]: ...
 
 
 class PolicyTaskFault(str, Enum):
@@ -168,7 +145,7 @@ class MetalArmPolicyTask(PolicyTask):
         name: str,
         config: MetalArmPolicyTaskConfig,
         *,
-        runtime: PolicyRuntime,
+        runtime: MetalArmPolicyRuntime,
         kinematics: StationKinematics,
         feedback_fresh: Callable[[], bool] | None = None,
         clock: Callable[[], float] = time.perf_counter,
@@ -198,12 +175,10 @@ class MetalArmPolicyTask(PolicyTask):
         self._goal: NDArray[np.float64] | None = None
         self._goal_received_at: float | None = None
 
+        self._input_timeout = (
+            config.goal_timeout_s if config.goal_timeout_s is not None else config.intent_timeout_s
+        )
         self._teleop = MetalTeleop(kinematics) if config.teleop else None
-
-    # ----------------------------------------------------------- coordinator API
-    def measured_frame_poses(self, state: CoordinatorState) -> dict[str, PoseStamped]:
-        """No published TF frames: the TCP sites are internal policy state."""
-        return {}
 
     # ------------------------------------------------------------- goal entries
     def set_goal_pose24(self, pose24: list[float], t_now: float | None = None) -> bool:
@@ -373,19 +348,14 @@ class MetalArmPolicyTask(PolicyTask):
             self._refresh_teleop_goal_locked(t_now)
         return True
 
-    def _input_timeout_s(self) -> float:
-        """Freshness bound for WebXR samples: the streamed-goal timeout."""
-        timeout = self._config.goal_timeout_s
-        return timeout if timeout is not None else self._config.intent_timeout_s
-
     def _teleop_inputs_fresh_locked(self, now: float) -> bool:
         """Every WebXR source must be fresh: both poses, buttons and both grips."""
-        return self._teleop is not None and self._teleop.input.fresh(now, self._input_timeout_s())
+        return self._teleop is not None and self._teleop.input.fresh(now, self._input_timeout)
 
     def _refresh_teleop_goal_locked(self, now: float) -> None:
         if self._teleop is None:
             return
-        updated = self._teleop.update(now, self._input_timeout_s())
+        updated = self._teleop.update(now, self._input_timeout)
         if updated is not None:
             # The older source bounds the goal's age; a live side cannot mask it.
             self._goal, self._goal_received_at = updated
@@ -448,7 +418,7 @@ class MetalArmPolicyTask(PolicyTask):
                 # An incomplete deadman is not a fault yet: wait for it, and
                 # let the engage request's own age bound expire it.
                 return None
-            if any(age > self._input_timeout_s() for age in ages):
+            if any(age > self._input_timeout for age in ages):
                 self._invalidate_locked(PolicyTaskFault.INTENT)
                 return None
             anchored = self._anchor_teleop_goal_locked(q, now)
@@ -475,7 +445,7 @@ class MetalArmPolicyTask(PolicyTask):
     ) -> NDArray[np.float64] | None:
         if self._teleop is None:
             return None
-        anchored = self._teleop.anchor(q, t_now, self._input_timeout_s())
+        anchored = self._teleop.anchor(q, t_now, self._input_timeout)
         if anchored is None:
             return None
         self._goal, self._goal_received_at = anchored
