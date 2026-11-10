@@ -37,7 +37,7 @@ from experimental.gateway.uploads import Uploads
 
 logger = setup_logger()
 
-API_VERSION = "8.3.0"
+API_VERSION = "8.5.0"
 
 
 @dataclass

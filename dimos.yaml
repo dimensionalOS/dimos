@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 8.3.0
+    version: 8.5.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -27,8 +27,9 @@ provides:
     /config:
       get:
         description: >-
-          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory): the one
-          answer to re-read after a `config` event on zenoh, so nothing has to read the file on a hot path
+          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory, and
+          blueprintView: the blueprint view's ratesPollS, pollWithoutEventsS and logMaxRecords from config.yaml's
+          `blueprint-view:`): the one answer to re-read after a `config` event on zenoh, so nothing has to read the file on a hot path
     /server/stop:
       post:
         summary: Stop this gateway (a running blueprint keeps running)
@@ -278,7 +279,8 @@ provides:
     /cloud/account:
       get:
         description: >-
-          The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks
+          The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks;
+          ?loginNot= (a login state) answers only once the login's state isn't that one, so a page waits instead of polling
     /cloud/login:
       post:
         summary: 'Start a device login: open the answer''s url and enter its code (cloud-login events follow it)'
