@@ -16,6 +16,7 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "a1z-keyboard-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_keyboard_teleop",
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
     "a1z-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_teleop",
     "alfred-keyboard-teleop": "dimos.robot.diy.alfred.blueprints.alfred_keyboard_teleop:alfred_keyboard_teleop",
@@ -224,6 +225,7 @@ all_blueprints = {
 all_modules = {
     "a1-z-connection": "dimos.robot.manipulators.a1z.connection.A1ZConnection",
     "a1-z-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic.A1ZCoordinator",
+    "a1-z-keyboard-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZKeyboardCoordinator",
     "a1-z-twist-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZTwistCoordinator",
     "agent": "dimos.agents.agent.Agent",
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",

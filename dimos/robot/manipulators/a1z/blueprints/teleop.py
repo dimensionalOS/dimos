@@ -121,26 +121,41 @@ class A1ZTwistCoordinator(ArmTwistCoordinator):
     arm_joint_state: In[JointState]
 
 
-# The connection module's ports, onto the coordinator's ports for the robot named "arm".
-_ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
-    (A1ZConnection, "position_command", "arm_position_command"),
-    (A1ZTwistCoordinator, "arm_joint_state", "joint_state"),
-]
+class A1ZKeyboardCoordinator(ArmTwistCoordinator):
+    """End-effector twists and gripper openings in, from the keyboard; one A1Z
+    named "arm" out, driven through ``A1ZConnection`` by joint targets."""
+
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
 
 
-def _teleop() -> Blueprint:
-    """Jog an A1Z's end and open and close its gripper from the Desktop
-    Manipulation app, through ``A1ZConnection``. ``UrdfManager`` serves the
-    A1Z's URDF and puts its joints on tf, so the app can draw it.
+def _remaps(coordinator: type[ModuleBase]) -> list[tuple[type[ModuleBase], str, str]]:
+    """The connection's ports, onto ``coordinator``'s ports for the robot named "arm"."""
+    return [
+        (A1ZConnection, "position_command", "arm_position_command"),
+        (coordinator, "arm_joint_state", "joint_state"),
+    ]
 
-    Wire it up with ``.remappings(_ARM_REMAPS)``. The CAN port is given at run
-    time, after the blueprint name (``--a1zconnection.can-port a1zcan``) or as
-    ``A1ZCONNECTION__CAN_PORT``.
+
+def _teleop(
+    coordinator: type[ArmTwistCoordinator], gripper_stream: str, *inputs: Blueprint
+) -> Blueprint:
+    """Jog an A1Z's end and open and close its gripper, through ``A1ZConnection``.
+    ``UrdfManager`` serves the A1Z's URDF and puts its joints on tf, so it can be drawn.
+
+    Wire it up with ``.remappings(_remaps(coordinator))``. The CAN port is given
+    at run time (``--a1zconnection.can-port a1zcan``) or as ``A1ZCONNECTION__CAN_PORT``.
+
+    Args:
+        coordinator: The coordinator class, with the input streams the teleop sends on.
+        gripper_stream: The stream that carries gripper openings (0 closed, 1 open).
+        inputs: The modules that send the twists and gripper openings, if any.
     """
     ik_model = make_a1z_model_config(robot="arm")
     model = a1z_model(robot="arm")
     return autoconnect(
-        A1ZTwistCoordinator.blueprint(
+        *inputs,
+        coordinator.blueprint(
             instance_name="ControlCoordinator",
             model=model,
             tasks=[
@@ -163,7 +178,7 @@ def _teleop() -> Blueprint:
                     type="gripper",
                     joint_names=["arm/gripper"],
                     priority=20,
-                    stream_bind={"gripper_command": "right_gripper_command"},
+                    stream_bind={"gripper_command": gripper_stream},
                 ),
             ],
         ),
@@ -173,4 +188,11 @@ def _teleop() -> Blueprint:
 
 
 # The blueprint registry finds a blueprint only by a line ending in a call like `.remappings`.
-a1z_teleop = _teleop().remappings(_ARM_REMAPS)
+# From the Desktop Manipulation app.
+a1z_teleop = _teleop(A1ZTwistCoordinator, "right_gripper_command").remappings(
+    _remaps(A1ZTwistCoordinator)
+)
+# From the keyboard, in a pygame window.
+a1z_keyboard_teleop = _teleop(
+    A1ZKeyboardCoordinator, "gripper_command", KeyboardTeleopModule.blueprint()
+).remappings(_remaps(A1ZKeyboardCoordinator))
