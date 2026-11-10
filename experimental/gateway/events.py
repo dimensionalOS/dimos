@@ -184,6 +184,40 @@ async def watch_launch(
         file_watch.cancel()
 
 
+async def watch_logs(
+    bus: Bus, dimos_dir: Path, debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS
+) -> None:
+    """Publishes a `log` event when a run's main.jsonl or the launch output grows (`run`: its id, or `launch`)."""
+    from experimental.gateway import logs
+
+    launch_dir = store.logs_dir()
+    run_roots = logs.logs_dirs(dimos_dir)
+    for directory in (launch_dir, *run_roots):
+        directory.mkdir(parents=True, exist_ok=True)
+    launch_file = launches.launch_log().resolve()
+    resolved_roots = [root.resolve() for root in run_roots]
+
+    def subject(path: str) -> str | None:
+        changed = Path(path)
+        if changed == launch_file:
+            return "launch"
+        if changed.name == "main.jsonl" and changed.parent.parent in resolved_roots:
+            return changed.parent.name
+        return None
+
+    try:
+        async for changes in watchfiles.awatch(
+            launch_dir,
+            *run_roots,
+            watch_filter=lambda _change, path: subject(path) is not None,
+            debounce=debounce_ms,
+        ):
+            for name in sorted({subject(path) for _, path in changes} - {None}):
+                bus.send({"type": "log", "run": name})
+    except Exception:
+        logger.exception("watching the logs failed")
+
+
 def is_blueprint_source(_change: watchfiles.Change, path: str) -> bool:
     """A .py file or a directory (a deleted one has no suffix either), outside __pycache__."""
     changed = Path(path)

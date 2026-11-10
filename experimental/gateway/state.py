@@ -110,9 +110,11 @@ def new_state(dimos_dir: Path, bus: events.Bus | None = None) -> State:
     store.serve(dimos_dir)
     uploads = Uploads(bus, store.gateway_dir() / "uploads.json")
     jobs = Jobs()
-    return State(
+    state = State(
         dimos_dir=dimos_dir, bus=bus, uploads=uploads, scanner=Scanner(dimos_dir, jobs), jobs=jobs
     )
+    state.process_stats.on_sample = lambda: bus.send({"type": "stats"})
+    return state
 
 
 def gateway_state(request: Request) -> State:
