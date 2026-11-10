@@ -947,3 +947,63 @@ def test_unopenable_assets_ignores_names_a_scene_published_for_the_bus() -> None
     published = _REFERENCING_LAYER.replace("meshes/", "/dimos/assets/room/")
 
     assert unopenable_assets(published, None) == {}
+
+
+_SCENE_WITH_ITS_OWN_SHADER = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+over "Shared"
+{
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1, 0, 0)
+    }
+}
+
+def Xform "room"
+{
+}
+"""
+
+_SUBTREE_WITH_AN_OUTSIDE_SHADER = """#usda 1.0
+(
+    defaultPrim = "arm_sub"
+)
+
+over "Shared"
+{
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0, 1, 0)
+    }
+}
+
+def Xform "arm_sub"
+{
+    def Material "paint" (
+        prepend references = </Shared>
+    )
+    {
+    }
+}
+"""
+
+
+def test_a_grafted_subtree_keeps_its_own_shaders_when_the_scene_has_prims_by_the_same_name() -> (
+    None
+):
+    from pxr import Gf
+
+    stage = _stage(graft_usd(_SCENE_WITH_ITS_OWN_SHADER, {"room": _SUBTREE_WITH_AN_OUTSIDE_SHADER}))
+
+    surface = stage.GetPrimAtPath("/room/arm_sub/paint/Surface")
+    assert surface, "the grafted material composed no shader at all"
+    assert surface.GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(0.0, 1.0, 0.0), (
+        "the grafted subtree is wearing the scene's shader instead of its own: a converted "
+        "asset keeps its shader networks beside its default prim, and grafting left the "
+        "reference pointing at whatever owns that path in the scene"
+    )
