@@ -174,3 +174,33 @@ def test_the_physics_and_the_tf_chain_place_a_frame_the_same(robot: str) -> None
             f"{robot}: {frame} faces somewhere else in physics than on tf"
         )
     assert compared > 10, f"{robot}: only {compared} frames compared, so this proves little"
+
+
+@pytest.mark.parametrize("robot", _ROBOTS)
+def test_no_mesh_is_left_in_the_converters_placeholder_grey(robot: str) -> None:
+    """A mesh that binds a material says that material's colour, not (0.5, 0.5, 0.5).
+
+    The converter writes a placeholder displayColor on every visual mesh, and a reader that
+    takes displayColor first -- the Controller does -- then draws a black-and-silver robot
+    flat grey. `scripts/mjcf_to_usd.py --repaint` puts the bound colour on the mesh; this is
+    the layer saying it was run.
+    """
+    from pxr import Usd, UsdShade
+
+    from dimos.sim2.usd_layer import usd_layer
+
+    stage = Usd.Stage.Open(str(usd_layer(_module(robot).usd)))
+    placeholder = []
+    for prim in stage.Traverse():
+        if prim.GetTypeName() != "Mesh":
+            continue
+        bound = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()[0]
+        if not bound or bound.GetPrim().GetAttribute("inputs:color").Get() is None:
+            continue
+        shown = prim.GetAttribute("primvars:displayColor").Get()
+        if shown is not None and all(abs(c - 0.5) < 1e-6 for c in tuple(shown[0])):
+            placeholder.append(str(prim.GetPath()))
+    assert not placeholder, (
+        f"{robot}: {len(placeholder)} mesh(es) still carry the converter's grey, e.g. "
+        f"{placeholder[:3]}; run `python scripts/mjcf_to_usd.py --repaint <layer>`"
+    )
