@@ -23,7 +23,7 @@ from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
+from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.sim import sim_module
@@ -84,7 +84,11 @@ def _walker(name: str) -> Blueprint:
 
 
 SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
-    {name: ("office_555", (x, y, HOME_HEIGHT), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
+    # On the floor, not at HOME_HEIGHT: that is where the *pelvis* sits once the home
+    # pose is struck, and the mount carries the robot's root, which is down at its feet.
+    # Spawning the root at pelvis height left it hanging 0.76 m up (pelvis at 1.548
+    # against a standing 0.793) to drop the moment physics began.
+    {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
 
