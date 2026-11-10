@@ -14,6 +14,7 @@
 
 import platform
 import sys
+from typing import cast
 
 import pytest
 
@@ -23,7 +24,9 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
     )
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.contract.limits import limits
+from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -38,7 +41,10 @@ from dimos.robot.manipulators.xarm.blueprints.teleop import (
     coordinator_teleop_xarm7,
     keyboard_teleop_xarm6,
     keyboard_teleop_xarm7,
+    xarm6_keyboard_teleop,
+    xarm7_keyboard_teleop,
 )
+from dimos.robot.manipulators.xarm.connection import XArmConfig, XArmConnection
 
 # Each blueprint's gripper joint: the adapter's "arm/gripper", or the URDF's
 # drive_joint behind XArmConnection.
@@ -58,7 +64,7 @@ def _coordinator_tasks(blueprint: Blueprint) -> list[TaskConfig]:
         for atom in blueprint.blueprints
         if isinstance(atom.module, type) and issubclass(atom.module, ControlCoordinator)
     )
-    return kwargs["tasks"]
+    return cast("list[TaskConfig]", kwargs["tasks"])
 
 
 @pytest.mark.parametrize(
@@ -94,3 +100,19 @@ def test_trajectory_accepts_gripper(blueprint: Blueprint) -> None:
     trajectory = next(task for task in _coordinator_tasks(blueprint) if task.type == "trajectory")
 
     assert "arm/gripper" in trajectory.joint_names
+
+
+@pytest.mark.parametrize("blueprint", [xarm6_keyboard_teleop, xarm7_keyboard_teleop])
+def test_connection_blueprint_shares_the_contract_declaration(blueprint: Blueprint) -> None:
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={}, overrides={"xarmconnection": {"ip": "192.0.2.1"}}
+    )
+    coordinator = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
+    connection = next(atom for atom in blueprint.blueprints if atom.module is XArmConnection)
+    config = ControlCoordinatorConfig.model_validate(parsed.module_kwargs(coordinator.name))
+    driver = XArmConfig.model_validate(parsed.module_kwargs(connection.name))
+    assert len(config.connections) == 1
+    assert limits(config.connections[0]) == limits(driver)
+    assert config.connections[0].model == driver.model

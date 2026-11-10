@@ -42,15 +42,18 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 
-BASE = "chassis/base"
+BASE = ("chassis/base_x", "chassis/base_y", "chassis/base_yaw")
 
 
-def test_a_twist_carries_forwards_leftwards_and_turning_only() -> None:
+@pytest.mark.parametrize("yaw", [0.0, math.pi / 2])
+def test_a_twist_carries_forwards_leftwards_and_turning_only(yaw: float) -> None:
     twist = Twist(linear=Vector3(0.5, 0.2, 9.0), angular=Vector3(9.0, 9.0, -0.3))
-    values = twist_to_values(twist, BASE)
-    assert values == {"chassis/base/vx": 0.5, "chassis/base/vy": 0.2, "chassis/base/wz": -0.3}
-    back = twist_from_values(values, BASE)
-    assert (back.linear.x, back.linear.y, back.linear.z) == (0.5, 0.2, 0.0)
+    values = twist_to_values(twist, BASE, yaw=yaw)
+    assert list(values.values()) == pytest.approx(
+        (0.5 * math.cos(yaw) - 0.2 * math.sin(yaw), 0.5 * math.sin(yaw) + 0.2 * math.cos(yaw), -0.3)
+    )
+    back = twist_from_values(values, BASE, yaw=yaw)
+    assert (back.linear.x, back.linear.y, back.linear.z) == pytest.approx((0.5, 0.2, 0.0))
     assert (back.angular.x, back.angular.y, back.angular.z) == (0.0, 0.0, -0.3)
 
 
@@ -100,6 +103,8 @@ def test_a_joint_state_from_values_fills_the_fields_every_joint_has() -> None:
 def test_motor_joints_are_the_models_moving_joints_named_in_full() -> None:
     model = fake_arm_model(("left_knee", "right_knee"))
     assert motor_joints(model, "g1") == ["g1/left_knee", "g1/right_knee"]
+    named = model.with_renamed_joints({"left_knee": "g1/left_knee", "right_knee": "g1/right_knee"})
+    assert motor_joints(named, "g1") == ["g1/left_knee", "g1/right_knee"]
 
 
 def test_a_motor_command_round_trips_in_joint_order() -> None:
@@ -127,23 +132,27 @@ def test_a_motor_command_of_the_wrong_size_or_missing_values_raises() -> None:
 @pytest.mark.parametrize("yaw", [0.0, 0.7, -2.5, math.pi])
 def test_a_pose_round_trips_through_x_y_and_yaw(yaw: float) -> None:
     pose = pose_from_values(
-        {"chassis/base/x": 1.0, "chassis/base/y": -2.0, "chassis/base/yaw": yaw},
+        {
+            "chassis/base_x/position": 1.0,
+            "chassis/base_y/position": -2.0,
+            "chassis/base_yaw/position": yaw,
+        },
         BASE,
         ts=3.0,
         frame_id="odom",
     )
     assert (pose.ts, pose.frame_id, pose.position.z) == (3.0, "odom", 0.0)
     values = pose_to_values(pose, BASE)
-    assert values["chassis/base/x"] == 1.0
-    assert values["chassis/base/y"] == -2.0
+    assert values["chassis/base_x/position"] == 1.0
+    assert values["chassis/base_y/position"] == -2.0
     # Facing exactly backwards may come back as +pi or -pi; both are the same.
-    assert math.cos(values["chassis/base/yaw"] - yaw) == pytest.approx(1.0)
+    assert math.cos(values["chassis/base_yaw/position"] - yaw) == pytest.approx(1.0)
 
 
 def test_pose_yaw_is_read_from_a_tilted_orientation() -> None:
     orientation = Quaternion.from_euler(Vector3(0.2, -0.1, 1.2))
     values = pose_to_values(PoseStamped(position=Vector3(0, 0, 0), orientation=orientation), BASE)
-    assert values["chassis/base/yaw"] == pytest.approx(1.2)
+    assert values["chassis/base_yaw/position"] == pytest.approx(1.2)
 
 
 def test_an_imu_round_trips_all_ten_readings() -> None:
@@ -161,9 +170,11 @@ def test_an_imu_round_trips_all_ten_readings() -> None:
 
 
 def test_from_values_names_what_is_missing() -> None:
-    with pytest.raises(ValueError, match=r"missing values \['chassis/base/wz'\]"):
-        twist_from_values({"chassis/base/vx": 0.0, "chassis/base/vy": 0.0}, BASE)
-    with pytest.raises(ValueError, match="chassis/base/yaw"):
-        pose_from_values({"chassis/base/x": 0.0, "chassis/base/y": 0.0}, BASE)
+    with pytest.raises(ValueError, match=r"missing values \['chassis/base_yaw/velocity'\]"):
+        twist_from_values(
+            {"chassis/base_x/velocity": 0.0, "chassis/base_y/velocity": 0.0}, BASE, yaw=0.0
+        )
+    with pytest.raises(ValueError, match="chassis/base_yaw/position"):
+        pose_from_values({"chassis/base_x/position": 0.0, "chassis/base_y/position": 0.0}, BASE)
     with pytest.raises(ValueError, match="g1/imu/qx"):
         imu_from_values({}, "g1/imu")

@@ -23,15 +23,20 @@ import tempfile
 
 import pytest
 
+from dimos.control._control_test_helpers import fake_arm_model
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.keys import Interface
+from dimos.control.contract.limits import movable_joints
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.utils.testing.waiting import wait_until
 
 J1 = "arm/joint1"
@@ -68,14 +73,43 @@ def arm(
     zero_stiffness_joints: Collection[str] = (),
 ) -> ConnectionSource:
     """The arm behind a connection module, with no reading yet."""
-    return ConnectionSource(
-        "arm", commands, readings, model, timeout, zero_stiffness_joints=zero_stiffness_joints
+    interfaces = tuple(
+        i
+        for port, i in (
+            ("position_command", Interface.POSITION),
+            ("velocity_command", Interface.VELOCITY),
+        )
+        if port in commands
     )
+    declaration = ConnectionConfig(
+        source="arm",
+        model=model,
+        joint_commands={
+            joint.name: interfaces
+            for joint in movable_joints(model)
+            if joint.name.startswith("arm/")
+        }
+        if model
+        else {"joint1": interfaces},
+    )
+    return ConnectionSource(declaration, commands, readings, timeout, zero_stiffness_joints=zero_stiffness_joints)
 
 
 def base(readings: Collection[str] = ("odom", "base_velocity")) -> ConnectionSource:
     """A base called "go2" that takes speeds and reports where it is and how fast it goes."""
-    return ConnectionSource("go2", ["cmd_vel"], readings, None, TIMEOUT)
+    names = ("go2/base_x", "go2/base_y", "go2/base_yaw")
+    model = fake_arm_model().with_planar_base(
+        PlanarBaseDefinition(
+            joint_names=names, velocity_limits=(1.0, 0.5, 2.0), acceleration_limits=(1.0, 1.0, 2.0)
+        )
+    )
+    config = ConnectionConfig(
+        source="go2",
+        model=model,
+        joint_commands={name: (Interface.VELOCITY,) for name in names},
+        twist_joints=names,
+    )
+    return ConnectionSource(config, ["cmd_vel"], readings, TIMEOUT)
 
 
 def reading(*positions: float) -> JointState:
@@ -246,18 +280,18 @@ def test_a_base_is_told_zero_on_every_axis_on_its_port() -> None:
     assert not source.ready_for_control()
     assert source.read_joints().joint_velocities == {}
     source.on_message("base_velocity", TwistStamped(linear=Vector3(0.4, 0.0, 0.0), frame_id="base"))
-    assert source.read_joints().joint_velocities["go2/base/vx"] == 0.4
-    assert source.read_joints().joint_positions == {}
+    assert source.read_joints().joint_velocities["go2/base_x"] == 0.4
+    assert source.read_joints().joint_positions == dict.fromkeys(source.joint_names, 0.0)
 
     values = source.command({})
     first, *rest = source.command_messages(values, ts=1.0)
     twist = first.message
 
     assert source.ready_for_control()
-    assert values == {"go2/base/vx": 0.0, "go2/base/vy": 0.0, "go2/base/wz": 0.0}
+    assert values == {f"{name}/velocity": 0.0 for name in source.joint_names}
     assert first.port == "cmd_vel" and rest == []
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-    assert source.joint_names == source.base_joint_names
+    assert source.joint_names == ["go2/base_x", "go2/base_y", "go2/base_yaw"]
 
 
 @pytest.mark.parametrize(
@@ -271,7 +305,7 @@ def test_invalid_velocity_alias_commands_are_rejected(
     mode: ControlMode, value: float, error: str
 ) -> None:
     with pytest.raises(ValueError, match=error):
-        base().command({"go2/base/vx": (value, mode)})
+        base().command({"go2/base_x": (value, mode)})
 
 
 def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
@@ -282,6 +316,87 @@ def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
     assert values[f"{J1}/velocity"] == 0.3
     assert values[f"{J2}/position"] == -0.2
     assert f"{J2}/velocity" not in values
+
+
+def test_planar_twist_binding_rotates_with_measured_yaw() -> None:
+    source = base()
+    with pytest.raises(ValueError, match="fresh readings"):
+        source.twist_values(Twist())
+    source.on_message(
+        "odom", PoseStamped(orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2)))
+    )
+    source.on_message("base_velocity", TwistStamped(linear=Vector3(0.4, 0, 0)))
+    assert source.read_joints().joint_positions["go2/base_yaw"] == pytest.approx(math.pi / 2)
+    assert source.read_joints().joint_velocities["go2/base_y"] == pytest.approx(0.4)
+    values = source.twist_values(Twist(linear=Vector3(0.4, 0, 0)))
+    assert values["go2/base_y/velocity"] == pytest.approx(0.4)
+    (message,) = source.command_messages(values, ts=1.0)
+    assert message.message.linear.x == pytest.approx(0.4)
+    assert message.message.linear.y == pytest.approx(0.0)
+
+
+def test_live_sensor_traffic_cannot_refresh_odometry(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr("time.monotonic", lambda: clock[0])
+    source = base(readings=("odom", "base_velocity", "imu"))
+    source.on_message("odom", PoseStamped())
+    source.on_message("base_velocity", TwistStamped())
+    source.on_message("imu", Imu(frame_id="imu"))
+    assert source.ready_for_control()
+    for _ in range(4):
+        clock[0] += 0.04
+        source.on_message("imu", Imu(frame_id="imu"))
+    assert not source.ready_for_control()
+    with pytest.raises(ValueError, match="fresh"):
+        source.twist_values(Twist())
+    with pytest.raises(ValueError, match="fresh odometry"):
+        source.command_messages(source.command({}), ts=1.0)
+    source.on_message("odom", PoseStamped())
+    source.on_message("base_velocity", TwistStamped())
+    assert source.ready_for_control()
+
+
+def test_joint_state_cannot_replace_odometry_for_twist_rotation() -> None:
+    source = base(readings=("odom", "joint_state"))
+    source.on_message(
+        "odom", PoseStamped(orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2)))
+    )
+    source.on_message("joint_state", JointState(name=["go2/base_yaw"], position=[0.0]))
+    assert source.read_joints().joint_positions["go2/base_yaw"] == pytest.approx(math.pi / 2)
+    values = source.command({"go2/base_y": (0.4, ControlMode.VELOCITY)})
+    (message,) = source.command_messages(values, ts=1.0)
+    assert (message.message.linear.x, message.message.linear.y) == pytest.approx((0.4, 0.0))
+
+
+@pytest.mark.parametrize("bad", [math.nan, math.inf])
+def test_nonfinite_odometry_cannot_produce_a_twist(bad: float) -> None:
+    source = base(readings=("odom",))
+    source.on_message("odom", PoseStamped(orientation=Quaternion(0, 0, bad, 1)))
+    assert not source.ready_for_control()
+    with pytest.raises(ValueError, match="odometry"):
+        source.command_messages(source.command({}), ts=1.0)
+
+
+def test_declaration_not_ports_authorizes_interfaces() -> None:
+    source = ConnectionSource(
+        ConnectionConfig(
+            source="arm",
+            model=ARM_MODEL,
+            joint_commands={J1: (Interface.POSITION,), J2: (Interface.VELOCITY,)},
+            clamp_commands=frozenset({f"{J2}/velocity"}),
+        ),
+        ["position_command", "velocity_command"],
+        ["joint_state"],
+        TIMEOUT,
+    )
+    source.on_message("joint_state", reading(0.2, -0.2))
+    assert source.command({J2: (0.3, ControlMode.VELOCITY)}) == {
+        f"{J1}/position": 0.2,
+        f"{J2}/velocity": 0.3,
+    }
+    assert source.command({J2: (9.0, ControlMode.VELOCITY)})[f"{J2}/velocity"] == 2.0
+    with pytest.raises(ValueError, match="cannot be told its velocity"):
+        source.command({J1: (0.3, ControlMode.VELOCITY)})
 
 
 def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> None:
@@ -325,12 +440,19 @@ def test_a_robot_it_cannot_drive_is_refused() -> None:
         arm(commands=("motor_command",))
     with pytest.raises(ValueError, match="cannot be held"):
         arm(commands=("position_command",), readings=("odom",))
-    with pytest.raises(ValueError, match="cannot be held"):
+    with pytest.raises(ValueError, match="told nothing"):
         arm(commands=("cmd_vel",), readings=("joint_state",))
     with pytest.raises(ValueError, match="no model"):
         arm(model=None)
-    with pytest.raises(ValueError, match="no movable joint named nobody/"):
-        ConnectionSource("nobody", ["position_command"], ["joint_state"], ARM_MODEL, TIMEOUT)
+    with pytest.raises(ValueError, match="another source"):
+        ConnectionSource(
+            ConnectionConfig(
+                source="nobody", model=ARM_MODEL, joint_commands={J1: (Interface.POSITION,)}
+            ),
+            ["position_command"],
+            ["joint_state"],
+            TIMEOUT,
+        )
 
 
 def test_a_reading_in_another_robots_frame_is_dropped() -> None:

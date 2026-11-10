@@ -537,40 +537,19 @@ class TickLoop:
         publish = self._connection_command_callback
         if publish is None:
             return
-        from dimos.control.tasks.operator_hold_task.operator_hold_task import OperatorHoldTask
-
         now = time.monotonic()
         with self._hardware_lock:
             for name, source in self._connections.items():
                 if not source.ready_for_control(now):
                     self._note_silence(name, source, now)
                     continue
-                # Check each publication, after readiness and while holding the
-                # same hardware lock as the write, not before waiting on it.
-                with self._task_lock:
-                    hold_tokens = tuple(
-                        token
-                        for task in self._tasks.values()
-                        if isinstance(task, OperatorHoldTask)
-                        if (token := task._hold_token()) is not None
-                    )
-                holding = bool(hold_tokens)
-                winners: dict[str, tuple[float, ControlMode]] = {}
-                # An operator hold is a safety state, not a mixed-mode task:
-                # let the source stop each resource by its capabilities.
-                if not holding:
-                    for joint, (value, mode, _) in joint_commands.items():
-                        if self._joint_to_hardware.get(joint) == name:
-                            winners[joint] = (value, mode)
+                winners = {
+                    joint: (value, mode)
+                    for joint, (value, mode, _) in joint_commands.items()
+                    if self._joint_to_hardware.get(joint) == name
+                }
                 try:
-                    publish(
-                        name,
-                        source.command(
-                            winners,
-                            holding=holding,
-                            hold_token=hold_tokens,
-                        ),
-                    )
+                    publish(name, source.command(winners))
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 

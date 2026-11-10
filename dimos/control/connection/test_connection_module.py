@@ -132,7 +132,7 @@ class Watched(FakeArm):
 @pytest.mark.parametrize(
     ("config", "match"),
     [
-        ({"joint_commands": ()}, "told nothing"),
+        ({"joint_commands": {}}, "told nothing"),
         ({"model": None}, "no model"),
     ],
 )

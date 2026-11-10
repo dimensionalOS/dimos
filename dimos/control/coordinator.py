@@ -44,7 +44,8 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
-from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
+from dimos.control.connection.connection_module import ConnectionConfig
+from dimos.control.connection_source import CMD_VEL, COMMAND_PORTS, READING_PORTS, ConnectionSource
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -73,7 +74,6 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.model import RobotModel
 from dimos.simulation.engines.spec import MujocoSimSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -115,10 +115,9 @@ class ControlCoordinatorConfig(ModuleConfig):
     # simulated adapters stay, so one saved robot configuration serves both.
     addresses: dict[str, str] = field(default_factory=dict)
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
-    # The model the robots driven through connection modules get their joints
-    # and position limits from; its joints are named "<robot>/<joint>". See
-    # ControlCoordinator for how those robots are named.
-    model: RobotModel | None = None
+    # The connection declarations used by blueprint assembly. Ports select
+    # transports, never capabilities; each source needs exactly one declaration.
+    connections: list[ConnectionConfig] = field(default_factory=list)
     # How old a robot's newest reading may be, in seconds, before it is no
     # longer commanded.
     reading_timeout_s: float = 0.2
@@ -150,17 +149,18 @@ class ControlCoordinator(Module):
             go2_cmd_vel: Out[Twist]
             go2_odom: In[PoseStamped]
 
-        autoconnect(Go2Coordinator.blueprint(), Go2Connection.blueprint()).remappings([
+        autoconnect(Go2Coordinator.blueprint(connections=[declaration]),
+                    Go2Connection.blueprint(**declaration.model_dump())).remappings([
             (Go2Connection, "cmd_vel", "go2_cmd_vel"),
             (Go2Coordinator, "go2_odom", "odom"),
         ])
 
     The kinds are listed in ``connection_source.COMMAND_PORTS`` and
-    ``READING_PORTS``. Joints and their limits come from ``config.model``,
-    named ``<robot>/<joint>``; a base alone needs no model. A robot with a
-    ``cmd_vel`` port takes base speeds too: tasks claim its axes
-    (``go2/base/vx``, ...) and win them in arbitration like joints, and an
-    axis no task drives is told 0. A robot is
+    ``READING_PORTS``. Joints, interfaces and bounds come from the same
+    ``config.connections`` declarations supplied to the connections. Ports do
+    not grant capabilities. A Twist transport explicitly binds model joints
+    (e.g. ``r1pro/base_x``) and rotates world-frame velocities using real
+    odometry yaw. Velocity-only joints no task drives get zero. A robot is
     commanded every tick once it has reported, and not while its newest
     reading is older than ``config.reading_timeout_s``. In a fleet, each
     connection module sets ``frame_id_prefix`` to its robot's name so
@@ -437,19 +437,25 @@ class ControlCoordinator(Module):
         readings = _robot_ports(self.inputs, READING_PORTS)
         robots = list(dict.fromkeys((*commands, *readings)))
         if not robots:
+            if self.config.connections:
+                raise ValueError("connection declarations require matching robot ports")
             return
         if self.config.hardware:
             raise ValueError(
                 f"{type(self).__name__} has hardware adapters and ports for robots {robots}; "
                 "a coordinator drives one or the other, not both"
             )
+        declarations = {config.source: config for config in self.config.connections}
+        if len(declarations) != len(self.config.connections) or declarations.keys() != set(robots):
+            raise ValueError(
+                "robot ports require exactly one matching connection declaration per source"
+            )
         with self._hardware_lock:
             for robot in robots:
                 source = ConnectionSource(
-                    robot,
+                    declarations[robot],
                     commands.get(robot, []),
                     readings.get(robot, []),
-                    self.config.model,
                     self.config.reading_timeout_s,
                     zero_stiffness_joints=[
                         joint
@@ -767,7 +773,7 @@ class ControlCoordinator(Module):
                 has_base = any(
                     hw.component.hardware_type == HardwareType.BASE
                     for hw in self._hardware.values()
-                ) or any(source.base_joint_names for source in self._connections.values())
+                ) or any(CMD_VEL in source.command_ports for source in self._connections.values())
             if has_base:
                 active.add("twist_command")
             for stream in active - self._stream_unsubs.keys():
@@ -865,14 +871,14 @@ class ControlCoordinator(Module):
                     value = getattr(getattr(msg, group), axis)
                     names.append(joint_name)
                     velocities.append(value)
-            # A robot behind a connection module takes the twist on its base
-            # axes ("r1pro/base/vx"); the last segment names the axis.
             for source in self._connections.values():
-                for axis_name in source.base_joint_names:
-                    mapping = TWIST_SUFFIX_MAP[axis_name.rsplit("/", 1)[-1]]
-                    group, axis = mapping
-                    names.append(axis_name)
-                    velocities.append(getattr(getattr(msg, group), axis))
+                try:
+                    values = source.twist_values(msg)
+                except ValueError:
+                    continue  # No odometry yet: do not authorize an untransformed command.
+                for key, value in values.items():
+                    names.append(key.rsplit("/", 1)[0])
+                    velocities.append(value)
 
         if names:
             joint_state = JointState(name=names, velocity=velocities)

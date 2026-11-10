@@ -84,17 +84,26 @@ class OperatorHoldStatus:
     estopped: bool = False
 
 
-def operator_hold_task(priority: int = OPERATOR_HOLD_PRIORITY) -> TaskConfig:
+def operator_hold_task(
+    priority: int = OPERATOR_HOLD_PRIORITY, joint_names: list[str] | None = None
+) -> TaskConfig:
     """Blueprint entry for the coordinator's one operator-hold task.
 
     Args:
         priority: Arbitration priority. Keep it above every other task
             (teleop is 50, autonomy 10-20) or the hold cannot take the joints.
+        joint_names: Position-capable joints to hold. Set this for a mixed-interface
+            robot; velocity-only joints remain visible to other tasks but are not held.
     """
     # The coordinator imports task modules, so import it lazily here.
     from dimos.control.coordinator import TaskConfig
 
-    return TaskConfig(name=OPERATOR_HOLD_TASK_NAME, type="operator_hold", priority=priority)
+    return TaskConfig(
+        name=OPERATOR_HOLD_TASK_NAME,
+        type="operator_hold",
+        priority=priority,
+        joint_names=joint_names or [],
+    )
 
 
 def _hold_value(joint_name: str, measured_position: float) -> float:
@@ -128,23 +137,25 @@ class OperatorHoldTask(BaseControlTask):
         name: str = OPERATOR_HOLD_TASK_NAME,
         priority: int = OPERATOR_HOLD_PRIORITY,
         status_interval: float = 1.0,
+        joint_names: frozenset[str] | None = None,
     ) -> None:
         """
         Args:
             name: Task name; callers address request/acknowledge to it.
             priority: Arbitration priority. Must exceed every other task's.
             status_interval: Seconds between repeated status messages while on.
+            joint_names: Optional position-capable subset; None learns all reported positions.
         """
         if not math.isfinite(status_interval) or status_interval <= 0.0:
             raise ValueError(f"status_interval must be positive seconds, got {status_interval}")
         self._name = name
         self._priority = priority
         self._status_interval = status_interval
+        self._joint_names = joint_names
         self._publish: Callable[[OperatorHoldStatus], None] | None = None
 
         self._lock = threading.Lock()
         self._on = False
-        self._generation = 0
         self._route = ""
         self._reason = ""
         self._started_at = 0.0
@@ -166,11 +177,6 @@ class OperatorHoldTask(BaseControlTask):
                 mode=ControlMode.SERVO_POSITION,
             )
 
-    def _hold_token(self) -> tuple[object, int] | None:
-        """Identify an active hold session even if release/re-request occurs between ticks."""
-        with self._lock:
-            return (self, self._generation) if self._on else None
-
     def is_active(self) -> bool:
         return self._on
 
@@ -184,7 +190,11 @@ class OperatorHoldTask(BaseControlTask):
             # Freeze nothing while e-stopped, so after the clear the hold
             # takes each joint where it is then. _held is empty until then.
             for name, position in state.joints.joint_positions.items():
-                if self._estopped or name in self._held:
+                if (
+                    self._estopped
+                    or name in self._held
+                    or (self._joint_names is not None and name not in self._joint_names)
+                ):
                     continue
                 if math.isfinite(position):
                     self._held[name] = _hold_value(name, position)
@@ -236,7 +246,6 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             if not self._on:
                 self._on = True
-                self._generation += 1
                 self._held = {}
                 self._unheld = set()
                 # Wall clock, for people reading the status; never used for control.
@@ -334,9 +343,9 @@ def create_task(cfg: Any, hardware: Any) -> OperatorHoldTask:
         raise ValueError(
             f"operator hold task must be named {OPERATOR_HOLD_TASK_NAME!r}, got {cfg.name!r}"
         )
-    if cfg.joint_names:
-        raise ValueError(
-            "operator hold claims every joint the coordinator reads; leave joint_names empty"
-        )
     params = OperatorHoldTaskParams.model_validate(cfg.params)
-    return OperatorHoldTask(priority=cfg.priority, status_interval=params.status_interval)
+    return OperatorHoldTask(
+        priority=cfg.priority,
+        status_interval=params.status_interval,
+        joint_names=frozenset(cfg.joint_names) if cfg.joint_names else None,
+    )

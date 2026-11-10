@@ -14,16 +14,15 @@
 
 """Which keys a robot accepts, and how far each may go.
 
-A connection module's config says what the robot is told: its joints
-through ``joint_commands`` and ``pd``, its base through ``base_range``.
-``limits`` turns that into one table, key to ``Limits``, with each joint's
-bounds read from the robot model (its URDF) and the base's from
-``base_range``. ``validate_command`` checks every command against it.
+A connection's per-joint interface declaration and robot model define one
+key-to-Limits table. Only declared interfaces need bounds; a velocity-only
+prismatic joint does not need a bounded position. ``validate_command`` checks
+every command against this table.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from typing import TYPE_CHECKING
 
@@ -31,11 +30,7 @@ from dimos.control.contract.keys import Interface, Key
 
 if TYPE_CHECKING:
     from dimos.control.connection.connection_module import ConnectionConfig
-    from dimos.msgs.geometry_msgs.Twist import Twist
     from dimos.robot.assets.model import JointDescription, RobotModel
-
-#: The one part a base is: it is driven as a whole, not as wheels.
-BASE_NAME = "base"
 
 #: The URDF joint types that can be driven. A fixed, floating or planar
 #: joint cannot.
@@ -83,11 +78,9 @@ class Limits:
 def limits(config: ConnectionConfig) -> dict[str, Limits]:
     """Every key a robot accepts, with how far each may go, from its config.
 
-    Each joint of the model that moves gets a key per interface in
-    ``joint_commands``, and for position, velocity, effort, kp and kd when
-    ``pd``, bounded as the model says. The base gets ``vx``, ``vy`` and
-    ``wz``, clamped to ``base_range`` either way. Joints come first, in the
-    model's order.
+    Only declared interfaces get keys, in model order. Declare PD_INTERFACES
+    for joints driven by position, velocity, effort and gains together. Bounds
+    come from the model; clamping is opt-in per key through ``clamp_commands``.
 
     Raises:
         ValueError: If joints are commanded without a model, no joint of the
@@ -95,21 +88,37 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
             config commands nothing.
     """
     source = config.source
+    if not config.joint_commands:
+        raise ValueError(f"{source!r} is told nothing: set joint_commands")
+    if config.model is None:
+        raise ValueError(f"{source!r} commands joints but has no model: set `model`")
+    joints = {joint.name: joint for joint in movable_joints(config.model)}
+    if not joints:
+        raise ValueError(f"{source!r} has no joints to drive: none in its model moves")
+    unknown = config.joint_commands.keys() - joints.keys()
+    if unknown:
+        raise ValueError(f"{source!r} declares joints absent from its model: {sorted(unknown)}")
     table: dict[str, Limits] = {}
-    interfaces = dict.fromkeys((*config.joint_commands, *(PD_INTERFACES if config.pd else ())))
-    if interfaces:
-        if config.model is None:
-            raise ValueError(f"{source!r} commands joints but has no model: set `model`")
-        joints = movable_joints(config.model)
-        if not joints:
-            raise ValueError(f"{source!r} has no joints to drive: none in its model moves")
-        for joint in joints:
-            for interface in interfaces:
-                table[Key.of(source, joint.name, interface)] = model_limit(joint, interface)
-    if config.base_range is not None:
-        table.update(_base_limits(source, config.base_range))
+    for name, joint in joints.items():
+        if name not in config.joint_commands:
+            continue
+        interfaces = dict.fromkeys(config.joint_commands[name])
+        for interface in interfaces:
+            full_name = name if "/" in name else f"{source}/{name}"
+            key = Key(f"{full_name}/{interface}")
+            if key.source != source:
+                raise ValueError(f"joint {name!r} belongs to another source than {source!r}")
+            bound = model_limit(joint, interface)
+            table[key] = replace(bound, clamp=True) if key in config.clamp_commands else bound
     if not table:
-        raise ValueError(f"{source!r} is told nothing: set joint_commands, pd or base_range")
+        raise ValueError(f"{source!r} is told nothing: set joint_commands")
+    if config.clamp_commands - table.keys():
+        raise ValueError("clamp_commands contains undeclared keys")
+    if config.twist_joints is not None:
+        if len(set(config.twist_joints)) != 3 or any(
+            f"{name}/velocity" not in table for name in config.twist_joints
+        ):
+            raise ValueError("twist_joints must bind three distinct declared velocity joints")
     return table
 
 
@@ -164,13 +173,3 @@ def model_limit(joint: JointDescription, interface: Interface) -> Limits:
     if bound is None:
         raise ValueError(f"joint {joint.name!r} has no {interface} limit in its model")
     return Limits(-bound, bound)
-
-
-def _base_limits(source: str, base_range: Twist) -> dict[str, Limits]:
-    """The base's three speed keys, each clamped to ``base_range`` either way."""
-    tops = (
-        (Interface.VX, base_range.linear.x),
-        (Interface.VY, base_range.linear.y),
-        (Interface.WZ, base_range.angular.z),
-    )
-    return {Key.of(source, BASE_NAME, axis): Limits(-top, top, clamp=True) for axis, top in tops}
