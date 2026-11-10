@@ -34,6 +34,7 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_urdf_joints,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
+from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 from dimos.teleop.openarm_mini.teleop_module import OpenArmMiniTeleopModule
 
 # Leader-follower needs human arm speeds, well above the WebXR IK profile.
@@ -116,3 +117,11 @@ teleop_openarm_mini_leader = _leader().global_config(
 teleop_openarm_mini_follower = _follower(ViserVisualizationConfig(host="0.0.0.0")).global_config(
     zenoh_connect=OPENARM_ROUTER
 )
+
+# Joy-Cons on the leaders instead of trigger servos: ZL/ZR drive the jaws,
+# B/Y mark episodes, plus pauses and resumes following.
+teleop_openarm_mini_joycon = autoconnect(_leader(), JoyConTeleopModule.blueprint(), _follower())
+
+teleop_openarm_mini_joycon_leader = autoconnect(
+    _leader(), JoyConTeleopModule.blueprint()
+).global_config(zenoh_mode="client", serve_coordinator_rpc=False)

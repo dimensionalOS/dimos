@@ -30,11 +30,12 @@ else:
     from typing_extensions import Self
 
 from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.config import openarm_urdf_joints
@@ -56,6 +57,7 @@ from dimos.teleop.openarm_mini.mapping import (
     map_side_readings,
     smooth_positions,
 )
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -84,6 +86,7 @@ class OpenArmMiniTeleopModuleConfig(ModuleConfig):
     gripper_travel_radians_by_side: Mapping[OpenArmMiniSide, Annotated[float, Field(gt=0.0)]] = (
         Field(default_factory=dict)
     )
+    # Start publishing or not; the right menu button (Joy-Con plus) toggles it at runtime.
     authority_active: bool = True
     # First-order low-pass on the mapped arm targets; None passes readings through.
     command_filter_cutoff_hz: float | None = 6.0
@@ -155,9 +158,13 @@ class OpenArmMiniTeleopModule(Module):
     joint_command: Out[JointState]
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
+    # Optional: a teleop_buttons producer (WebXR, Joy-Con) pauses and resumes following.
+    teleop_buttons: In[Buttons]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._authority = bool(self.config.authority_active)
+        self._menu_was_down = False
         self._buses: dict[OpenArmMiniSide, OpenArmMiniLeaderReader] = {}
         self._previous_positions_by_side: dict[OpenArmMiniSide, dict[str, float]] = {}
         self._filtered_by_joint: dict[str, float] = {}
@@ -179,6 +186,9 @@ class OpenArmMiniTeleopModule(Module):
         self._stop_event.clear()
         try:
             self.connect_teleop()
+            buttons = getattr(self, "teleop_buttons", None)
+            if buttons is not None and getattr(buttons, "transport", None) is not None:
+                self.register_disposable(Disposable(buttons.subscribe(self._on_buttons)))
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
         except Exception:
@@ -230,6 +240,24 @@ class OpenArmMiniTeleopModule(Module):
         self._buses = buses
         self._teleop_connected = True
 
+    @rpc
+    def set_authority(self, active: bool) -> bool:
+        """Publish leader targets (True) or hold the follower where it is (False)."""
+        self._authority = bool(active)
+        logger.info("OpenArm Mini teleop authority %s", "on" if self._authority else "off")
+        return self._authority
+
+    @rpc
+    def get_authority(self) -> bool:
+        return self._authority
+
+    def _on_buttons(self, msg: Buttons) -> None:
+        """The right menu button toggles authority on its rising edge."""
+        down = bool(msg.right_menu)
+        if down and not self._menu_was_down:
+            self.set_authority(not self._authority)
+        self._menu_was_down = down
+
     def disconnect_teleop(self) -> None:
         for bus in self._buses.values():
             bus.disconnect()
@@ -242,7 +270,7 @@ class OpenArmMiniTeleopModule(Module):
     def get_current_commands(self) -> list[OpenArmMiniSideCommand] | None:
         """Read every enabled leader once; None when a read fails or authority is off."""
         openarm_mini = self.openarm_mini_config
-        if not self._teleop_connected or not openarm_mini.authority_active:
+        if not self._teleop_connected or not self._authority:
             return None
 
         side_commands: list[OpenArmMiniSideCommand] = []

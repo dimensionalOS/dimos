@@ -210,6 +210,45 @@ step on the shoulder joints at no measurable lag. Pass `null` to send raw
 readings. The remaining step is the follower re-anchoring each streamed
 target on a measured angle that lags the leader; that is follower-side.
 
+## Joy-Cons instead of trigger servos
+
+`teleop-openarm-mini-joycon` and `teleop-openarm-mini-joycon-leader` add a
+Nintendo Joy-Con per leader (L on the left, R on the right) beside the leader
+module. The Joy-Cons pair over Bluetooth; the kernel `hid-nintendo` driver
+shows each as a gamepad and the module reads both with pygame, so there is
+no extra dependency. With the trigger servo removed, `calibrate` records arm
+joints only and the Joy-Cons are the only gripper publisher.
+
+| Joy-Con | does |
+|---|---|
+| ZL / ZR held | close the left / right jaw (`gripper_mode: toggle` flips per press instead) |
+| B / Y | start or save / discard an episode (the episode monitor's defaults) |
+| plus | pause and resume following (`OpenArmMiniTeleopModule.set_authority`) |
+| left stick | base velocity on `cmd_vel` when `publish_cmd_vel` is on; stick pressed turns it into yaw |
+
+Pair once per Joy-Con, holding the SYNC button on its rail until the LEDs
+chase:
+
+```bash
+bluetoothctl
+power on; agent on; scan on
+pair <MAC>; trust <MAC>; connect <MAC>
+```
+
+Then confirm the button indices the driver reports, pressing each button
+and moving each stick:
+
+```bash
+python -m dimos.teleop.joycon.probe 60
+```
+
+The defaults in `dimos.teleop.joycon.mapping` are a first guess for
+`hid-nintendo`; when an index differs, pass the table per side, for example
+`--joyconteleopmodule.right-buttons '{"ZR": 7, "B": 0, "Y": 3, "plus": 8, "A": 1, "X": 2, "R": 5, "stick": 10}'`.
+The published opening slews at `gripper_slew_per_s` (3 per second) so a jaw
+never slams. A Joy-Con that drops off Bluetooth keeps its last opening until
+it is back; the other side keeps working.
+
 ## Driving the real OpenArm follower
 
 Without `--simulation` the same blueprint drives the physical bimanual OpenArm

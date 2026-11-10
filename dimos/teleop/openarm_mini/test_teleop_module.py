@@ -43,6 +43,7 @@ from dimos.teleop.openarm_mini.teleop_module import (
     OpenArmMiniTeleopModule,
     OpenArmMiniTeleopModuleConfig,
 )
+from dimos.teleop.webxr.controller_types import Buttons
 
 
 class _FakeBus:
@@ -631,3 +632,25 @@ def test_command_filter_blends_toward_new_readings(
 def test_config_rejects_non_positive_filter() -> None:
     with pytest.raises(ValueError):
         OpenArmMiniTeleopModuleConfig(port_left="l", command_filter_cutoff_hz=0.0)
+
+
+def test_right_menu_rising_edge_toggles_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    left_path, right_path = _write_calibrations(tmp_path)
+    _patch_buses(monkeypatch, {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())})
+    with _connected_module(_configured_config(left_path, right_path)) as module:
+        assert module.get_authority() is True
+        pressed = Buttons()
+        pressed.right_menu = True
+        module._on_buttons(pressed)
+        assert module.get_authority() is False
+        assert module.get_current_command() is None
+        module._on_buttons(pressed)
+        assert module.get_authority() is False
+        module._on_buttons(Buttons())
+        module._on_buttons(pressed)
+        assert module.get_authority() is True
+        assert module.get_current_command() is not None
+        assert module.set_authority(False) is False
+        assert module.get_current_command() is None
