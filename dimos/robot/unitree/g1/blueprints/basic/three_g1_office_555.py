@@ -17,7 +17,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_human
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import G1_GROOT_KD, G1_GROOT_KP
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
@@ -48,7 +48,7 @@ class _Walker(TeleopControlCoordinator):
     cmd_vel: In[Twist]
 
 
-def _walker(name: str):
+def _walker(name: str) -> Blueprint:
     joints = make_humanoid_joints(name)
     return _Walker.blueprint(
         tick_rate=POLICY_HZ,
@@ -88,7 +88,7 @@ SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
 )
 
 
-def _robot(name: str):
+def _robot(name: str) -> Blueprint:
     return (
         autoconnect(
             G1Sim.blueprint(
@@ -113,8 +113,8 @@ def _robot(name: str):
     )
 
 
-def _manager_name(blueprint) -> str:
-    return next(atom.name for atom in blueprint.blueprints if atom.module is UsdManager)
+def _manager_name(blueprint: Blueprint) -> str:
+    return str(next(atom.name for atom in blueprint.blueprints if atom.module is UsdManager))
 
 
 _robots = {name: _robot(name) for name in SPOTS}

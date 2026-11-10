@@ -43,23 +43,27 @@ from dimos.sim2.world_observations import WorldMirror
 from dimos.utils.logging_config import setup_logger
 
 HOME_HEIGHT = 0.755
-_LEG = (
-    ("hip_pitch", -0.312, 75, 2),
-    ("hip_roll", 0, 75, 2),
-    ("hip_yaw", 0, 75, 2),
-    ("knee", 0.669, 75, 2),
-    ("ankle_pitch", -0.363, 20, 1),
-    ("ankle_roll", 0, 2, 0.2),
+_LEG: tuple[tuple[str, float, float, float], ...] = (
+    ("hip_pitch", -0.312, 75.0, 2.0),
+    ("hip_roll", 0.0, 75.0, 2.0),
+    ("hip_yaw", 0.0, 75.0, 2.0),
+    ("knee", 0.669, 75.0, 2.0),
+    ("ankle_pitch", -0.363, 20.0, 1.0),
+    ("ankle_roll", 0.0, 2.0, 0.2),
 )
-_WAIST = (("waist_yaw", 0, 75, 2), ("waist_roll", 0, 75, 2), ("waist_pitch", 0.073, 75, 2))
-_ARM = (
-    ("shoulder_pitch", 0.2, 75, 2),
-    ("shoulder_roll", 0.2, 75, 2),
-    ("shoulder_yaw", 0, 75, 2),
-    ("elbow", 0.6, 75, 2),
-    ("wrist_roll", 0, 2, 0.2),
-    ("wrist_pitch", 0, 2, 0.2),
-    ("wrist_yaw", 0, 2, 0.2),
+_WAIST: tuple[tuple[str, float, float, float], ...] = (
+    ("waist_yaw", 0.0, 75.0, 2.0),
+    ("waist_roll", 0.0, 75.0, 2.0),
+    ("waist_pitch", 0.073, 75.0, 2.0),
+)
+_ARM: tuple[tuple[str, float, float, float], ...] = (
+    ("shoulder_pitch", 0.2, 75.0, 2.0),
+    ("shoulder_roll", 0.2, 75.0, 2.0),
+    ("shoulder_yaw", 0.0, 75.0, 2.0),
+    ("elbow", 0.6, 75.0, 2.0),
+    ("wrist_roll", 0.0, 2.0, 0.2),
+    ("wrist_pitch", 0.0, 2.0, 0.2),
+    ("wrist_yaw", 0.0, 2.0, 0.2),
 )
 
 

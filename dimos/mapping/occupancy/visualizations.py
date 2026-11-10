@@ -90,7 +90,8 @@ def turbo_image(grid: NDArray[np.int8]) -> NDArray[np.uint8]:
 
     lookup_indices = np.where(grid == -1, np.uint8(255), np.clip(grid, 0, 100).astype(np.uint8))
 
-    return color_lut[lookup_indices]
+    image: NDArray[np.uint8] = color_lut[lookup_indices]
+    return image
 
 
 def _interpolate_turbo(t: float) -> tuple[int, int, int]:
