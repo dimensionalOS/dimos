@@ -243,7 +243,8 @@ link drops, the follower holds its last target.
 recorder, as `openyam-quest-collection` does for Quest. It records the measured
 follower joints (`coordinator_joint_state`, the connection's 14 arm joints and
 2 finger joints under the `arm/` prefix), the coordinator's attempted position
-commands (`coordinator_joint_command`, the 14 arm joints the leaders drive) and
+commands (`arm_position_command`, the coordinator's port into the connection,
+since it publishes no `coordinator_joint_command` for connection robots) and
 two 640x480 wrist cameras. `--simulation` swaps the connection for a mock.
 
 ```bash
