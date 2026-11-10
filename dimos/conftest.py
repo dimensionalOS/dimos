@@ -14,6 +14,7 @@
 
 import atexit
 from contextlib import suppress
+from ctypes.util import find_library
 import faulthandler
 import hashlib
 import os
@@ -79,7 +80,17 @@ else:
 # Linux only. There is no EGL on macOS, where MuJoCo rejects the value outright --
 # `RuntimeError: invalid value for environment variable MUJOCO_GL: egl`, which is how CI found
 # this -- and its own default renders headless there anyway.
-if platform.system() == "Linux" and not os.environ.get("MUJOCO_GL"):
+#
+# And only where the library is actually there. A runner without libEGL takes PyOpenGL's
+# loader to `PLATFORM.EGL = None`, and importing its EGL types then dies on
+# `'NoneType' object has no attribute 'eglQueryString'` -- which is a worse failure than the
+# one this is here to prevent, and it is not the renderer's fault either. Unset, MuJoCo
+# chooses for itself, which is what a machine with no EGL had before this line existed.
+if (
+    platform.system() == "Linux"
+    and not os.environ.get("MUJOCO_GL")
+    and find_library("EGL") is not None
+):
     os.environ["MUJOCO_GL"] = "egl"
 
 # Raise the open-file limit. Each LCM transport opens at least one
