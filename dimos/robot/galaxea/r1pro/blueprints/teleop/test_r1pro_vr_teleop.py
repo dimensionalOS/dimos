@@ -507,6 +507,13 @@ def test_release_disengages_and_holds_position() -> None:
         wait_until(lambda: any(abs(q) > 1e-3 for q in chain.body_q()), timeout=5.0, interval=0.05)
         chain.release()
         wait_until(lambda: not chain.task.is_active(), timeout=5.0, interval=0.02)
+
+        def settled() -> bool:
+            with chain.fake._lock:
+                return chain.fake._q == chain.fake._target_q
+
+        # Inactive stops new IK targets; the fake still tracks the last one.
+        wait_until(settled, timeout=5.0, interval=0.02)
         held = chain.body_q()
         time.sleep(0.4)
         assert chain.body_q() == pytest.approx(held, abs=1e-9)
