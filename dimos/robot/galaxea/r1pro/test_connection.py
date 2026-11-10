@@ -232,7 +232,7 @@ def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
 def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:
     r = rig()
     assert not r.jaws("left") and not r.jaws("right")
-    r.feed_grippers(left=20.0, right=40.0)
+    r.feed_grippers(left=20.0, right=40.0, ts=time.time())
     wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
     assert list(r.jaw_readings()[-1].position) == pytest.approx([0.02, 0.04])
     r.move({"r1pro/left_gripper": 0.02})  # Initial measured-position hold.
@@ -243,6 +243,9 @@ def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:
     assert not r.jaws("right")
     r.move({"r1pro/right_gripper": 0.03})
     assert [list(msg.position) for msg in r.jaws("right")] == [[30.0]]
+    r.module.stop()
+    r.module._send_gripper_target("left", 0.06, None)
+    assert len(r.jaws("left")) == 1
 
 
 def test_gripper_invalid_feedback_blocks_without_replay(rig, monkeypatch):
@@ -267,6 +270,12 @@ def test_gripper_invalid_feedback_blocks_without_replay(rig, monkeypatch):
     r.feed_status("gripper_left", [RosStatusError()])
     r.move({"r1pro/left_gripper": 0.09})
     assert [list(msg.position) for msg in r.jaws("left")] == [[60.0], [90.0]]
+    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(math.nan))
+    r.move({"r1pro/left_gripper": 0.1})
+    assert len(r.jaws("left")) == 2
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.095})
+    assert list(r.jaws("left")[-1].position) == [95.0]
 
 
 def test_stale_feedback_rejects_mixed_commands_but_allows_halt(rig, monkeypatch):
