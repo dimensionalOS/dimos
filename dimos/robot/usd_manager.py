@@ -270,7 +270,7 @@ class UsdManager(Module):
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
         root, scene = await self._compose(chain)
-        published, assets = await asyncio.to_thread(publish_usd_assets, scene)
+        published, assets = await asyncio.to_thread(publish_usd_assets, scene, root[ASSET_ROOT])
         self._published_assets = assets
         self._scene = published
         return ["", published]
@@ -388,12 +388,13 @@ class UsdManager(Module):
     def _adopt(self, answer: list[str], mount: Mount) -> tuple[str, set[str]]:
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
+        where = answer[ASSET_ROOT] or None
         usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
-        matched = usd_frame_names(usd) & set(pre) if pre else set()
-        usd = prefix_usd_frames(rename_usd_frames(usd, pre), mount.frame_prefix)
+        matched = usd_frame_names(usd, where) & set(pre) if pre else set()
+        usd = prefix_usd_frames(rename_usd_frames(usd, pre, where), mount.frame_prefix, where)
         if post:
-            matched |= usd_frame_names(usd) & set(post)
-        return rename_usd_frames(usd, post), matched
+            matched |= usd_frame_names(usd, where) & set(post)
+        return rename_usd_frames(usd, post, where), matched
 
     def _ask_for_usd(
         self, client: RPCClient, frame_id: str, mount: Mount, chain: list[str]
