@@ -35,6 +35,7 @@ from dimos.robot.assets.usd_assets import (
     asset_hash,
     describe_unopenable_assets,
     require_asset_hashes,
+    require_fetched_assets,
     unhashed_assets,
     unopenable_assets,
 )
@@ -886,12 +887,31 @@ def test_describe_unopenable_assets_says_which_files_and_how_to_fetch_them(
     root = _referencing_layer(tmp_path)
 
     message = describe_unopenable_assets(
-        unopenable_assets(_REFERENCING_LAYER, root), what="the office scene"
+        unopenable_assets(_REFERENCING_LAYER, root), root, what="the office scene"
     )
 
     assert "the office scene names 2 asset(s)" in message
     assert "meshes/pointer.usdc" in message
-    assert 'git lfs pull --include="meshes/*"' in message
+    assert f'git lfs checkout "{root / "meshes"}"' in message
+
+
+def test_an_unfetched_pointer_is_refused_and_a_merely_missing_file_is_not(
+    tmp_path: Path,
+) -> None:
+    root = _referencing_layer(tmp_path)
+    unopenable = unopenable_assets(_REFERENCING_LAYER, root)
+
+    with pytest.raises(FileNotFoundError) as error:
+        require_fetched_assets(unopenable, root, what="the office scene")
+
+    message = str(error.value)
+    assert "names 1 asset(s)" in message, "only the pointer stub, not the missing file"
+    assert "meshes/pointer.usdc" in message
+    assert "meshes/gone.usdc" not in message
+    assert "GIT_LFS_SKIP_SMUDGE" in message
+
+    (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
+    require_fetched_assets(unopenable_assets(_REFERENCING_LAYER, root), root, what="the scene")
 
 
 def test_unopenable_assets_ignores_names_a_scene_published_for_the_bus() -> None:
