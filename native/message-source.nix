@@ -14,33 +14,22 @@ let
     unzip -q ${generatorWheel} -d $out
   '';
   python = pkgs.python3.withPackages (p: [
-    p.setuptools p.wheel p.pydantic p.empy p.lark p.rosbags p.numpy p.requests
+    p.setuptools p.wheel p.pydantic p.empy p.lark p.rosbags p.numpy
   ]);
   product = pkgs.lib.fileset.toSource {
     root = ../.;
     fileset = pkgs.lib.fileset.unions [
       ../pyproject.toml
-      ../dimos/message_codegen/build.py
-      ../packages/dimos-generated/schema-sources.json
-      ../packages/dimos-generated/custom
+      ../packages/dimos-messages
     ];
   };
-  schemaLock = builtins.fromJSON (builtins.readFile ../packages/dimos-generated/schema-sources.json);
-  schemaArchives = map (source: {
-    name = builtins.hashString "sha256" source.url + ".tar.gz";
-    archive = pkgs.fetchurl { inherit (source) url sha256; };
-  }) schemaLock.sources;
   source = pkgs.runCommand "dimos-generated-message-source" { nativeBuildInputs = [ python ]; } ''
     cp -r ${product} product
     chmod -R u+w product
-    mkdir -p cache/archives
-    ${pkgs.lib.concatMapStringsSep "\n" (item: "cp ${item.archive} cache/archives/${item.name}") schemaArchives}
     export PYTHONPATH="$PWD/product:${generator}:$PYTHONPATH"
     python3 - <<'PYTHON'
 from pathlib import Path
-from dimos.message_codegen.build import prepare_builtin_sources
 from dimos_cdrgen.source_package import prepare
-prepare_builtin_sources(Path("cache"), offline=True)
 prepare(Path("product"))
 PYTHON
     cp -r product/build/message-source $out
