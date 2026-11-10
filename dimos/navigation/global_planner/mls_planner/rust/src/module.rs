@@ -283,9 +283,8 @@ pub struct MlsPlanner {
     // on map processing. Seed regions queue in arrival order.
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
+    // The active goal carries the frame it was given in, looked up on tf every replan.
     active_goal: Shared<Goal>,
-    // The frame the active goal was given in, looked up on tf every replan.
-    goal_frame: Shared<String>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
     latest_status: LatestStatus,
@@ -314,7 +313,6 @@ impl MlsPlanner {
             pending: Arc::clone(&self.pending),
             seed_regions: Arc::clone(&self.seed_regions),
             active_goal: Arc::clone(&self.active_goal),
-            goal_frame: Arc::clone(&self.goal_frame),
             goal_changed: Arc::clone(&self.goal_changed),
             wake: Arc::clone(&self.wake),
             tf: self.tf.clone(),
@@ -427,7 +425,7 @@ impl MlsPlanner {
         match goal_position(&msg.point) {
             Some(position) => {
                 let id = self.next_goal_id(&msg.header.stamp);
-                let held = *self.active_goal.lock().expect("goal mutex");
+                let held = self.active_goal.lock().expect("goal mutex").clone();
                 // A goal sent again keeps its id, so it is not preempted.
                 if let Some(held) = held.filter(|held| !held.id.same_stamp(&id)) {
                     self.preempt(held, PREEMPT_REPLACED).await;
@@ -435,9 +433,12 @@ impl MlsPlanner {
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
                     .await;
-                *self.goal_frame.lock().expect("goal frame mutex") =
-                    Some(msg.header.frame_id.clone());
-                self.set_active_goal(Some(Goal { id, position }));
+                let frame = Some(Arc::from(msg.header.frame_id.as_str()));
+                self.set_active_goal(Some(Goal {
+                    id,
+                    position,
+                    frame,
+                }));
             }
             None => {
                 if let Some(held) = self.set_active_goal(None) {
@@ -523,8 +524,12 @@ impl GoalProgress {
     fn time_left(&self) -> Option<Duration> {
         let now = Instant::now();
         [
-            self.blocked.map(|b| b.remaining(self.blocked_timeout, now)),
-            self.stall.map(|s| s.remaining(self.stall_timeout, now)),
+            self.blocked
+                .as_ref()
+                .map(|b| b.remaining(self.blocked_timeout, now)),
+            self.stall
+                .as_ref()
+                .map(|s| s.remaining(self.stall_timeout, now)),
         ]
         .into_iter()
         .flatten()
@@ -535,8 +540,7 @@ impl GoalProgress {
     fn take_timed_out(&mut self) -> Option<Blocked> {
         let timed_out = self
             .blocked
-            .filter(|b| b.remaining(self.blocked_timeout, Instant::now()).is_zero())?;
-        self.blocked = None;
+            .take_if(|b| b.remaining(self.blocked_timeout, Instant::now()).is_zero())?;
         Some(timed_out)
     }
 
@@ -544,8 +548,7 @@ impl GoalProgress {
     fn take_stalled(&mut self) -> Option<Stall> {
         let stalled = self
             .stall
-            .filter(|s| s.remaining(self.stall_timeout, Instant::now()).is_zero())?;
-        self.stall = None;
+            .take_if(|s| s.remaining(self.stall_timeout, Instant::now()).is_zero())?;
         Some(stalled)
     }
 
@@ -554,7 +557,7 @@ impl GoalProgress {
         self.stall = Some(Stall::track(
             goal,
             position,
-            self.stall,
+            self.stall.take(),
             self.min_move_m,
             Instant::now(),
         ));
@@ -562,7 +565,12 @@ impl GoalProgress {
 
     /// Mark the goal blocked, keeping when its block began.
     fn block(&mut self, goal: Goal, reason: &'static str) {
-        self.blocked = Some(Blocked::of(goal, reason, self.blocked, Instant::now()));
+        self.blocked = Some(Blocked::of(
+            goal,
+            reason,
+            self.blocked.take(),
+            Instant::now(),
+        ));
         self.stall = None;
     }
 
@@ -606,7 +614,6 @@ struct Worker {
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
     active_goal: Shared<Goal>,
-    goal_frame: Shared<String>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
     tf: Tf,
@@ -854,11 +861,10 @@ impl Worker {
         }
     }
 
-    /// The active goal's frame to the world frame, or None when it is the world frame or tf
-    /// does not know it.
-    fn goal_frame_to_world(&self) -> Option<Transform> {
-        let frame = self.goal_frame.lock().expect("goal frame mutex").clone()?;
-        (frame != self.config.world_frame)
+    /// *goal*'s frame to the world frame, or None when it is the world frame or tf does not know it.
+    fn goal_frame_to_world(&self, goal: &Goal) -> Option<Transform> {
+        let frame = goal.frame.clone()?;
+        (*frame != *self.config.world_frame)
             .then(|| self.tf.get_latest(&self.config.world_frame, &frame))
             .flatten()
     }
@@ -877,7 +883,7 @@ impl Worker {
         let Some(timed_out) = progress.take_timed_out() else {
             return;
         };
-        if self.clear_goal(timed_out.goal) {
+        if self.clear_goal(&timed_out.goal) {
             self.status
                 .report(Report::new(
                     timed_out.goal.id,
@@ -891,13 +897,14 @@ impl Worker {
     /// Abort a followed goal once the robot has not moved for the whole
     /// timeout, and stop the follower.
     async fn abort_if_stalled(&self, progress: &mut GoalProgress) {
-        if let (Some(stall), Some(position)) = (progress.stall, self.base_position()) {
-            progress.track(stall.goal, position);
+        if let (Some(stall), Some(position)) = (progress.stall.as_ref(), self.base_position()) {
+            let goal = stall.goal.clone();
+            progress.track(goal, position);
         }
         let Some(stalled) = progress.take_stalled() else {
             return;
         };
-        if !self.clear_goal(stalled.goal) {
+        if !self.clear_goal(&stalled.goal) {
             return;
         }
         progress.followed = None;
@@ -918,7 +925,7 @@ impl Worker {
         goal_changed: bool,
         progress: &mut GoalProgress,
     ) {
-        let goal = *self.active_goal.lock().expect("goal mutex");
+        let goal = self.active_goal.lock().expect("goal mutex").clone();
         let start = self
             .base_position()
             .map(|s| (s.0, s.1, s.2 - self.config.start_z_offset_m));
@@ -932,7 +939,7 @@ impl Worker {
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
             GoalStep::Plan { start, goal } => {
-                let at = goal_in_world(goal.position, self.goal_frame_to_world());
+                let at = goal_in_world(goal.position, self.goal_frame_to_world(&goal));
                 self.plan(planner, start, goal, at, progress).await
             }
         }
@@ -958,7 +965,7 @@ impl Worker {
                 if progress.arrive(goal.id) {
                     publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 }
-                self.clear_goal(goal);
+                self.clear_goal(&goal);
                 self.status.report(report).await;
                 return;
             }
@@ -990,7 +997,7 @@ impl Worker {
 
     /// Clear the active goal unless a newer one replaced it meanwhile. True
     /// when it was cleared.
-    fn clear_goal(&self, goal: Goal) -> bool {
+    fn clear_goal(&self, goal: &Goal) -> bool {
         clear_if_held(&self.active_goal, goal)
     }
 }
@@ -1383,6 +1390,7 @@ mod tests {
                 arrival: n as u64,
             },
             position,
+            frame: None,
         }
     }
 
@@ -1395,6 +1403,7 @@ mod tests {
                 arrival,
             },
             position: (5.0, 0.0, 0.0),
+            frame: None,
         };
         let timeout = Duration::from_secs(10);
         let t0 = Instant::now();
@@ -1402,9 +1411,9 @@ mod tests {
         let end = t0 + timeout;
         let stall = Stall::track(goal(1), (0.0, 0.0, 0.0), None, 0.2, t0);
         // Creeping, or standing higher, is not progress.
-        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall), 0.2, later);
+        let still = Stall::track(goal(1), (0.1, 0.0, 0.5), Some(stall.clone()), 0.2, later);
         assert!(still.remaining(timeout, end).is_zero());
-        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall), 0.2, later);
+        let moved = Stall::track(goal(1), (0.3, 0.0, 0.0), Some(stall.clone()), 0.2, later);
         assert_eq!(moved.remaining(timeout, end), Duration::from_secs(4));
         let replaced = Stall::track(goal(2), (0.0, 0.0, 0.0), Some(stall), 0.2, later);
         assert_eq!(replaced.remaining(timeout, end), Duration::from_secs(4));
@@ -1419,11 +1428,14 @@ mod tests {
         };
         let mut progress = GoalProgress::new(&config);
         let goal = goal_at(1, (5.0, 0.0, 0.0));
-        progress.block(goal, NO_SAFE_PATH);
-        assert_eq!(progress.take_timed_out().map(|b| b.goal), Some(goal));
+        progress.block(goal.clone(), NO_SAFE_PATH);
+        assert_eq!(
+            progress.take_timed_out().map(|b| b.goal),
+            Some(goal.clone())
+        );
         assert!(progress.take_timed_out().is_none());
-        progress.track(goal, (0.0, 0.0, 0.0));
-        assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal));
+        progress.track(goal.clone(), (0.0, 0.0, 0.0));
+        assert_eq!(progress.take_stalled().map(|s| s.goal), Some(goal.clone()));
         assert!(progress.take_stalled().is_none());
     }
 
@@ -1678,23 +1690,29 @@ mod tests {
         let start = Some((0.0, 0.0, 0.0));
         let goal = goal_at(1, (5.0, 0.0, 0.0));
         assert_eq!(
-            goal_step(Some(goal), true, false, start),
+            goal_step(Some(goal.clone()), true, false, start),
             GoalStep::Plan {
                 start: (0.0, 0.0, 0.0),
-                goal
+                goal: goal.clone()
             }
         );
         assert_eq!(
-            goal_step(Some(goal), true, false, None),
-            GoalStep::NoPose(goal)
+            goal_step(Some(goal.clone()), true, false, None),
+            GoalStep::NoPose(goal.clone())
         );
 
         let canceled = goal_position(&point(f64::NAN, f64::NAN, f64::NAN))
             .map(|position| goal_at(2, position));
         // Even with no pose on tf.
-        assert_eq!(goal_step(canceled, true, true, None), GoalStep::Clear);
+        assert_eq!(
+            goal_step(canceled.clone(), true, true, None),
+            GoalStep::Clear
+        );
         // Teleop repeats the cancel every command, and nothing is out to clear.
-        assert_eq!(goal_step(canceled, true, false, start), GoalStep::Idle);
+        assert_eq!(
+            goal_step(canceled.clone(), true, false, start),
+            GoalStep::Idle
+        );
         // A live update with no goal publishes nothing.
         assert_eq!(goal_step(canceled, false, false, start), GoalStep::Idle);
     }
@@ -1703,10 +1721,11 @@ mod tests {
     fn a_reached_goal_keeps_its_path_until_a_cancel_clears_it() {
         let goal = goal_at(1, (5.0, 0.0, 0.0));
         let mut progress = GoalProgress::new(&test_config());
+        let id = goal.id;
         progress.follow(goal, (0.0, 0.0, 0.0), Instant::now());
         // The follower is on this goal's path, so it settles on its own.
-        assert!(!progress.arrive(goal.id));
-        assert_eq!(progress.followed, Some(goal.id));
+        assert!(!progress.arrive(id));
+        assert_eq!(progress.followed, Some(id));
         // A cancel after arrival still clears the held path.
         assert_eq!(
             goal_step(None, true, progress.followed.is_some(), None),

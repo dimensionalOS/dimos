@@ -39,7 +39,7 @@ pub(crate) const NO_PROGRESS: &str = "no progress";
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// A goal that cannot be planned, when that began, and why.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Blocked {
     pub(crate) goal: Goal,
     since: Instant,
@@ -71,7 +71,7 @@ impl Blocked {
 }
 
 /// A followed goal, where the robot last moved, and when.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Stall {
     pub(crate) goal: Goal,
     anchor: Xyz,
@@ -123,11 +123,16 @@ impl GoalId {
     }
 }
 
-/// The active goal and the id its status reports carry.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// The active goal, the id its status reports carry, and the frame it arrived in.
+///
+/// The frame travels with the position because they arrived together on one `PointStamped`: held
+/// apart, a reader can take a new goal's frame with the previous goal's position.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Goal {
     pub(crate) id: GoalId,
     pub(crate) position: Xyz,
+    /// `header.frame_id`, or None when the goal came without one
+    pub(crate) frame: Option<Arc<str>>,
 }
 
 /// One goal's state as nav_status carries it.
@@ -244,9 +249,9 @@ pub(crate) fn stop_on_arrival(followed: Option<GoalId>, goal: GoalId) -> bool {
     !followed.is_some_and(|followed| followed.same_stamp(&goal))
 }
 
-pub(crate) fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: Goal) -> bool {
+pub(crate) fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: &Goal) -> bool {
     let mut guard = slot.lock().expect("goal mutex");
-    let held = *guard == Some(goal);
+    let held = guard.as_ref() == Some(goal);
     if held {
         *guard = None;
     }
