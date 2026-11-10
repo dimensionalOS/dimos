@@ -67,9 +67,9 @@ def resolve_usd_assets(usd: str, root: str) -> str:
     return str(layer.ExportToString()) if changed else usd
 
 
-def publish_usd_assets(usd: str) -> tuple[str, dict[str, str]]:
+def publish_usd_assets(usd: str, root: Path | str | None = None) -> tuple[str, dict[str, str]]:
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a scene")
+    layer = layer_from(pxr, usd, "a scene", root)
     public: dict[str, str] = {}
     taken: set[str] = set()
     changed = False
