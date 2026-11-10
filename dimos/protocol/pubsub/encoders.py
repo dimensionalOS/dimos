@@ -174,7 +174,12 @@ class MessageEncoderMixin(PubSubEncoderMixin[MessageTopic, Any, bytes]):
 
         def receive(payload: bytes, topic: MessageTopic) -> None:
             name = getattr(topic, "topic", str(topic))
-            descriptor = descriptor_for(name)
+            if not isinstance(payload, bytes):
+                # The transport's encoder already decoded a self-describing
+                # (legacy LCM) channel from its type suffix.
+                callback(payload, topic)
+                return
+            descriptor = descriptor_for(name) or getattr(topic, "message", None)
             if descriptor is None:
                 callback(payload, topic)
                 return
@@ -193,10 +198,27 @@ class MessageEncoderMixin(PubSubEncoderMixin[MessageTopic, Any, bytes]):
 
         return super().subscribe_all(receive, **kwargs)  # type: ignore[misc,no-any-return]
 
+    def subscribe(
+        self, topic: MessageTopic, callback: Callable[[Any, MessageTopic], None]
+    ) -> Callable[[], None]:
+        """Warm the declared type's decode dependencies on the caller's thread.
+
+        Left to the first decode, a multi-second import would run on the
+        transport's handler thread and drop messages meanwhile.
+        """
+        warmup = getattr(getattr(topic, "message", None), "message_type", None)
+        warmup = getattr(warmup, "lcm_warmup", None)
+        if warmup is not None:
+            warmup()
+        return super().subscribe(topic, callback)
+
     def decode_received(
         self, payload: bytes, declared: MessageTopic, received: MessageTopic
     ) -> Any:
         descriptor = declared.message
+        if descriptor is None:
+            # Pattern subscriptions declare no type; the concrete channel does.
+            descriptor = received.message
         if descriptor is None:
             return payload
         actual = received.message

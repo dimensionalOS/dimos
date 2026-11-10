@@ -12,53 +12,82 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""JPEG image transport with a standalone CDR CompressedImage envelope.
+"""JPEG image transport with a CDR CompressedImage envelope.
 
 Split from lcmpubsub.py so that importing CborLCM / LCM does not
 transitively pull in ``dimos.msgs.sensor_msgs.Image`` (and its heavy
 cv2 / rerun dependencies).
+
+Generated images (``dimos_messages.sensor_msgs.msg.Image``) travel as a raw CDR
+``CompressedImage``. Legacy ``dimos.msgs.sensor_msgs.Image`` values keep their
+existing LCM JPEG envelope (``Image.lcm_jpeg_encode``), so consumers that have
+not migrated see no change.
 """
 
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, cast
+
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 
 from dimos.message_utils import image
-from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.pubsub.codec import CDRCodec
 from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 
 
-class JpegEncoderMixin(PubSubEncoderMixin[Topic, Image, bytes]):
-    def encode(self, msg: Image, _: Topic) -> bytes:
-        return CDRCodec(CompressedImage).encode(image.to_compressed(msg, format="jpeg"))
+class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any, bytes]):
+    """JPEG-encode either Image family at the byte-oriented LCM boundary."""
 
-    def decode(self, msg: bytes, topic: Topic) -> Image:
+    def encode(self, msg: Any, topic: Topic | str) -> bytes:
+        descriptor = getattr(topic, "message", None)
+        if descriptor is not None:
+            if descriptor.encoding == "cdr":
+                return self._encode_generated(msg, descriptor.message_type)
+            return self._encode_legacy(msg, descriptor.message_type)
+
+        # A bare string/pattern topic carries no declaration: follow the value.
+        if _uses_cdr(msg):
+            return self._encode_generated(msg, Image)
+        return cast("bytes", msg.lcm_jpeg_encode())
+
+    def decode(self, msg: bytes, topic: Topic) -> Any:
         if topic.topic == "LCM_SELF_TEST":
             raise DecodingError("Ignoring LCM_SELF_TEST topic")
-        if topic.lcm_type is not Image:
-            raise DecodingError("JPEG transport requires generated sensor_msgs/Image")
-        return image.from_compressed(CDRCodec(CompressedImage).decode(msg))
+        descriptor = topic.message
+        if descriptor is None:
+            raise DecodingError(
+                f"Cannot decode JPEG: topic {topic.topic!r} has no declared message type"
+            )
+        if descriptor.encoding == "cdr":
+            if descriptor.message_type is not Image:
+                raise DecodingError("JPEG transport requires generated sensor_msgs/Image")
+            return image.from_compressed(CDRCodec(CompressedImage).decode(msg))
+        return cast("type[Any]", descriptor.message_type).lcm_jpeg_decode(msg)
+
+    @staticmethod
+    def _encode_generated(msg: Any, message_type: type) -> bytes:
+        if message_type is not Image or type(msg) is not Image:
+            raise TypeError("JPEG transport requires a generated sensor_msgs/Image")
+        return CDRCodec(CompressedImage).encode(image.to_compressed(msg, format="jpeg"))
+
+    @staticmethod
+    def _encode_legacy(msg: Any, message_type: type) -> bytes:
+        if type(msg) is not message_type or not hasattr(msg, "lcm_jpeg_encode"):
+            raise TypeError("JPEG transport requires the declared dimos Image class")
+        return cast("bytes", msg.lcm_jpeg_encode())
 
 
-class JpegLCM(LCMPubSubBase):
-    """Adapt generated images at the byte-oriented LCM boundary."""
+def _uses_cdr(msg: Any) -> bool:
+    from dimos.protocol.pubsub.codec import describe_message
 
-    _codec = JpegEncoderMixin()
+    try:
+        return describe_message(type(msg)).encoding == "cdr"
+    except TypeError:
+        return False
 
-    def publish(self, topic: Topic | str, message: Any) -> None:
-        if isinstance(topic, str):
-            topic = Topic(topic, Image)
-        if not isinstance(message, Image):
-            raise TypeError("JPEG transport requires a generated Image")
-        super().publish(topic, self._codec.encode(message, topic))
 
-    def subscribe(self, topic: Topic, callback: Callable[[Any, Topic], None]) -> Callable[[], None]:
-        def receive(payload: bytes, received: Topic) -> None:
-            try:
-                message = self._codec.decode(payload, received)
-            except (DecodingError, ValueError):
-                return
-            callback(message, received)
-
-        return super().subscribe(topic, receive)
+class JpegLCM(  # type: ignore[misc]
+    JpegEncoderMixin,
+    LCMPubSubBase,
+): ...

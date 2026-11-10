@@ -23,15 +23,15 @@ import sys
 from types import ModuleType, SimpleNamespace
 
 from dimos_cdrgen.registry import encode, schema
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Image, Imu
+from dimos_messages.std_msgs.msg import Header
 import numpy as np
 import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
 from dimos.core.transport import LCMTransport, ROSTransport
-from dimos_messages.builtin_interfaces.msg import Time
-from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos_messages.sensor_msgs.msg import Image, Imu
-from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl import rospubsub, rospubsub_conversion as conversion
 
 
@@ -181,6 +181,9 @@ def test_missing_ros_serialization_reports_runtime_dependency(ros_boundary, monk
         conversion.dimos_to_ros(_sample(Image), ros_boundary.oracle.types[Image.__msgtype__])
 
 
+@pytest.mark.skip(
+    reason="Exercises the R1Pro consumer migration; runs in the transports migration PR"
+)
 def test_depth_and_imu_workers_reuse_ros_cdr_preserving_layout_and_ns(ros_boundary):
     import queue
 

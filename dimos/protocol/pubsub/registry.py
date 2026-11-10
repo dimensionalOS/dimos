@@ -136,9 +136,9 @@ def make_pubsub_transport(
     proto, topic, msg_type_name = parse_pubsub_uri(uri)
     resolved = msg_type
     if msg_type_name is not None:
-        from dimos.protocol.pubsub.message_types import resolve_declared_message_type
+        from dimos.protocol.pubsub.message_types import resolve_channel_message_type
 
-        resolved = resolve_declared_message_type(msg_type_name)
+        resolved = resolve_channel_message_type(msg_type_name)
         if resolved is None:
             raise ValueError(f"Could not resolve message type {msg_type_name!r} from URI {uri!r}")
     transport: PubSubTransport[Any] = _REGISTRY[proto](topic, resolved)

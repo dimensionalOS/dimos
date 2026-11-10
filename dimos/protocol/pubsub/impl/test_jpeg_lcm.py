@@ -1,9 +1,9 @@
 import threading
 
+from dimos_messages.sensor_msgs.msg import Image
 import numpy as np
 
 from dimos.message_utils import image
-from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.impl.jpeg_lcm import JpegLCM
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 

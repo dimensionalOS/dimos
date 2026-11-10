@@ -74,7 +74,7 @@ class Topic:
         Channel format: /topic#module.ClassName
         Falls back to default_lcm_type if type cannot be parsed.
         """
-        from dimos.protocol.pubsub.message_types import resolve_declared_message_type
+        from dimos.protocol.pubsub.message_types import resolve_channel_message_type
 
         if default_lcm_type is not None and describe_message(default_lcm_type).encoding == "cdr":
             return Topic(channel, message_type=default_lcm_type)
@@ -83,8 +83,8 @@ class Topic:
             return Topic(topic=channel, lcm_type=default_lcm_type)
 
         topic_str, type_name = channel.rsplit("#", 1)
-        lcm_type = resolve_declared_message_type(type_name)
-        return Topic(topic=topic_str, lcm_type=lcm_type or default_lcm_type)
+        lcm_type = resolve_channel_message_type(type_name) or default_lcm_type
+        return Topic(topic=topic_str, lcm_type=lcm_type)
 
 
 class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):

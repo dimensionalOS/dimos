@@ -62,7 +62,11 @@ class LCMCodec(Generic[T]):
         return message.lcm_encode()  # type: ignore[attr-defined,no-any-return]
 
     def decode(self, payload: bytes) -> T:
-        return self.message_type.lcm_decode(payload)  # type: ignore[attr-defined,no-any-return]
+        try:
+            return self.message_type.lcm_decode(payload)  # type: ignore[attr-defined,no-any-return]
+        except AttributeError as error:
+            # Publish-only doubles (e.g. tests) may implement just lcm_encode.
+            raise ValueError(f"{self.message_type!r} has no lcm_decode") from error
 
 
 @dataclass(frozen=True)
@@ -90,7 +94,7 @@ def describe_message(message_type: type[T]) -> MessageDescriptor[T]:
     name = _generated_name(message_type)
     if name is not None:
         return MessageDescriptor(message_type, "cdr", name, CDRCodec(message_type))
-    if hasattr(message_type, "lcm_encode") and hasattr(message_type, "lcm_decode"):
+    if hasattr(message_type, "lcm_encode") or hasattr(message_type, "lcm_decode"):
         legacy_name = getattr(message_type, "msg_name", None)
         if not isinstance(legacy_name, str) or not legacy_name:
             legacy_name = f"{message_type.__module__}.{message_type.__name__}"

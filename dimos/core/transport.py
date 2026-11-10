@@ -210,6 +210,7 @@ class ROSTransport(PubSubTransport[Any]):
 
     def __init__(self, topic: str, msg_type: type[Any], **kwargs: Any) -> None:
         describe_message(msg_type)
+        self._ros_kwargs = kwargs
         # rclpy (about 0.1 s with rospubsub): only loaded when a ROSTransport exists.
         from dimos.protocol.pubsub.impl.rospubsub import ROSTopic
 
@@ -238,7 +239,7 @@ class ROSTransport(PubSubTransport[Any]):
         if self._ros is None:
             from dimos.protocol.pubsub.impl.rospubsub import DimosROS  # rclpy: see __init__
 
-            self._ros = DimosROS()
+            self._ros = DimosROS(**self._ros_kwargs)
             self._ros.start()
 
     def stop(self) -> None:
@@ -390,7 +391,17 @@ class WebRTCTransport(PubSubTransport[M]):
                     with self._channel_types_lock:
                         declared = self._channel_types.setdefault(provider, {})
                         previous = declared.get(self.topic)
-                        if previous is not None and previous is not self._msg_type:
+                        # Legacy LCM messages identify themselves on the wire and
+                        # may share a multiplexed channel; CDR has no schema
+                        # fingerprint, so a channel binds exactly one type.
+                        if (
+                            previous is not None
+                            and previous is not self._msg_type
+                            and (
+                                describe_message(previous).encoding == "cdr"
+                                or describe_message(self._msg_type).encoding == "cdr"
+                            )
+                        ):
                             raise TypeError(
                                 f"WebRTC channel {self.topic!r} already declares {describe_message(previous).name}; cannot bind {describe_message(self._msg_type).name}"
                             )

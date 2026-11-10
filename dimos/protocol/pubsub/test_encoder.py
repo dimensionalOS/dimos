@@ -17,11 +17,11 @@ import json
 from typing import Any
 
 from dimos_cdrgen.registry import encode as encode_cdr
+from dimos_messages.geometry_msgs.msg import Vector3
+from dimos_messages.std_msgs.msg import Int32, String
 import numpy as np
 import pytest
 
-from dimos_messages.geometry_msgs.msg import Vector3
-from dimos_messages.std_msgs.msg import Int32, String
 from dimos.protocol.pubsub.codec import MessageDescriptor, describe_message
 from dimos.protocol.pubsub.encoders import CborEncoderMixin, MessageEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory, MemoryWithJSONEncoder

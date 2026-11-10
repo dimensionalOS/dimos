@@ -37,7 +37,30 @@ def resolve_declared_message_type(name: str) -> type | None:
     resolved = resolve_message_type(name)
     if resolved is not None:
         return resolved
+    return resolve_legacy_message_type(name)
+
+
+def resolve_legacy_message_type(name: str) -> type | None:
+    """Resolve a legacy ``dimos.msgs`` type name.
+
+    Channel strings that embed a type suffix (``topic#pkg.Type``) or a key
+    expression segment are only produced by legacy publishers, whose payload
+    is LCM; the legacy class must win there.
+    """
     from dimos.msgs.helpers import resolve_msg_type
 
     return resolve_msg_type(name)
 
+
+def resolve_channel_message_type(name: str) -> type | None:
+    """Resolve a type name embedded in a legacy channel/URI (``pkg.Type``).
+
+    The dotted form is what legacy publishers append to channels and key
+    expressions, so the legacy class wins there; canonical generated names
+    (``pkg/msg/Type``) resolve through the registry.
+    """
+    if "/" not in name:
+        legacy = resolve_legacy_message_type(name)
+        if legacy is not None:
+            return legacy
+    return resolve_declared_message_type(name)

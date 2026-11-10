@@ -26,7 +26,7 @@ import zenoh
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.encoders import CborEncoderMixin, MessageEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
-from dimos.protocol.pubsub.message_types import resolve_declared_message_type
+from dimos.protocol.pubsub.message_types import resolve_channel_message_type
 from dimos.protocol.pubsub.spec import AllPubSub
 from dimos.protocol.service.zenohservice import ZenohService
 from dimos.utils.logging_config import setup_logger
@@ -129,7 +129,7 @@ def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> T
     parts = key_expr.rsplit("/", 1)
     if len(parts) == 2:
         base, maybe_type = parts
-        lcm_type = resolve_declared_message_type(maybe_type)
+        lcm_type = resolve_channel_message_type(maybe_type)
         if lcm_type is not None:
             return Topic(topic=base, lcm_type=lcm_type)
     return Topic(topic=key_expr, lcm_type=default_lcm_type)

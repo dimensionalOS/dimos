@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dimos_messages.geometry_msgs.msg import Vector3
+
 from dimos.protocol.pubsub.message_types import resolve_message_type
 
 
