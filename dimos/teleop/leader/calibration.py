@@ -40,6 +40,8 @@ LeaderSide = Literal["left", "right"]
 LEADER_SIDES: tuple[LeaderSide, ...] = ("left", "right")
 # Both leader arms built so far carry seven Feetech motors, numbered along the arm.
 DEFAULT_LEADER_MOTOR_NAMES: tuple[str, ...] = tuple(f"joint_{index}" for index in range(1, 8))
+# The trigger servo a leader may carry for its gripper; absent on arm-only leaders.
+LEADER_GRIPPER_MOTOR_NAME = "gripper"
 
 
 def default_calibration_path(side: LeaderSide, root: Path = LEADER_STATE_DIR) -> Path:

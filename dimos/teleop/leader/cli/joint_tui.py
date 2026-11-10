@@ -31,14 +31,12 @@ if TYPE_CHECKING:
     from rich.console import Group
 
 from dimos.teleop.leader.calibration import (
-    DEFAULT_LEADER_MOTOR_NAMES,
     LeaderCalibration,
     LeaderSide,
     default_calibration_path,
     load_calibration,
 )
 from dimos.teleop.leader.cli._errors import exit_for_missing_dependency
-from dimos.teleop.leader.cli.calibrate import DEFAULT_MOTOR_IDS
 from dimos.teleop.leader.feetech import (
     FEETECH_DEFAULT_BAUDRATE,
     FeetechLeaderReader,
@@ -96,16 +94,14 @@ def _run(
 
     refresh_seconds = 1.0 / refresh_hz
     calibration = _load_tui_calibration(side, _resolve_calibration_path(side, calibration_path))
+    motor_ids = {name: motor.id for name, motor in calibration.motors.items()}
     reader = FeetechLeaderReader(port, baudrate)
     try:
         reader.connect()
 
         with Live(refresh_per_second=refresh_hz, screen=True) as live:
             while True:
-                rows = _read_side_rows(
-                    calibration,
-                    reader.read_raw_positions(DEFAULT_MOTOR_IDS),
-                )
+                rows = _read_side_rows(calibration, reader.read_raw_positions(motor_ids))
                 live.update(_build_joint_dashboard(rows))
                 time.sleep(refresh_seconds)
     except KeyboardInterrupt:
@@ -135,14 +131,12 @@ def _read_side_rows(
         LeaderJointRow(
             side=calibration.side,
             joint=motor_name,
-            motor_id=calibration.motors[motor_name].id,
+            motor_id=motor.id,
             raw=raw_positions[motor_name],
-            radians=calibrated_motor_radians(
-                raw_positions[motor_name], calibration.motors[motor_name]
-            ),
-            flip=calibration.motors[motor_name].flip,
+            radians=calibrated_motor_radians(raw_positions[motor_name], motor),
+            flip=motor.flip,
         )
-        for motor_name in DEFAULT_LEADER_MOTOR_NAMES
+        for motor_name, motor in calibration.motors.items()
     ]
 
 

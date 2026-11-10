@@ -14,10 +14,13 @@
 
 from typing import get_args, get_origin, get_type_hints
 
+import pytest
+
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
+from dimos.robot.manipulators.damiao.robot import DamiaoGripper, DamiaoMotor
 from dimos.teleop.leader.coordinator import (
     LEADER_JOINT_COMMAND,
     LEADER_TASK_PRIORITY,
@@ -52,14 +55,33 @@ def test_leader_task_outranks_the_trajectory_task_and_reads_its_own_port() -> No
     assert "velocity_limits" not in leader_task(JOINTS).params
 
 
-def test_gripper_tasks_bind_each_side_to_its_own_command() -> None:
-    tasks = leader_gripper_tasks({"left": "arm/left_gripper", "right": "arm/right_gripper"})
-    assert [(t.name, t.type, t.joint_names, t.priority, t.stream_bind) for t in tasks] == [
+def _jaw(name: str, joint: str, open_at: str) -> DamiaoGripper:
+    return DamiaoGripper(
+        name=name,
+        joint=joint,
+        open_at=open_at,  # type: ignore[arg-type]
+        motor=DamiaoMotor(name, "DM4310", 0x08, 0x18),
+        opening="decreasing_position",
+        current=0.15,
+    )
+
+
+def test_gripper_tasks_bind_each_jaw_to_its_side_and_keep_its_open_end() -> None:
+    tasks = leader_gripper_tasks(
+        [
+            _jaw("left_gripper", "left_finger_joint1", "upper"),
+            _jaw("right_gripper", "right_gripper", "lower"),
+        ]
+    )
+    assert [
+        (t.name, t.type, t.joint_names, t.priority, t.params, t.stream_bind) for t in tasks
+    ] == [
         (
             "left_arm_gripper",
             "gripper",
-            ["arm/left_gripper"],
+            ["arm/left_finger_joint1"],
             20,
+            {"open_at": "upper"},
             {"gripper_command": "left_gripper_command"},
         ),
         (
@@ -67,6 +89,9 @@ def test_gripper_tasks_bind_each_side_to_its_own_command() -> None:
             "gripper",
             ["arm/right_gripper"],
             20,
+            {"open_at": "lower"},
             {"gripper_command": "right_gripper_command"},
         ),
     ]
+    with pytest.raises(ValueError, match="not named <side>_gripper"):
+        leader_gripper_tasks([_jaw("gripper", "joint7", "upper")])

@@ -28,7 +28,8 @@ from dimos.control.coordinator import TaskConfig
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
-from dimos.teleop.leader.calibration import LeaderSide
+from dimos.robot.manipulators.damiao.robot import DamiaoGripper
+from dimos.teleop.leader.calibration import LEADER_SIDES
 
 LEADER_JOINT_COMMAND = "leader_joint_command"
 LEADER_TASK_NAME = "leader"
@@ -65,16 +66,26 @@ def leader_task(
 
 
 def leader_gripper_tasks(
-    gripper_joint_by_side: Mapping[LeaderSide, str], *, priority: int = GRIPPER_TASK_PRIORITY
+    grippers: Iterable[DamiaoGripper], *, priority: int = GRIPPER_TASK_PRIORITY
 ) -> list[TaskConfig]:
-    """One gripper task per leader side, each reading that side's gripper command."""
-    return [
-        TaskConfig(
-            name=f"{side}_arm_gripper",
-            type="gripper",
-            joint_names=[joint],
-            priority=priority,
-            stream_bind={"gripper_command": f"{side}_gripper_command"},
+    """One gripper task per jaw, each reading its side's opening from the leader.
+
+    A jaw named ``<side>_gripper`` reads ``<side>_gripper_command``; ``open_at``
+    comes from the robot so a jaw open at its lower end is not driven inverted.
+    """
+    tasks: list[TaskConfig] = []
+    for gripper in grippers:
+        side = gripper.name.removesuffix("_gripper")
+        if side == gripper.name or side not in LEADER_SIDES:
+            raise ValueError(f"gripper {gripper.name!r} is not named <side>_gripper")
+        tasks.append(
+            TaskConfig(
+                name=f"{side}_arm_gripper",
+                type="gripper",
+                joint_names=[f"arm/{gripper.joint}"],
+                priority=priority,
+                params={"open_at": gripper.open_at},
+                stream_bind={"gripper_command": f"{side}_gripper_command"},
+            )
         )
-        for side, joint in gripper_joint_by_side.items()
-    ]
+    return tasks
