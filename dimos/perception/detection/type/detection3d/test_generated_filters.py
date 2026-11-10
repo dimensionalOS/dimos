@@ -16,10 +16,10 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image, pointcloud
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, PointCloud2, PointField, RegionOfInterest
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, PointCloud2, PointField, RegionOfInterest
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     height_filter,

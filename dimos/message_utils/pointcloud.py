@@ -30,9 +30,9 @@ from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.message_utils import camera_info, geometry, image, time as message_time
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, PointField
+from dimos_messages.std_msgs.msg import Header
 
 _FIELD_KINDS = {1: "i1", 2: "u1", 3: "i2", 4: "u2", 5: "i4", 6: "u4", 7: "f4", 8: "f8"}
 

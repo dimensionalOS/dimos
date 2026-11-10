@@ -20,8 +20,8 @@ import time
 import pytest
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 

@@ -55,12 +55,12 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import transport_topic
-from dimos.messages.sensor_msgs.msg import (
+from dimos_messages.sensor_msgs.msg import (
     CameraInfo,
     CompressedImage,
     Image,
 )
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches

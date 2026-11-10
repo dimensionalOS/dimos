@@ -28,10 +28,10 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import image, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import EntityMarkers
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import EntityMarkers
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
 from dimos.perception.experimental.temporal_memory.clip_filter import _get_image_data
 from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB

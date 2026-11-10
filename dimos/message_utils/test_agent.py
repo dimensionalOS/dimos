@@ -9,9 +9,9 @@ import numpy as np
 
 from dimos.message_utils.agent import content_blocks
 from dimos.message_utils.image import from_array
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_image_content_keeps_rgb_pixels_in_jpeg() -> None:

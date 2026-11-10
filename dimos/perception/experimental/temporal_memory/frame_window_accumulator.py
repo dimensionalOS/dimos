@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from dimos.message_utils import time as message_time
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
 
 @dataclass

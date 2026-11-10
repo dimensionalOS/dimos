@@ -27,9 +27,9 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.std_msgs.msg import Float32, Header, Int32, String
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.std_msgs.msg import Float32, Header, Int32, String
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.webrtc.providers import spec

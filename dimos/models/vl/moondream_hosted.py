@@ -22,7 +22,7 @@ import numpy as np
 from PIL import Image as PILImage
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

@@ -18,8 +18,8 @@ import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 
 @pytest.fixture

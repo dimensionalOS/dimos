@@ -18,7 +18,7 @@ from typing import TypeVar, Union
 
 import numpy as np
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 T = TypeVar("T", bound="Vector")
 

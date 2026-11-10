@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.utils.data import get_data
 
 

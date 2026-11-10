@@ -23,7 +23,7 @@ import pytest
 from reactivex.testing import ReactiveTest, TestScheduler
 
 from dimos.message_utils import image, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.experimental import perceive_loop_skill as skill_module
 from dimos.perception.experimental.perceive_loop_skill import PerceiveLoopSkill
 

@@ -12,7 +12,7 @@ import pytest
 
 from dimos.core.stream import Stream, Transport
 from dimos.message_utils import time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
+from dimos_messages.builtin_interfaces.msg import Time
 from dimos.utils.testing.moment import OutputMoment, SensorMoment
 from dimos.utils.testing.test_pickle_messages import FIXTURES
 

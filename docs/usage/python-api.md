@@ -42,7 +42,7 @@ app.stop()
 Modules can define `@rpc` methods which you can call. Here's an example:
 
 ```python skip
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 # Rotate right.
 app.GO2Connection.move(Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, -1.0)), duration=0.05)
 # Move forward.

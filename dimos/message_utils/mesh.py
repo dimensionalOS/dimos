@@ -19,8 +19,8 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.messages.dimos_msgs.msg import TriangleMesh
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.std_msgs.msg import Header
 
 
 def from_arrays(

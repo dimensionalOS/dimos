@@ -30,7 +30,7 @@ import pytest
 
 from dimos.message_utils import pointcloud as pointcloud_utils
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.web.cockpit import Map3D, cockpit
 
 pytest.importorskip("playwright")

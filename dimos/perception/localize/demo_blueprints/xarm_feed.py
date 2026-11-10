@@ -41,8 +41,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.replay import ReplayStream
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 

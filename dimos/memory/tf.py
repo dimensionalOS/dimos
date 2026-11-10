@@ -20,11 +20,11 @@ import math
 from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory.stream import Stream
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.tf import MultiTBuffer
 
 if TYPE_CHECKING:
-    from dimos.messages.geometry_msgs.msg import TransformStamped
+    from dimos_messages.geometry_msgs.msg import TransformStamped
     from dimos.protocol.tf.tf import TFLookup
 
 

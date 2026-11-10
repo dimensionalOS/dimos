@@ -119,8 +119,8 @@ def test_clean_isolated_message_install_and_builtin_identity(installed_toolchain
         """from importlib.metadata import entry_points
 from acme_telemetry.telemetry_msgs.msg import DeviceReading
 from acme_telemetry_schemas.provider import package_root
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
 from dimos_cdrgen.registry import encode, decode
 value = DeviceReading(Header(Time(17, 23), "map"), 7, 2.5, "sensor")
 assert type(value.header) is Header
@@ -146,8 +146,8 @@ assert (package_root() / 'rust/Cargo.toml').is_file()
             "-I",
             "-c",
             """from acme_telemetry.telemetry_msgs.msg import DeviceReading
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
 value = DeviceReading(Header(Time(0, 0), 'map'), 7, 2.5, 'sensor', 9)
 assert value.status == 9
 """,

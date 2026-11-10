@@ -31,9 +31,9 @@ from dimos.agents.typesafe.constants import (
 from dimos.message_utils import geometry, pointcloud
 
 if TYPE_CHECKING:
-    from dimos.messages.geometry_msgs.msg import PoseStamped
-    from dimos.messages.sensor_msgs.msg import PointCloud2
-    from dimos.messages.vision_msgs.msg import Detection2DArray, Detection3DArray
+    from dimos_messages.geometry_msgs.msg import PoseStamped
+    from dimos_messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.vision_msgs.msg import Detection2DArray, Detection3DArray
 
 
 class XyzJson(TypedDict):

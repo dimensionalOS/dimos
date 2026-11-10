@@ -34,14 +34,14 @@ ColorLike = Union[str, Color, DeferredColor]
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
-    from dimos.messages.geometry_msgs.msg import (
+    from dimos_messages.geometry_msgs.msg import (
         Point as GeoPoint,
         Pose as GeoPose,
         PoseStamped,
         Vector3,
     )
-    from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
-    from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+    from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
+    from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 
 
 @dataclass

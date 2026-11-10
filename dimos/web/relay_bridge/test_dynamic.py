@@ -32,9 +32,9 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, PeekNotFound
 from dimos.core.stream import In, Out, RemoteIn
 from dimos.core.transport import pLCMTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web import _test_values as message_values
 from dimos.web.cockpit import Channel, cockpit
@@ -169,7 +169,7 @@ def test_digest_name_collision_with_different_specs_raises(monkeypatch):
 
 _RELOAD_SCRIPT = """
 import importlib, sys
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.protocol.encode.cbor import decode, encode
 import dimos.web.relay_bridge.dynamic as dynamic
 

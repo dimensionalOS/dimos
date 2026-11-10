@@ -3,8 +3,8 @@ import numpy as np
 from dimos.memory.codecs.base import codec_from_id, codec_id
 from dimos.memory.codecs.cdrjpeg import CdrjpegCodec
 from dimos.message_utils import image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_generated_jpeg_storage_preserves_header_and_pixels():

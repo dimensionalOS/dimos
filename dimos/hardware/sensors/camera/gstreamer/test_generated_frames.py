@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 gi = pytest.importorskip("gi", reason="GStreamer acceptance requires the optional GI binding")

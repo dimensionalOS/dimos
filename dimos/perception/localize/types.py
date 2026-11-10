@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 @dataclass

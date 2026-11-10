@@ -25,7 +25,7 @@ from dimos.message_utils import pointcloud
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.messages.geometry_msgs.msg import Vector3
+    from dimos_messages.geometry_msgs.msg import Vector3
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()

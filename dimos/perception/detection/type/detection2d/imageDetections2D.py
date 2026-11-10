@@ -27,8 +27,8 @@ from dimos.perception.detection.type.imageDetections import ImageDetections
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
-    from dimos.messages.sensor_msgs.msg import Image
-    from dimos.messages.vision_msgs.msg import Detection2DArray
+    from dimos_messages.sensor_msgs.msg import Image
+    from dimos_messages.vision_msgs.msg import Detection2DArray
 
 T2D = TypeVar("T2D", bound=Detection2D, default=Detection2DBBox)
 

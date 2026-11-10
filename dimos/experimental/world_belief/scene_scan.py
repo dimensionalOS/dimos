@@ -28,12 +28,12 @@ from dimos.message_utils import (
     image as image_utils,
     time as message_time,
 )
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
     TransformStamped,
 )
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 

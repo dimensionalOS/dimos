@@ -20,7 +20,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -28,9 +28,9 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC

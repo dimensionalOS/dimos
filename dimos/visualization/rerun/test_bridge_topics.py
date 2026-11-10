@@ -35,7 +35,7 @@ import rerun as rr
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
 from dimos.visualization.rerun.bridge import (
     RerunBridgeModule,

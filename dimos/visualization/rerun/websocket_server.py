@@ -30,8 +30,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.generic import connect_host
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RERUN_WEBSOCKET_PORT

@@ -166,7 +166,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.messages.std_msgs.msg import Int32
+from dimos_messages.std_msgs.msg import Int32
 
 
 class Counter(Module):
@@ -201,7 +201,7 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.messages.std_msgs.msg import Int32
+from dimos_messages.std_msgs.msg import Int32
 from dimos.spec.utils import Spec
 
 
@@ -277,8 +277,8 @@ For every declared `x: In[T]`, if the module defines `async def handle_x(self, m
 ```python
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import PointStamped
-from dimos.messages.geometry_msgs.msg import Twist
+from dimos_messages.geometry_msgs.msg import PointStamped
+from dimos_messages.geometry_msgs.msg import Twist
 
 class MovementManager(Module):
     clicked_point: In[PointStamped]
@@ -471,7 +471,7 @@ Most of the time this is a bad idea, but you can peak behind blueprints, autocon
 import time
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import WebcamModule
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 camera = WebcamModule()
 camera.color_image.transport = LCMTransport("/camera/rgb", Image)
@@ -486,7 +486,7 @@ camera.stop()
 ```python skip
 import time
 from dimos.core.transport import LCMTransport
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.perception.detection.module2D import Detection2DModule
 
 detector = Detection2DModule()
@@ -508,7 +508,7 @@ A transport works on its own. Init one and send/receive from a plain script, no 
 
 ```python skip
 from dimos.core.transport import LCMTransport
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.std_msgs.msg import String
 
 chat = LCMTransport("/chat", String)
 
@@ -535,7 +535,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.std_msgs.msg import String
 
 class Dyn(Module):
     @rpc

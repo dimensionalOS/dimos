@@ -16,8 +16,8 @@ from abc import ABC, abstractmethod
 
 from reactivex.observable import Observable
 
-from dimos.messages.geometry_msgs.msg import Quaternion
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.geometry_msgs.msg import Quaternion
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 OPTICAL_ROTATION = Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5)

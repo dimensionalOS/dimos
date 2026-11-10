@@ -16,7 +16,7 @@ from dimos_lcm.geometry_msgs.Vector3 import Vector3 as LCMVector3
 import pytest
 
 from dimos.memory.codecs.base import codec_for, codec_from_id, codec_id
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 
 def test_historical_envelope_returns_generated_value():
@@ -39,7 +39,7 @@ def test_historical_weighted_segments_keep_generated_identity_and_weights():
     from dimos_lcm.geometry_msgs import PoseStamped
     from dimos_lcm.nav_msgs import Path
 
-    from dimos.messages.dimos_msgs.msg import LineSegments3D
+    from dimos_messages.dimos_msgs.msg import LineSegments3D
 
     old = Path()
     old.header.frame_id = "map"
@@ -64,7 +64,7 @@ def test_historical_transform_wrapper_reads_first_tf_edge_as_generated_stamped()
     from dimos_lcm.geometry_msgs import TransformStamped
     from dimos_lcm.tf2_msgs import TFMessage
 
-    from dimos.messages.geometry_msgs.msg import TransformStamped as GeneratedTransform
+    from dimos_messages.geometry_msgs.msg import TransformStamped as GeneratedTransform
 
     old = TFMessage()
     edge = TransformStamped()

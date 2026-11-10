@@ -32,10 +32,10 @@ from dimos.message_utils import (
     pointcloud as pointcloud_utils,
     time as message_time,
 )
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import Detection2DArray, Detection3DArray
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import Detection2DArray, Detection3DArray
 from dimos.models.segmentation.edge_tam import BoxPromptImageSegmenter
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode

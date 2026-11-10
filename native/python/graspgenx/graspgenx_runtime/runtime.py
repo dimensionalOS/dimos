@@ -28,9 +28,9 @@ from dimos.manipulation.grasping.grasp_gen_x.module import (
     GraspGenXModule,
 )
 from dimos.message_utils import geometry, pointcloud
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Pose
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Pose
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from graspgenx_runtime.backend import GraspGenXRuntime

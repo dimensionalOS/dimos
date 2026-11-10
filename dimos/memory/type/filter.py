@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, fields
 from itertools import islice
 from typing import TYPE_CHECKING, Any
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
