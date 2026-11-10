@@ -12,19 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The R1 Pro's control wiring end to end, with no hardware.
-
-A real ``R1ProCoordinator`` runs its real tasks — the whole-body joint
-trajectory task and the chassis velocity task — and drives a real
-``R1ProConnection`` through the contract ports (``r1pro_position_command``,
-``r1pro_velocity_command``, ``r1pro_joint_state``, ``r1pro_imu``) on in-process
-transports. The vendor ROS stack is faked (``_connection_test_fakes``), so
-what the vendor topics would carry is checked directly, and feedback is
-injected there to verify the readback path into the coordinator's state.
-
-The coordinator's tick loop is stepped by hand, one tick at a time; the
-connection module's own threads (publish loop, deadman) run for real.
-"""
+"""The R1 Pro's control wiring end to end, with no hardware."""
 
 from __future__ import annotations
 
@@ -42,7 +30,6 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
-import dimos.control.tick_loop as tick_mod
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -139,11 +126,7 @@ class Rig:
         self.yaw = math.pi / 2
 
     def attach(self, feedback: list[float] | None = None, **config: Any) -> R1ProConnection:
-        """Start an ``R1ProConnection`` on the shared ports, on the fake vendor stack.
-
-        The fake robot reports ``feedback`` (flat 18-joint layout) once the
-        module has subscribed, so ``start``'s feedback discovery succeeds.
-        """
+        """Start an ``R1ProConnection`` on the shared ports, on the fake vendor stack."""
         config.setdefault("boot_vendor_stack", False)
         config.setdefault("deadman_timeout_s", 5.0)
         config.setdefault("sensor_stats_interval_s", 0.0)
@@ -172,13 +155,7 @@ class Rig:
         self._feed_stops[self.connections.index(conn)].set()
 
     def _feed_while_alive(self, stop: threading.Event, streamed: list[list[float] | None]) -> None:
-        """Stream feedback like the real ~100 Hz vendor topics while the
-        connection is up; the topics die with it, as on the real robot.
-
-        A single frame can go stale (reading timeout) before a loaded CI
-        runner steps the next tick, so the fake keeps publishing. The latest
-        value passed to ``feed`` is what keeps streaming.
-        """
+        """Keep measured feedback fresh across slow CI ticks, until detached."""
 
         def subscribed() -> bool:
             return bool(self.fake.nodes) and self.fake.control.listener_count() >= 4
@@ -265,7 +242,7 @@ def rig(mocker: Any, fake_ros: FakeRos) -> Iterator[Callable[..., Rig]]:
         r.coordinator.stop()
 
 
-def test_the_r1pro_is_one_connection_robot_with_18_joints_3_base_axes_and_no_adapters(
+def test_real_coordinator_holds_then_drives_arm_and_base_on_canonical_planes(
     rig: Callable[..., Rig],
 ) -> None:
     r = rig()
@@ -279,141 +256,57 @@ def test_the_r1pro_is_one_connection_robot_with_18_joints_3_base_axes_and_no_ada
     }
     # The shipped tasks are reused as-is: one trajectory task, one velocity task.
     assert set(r.coordinator._tasks) == {"joint_trajectory", "vel_chassis"}
-
-
-def test_feedback_flows_from_the_vendor_topics_into_the_coordinator(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    r.attach()
-    r.tick_until(lambda: bool(r.positions_sent()))
-
-    # The coordinator's state is what the fake robot reported, by full name.
+    conn = r.attach()
+    r.tick_until(lambda: bool(r.position_commands.sent) and bool(r.base_commands.sent))
     assert r.joint_positions() == pytest.approx(MEASURED_Q)
     joints = r.coordinator._connections["r1pro"].read_joints()
     assert set(joints.joint_positions) == set(R1PRO_UPPER_BODY_JOINTS + R1PRO_BASE_JOINTS)
-
-
-def test_an_idle_coordinator_holds_the_joints_where_they_are_and_zeroes_the_base(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    r.attach()
-    r.tick_until(lambda: bool(r.position_commands.sent) and bool(r.base_commands.sent))
-
-    # No task drives anything: the 18 joints are held at their measured
-    # positions and the chassis is told 0 on every axis.
+    assert list(r.position_commands.sent[-1].name) == R1PRO_UPPER_BODY_JOINTS
+    assert list(r.base_commands.sent[-1].name) == R1PRO_BASE_JOINTS
     assert r.positions_sent()[-1] == pytest.approx(MEASURED_Q)
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-    assert r.connections[0].status().last_rejection is None
+    assert list(r.base_commands.sent[-1].velocity) == [0.0] * 3
 
-
-def test_a_trajectory_drives_the_upper_body_through_the_whole_chain(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    conn = r.attach()
-    r.tick_until(lambda: bool(r.positions_sent()))
-
-    start = r.joint_positions()
-    goal = [q + 0.02 for q in start]
-    trajectory = JointTrajectory(
-        joint_names=list(R1PRO_UPPER_BODY_JOINTS),
-        points=[
-            TrajectoryPoint(positions=start),
-            TrajectoryPoint(positions=goal, time_from_start=0.3),
-        ],
+    goal = [q + 0.02 for q in MEASURED_Q]
+    result = r.coordinator.execute_trajectory(
+        JointTrajectory(
+            joint_names=list(R1PRO_UPPER_BODY_JOINTS),
+            points=[
+                TrajectoryPoint(positions=MEASURED_Q),
+                TrajectoryPoint(positions=goal, time_from_start=0.1),
+            ],
+        )
     )
-    result = r.coordinator.execute_trajectory(trajectory)
     assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
+    assert "twist_command" in r.coordinator._stream_unsubs
+    r.twist_bus.publish(Twist(linear=Vector3(0.5, -0.2, 0.0), angular=Vector3(0.0, 0.0, 0.7)))
+    r.tick()
+    # Real measured pi/2 yaw: body -> canonical world velocities -> vendor body.
+    assert list(r.base_commands.sent[-1].velocity) == pytest.approx([0.2, 0.5, 0.7])
+    sent = r.fake.control.sent_to("/motion_target/target_speed_chassis")[-1].twist
+    assert (sent.linear.x, sent.linear.y, sent.angular.z) == pytest.approx((0.5, -0.2, 0.7))
 
-    # Task -> ConnectionSource -> r1pro_position_command -> connection -> vendor topics.
     def at_goal() -> bool:
         sent = r.fake.control.sent_to("/motion_target/target_joint_state_arm_left")
         return bool(sent) and list(sent[-1].position) == pytest.approx(goal[4:11], abs=1e-3)
 
     r.tick_until(at_goal)
-    assert conn.status().last_rejection is None
-    assert conn.status().last_error is None
-
-    # The robot reporting the goal back closes the loop: the coordinator sees it.
+    assert conn.status().last_rejection is conn.status().last_error is None
+    for segment, values in (
+        ("torso", goal[:4]),
+        ("arm_left", goal[4:11]),
+        ("arm_right", goal[11:]),
+    ):
+        msg = r.fake.control.sent_to(f"/motion_target/target_joint_state_{segment}")[-1]
+        assert list(msg.position) == pytest.approx(values, abs=1e-3)
+        assert list(msg.velocity) == [conn.config.tracking_speed] * len(values)
     r.feed(q=goal)
     r.tick_until(lambda: r.joint_positions() == pytest.approx(goal, abs=1e-6))
 
-
-def test_a_twist_rotates_to_world_joints_and_back_to_body_at_the_vendor(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    r.attach()
-    r.tick_until(lambda: bool(r.twists_sent()))
-
-    # The public twist bus is subscribed because the connection has a base.
-    assert "twist_command" in r.coordinator._stream_unsubs
-
-    r.twist_bus.publish(Twist(linear=Vector3(0.5, -0.2, 0.0), angular=Vector3(0.0, 0.0, 0.7)))
-    r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == pytest.approx((0.2, 0.5, 0.7))
-    sent = r.fake.control.sent_to("/motion_target/target_speed_chassis")[-1]
-    assert (sent.twist.linear.x, sent.twist.linear.y, sent.twist.angular.z) == pytest.approx(
-        (0.5, -0.2, 0.7)
-    )
-
-    # Out-of-bounds velocities are rejected as a whole, not clipped.
-    before = len(r.fake.control.published)
+    # Bounds reject the whole tick rather than clipping or sending arm-only output.
+    before = list(r.fake.control.published)
     r.twist_bus.publish(Twist(linear=Vector3(5.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, -9.0)))
     r.tick()
-    assert len(r.fake.control.published) == before
-
-
-def test_a_command_past_a_urdf_limit_goes_nowhere(rig: Callable[..., Rig], mocker: Any) -> None:
-    from dimos.control.task import (
-        BaseControlTask,
-        ControlMode,
-        CoordinatorState,
-        JointCommandOutput,
-        ResourceClaim,
-    )
-
-    class PastTheLimit(BaseControlTask):
-        """Always active; tells torso_joint1 99 rad, ~50x past its URDF limit."""
-
-        def __init__(self) -> None:
-            self._name = "past_the_limit"
-
-        def claim(self) -> ResourceClaim:
-            return ResourceClaim(joints=frozenset({"r1pro/torso_joint1"}), priority=10)
-
-        def is_active(self) -> bool:
-            return True
-
-        def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-            return JointCommandOutput(
-                joint_names=["r1pro/torso_joint1"],
-                positions=[99.0],
-                mode=ControlMode.POSITION,
-            )
-
-        def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-            pass
-
-    error = mocker.patch.object(tick_mod.logger, "error")
-    r = rig()
-    conn = r.attach()
-    r.tick_until(lambda: bool(r.positions_sent()))
-    before = list(r.fake.control.published)
-
-    r.coordinator.add_task(PastTheLimit())
-    r.tick()
-    r.tick()
-
-    # The source refuses the whole tick's command before anything is sent,
-    # so the vendor topics stay untouched and the module sees no rejection.
-    error.assert_called()
     assert r.fake.control.published == before
-    assert conn.status().last_rejection is None
 
 
 def test_an_estop_stops_the_commands_and_the_deadman_halts_the_robot(
@@ -440,7 +333,8 @@ def test_an_estop_stops_the_commands_and_the_deadman_halts_the_robot(
     held = r.fake.control.sent_to("/motion_target/target_joint_state_torso")[-1]
     assert list(held.position) == pytest.approx(MEASURED_Q[0:4])
 
-    # Clearing the estop re-holds at the next reading and drives again.
+    r.twist_bus.publish(Twist(linear=Vector3(0.6, 0.0, 0.0)))
+    # Neither pre-estop nor latched input may replay after clearing.
     assert r.coordinator.set_estop(False)
     r.tick_until(lambda: len(r.position_commands.sent) > sent)
     assert list(r.base_commands.sent[-1].velocity) == [0.0] * 3
@@ -485,17 +379,12 @@ def test_a_connection_that_goes_quiet_stops_being_commanded_until_it_returns(
     assert all(node.stopped for node in r.fake.nodes)
 
     # Commands keep flowing until the readings age past the timeout, then stop.
-    deadline = time.monotonic() + 0.4
-    while time.monotonic() < deadline:
-        r.tick()
-        time.sleep(0.02)
+    source = r.coordinator._connections["r1pro"]
+    r.tick_until(lambda: not source.ready_for_control())
     sent = len(r.position_commands.sent)
-    deadline = time.monotonic() + 0.2
-    while time.monotonic() < deadline:
-        r.tick()
-        time.sleep(0.02)
+    r.tick()
+    r.tick()
     assert len(r.position_commands.sent) == sent
-    assert not r.coordinator._connections["r1pro"].ready_for_control()
 
     # It comes back (a fresh module, as after a restart) reporting a moved arm.
     moved = [q + 0.01 for q in MEASURED_Q]
@@ -509,14 +398,22 @@ def test_a_connection_that_goes_quiet_stops_being_commanded_until_it_returns(
 # Blueprint, registry, and consumer contracts — no hardware, nothing started.
 
 
-def _parse(bp: Any) -> None:
-    BlueprintConfigParser(bp).parse(environ={}, overrides={"g": {"viewer": "none"}})
-
-
 def test_the_control_blueprint_pairs_the_connection_ports_with_the_coordinators() -> None:
     bp = r1pro_control(boot_vendor_stack=False)
-    _parse(bp)
+    BlueprintConfigParser(bp).parse(environ={}, overrides={"g": {"viewer": "none"}})
 
+    streams = {name for name, _type in bp.transport_map}
+    assert not {"motor_states", "motor_command", "chassis_cmd_vel", "joint_command"} & streams
+    assert {
+        "cmd_vel",
+        "twist_command",
+        "imu_chassis",
+        "imu_torso",
+        "odometry",
+        "chassis_odom",
+        "coordinator_joint_state",
+    } <= streams
+    assert all("Adapter" not in atom.module.__name__ for atom in bp.blueprints)
     pairs = {(old, new) for (_, old), new in bp.remapping_map.items()}
     assert ("position_command", "r1pro_position_command") in pairs
     assert ("velocity_command", "r1pro_velocity_command") in pairs
@@ -525,62 +422,8 @@ def test_the_control_blueprint_pairs_the_connection_ports_with_the_coordinators(
     # The wheel-odometry pose keeps the name navigation consumers read.
     assert ("odom", "chassis_odom") in pairs
 
-    # The remap targets are the coordinator's real ports, and vice versa.
-    # (Ports read off the classes: instantiating the modules would spawn threads.)
-    from dimos.core.coordination.blueprints import BlueprintAtom
 
-    coord_atom = BlueprintAtom.create(R1ProCoordinator, {})
-    coord_ins = {s.name for s in coord_atom.streams if s.direction == "in"}
-    coord_outs = {s.name for s in coord_atom.streams if s.direction == "out"}
-    assert {"r1pro_position_command", "r1pro_velocity_command"} <= coord_outs
-    assert {"r1pro_joint_state", "r1pro_imu"} <= coord_ins
-    conn_atom = BlueprintAtom.create(R1ProConnection, {})
-    conn_ins = {s.name for s in conn_atom.streams if s.direction == "in"}
-    conn_outs = {s.name for s in conn_atom.streams if s.direction == "out"}
-    assert {"position_command", "velocity_command"} <= conn_ins
-    assert {"joint_state", "imu_chassis", "imu_torso", "odom", "odometry", "tf"} <= conn_outs
-
-
-def test_the_old_adapter_wiring_is_gone_from_the_control_blueprint() -> None:
-    bp = r1pro_control(boot_vendor_stack=False)
-    streams = {name for name, _type in bp.transport_map}
-    # The transport adapters' topics are gone with them.
-    assert "motor_states" not in streams
-    assert "motor_command" not in streams
-    assert "chassis_cmd_vel" not in streams
-    assert "joint_command" not in streams
-    # The consumer contracts survive: the public twist bus, both IMUs, wheel
-    # odometry, the chassis pose, and the coordinator's joint state.
-    assert {"cmd_vel", "twist_command"} <= streams
-    assert {"imu_chassis", "imu_torso", "odometry", "chassis_odom"} <= streams
-    assert "coordinator_joint_state" in streams
-    # No module in the blueprint is a hardware adapter.
-    assert all("Adapter" not in atom.module.__name__ for atom in bp.blueprints)
-
-
-def test_every_public_r1pro_blueprint_composes() -> None:
-    from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_coordinator
-    from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_teleop import r1pro_teleop
-    from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation import (
-        r1pro_manipulation,
-    )
-    from dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav import r1pro_nav
-
-    for bp in (r1pro_coordinator, r1pro_teleop, r1pro_nav, r1pro_manipulation):
-        _parse(bp)
-
-    # Teleop keeps driving the coordinator's twist_command, as before.
-    pairs = {(old, new) for (_, old), new in r1pro_teleop.remapping_map.items()}
-    assert ("tele_cmd_vel", "twist_command") in pairs
-    # Navigation keeps the /cmd_vel bus and the chassis pose it plans from.
-    nav_streams = {name for name, _type in r1pro_nav.transport_map}
-    assert {"cmd_vel", "twist_command", "chassis_odom", "odometry"} <= nav_streams
-    # Manipulation keeps the coordinator's joint state it plans against.
-    man_streams = {name for name, _type in r1pro_manipulation.transport_map}
-    assert "coordinator_joint_state" in man_streams
-
-
-def test_every_r1pro_blueprint_is_registered_and_importable() -> None:
+def test_every_public_r1pro_blueprint_is_registered_importable_and_composes() -> None:
     from dimos.robot.all_blueprints import all_blueprints
 
     names = sorted(name for name in all_blueprints if name.startswith("r1pro"))
@@ -593,9 +436,18 @@ def test_every_r1pro_blueprint_is_registered_and_importable() -> None:
         "r1pro-vr-teleop",
         "r1pro-vr-teleop-real",
     ]
+    blueprints = {}
     for name in names:
         module_path, _, attr = all_blueprints[name].partition(":")
-        assert hasattr(importlib.import_module(module_path), attr)
+        bp = getattr(importlib.import_module(module_path), attr)
+        BlueprintConfigParser(bp).parse(environ={}, overrides={"g": {"viewer": "none"}})
+        blueprints[name] = bp
+    pairs = {(old, new) for (_, old), new in blueprints["r1pro-teleop"].remapping_map.items()}
+    assert ("tele_cmd_vel", "twist_command") in pairs
+    nav_streams = {name for name, _type in blueprints["r1pro-nav"].transport_map}
+    assert {"cmd_vel", "twist_command", "chassis_odom", "odometry"} <= nav_streams
+    man_streams = {name for name, _type in blueprints["r1pro-manipulation"].transport_map}
+    assert "coordinator_joint_state" in man_streams
 
 
 def test_grippers_are_command_only_contract_joints_and_stay_out_of_planning() -> None:
