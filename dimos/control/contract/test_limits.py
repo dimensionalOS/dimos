@@ -264,13 +264,12 @@ def test_planar_joints_use_model_velocity_bounds_without_position_bounds(model: 
     cfg = config(
         model=planar,
         joint_commands={name: (Interface.VELOCITY,) for name in names},
-        clamp_commands=frozenset(f"arm/{name}/velocity" for name in names),
     )
     table = limits(cfg)
     assert list(table.values()) == [
-        Limits(-1.5, 1.5, True),
-        Limits(-0.5, 0.5, True),
-        Limits(-2.0, 2.0, True),
+        Limits(-1.5, 1.5),
+        Limits(-0.5, 0.5),
+        Limits(-2.0, 2.0),
     ]
     assert all(key.endswith("/velocity") for key in table)
     with pytest.raises(ValueError, match="absent from its model"):

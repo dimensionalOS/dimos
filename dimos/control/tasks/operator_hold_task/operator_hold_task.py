@@ -15,9 +15,9 @@
 """Operator hold: freeze every joint where it is and wait for a person.
 
 A hold is not an e-stop. An e-stop cuts motion; a hold keeps commanding
-each joint's current position (zero velocity for a wheeled base) from a
-priority above every other task, so nothing moves until someone
-acknowledges the hold.
+each position-capable joint's current position from a priority above every
+other task, until someone acknowledges the hold. Velocity-only joints
+are not claimed.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
-from dimos.control.components import TWIST_SUFFIX_MAP
+from dimos.control.contract.keys import Interface
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -92,8 +92,8 @@ def operator_hold_task(
     Args:
         priority: Arbitration priority. Keep it above every other task
             (teleop is 50, autonomy 10-20) or the hold cannot take the joints.
-        joint_names: Position-capable joints to hold. Set this for a mixed-interface
-            robot; velocity-only joints remain visible to other tasks but are not held.
+        joint_names: Optional restriction of the automatically discovered
+            position-capable joints. Velocity-only joints are never held.
     """
     # The coordinator imports task modules, so import it lazily here.
     from dimos.control.coordinator import TaskConfig
@@ -106,19 +106,12 @@ def operator_hold_task(
     )
 
 
-def _hold_value(joint_name: str, measured_position: float) -> float:
-    # A wheeled base's "joints" are velocities (base/vx, base/vy, base/wz), so
-    # freezing one means commanding zero, not repeating its odometry reading.
-    suffix = joint_name.rsplit("/", 1)[-1]
-    return 0.0 if suffix in TWIST_SUFFIX_MAP else measured_position
-
-
 class OperatorHoldTask(BaseControlTask):
     """Hold every joint at the position it had when the hold was requested.
 
     Idle until ``request()``. Then, each tick, it learns the joints from the
     coordinator's joint-state snapshot: a joint seen for the first time is
-    frozen at its measured position (zero for a base's velocity joints), and
+    frozen at its measured position if it accepts position commands, and
     the whole set is commanded every tick until ``acknowledge()``. A joint
     that appears later, e.g. hardware added during a hold, is frozen when
     first seen. A joint with no valid reading waits in ``unheld``.
@@ -144,7 +137,7 @@ class OperatorHoldTask(BaseControlTask):
             name: Task name; callers address request/acknowledge to it.
             priority: Arbitration priority. Must exceed every other task's.
             status_interval: Seconds between repeated status messages while on.
-            joint_names: Optional position-capable subset; None learns all reported positions.
+            joint_names: Optional subset; None learns all position-capable joints.
         """
         if not math.isfinite(status_interval) or status_interval <= 0.0:
             raise ValueError(f"status_interval must be positive seconds, got {status_interval}")
@@ -187,17 +180,21 @@ class OperatorHoldTask(BaseControlTask):
         with self._lock:
             if not self._on:
                 return None
+            eligible = {
+                name
+                for name, interfaces in state.joints.joint_command_interfaces.items()
+                if Interface.POSITION in interfaces
+                and (self._joint_names is None or name in self._joint_names)
+            }
+            self._held = {name: value for name, value in self._held.items() if name in eligible}
+            self._unheld.intersection_update(eligible)
             # Freeze nothing while e-stopped, so after the clear the hold
             # takes each joint where it is then. _held is empty until then.
             for name, position in state.joints.joint_positions.items():
-                if (
-                    self._estopped
-                    or name in self._held
-                    or (self._joint_names is not None and name not in self._joint_names)
-                ):
+                if self._estopped or name in self._held or name not in eligible:
                     continue
                 if math.isfinite(position):
-                    self._held[name] = _hold_value(name, position)
+                    self._held[name] = position
                     self._unheld.discard(name)
                 elif name not in self._unheld:
                     self._unheld.add(name)

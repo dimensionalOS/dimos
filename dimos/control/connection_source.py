@@ -262,6 +262,14 @@ class ConnectionSource:
         return [joint.name for joint in self._joints]
 
     @property
+    def joint_command_interfaces(self) -> dict[str, frozenset[Interface]]:
+        """Declared command interfaces, independent of feedback freshness."""
+        return {
+            joint.name: frozenset(Interface(key) for key in joint.command_keys)
+            for joint in self._joints
+        }
+
+    @property
     def command_ports(self) -> list[str]:
         """The kinds of port commands go out on, e.g. ["position_command"]."""
         return list(self._joint_ports.values())
@@ -358,7 +366,10 @@ class ConnectionSource:
         rather than given a zero that looks like a real reading.
         """
         latest = self._latest
-        snapshot = JointStateSnapshot(timestamp=self._received_at)
+        snapshot = JointStateSnapshot(
+            timestamp=self._received_at,
+            joint_command_interfaces=self.joint_command_interfaces,
+        )
         for joint in self._joints:
             for interface, into in (
                 (Interface.POSITION, snapshot.joint_positions),

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import TaskConfig
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.operator_hold_task.operator_hold_task import (
@@ -30,7 +31,17 @@ from dimos.control.tasks.operator_hold_task.operator_hold_task import (
 
 
 def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
-    return CoordinatorState(joints=JointStateSnapshot(joint_positions=positions), t_now=t_now)
+    return CoordinatorState(
+        joints=JointStateSnapshot(
+            joint_positions=positions,
+            joint_command_interfaces={
+                **{f"arm/joint{i}": frozenset({Interface.POSITION}) for i in (1, 2, 3)},
+                "arm/vx": frozenset({Interface.POSITION}),
+                "base/slide": frozenset({Interface.VELOCITY}),
+            },
+        ),
+        t_now=t_now,
+    )
 
 
 def test_idle_until_requested():
@@ -43,30 +54,49 @@ def test_idle_until_requested():
     assert status == OperatorHoldStatus(on=False, stamp=status.stamp)
 
 
-def test_freezes_each_joint_at_first_sight_and_base_joints_at_zero():
+def test_freezes_position_capable_joints_at_first_sight_without_name_heuristics():
     task = OperatorHoldTask()
     task.request("manual", "stuck")
 
-    first = task.compute(_state({"arm/joint1": 0.5, "base/vx": 1.5, "base/wz": -0.2}))
+    first = task.compute(_state({"arm/joint1": 0.5, "arm/vx": 1.5, "base/slide": -0.2}))
 
     assert first is not None
     assert first.mode is ControlMode.SERVO_POSITION
     assert dict(zip(first.joint_names, first.positions, strict=True)) == {
         "arm/joint1": 0.5,
-        "base/vx": 0.0,
-        "base/wz": 0.0,
+        "arm/vx": 1.5,
     }
     # Later readings do not move the hold; a joint seen later is frozen where it is then.
-    later = task.compute(_state({"arm/joint1": 0.9, "base/vx": 2.0, "arm/joint2": -1.0}))
+    later = task.compute(_state({"arm/joint1": 0.9, "arm/vx": 2.0, "arm/joint2": -1.0}))
     assert later is not None
     assert dict(zip(later.joint_names, later.positions, strict=True)) == {
         "arm/joint1": 0.5,
-        "base/vx": 0.0,
-        "base/wz": 0.0,
+        "arm/vx": 1.5,
         "arm/joint2": -1.0,
     }
-    assert task.claim().joints == {"arm/joint1", "base/vx", "base/wz", "arm/joint2"}
+    assert task.claim().joints == {"arm/joint1", "arm/vx", "arm/joint2"}
     assert task.claim().priority == 100
+
+
+@pytest.mark.parametrize("scope", [None, frozenset({"arm/vx", "base/slide"})])
+def test_hold_tracks_capability_changes_but_keeps_targets_without_feedback(
+    scope: frozenset[str] | None,
+) -> None:
+    task = OperatorHoldTask(joint_names=scope)
+    task.request("manual")
+    state = _state({"arm/vx": 1.5, "base/slide": 0.2, "unknown/joint": 0.4})
+    output = task.compute(state)
+    assert output is not None and output.joint_names == ["arm/vx"]
+    state.joints.joint_positions.clear()
+    output = task.compute(state)
+    assert output is not None and output.positions == [1.5]
+    state.joints.joint_command_interfaces["arm/vx"] = frozenset({Interface.VELOCITY})
+    assert task.compute(state) is None
+    assert task.claim().joints == frozenset()
+    state.joints.joint_command_interfaces["arm/vx"] = frozenset({Interface.POSITION})
+    state.joints.joint_positions["arm/vx"] = 2.0
+    output = task.compute(state)
+    assert output is not None and output.positions == [2.0]
 
 
 def test_joint_without_a_valid_reading_is_reported_until_frozen():
@@ -229,3 +259,5 @@ def test_blueprint_helper_and_factory():
         create_task(TaskConfig(name="hold", type="operator_hold"), hardware={})
     scoped = create_task(operator_hold_task(joint_names=["a/b"]), hardware={})
     assert scoped._joint_names == frozenset({"a/b"})
+    scoped.request("manual")
+    assert scoped.compute(_state({"arm/joint1": 0.4})) is None

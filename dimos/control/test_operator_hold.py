@@ -32,6 +32,7 @@ from dimos.control.components import (
     make_joints,
     make_twist_base_joints,
 )
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -192,12 +193,12 @@ class TestRequest:
         assert status.on and status.route == "manual" and status.reason == "arm stuck"
         assert status.started_at > 0.0
         rig.tick()
-        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS) | frozenset(BASE_JOINTS)
+        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS)
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-        # A base "joint" is a velocity, so holding it means zero, not its odometry.
-        assert rig.base_writes()[-1] == [0.0, 0.0, 0.0]
+        # Velocity-only joints report odometry but are not position-held.
+        assert rig.base_writes() == []
 
-    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig):
+    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig, monkeypatch):
         rig.request()
         rig.tick()
         rig.arm.read_joint_positions.return_value = [0.15, 0.2, 0.3]
@@ -205,6 +206,15 @@ class TestRequest:
         rig.tick()
 
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+        monkeypatch.setattr(rig.coordinator._hardware["arm"], "ready_for_control", lambda: False)
+        snapshot, _ = rig._loop._read_all_hardware()
+        assert not set(ARM_JOINTS) & snapshot.joint_positions.keys()
+        assert snapshot.joint_command_interfaces[ARM_JOINTS[0]] == {
+            Interface.POSITION,
+            Interface.VELOCITY,
+        }
+        rig.tick()
+        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS)
 
     def test_unknown_route_raises_and_holds_nothing(self, rig):
         with pytest.raises(ValueError):
@@ -268,7 +278,8 @@ class TestStatus:
     def test_repeats_once_per_second_while_on(self, rig):
         rig.request(route="agent", reason="need help")
         snapshot = JointStateSnapshot(
-            joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True))
+            joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True)),
+            joint_command_interfaces={name: frozenset({Interface.POSITION}) for name in ARM_JOINTS},
         )
 
         for t_now in (0.0, 0.5, 0.99, 1.0, 1.5, 2.0, 2.5, 3.0):
@@ -313,7 +324,7 @@ class TestEstop:
         status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
         assert status.on and status.route == "failsafe" and not status.estopped
         assert rig.arm_writes()[-1] == pytest.approx([0.15, 0.25, 0.35])
-        assert rig.base_writes()[-1] == [0.0, 0.0, 0.0]
+        assert rig.base_writes() == []
 
         assert rig.acknowledge().on is False
         assert not rig.hold_task.is_active()

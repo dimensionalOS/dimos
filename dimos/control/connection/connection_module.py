@@ -53,7 +53,6 @@ class ConnectionConfig(ModuleConfig):
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
             listed joints are commanded; planar axes are ordinary joints.
-        clamp_commands: Full keys whose model bounds clamp instead of reject.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
     """
@@ -61,7 +60,6 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
-    clamp_commands: frozenset[str] = frozenset()
     deadman_timeout_s: float = 0.1
 
 
