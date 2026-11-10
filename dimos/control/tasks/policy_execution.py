@@ -117,6 +117,47 @@ class OnnxActor:
         return np.asarray(outputs[0], dtype=np.float32).reshape(-1)
 
 
+class PolicySessionGuard:
+    """Generation counter for one active policy session.
+
+    A task prepares a policy tick in one generation, may run the actor outside
+    its session lock, then asks :meth:`current` before emitting. Invalidating
+    the session bumps the generation, so a late result from a released,
+    estopped, preempted or stopped session can never reach the motors.
+
+    The guard owns only the generation and active flag; approval inputs (goals,
+    deadman, feedback freshness) and fault detail stay with the backend.
+    """
+
+    def __init__(self) -> None:
+        self._epoch = 0
+        self._active = False
+
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @property
+    def epoch(self) -> int:
+        return self._epoch
+
+    def begin(self) -> int:
+        """Open a session and return its generation."""
+        self._active = True
+        self._epoch += 1
+        return self._epoch
+
+    def invalidate(self) -> None:
+        """Close the session; an in-flight result for it is no longer current."""
+        if self._active:
+            self._epoch += 1
+        self._active = False
+
+    def current(self, epoch: int) -> bool:
+        """Return True while ``epoch`` is still the active generation."""
+        return self._active and self._epoch == epoch
+
+
 class PolicyTickScheduler:
     """Decide which coordinator ticks run policy inference.
 

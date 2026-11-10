@@ -26,6 +26,7 @@ import pytest
 from dimos.control.tasks.policy_execution import (
     OnnxActor,
     PolicyCommandHold,
+    PolicySessionGuard,
     PolicyTickScheduler,
 )
 
@@ -174,3 +175,43 @@ def test_command_hold_reemits_and_respects_dry_run() -> None:
     hold.clear()
     assert hold.positions is None
     assert hold.hold() is None
+    hold.set_dry_run(False)
+    emitted = hold.emit([0.5, 0.6])
+    assert emitted is not None
+    np.testing.assert_allclose(emitted.positions or [], [0.5, 0.6])
+
+    hold.clear()
+    assert hold.positions is None
+    assert hold.hold() is None
+
+
+def test_session_guard_tracks_the_active_generation() -> None:
+    guard = PolicySessionGuard()
+    assert not guard.active
+    assert not guard.current(0)
+
+    first = guard.begin()
+    assert guard.active
+    assert guard.current(first)
+    assert not guard.current(first - 1)
+
+    guard.invalidate()
+    assert not guard.active
+    assert not guard.current(first)
+
+    second = guard.begin()
+    assert second == first + 2
+    assert guard.current(second)
+    assert not guard.current(first)
+
+
+def test_session_guard_invalidating_an_inactive_session_keeps_the_epoch() -> None:
+    guard = PolicySessionGuard()
+    guard.invalidate()
+    assert guard.epoch == 0
+
+    epoch = guard.begin()
+    guard.invalidate()
+    assert guard.epoch == epoch + 1
+    guard.invalidate()
+    assert guard.epoch == epoch + 1
