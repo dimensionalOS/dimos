@@ -30,10 +30,10 @@
       "locked": {
         "dir": "native/cpp",
         "lastModified": 1794265361,
-        "narHash": "sha256-JHjkMGoJkPU998Z0vM+u5ZRe3QAKUUNb+NyLVNy+oIM=",
+        "narHash": "sha256-QmkfuHwQ4l4lIXJP0wFaDF2KmcJQOQxX87CCpk0mSmk=",
         "owner": "dimensionalOS",
         "repo": "dimos",
-        "rev": "f40fdb35356bd652bdc43130b29a666c807783b7",
+        "rev": "4e3b3d3c2b0d3255b1bc03b7fa2f2b9fd3588e01",
         "type": "github"
       },
       "original": {

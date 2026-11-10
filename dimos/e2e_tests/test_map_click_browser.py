@@ -23,11 +23,12 @@ import numpy as np
 import pytest
 from reactivex.disposable import Disposable
 
-from dimos.core.transport import pLCMTransport
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import make_transport
+from dimos.message_utils.time import time_from_seconds
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.web.cockpit import Map2D, Map3D, Row, cockpit
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.gen_costmap_fixtures import grid_msg
@@ -51,14 +52,18 @@ CLOUD = PointCloud2.from_numpy(np.array([[2.5, 3.5, 0.5]], np.float32), frame_id
 class MapBridge(NamedTuple):
     url: str
     module: RelayBridgeModule
-    path: pLCMTransport
+    path: PubSubTransport
 
 
 def _path(*xy: tuple[float, float]) -> Path:
     poses = [
-        PoseStamped(ts=1.0, position=[x, y, 0.0], orientation=[0.0, 0.0, 0.0, 1.0]) for x, y in xy
+        PoseStamped(
+            header=Header(stamp=time_from_seconds(1.0), frame_id=""),
+            pose=Pose(position=Point(x, y, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)),
+        )
+        for x, y in xy
     ]
-    return Path(ts=1.0, frame_id="world", poses=poses)
+    return Path(header=Header(stamp=time_from_seconds(1.0), frame_id="world"), poses=poses)
 
 
 @pytest.fixture
@@ -69,14 +74,14 @@ def map_bridge() -> Iterator[MapBridge]:
     )
     (atom,) = cockpit(layout=layout).blueprints
     module = atom.module(local_port=0, open_browser=False, robot_id="map-click-e2e", **atom.kwargs)
-    transports: list[pLCMTransport] = []
-    publishers: dict[str, pLCMTransport] = {}
+    transports: list[PubSubTransport] = []
+    publishers: dict[str, PubSubTransport] = {}
     for ch in ("global_costmap", "global_map", "path"):
         topic = f"/map_click_e2e/{ch}"
-        bridge_side = pLCMTransport(topic)
+        bridge_side = make_transport(topic, type(GRID) if ch == "global_costmap" else Path)
         bridge_side.start()
         getattr(module, ch).transport = bridge_side
-        publishers[ch] = pLCMTransport(topic)
+        publishers[ch] = make_transport(topic, type(GRID) if ch == "global_costmap" else Path)
         publishers[ch].start()
         transports += [bridge_side, publishers[ch]]
     stop = threading.Event()
@@ -137,7 +142,7 @@ def test_click_to_goal_and_cancel(map_bridge: MapBridge, chromium_page: Page) ->
     assert wait_until(lambda: len(clicks) == 1, timeout=15.0)
     assert clicks[0].x == pytest.approx(0.75, abs=0.01)
     assert clicks[0].y == pytest.approx(0.0, abs=0.01)
-    assert clicks[0].frame_id == "world"
+    assert clicks[0].header.frame_id == "world"
 
     cancel = chromium_page.get_by_test_id("map2d-global_costmap-cancel")
     expect(cancel).to_have_count(0)
@@ -146,7 +151,9 @@ def test_click_to_goal_and_cancel(map_bridge: MapBridge, chromium_page: Page) ->
     cancel.click()
     assert wait_until(lambda: stops == [True], timeout=15.0)
 
-    map_bridge.path.publish(Path())
+    map_bridge.path.publish(
+        Path(header=Header(stamp=time_from_seconds(0.0), frame_id=""), poses=[])
+    )
     expect(cancel).to_have_count(0, timeout=30_000)
 
 
