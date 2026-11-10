@@ -64,7 +64,8 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 
 def test_make_openyam_model_config_uses_canonical_arm_joints(mocker) -> None:
     download = mocker.patch(
-        "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
+        "dimos.robot.assets.git_cache.GitAssetCache.resolve",
+        side_effect=AssertionError("Config must not download models"),
     )
     config = make_openyam_model_config()
 
@@ -82,13 +83,17 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
     model = prepare_robot_model(config).description
 
-    assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
+    assert OPENYAM_MODEL_PATH.parts[-2:] == ("openyam_single", "openyam_single.urdf")
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
     )
-    assert {
-        joint.name: joint.type for joint in model.joints if joint.name in {"joint7", "joint8"}
-    } == {"joint7": "prismatic", "joint8": "prismatic"}
+    tip = model.get_joint("gripper_tip_joint")
+    assert tip is not None
+    assert (tip.parent_link, tip.child_link, tip.origin_xyz) == (
+        "arm_tcp",
+        "gripper_tip",
+        (0.0, 0.0, 0.0),
+    )
 
 
 @pytest.mark.self_hosted
@@ -104,7 +109,11 @@ def test_openyam_jaw_is_joint7_and_joint8_copies_it() -> None:
     finger = loaded.get_joint("arm/joint7")
     follower = loaded.get_joint("arm/joint8")
     assert finger is not None and follower is not None
-    assert (finger.type, finger.lower, finger.upper) == ("prismatic", -0.04695, pytest.approx(0.0))
+    assert (finger.type, finger.lower, finger.upper) == (
+        "prismatic",
+        0.01081,
+        pytest.approx(0.0594641),
+    )
     assert follower.mimic == ("arm/joint7", 1.0, 0.0)
 
 
