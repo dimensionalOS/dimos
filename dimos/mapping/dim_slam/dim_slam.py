@@ -23,9 +23,9 @@ from pydantic import BaseModel, Field, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.nvidia_env import driver_env, sdk_variant
 

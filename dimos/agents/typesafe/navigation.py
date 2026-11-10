@@ -55,17 +55,17 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     PointStamped,
     PoseStamped,
     Twist,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection2DArray, Detection3DArray
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import Detection2DArray, Detection3DArray
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import LatestReader, getter_streaming
 

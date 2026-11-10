@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import geometry, image as image_utils, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2, RegionOfInterest
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 
 
 def point_to_pose_stamped(point: tuple[float, float]) -> PoseStamped:

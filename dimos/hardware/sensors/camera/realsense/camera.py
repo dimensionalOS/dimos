@@ -24,11 +24,11 @@ from pydantic import Field, InstanceOf
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import ImuInfo
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import ImuInfo
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.spec import perception
 
 

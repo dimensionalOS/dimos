@@ -17,8 +17,8 @@
 import pytest
 
 from dimos.memory.store.mcap import McapStore, _dimos_wire, _DimosCodec, _slug
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 def test_a_dimos_topic_names_its_own_type():

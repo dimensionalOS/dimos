@@ -23,7 +23,7 @@ import torch
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 _DEPTH_MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
 _DEPTH_MAX_WIDTH = 640

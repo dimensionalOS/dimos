@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.qwen.bbox import BBox
 from dimos.models.vl.base import VlModel
 from dimos.utils.generic import extract_json_from_llm_response

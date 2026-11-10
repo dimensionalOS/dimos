@@ -23,13 +23,13 @@ else:
     from typing_extensions import Self
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
     from dimos.perception.detection.type.detection2d.base import Detection2D
 
     T = TypeVar("T", bound=Detection2D)

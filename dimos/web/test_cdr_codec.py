@@ -24,7 +24,7 @@ from typing import Any
 from dimos_cdrgen.registry import decode, encode
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Point, PoseStamped
+from dimos_messages.geometry_msgs.msg import Point, PoseStamped
 from dimos.web.cdr_codec import check_cdr_params, encode_cdr_v1, export_schema
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import resolve_encoder
@@ -94,7 +94,7 @@ def test_codec_import_has_no_generated_or_numpy_side_effects() -> None:
         [
             sys.executable,
             "-c",
-            "import sys; import dimos.web.cdr_codec; assert 'numpy' not in sys.modules; assert 'dimos.messages' not in sys.modules",
+            "import sys; import dimos.web.cdr_codec; assert 'numpy' not in sys.modules; assert 'dimos_messages' not in sys.modules",
         ],
         check=True,
     )

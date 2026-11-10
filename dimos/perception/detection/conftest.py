@@ -27,9 +27,9 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule

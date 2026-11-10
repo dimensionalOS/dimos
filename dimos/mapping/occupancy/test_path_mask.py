@@ -21,7 +21,7 @@ from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.message_utils import image, image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 

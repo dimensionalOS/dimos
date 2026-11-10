@@ -17,8 +17,8 @@
 import numpy as np
 
 from dimos.message_utils import camera_info, image, pointcloud, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -27,8 +27,8 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.experimental.object import Object, aggregate_pointclouds, to_detection3d_array

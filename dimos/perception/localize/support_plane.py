@@ -26,7 +26,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.memory.type.observation import Observation
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
     from dimos.perception.localize.rig import Rig
 
 logger = setup_logger()

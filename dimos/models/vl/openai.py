@@ -21,7 +21,7 @@ import numpy as np
 from openai import OpenAI
 
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.utils.logging_config import setup_logger
 

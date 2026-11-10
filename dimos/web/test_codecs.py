@@ -23,9 +23,9 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.web.codecs import (
     MAX_ENCODED_META_BYTES,
     DecoderDef,

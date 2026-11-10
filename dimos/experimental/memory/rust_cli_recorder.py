@@ -34,7 +34,7 @@ from dimos.experimental.memory.cdr_schema import recording_schema
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.utils.logging_config import setup_logger
 

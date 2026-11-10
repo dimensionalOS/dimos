@@ -29,9 +29,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, pointcloud
-from dimos.messages.geometry_msgs.msg import Pose, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Pose, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

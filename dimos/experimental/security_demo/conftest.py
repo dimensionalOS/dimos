@@ -18,8 +18,8 @@ import pytest
 
 from dimos.experimental.security_demo.security_module import SecurityModule
 from dimos.message_utils import camera_info, image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.utils.data import get_data

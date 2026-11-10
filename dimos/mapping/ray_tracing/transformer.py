@@ -23,7 +23,7 @@ from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.transform import FnTransformer, Transformer
 from dimos.message_utils import pointcloud
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

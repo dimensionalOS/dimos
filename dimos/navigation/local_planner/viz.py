@@ -27,9 +27,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.message_utils import geometry, pointcloud
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.navigation.embodiment.base import Embodiment
 from dimos.navigation.local_planner.profile import (
     ceilings_to_clearance,

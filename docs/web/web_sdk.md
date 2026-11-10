@@ -234,7 +234,7 @@ In `web.py`, the encoder and the second channel:
 ```python skip
 import numpy as np
 
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.message_utils import pointcloud
 from dimos.web.codecs import EncodedPayload, web_encoder
 

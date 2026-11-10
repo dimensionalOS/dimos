@@ -23,8 +23,8 @@ By default, NativeModule passes config fields and port channels as CLI arguments
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.sensor_msgs.msg import Imu
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import Imu
 import time
 
 class MyLidarConfig(NativeModuleConfig):
@@ -254,8 +254,8 @@ The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors
 ```python skip
 from dimos.core.stream import Out
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.sensor_msgs.msg import Imu
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):

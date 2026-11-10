@@ -24,10 +24,10 @@ from reactivex import from_iterable, of, operators as ops
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import image as image_utils
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.perception.experimental import spatial_perception
 from dimos.perception.experimental.spatial_perception import SpatialMemory
 from dimos.perception.experimental.visual_memory import VisualMemory

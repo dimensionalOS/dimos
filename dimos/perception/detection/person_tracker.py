@@ -23,11 +23,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.types.timestamped import TimestampedData, align_timestamped
 from dimos.utils.reactive import backpressure

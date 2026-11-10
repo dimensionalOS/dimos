@@ -28,13 +28,13 @@ import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped, TransformStamped, Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
-from dimos.messages.sensor_msgs.msg import Image, Imu, JointState, PointCloud2
-from dimos.messages.std_msgs.msg import Bool
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs.msg import PointStamped, PoseStamped, TransformStamped, Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos_messages.sensor_msgs.msg import Image, Imu, JointState, PointCloud2
+from dimos_messages.std_msgs.msg import Bool
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web.cockpit import (
     Channel,

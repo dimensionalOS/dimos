@@ -20,13 +20,26 @@ from pathlib import Path
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
+import tomllib
 
 from dimos_cdrgen.native_build import prepare_cpp, write_cmake_toolchain
 from dimos_cdrgen.registry import decode, encode
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages_schemas.provider import package_root  # type: ignore[import-untyped]
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages_schemas.provider import package_root  # type: ignore[import-untyped]
+
+
+def _stage_cargo_project(project: Path, sources: Path) -> None:
+    """Pin the example's message dependency to the generated crate's real version."""
+    manifest = tomllib.loads((sources / "rust" / "Cargo.toml").read_text())
+    version = manifest["package"]["version"]
+    cargo_toml = project / "Cargo.toml"
+    dependency = 'dimos-generated-messages = "*"'
+    pinned = f'dimos-generated-messages = "={version}"'
+    text = cargo_toml.read_text()
+    assert dependency in text, f"{dependency!r} missing from the example Cargo.toml"
+    cargo_toml.write_text(text.replace(dependency, pinned, 1))
 
 
 def main() -> None:
@@ -43,6 +56,7 @@ def main() -> None:
     with TemporaryDirectory(prefix="dimos-builtin-example-") as temporary:
         project = Path(temporary)
         shutil.copytree(Path(__file__).with_name("native"), project, dirs_exist_ok=True)
+        _stage_cargo_project(project, sources)
         toolchain = write_cmake_toolchain(prefix, project / "toolchain.cmake")
         (project / "python.cdr").write_bytes(encode(Header(Time(17, 23), "map")))
         commands = [

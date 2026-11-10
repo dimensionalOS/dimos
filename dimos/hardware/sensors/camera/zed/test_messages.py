@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, Vector3
+from dimos_messages.geometry_msgs.msg import Transform, Vector3
 
 
 @pytest.fixture

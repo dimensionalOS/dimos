@@ -31,7 +31,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.vl.create import create
 from dimos.models.vl.types import VlModelName
 from dimos.types.timestamped import TimestampedBufferCollection, TimestampedData

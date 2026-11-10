@@ -27,8 +27,8 @@ import typer
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.messages.geometry_msgs.msg import TransformStamped
-    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos_messages.geometry_msgs.msg import TransformStamped
+    from dimos_messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.navigation.go2.loop_closure.pgo import PoseGraph
 
 PATH_THICKNESS = 0.01
@@ -125,8 +125,8 @@ def _accumulate(
     """
     from dimos.mapping.voxels.module import VoxelMapTransformer
     from dimos.message_utils import geometry, pointcloud
-    from dimos.messages.geometry_msgs.msg import TransformStamped
-    from dimos.messages.std_msgs.msg import Header
+    from dimos_messages.geometry_msgs.msg import TransformStamped
+    from dimos_messages.std_msgs.msg import Header
 
     def prepared() -> Iterable[Observation[PointCloud2]]:
         for obs in obs_iter:
@@ -219,8 +219,8 @@ def _log_reconstruction(
 
     from dimos.memory.vis.color import Color
     from dimos.message_utils import time as message_time
-    from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
-    from dimos.messages.std_msgs.msg import Header
+    from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+    from dimos_messages.std_msgs.msg import Header
     from dimos.visualization.rerun.cdr import cloud_archetype
 
     rr.send_blueprint(rrb.Blueprint(rrb.Spatial3DView(origin="world")))
@@ -498,9 +498,9 @@ def main(
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.utils.progress import progress
     from dimos.message_utils import camera_info as camera_info_utils, image, time as message_time
-    from dimos.messages.geometry_msgs.msg import Quaternion, Transform, Vector3
-    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-    from dimos.messages.std_msgs.msg import Header
+    from dimos_messages.geometry_msgs.msg import Quaternion, Transform, Vector3
+    from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos_messages.std_msgs.msg import Header
     from dimos.navigation.go2.loop_closure.pgo import PGO, PGOKwargs
     from dimos.navigation.go2.loop_closure.pgo_map import LIVE_PGO
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
@@ -784,7 +784,7 @@ def main(
         print(f"wrote {out_path}")
         print()
         print("load back with:")
-        print("    from dimos.messages.sensor_msgs.msg import PointCloud2")
+        print("    from dimos_messages.sensor_msgs.msg import PointCloud2")
         print("    from dimos_cdrgen.registry import decode")
         print(f'    pcd = decode(open("{out_path.name}", "rb").read(), PointCloud2)')
 

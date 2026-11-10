@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.memory.embed import EmbedImages
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

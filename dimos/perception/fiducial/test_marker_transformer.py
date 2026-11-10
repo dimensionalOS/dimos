@@ -17,8 +17,8 @@ import pytest
 
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image
 from dimos.perception.fiducial.marker_transformer import DetectMarkers
 from dimos.perception.fiducial.test_helpers import (

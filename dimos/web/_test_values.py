@@ -12,13 +12,13 @@ from dimos.message_utils import (
     pointcloud,
     time as message_time,
 )
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.geometry_msgs import msg as geometry_msgs
-from dimos.messages.nav_msgs import msg as nav_msgs
-from dimos.messages.sensor_msgs import msg as sensor_msgs
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs import msg as geometry_msgs
+from dimos_messages.nav_msgs import msg as nav_msgs
+from dimos_messages.sensor_msgs import msg as sensor_msgs
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 
 
 def header(ts: float = 0.0, frame_id: str = "") -> Header:

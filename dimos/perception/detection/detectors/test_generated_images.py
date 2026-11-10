@@ -20,8 +20,8 @@ import torch
 from transformers.feature_extraction_utils import BatchFeature
 
 from dimos.message_utils import image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.detectors.omdet import OmDetDetector
 from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 

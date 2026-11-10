@@ -23,9 +23,9 @@ from PIL import Image as PILImage
 import pytest
 
 from dimos.message_utils import image, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_padded_image_view_retains_owner_and_is_readonly() -> None:

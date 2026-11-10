@@ -26,7 +26,7 @@ from dimos.message_utils import (
     occupancy as occupancy_utils,
     time as message_time,
 )
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     PointStamped,
     Pose,
@@ -35,8 +35,8 @@ from dimos.messages.geometry_msgs.msg import (
     Quaternion,
     TwistWithCovariance,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.navigation.go2.replanning_a_star.controllers import PController, PdController, _velocity
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.go2.replanning_a_star.position_tracker import PositionTracker

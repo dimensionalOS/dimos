@@ -24,8 +24,8 @@ import pytest
 from dimos.core.baked_host import BakedHost, baked_host
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.protocol.encode.cbor import decode, encode
 
 

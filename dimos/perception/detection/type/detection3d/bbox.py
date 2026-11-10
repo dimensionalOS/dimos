@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 
 from dimos.message_utils import geometry
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -31,8 +31,8 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import (
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import (
     BoundingBox3D,
     Detection3D,
     ObjectHypothesis,

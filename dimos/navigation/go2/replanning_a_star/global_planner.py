@@ -30,9 +30,9 @@ from dimos.message_utils import (
     time as message_time,
 )
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.geometry_msgs.msg import Point, PoseStamped, Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.geometry_msgs.msg import Point, PoseStamped, Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.go2.replanning_a_star.local_planner import LocalPlanner, StopMessage

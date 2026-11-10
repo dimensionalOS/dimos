@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Bool
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Bool
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
 

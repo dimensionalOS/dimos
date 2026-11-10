@@ -23,10 +23,10 @@ import pytest
 from dimos.memory.codecs.base import codec_for, codec_from_id, codec_id
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.store.cdr_mcap import CdrMcapStore
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.std_msgs.msg import Header
 
 
 def message(sec=17):

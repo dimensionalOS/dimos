@@ -20,8 +20,8 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing.replay import SensorReplay
 

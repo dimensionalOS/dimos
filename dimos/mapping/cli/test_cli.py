@@ -35,7 +35,7 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 # These drive the real CLI against an LFS recording (CPU voxel accumulation,
 # multi-second runs) — self-hosted runner only.
@@ -157,7 +157,7 @@ def test_pose_fill_snippet(dataset: str, tmp_path: Path) -> None:
     assert out.exists()
 
     from dimos.memory.store.sqlite import SqliteStore
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.sensor_msgs.msg import PointCloud2
 
     store = SqliteStore(path=str(out), must_exist=True)
     try:

@@ -22,8 +22,8 @@ from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.message_utils import image
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.sensor_msgs.msg import Image
 
 Palette: TypeAlias = Literal["rainbow", "turbo"]
 

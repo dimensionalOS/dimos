@@ -8,8 +8,8 @@ from typing import Any
 
 from dimos.message_utils import image as image_utils
 from dimos.message_utils.geometry import quaternion_euler
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 
 
 def content_blocks(value: object) -> list[dict[str, Any]] | None:

@@ -30,7 +30,7 @@ from dimos.mapping.relocalization.lidar.relocalize import (
 )
 from dimos.mapping.relocalization.module import Config, RelocalizationModule
 from dimos.message_utils import pointcloud
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 

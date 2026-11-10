@@ -23,7 +23,7 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -33,8 +33,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry, Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry, Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.visualization.rerun.cdr import generated_archetypes, path_archetype
 

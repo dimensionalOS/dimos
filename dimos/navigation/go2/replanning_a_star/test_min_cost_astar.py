@@ -26,8 +26,8 @@ from dimos.message_utils import (
     occupancy as occupancy_utils,
     time as message_time,
 )
-from dimos.messages.geometry_msgs.msg import Point, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 

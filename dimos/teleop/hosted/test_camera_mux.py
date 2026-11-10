@@ -27,9 +27,9 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.teleop.hosted.blueprints.cloudflare import (
     teleop_hosted_go2_multicam,
     teleop_hosted_go2_transport,

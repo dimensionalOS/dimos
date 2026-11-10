@@ -23,7 +23,7 @@ import requests
 
 from dimos.mapping.models import ImageCoord, LatLon
 from dimos.message_utils import image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 
 @dataclass(frozen=True)

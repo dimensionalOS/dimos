@@ -29,11 +29,11 @@ from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion, RegionBounds
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.dimos_msgs.msg import LineSegments3DRegion, PointCloudRegion, RegionBounds
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation import spec
 
 

@@ -223,7 +223,7 @@ def rerun_layout(stream_types: dict[str, type]) -> Any:
     """A Rerun blueprint showing every recorded stream: one 3D world view, one 2D view per image."""
     import rerun.blueprint as rrb
 
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
     images = [
         rrb.Spatial2DView(origin=f"world/{n}", name=n)

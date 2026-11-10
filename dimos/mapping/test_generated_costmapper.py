@@ -32,10 +32,10 @@ from dimos.mapping.pointclouds.occupancy import (
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.message_utils import occupancy as occupancy_utils, pointcloud, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2, PointField
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2, PointField
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.data import get_data
 from dimos.utils.threadpool import get_max_workers

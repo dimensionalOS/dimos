@@ -35,10 +35,10 @@ from dimos.message_utils import (
 )
 from dimos.message_utils.geometry import inverse_transform, transform_matrix
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 def _populate_required_streams(

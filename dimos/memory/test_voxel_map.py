@@ -19,7 +19,7 @@ import numpy as np
 from dimos.mapping.voxels.module import VoxelMapTransformer
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 def _make_obs(obs_id: int, points: np.ndarray, ts: float = 0.0) -> Observation[PointCloud2]:

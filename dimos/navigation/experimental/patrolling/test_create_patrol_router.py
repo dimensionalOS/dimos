@@ -29,9 +29,9 @@ from dimos.message_utils import (
     pointcloud,
     time as message_time,
 )
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.utilities import point_to_pose_stamped
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import min_cost_astar
