@@ -46,6 +46,12 @@ from dimos.sim2.sim import sim_module
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.world_observations import ACT, WorldMirror
 
+# Every scene here is read out of a USD layer, and a runner without usd-core cannot read one:
+# linux-aarch64 has no wheel for it (pyproject's marker says so), so without this the tests
+# fail there on dimos's own "Reading or writing USD needs usd-core (pxr)". Their neighbours
+# in this directory skip the same way.
+pytest.importorskip("pxr")
+
 L1_PERIOD = 0.13
 RATES = {
     "color_image": 10.0,
