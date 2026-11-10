@@ -19,12 +19,15 @@ import importlib
 import pkgutil
 import re
 import time
+from typing import NoReturn
 
 import typer
+import zenoh
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
-from dimos.core.transport_factory import make_transport, transport_topic
+from dimos.core.transport_factory import make_transport, transport_topic, zenoh_prefix
+from dimos.msgs.helpers import resolve_msg_type
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
@@ -47,12 +50,36 @@ def _resolve_type(type_name: str) -> type:
         if hasattr(module, type_name):
             return getattr(module, type_name)  # type: ignore[no-any-return]
 
-    raise ValueError(f"Could not find type '{type_name}' in any known message modules")
+    _fail(f"Could not find type '{type_name}' in any known message modules")
+
+
+def _fail(message: str) -> NoReturn:
+    typer.echo(f"Error: {message}", err=True)
+    raise typer.Exit(1)
+
+
+def _split_topic(topic: str) -> tuple[str, type | None]:
+    """Split a topic argument into the channel name and the message type it embeds.
+
+    Besides the bare name ("tf", "/tf"), this accepts the full forms that the logs
+    and `dimos spy` print: the typed LCM channel ("/tf#tf2_msgs.TFMessage") and,
+    on Zenoh, the key ("dimos/tf/tf2_msgs.TFMessage").
+    """
+    name, _, msg_name = topic.partition("#")
+    if global_config.transport == "zenoh":
+        name = name.removeprefix(zenoh_prefix())
+        head, _, last = name.rpartition("/")
+        if not msg_name and head and resolve_msg_type(last) is not None:
+            name, msg_name = head, last
+    if not msg_name:
+        return name, None
+    msg_type = resolve_msg_type(msg_name)
+    if msg_type is None:
+        _fail(f"Could not resolve message type '{msg_name}' in topic '{topic}'")
+    return name, msg_type
 
 
 def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
-    from dimos.msgs.helpers import resolve_msg_type
-
     _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
     cls = resolve_msg_type(msg_name)
     if cls is None:
@@ -72,20 +99,26 @@ def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: No
 
 
 def topic_echo(topic: str, type_name: str | None) -> None:
-    # Explicit mode (legacy): backend chosen by make_transport from global_config.
+    topic, msg_type = _split_topic(topic)
     if type_name is not None:
         msg_type = _resolve_type(type_name)
-        transport: PubSubTransport[object] = make_transport(topic, msg_type)
-        transport.subscribe(lambda msg: print(msg))
-        _listen_forever(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
-        return
 
-    # Inferred typed mode: decode each message from the type embedded in its
-    # channel/key. The wire format is backend-specific, so dispatch on it.
-    if global_config.transport == "zenoh":
-        _topic_echo_inferred_zenoh(topic)
-    else:
-        _topic_echo_inferred_lcm(topic)
+    try:
+        # Typed mode: backend chosen by make_transport from global_config.
+        if msg_type is not None:
+            transport: PubSubTransport[object] = make_transport(topic, msg_type)
+            transport.subscribe(lambda msg: print(msg, flush=True))
+            _listen_forever(
+                f"Listening on {topic} for {msg_type.__name__} messages... (Ctrl+C to stop)"
+            )
+        # Inferred typed mode: decode each message from the type embedded in its
+        # channel/key. The wire format is backend-specific, so dispatch on it.
+        elif global_config.transport == "zenoh":
+            _topic_echo_inferred_zenoh(topic)
+        else:
+            _topic_echo_inferred_lcm(topic)
+    except zenoh.ZError as e:
+        _fail(f"Invalid topic '{topic}': {e}")
 
 
 def _topic_echo_inferred_lcm(topic: str) -> None:
@@ -159,6 +192,9 @@ def topic_send(topic: str, message_expr: str) -> None:
         raise typer.Exit(1)
 
     msg_type = type(message)
+    topic, topic_type = _split_topic(topic)
+    if topic_type is not None and topic_type is not msg_type:
+        _fail(f"Topic expects {topic_type.__name__} but the message is {msg_type.__name__}")
     transport: PubSubTransport[object] = make_transport(topic, msg_type)
 
     transport.broadcast(None, message)

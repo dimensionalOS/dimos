@@ -13,8 +13,15 @@
 # limitations under the License.
 
 import pytest
+import typer
 
-from dimos.cli.topic import _build_eval_context, _decode_typed_lcm_message, topic_send
+from dimos.cli.topic import (
+    _build_eval_context,
+    _decode_typed_lcm_message,
+    _split_topic,
+    topic_echo,
+    topic_send,
+)
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
@@ -82,3 +89,42 @@ def test_topic_send_delivers_over_lcm(monkeypatch: pytest.MonkeyPatch, lcm_url: 
         bus.stop()
 
     assert collector.results[0][0] == Twist(Vector3(0.5, 0, 0), Vector3(0, 0, 0))
+
+
+@pytest.mark.parametrize(
+    ("transport", "topic", "expected"),
+    [
+        ("zenoh", "cmd_vel", ("cmd_vel", None)),
+        ("zenoh", "/cmd_vel", ("/cmd_vel", None)),
+        ("zenoh", "/cmd_vel#geometry_msgs.Twist", ("/cmd_vel", Twist)),
+        ("zenoh", "dimos/cmd_vel", ("cmd_vel", None)),
+        ("zenoh", "dimos/cmd_vel/geometry_msgs.Twist", ("cmd_vel", Twist)),
+        ("zenoh", "dimos/robot0/cmd_vel/geometry_msgs.Twist", ("robot0/cmd_vel", Twist)),
+        ("lcm", "/cmd_vel", ("/cmd_vel", None)),
+        ("lcm", "/cmd_vel#geometry_msgs.Twist", ("/cmd_vel", Twist)),
+    ],
+)
+def test_split_topic(
+    monkeypatch: pytest.MonkeyPatch, transport: str, topic: str, expected: tuple[str, type | None]
+) -> None:
+    monkeypatch.setattr(global_config, "transport", transport)
+
+    assert _split_topic(topic) == expected
+
+
+def test_split_topic_rejects_unknown_type(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(typer.Exit):
+        _split_topic("/cmd_vel#geometry_msgs.Nope")
+
+    assert "geometry_msgs.Nope" in capsys.readouterr().err
+
+
+def test_topic_echo_reports_invalid_zenoh_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+
+    with pytest.raises(typer.Exit):
+        topic_echo("cmd?vel", None)
+
+    assert "Invalid topic 'cmd?vel'" in capsys.readouterr().err
