@@ -1267,6 +1267,7 @@ def test_a_manager_with_no_model_stands_on_a_world_link() -> None:
 
 
 def test_a_world_manager_has_no_asset_root_to_offer() -> None:
+    pytest.importorskip("pxr")
     module = UrdfManager()
     try:
         assert module.get_usd()[0] == ""
