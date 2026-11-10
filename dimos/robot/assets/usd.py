@@ -330,7 +330,7 @@ def warm_usd() -> None:
     list(stage.Traverse())
 
 
-def layer_from(pxr: Pxr, usd: str, what: str, root: Path | str | None = None) -> Layer:
+def layer_from(pxr: Pxr, usd: str, what: str, root: Path | str | None) -> Layer:
     if root is None:
         layer = pxr.Sdf.Layer.CreateAnonymous(".usda")
     else:
