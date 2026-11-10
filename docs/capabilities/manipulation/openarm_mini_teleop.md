@@ -48,9 +48,9 @@ dimos --simulation run teleop-openarm-mini --leaderteleopmodule.port-left <feete
 ```
 
 Leader joint N drives follower joint N of the same side, clamped to the OpenArm
-limits before publishing. The targets stream into the coordinator's `leader`
-trajectory task at priority 20 with human-speed velocity limits; the trigger
-drives that side's gripper task, 1 = open.
+limits before publishing. The targets stream into the coordinator's
+`joint_trajectory` task with human-speed velocity limits; the trigger drives
+that side's gripper task, 1 = open.
 
 ## Driving the real OpenArm
 

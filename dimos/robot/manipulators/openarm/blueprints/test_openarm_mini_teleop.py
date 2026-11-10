@@ -19,6 +19,7 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _is_name_unique
@@ -68,8 +69,8 @@ def _tasks_of(blueprint: Blueprint) -> list[TaskConfig]:
 
 def _assert_leader_task(blueprint: Blueprint) -> None:
     (task,) = [task for task in _tasks_of(blueprint) if task.type == "trajectory"]
-    assert task.name == "leader"
-    assert task.priority == 20
+    assert task.name == JOINT_TRAJECTORY_TASK_NAME
+    assert task.priority == 10
     assert task.stream_bind == {"joint_command": LEADER_JOINT_COMMAND}
     assert task.joint_names == _BOTH_ARMS
     assert list(task.params["velocity_limits"]) == _BOTH_ARMS
