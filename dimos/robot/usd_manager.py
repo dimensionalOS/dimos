@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from threading import RLock
 import time
@@ -44,9 +45,11 @@ from dimos.robot.assets.usd import (
     warm_usd,
 )
 from dimos.robot.assets.usd_assets import (
+    describe_unopenable_assets,
     publish_usd_assets,
     require_asset_hashes,
     resolve_usd_assets,
+    unopenable_assets,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -257,7 +260,7 @@ class UsdManager(Module):
         with self._usd_lock:
             if self._usd is None:
                 usd = self._description.usd
-                self._usd = rename_usd_frames(usd, self._frames)
+                self._usd = rename_usd_frames(usd, self._frames, self._asset_root() or None)
             return [self._asset_root(), self._usd]
 
     def _asset_root(self) -> str:
@@ -270,10 +273,19 @@ class UsdManager(Module):
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
         root, scene = await self._compose(chain)
-        published, assets = await asyncio.to_thread(publish_usd_assets, scene, root[ASSET_ROOT])
+        where = root[ASSET_ROOT] or None
+        await asyncio.to_thread(self._report_unopenable_assets, scene, where)
+        published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
         self._published_assets = assets
         self._scene = published
         return ["", published]
+
+    def _report_unopenable_assets(self, scene: str, root: str | None) -> None:
+        unopenable = unopenable_assets(scene, root)
+        if unopenable:
+            logger.warning(
+                describe_unopenable_assets(unopenable, what=f"the scene of {self._scene_identity}")
+            )
 
     @rpc
     async def get_asset(self, name: str) -> bytes:
@@ -300,7 +312,9 @@ class UsdManager(Module):
         subtrees = await self._subtrees([*chain, self._scene_identity])
         root = await asyncio.to_thread(self.get_usd)
         scene = (
-            await asyncio.to_thread(self._graft_in_waves, root[USD], subtrees)
+            await asyncio.to_thread(
+                self._graft_in_waves, root[USD], subtrees, root[ASSET_ROOT] or None
+            )
             if subtrees
             else root[USD]
         )
@@ -310,11 +324,11 @@ class UsdManager(Module):
     def _scene_identity(self) -> str:
         return self.config.rpc_name or self.config.instance_name or type(self).__name__
 
-    def _graft_in_waves(self, root_usd: str, subtrees: dict[str, str]) -> str:
+    def _graft_in_waves(self, root_usd: str, subtrees: dict[str, str], root: str | None) -> str:
         scene = root_usd
         remaining = dict(subtrees)
         while remaining:
-            present = usd_frame_names(scene)
+            present = usd_frame_names(scene, root)
             ready = {frame: usd for frame, usd in remaining.items() if frame in present}
             if not ready:
                 raise ValueError(
@@ -324,7 +338,7 @@ class UsdManager(Module):
                     f'mounted subtree carries that subtree\'s namespace prefix ("g1/head_mount", '
                     f'not "head_mount"). The scene has: {sorted(present)}'
                 )
-            scene = graft_usd(scene, ready)
+            scene = graft_usd(scene, ready, root)
             for frame in ready:
                 del remaining[frame]
         return scene
@@ -373,9 +387,12 @@ class UsdManager(Module):
             if answer is not None:
                 logger.info(f"subtree for {frame_id} from {name} after {attempts} ask(s)")
                 await asyncio.to_thread(
-                    require_asset_hashes,
-                    answer[USD],
-                    what=f"the subtree {name} answered for frame {frame_id!r}",
+                    partial(
+                        require_asset_hashes,
+                        answer[USD],
+                        what=f"the subtree {name} answered for frame {frame_id!r}",
+                        root=answer[ASSET_ROOT] or None,
+                    )
                 )
                 return await asyncio.to_thread(self._adopt, answer, mount)
             if attempts % _WAITING_LOG_EVERY == 0:
