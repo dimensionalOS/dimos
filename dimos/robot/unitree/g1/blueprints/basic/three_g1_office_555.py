@@ -23,7 +23,7 @@ from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
+from dimos.robot.unitree.g1.sim2 import G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.sim import sim_module
@@ -84,7 +84,17 @@ def _walker(name: str) -> Blueprint:
 
 
 SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
-    {name: ("office_555", (x, y, HOME_HEIGHT), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
+    # On the floor. A mount frame in a composed scene says where the robot's *asset* goes, not
+    # where its pelvis goes -- `graft_usd` puts the layer's root prim there and the layer's own
+    # offsets place everything above it -- so a frame on the floor is a G1 drawn standing, pelvis
+    # at the 0.793 its layer carries. HOME_HEIGHT here would add the two and hang it 0.76 m up.
+    #
+    # It does start 38 mm above where it finishes: 0.793 is the pose the layer is drawn in, every
+    # joint at zero, and the home pose bends the knees, which lowers the pelvis to about 0.755
+    # without lowering the feet. Nothing is wrong with that -- the drop is 0.09 s of free fall and
+    # the policies are already driving by the time the world steps (see `startup_delay`). The old
+    # path hid it by adding a keyframe's base height to this frame; there is no keyframe now.
+    {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
 
@@ -117,6 +127,15 @@ def _manager_name(blueprint: Blueprint) -> str:
     return str(next(atom.name for atom in blueprint.blueprints if atom.module is UsdManager))
 
 
+def _walker_name(blueprint: Blueprint) -> str:
+    """The deployed instance name of a robot's coordinator, for the world to ask about arming.
+
+    Taken off the atom rather than spelled out, for the reason `_manager_name` is: it stays in
+    step with however the coordinator names instances, namespace prefix and all.
+    """
+    return str(next(atom.name for atom in blueprint.blueprints if atom.module is _Walker))
+
+
 _robots = {name: _robot(name) for name in SPOTS}
 
 scene_manager = UsdManager.blueprint(
@@ -133,6 +152,17 @@ three_g1_office_555 = autoconnect(
     sim_module(
         scene_manager=SCENE_MANAGER,
         robots=[SimulatedRobot(name, G1Sim.usd) for name in SPOTS],
+        # Who the world waits for: it starts the moment all three coordinators report their
+        # GR00T task armed, and `startup_delay` below is only the cap on that wait.
+        wait_for=[_walker_name(blueprint) for blueprint in _robots.values()],
+        # Long enough for all three policies to have the joints before the world starts. These
+        # robots are held up by their policies and not by their servos -- left at the home pose
+        # a G1 folds in about a second and a half -- and a policy cannot command one until it
+        # has seen its joints, which it reads from this world's own observations. Building this
+        # world takes most of twenty seconds, because every module that wants a view of the room
+        # composes it again and compiles its own copy, so the controllers used to arm 8.5 to
+        # 9.8 s after stepping had already begun, by which time the robots were on the floor.
+        startup_delay=20.0,
     ),
     vis_module(viewer_backend=global_config.viewer),
     scene_manager,

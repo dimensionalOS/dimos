@@ -141,7 +141,7 @@ def Xform "go2" (
                 rel material:binding = </go2/Materials/black>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0, 0, 0)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -166,7 +166,7 @@ def Xform "go2" (
                 rel material:binding = </go2/Materials/black>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0, 0, 0)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -191,7 +191,7 @@ def Xform "go2" (
                 rel material:binding = </go2/Materials/black>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0, 0, 0)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -216,7 +216,7 @@ def Xform "go2" (
                 rel material:binding = </go2/Materials/white>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0.99999994, 1, 0.9999999)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -241,7 +241,7 @@ def Xform "go2" (
                 rel material:binding = </go2/Materials/gray>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -386,7 +386,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/metal>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -411,7 +411,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/gray>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -479,7 +479,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -504,7 +504,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/gray>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -570,7 +570,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/gray>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -595,7 +595,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -684,7 +684,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -818,7 +818,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/metal>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -843,7 +843,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/gray>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -911,7 +911,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -936,7 +936,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/gray>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1002,7 +1002,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/gray>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1027,7 +1027,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1116,7 +1116,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1250,7 +1250,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/metal>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -1275,7 +1275,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/gray>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -1343,7 +1343,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1368,7 +1368,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/gray>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1434,7 +1434,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/gray>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1459,7 +1459,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1548,7 +1548,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1682,7 +1682,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/metal>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -1707,7 +1707,7 @@ def Xform "go2" (
                     rel material:binding = </go2/Materials/gray>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -1775,7 +1775,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.7874123, 0.8900055, 0.8900054)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1800,7 +1800,7 @@ def Xform "go2" (
                         rel material:binding = </go2/Materials/gray>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1866,7 +1866,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/gray>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.40874615, 0.43727827, 0.5611312)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1891,7 +1891,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1980,7 +1980,7 @@ def Xform "go2" (
                             rel material:binding = </go2/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0, 0, 0)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (

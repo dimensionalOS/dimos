@@ -56,6 +56,8 @@ def _lcm_bucket(seed: str) -> int:
 
 
 _run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
+
+
 if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
@@ -67,6 +69,18 @@ else:
     os.environ.setdefault("LCM_DEFAULT_URL", f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0")
     os.environ.setdefault("ZENOH_SCOUT_ADDR", f"224.0.0.224:{17700 + _BUCKET}")
     os.environ.setdefault("MCPSERVER__PORT", str(20000 + _BUCKET))
+
+# Render offscreen unless something has already chosen, and only where that means EGL. MuJoCo
+# picks GLFW when nothing says otherwise, and GLFW needs a display: in a Linux shell with no
+# `DISPLAY` -- an agent's, a CI runner's, a detached session's -- the first `mujoco.Renderer`
+# raises "an OpenGL platform library has not been loaded into this process", and a test that
+# renders fails for a reason that has nothing to do with it.
+#
+# Linux only. There is no EGL on macOS, where MuJoCo rejects the value outright --
+# `RuntimeError: invalid value for environment variable MUJOCO_GL: egl`, which is how CI found
+# this -- and its own default renders headless there anyway.
+if platform.system() == "Linux" and not os.environ.get("MUJOCO_GL"):
+    os.environ["MUJOCO_GL"] = "egl"
 
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,

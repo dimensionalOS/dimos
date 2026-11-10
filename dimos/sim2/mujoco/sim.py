@@ -28,7 +28,7 @@ from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.sim import SimulatedWorldConfig, scene_from
+from dimos.sim2.sim import SimulatedWorldConfig, driving, scene_from
 from dimos.sim2.spec import validate
 from dimos.utils.logging_config import setup_logger
 
@@ -37,6 +37,12 @@ logger = setup_logger()
 
 class MujocoSimConfig(SimulatedWorldConfig):
     max_burst_seconds: float = 0.01
+
+
+# How often the world republishes itself while it is held before the first step.
+_HOLD_PERIOD = 0.05
+# How often it asks the modules in `wait_for` whether they are driving yet.
+_PROBE_PERIOD = 0.5
 
 
 class MujocoSim(Module):
@@ -88,6 +94,7 @@ class MujocoSim(Module):
         publisher = self._publisher
         assert publisher is not None
         await asyncio.to_thread(self._all_started.wait)
+        await self._settle_before_stepping(backend, publisher)
         while True:
             _when, frame = backend.step()
             if backend.waiting_for:
@@ -100,6 +107,58 @@ class MujocoSim(Module):
             elif not publisher.busy:
                 publisher.offer(frame)
             await asyncio.sleep(0.001)
+
+    async def _settle_before_stepping(self, backend: Any, publisher: Any) -> None:
+        """Publish the world until the robots are being driven, then start it.
+
+        See `startup_delay` in `SimulatedWorldConfig` for why the wait is here at all. The
+        world is published throughout, because that is what the policies are waiting on: they
+        read the joints out of these observations, and until they have them they send nothing.
+        Nothing is stepped, so none of the wait is time a robot can fall over in.
+
+        `wait_for` is what ends it: the modules named there are asked, every half second,
+        whether their tasks have armed, and the first moment they all have the world starts.
+        `startup_delay` is the cap on that, and the whole wait when nothing is named -- so
+        leaving `wait_for` empty is the blind timer, and filling it can only make the wait
+        shorter, never longer.
+        """
+        deadline = time.monotonic() + self.config.startup_delay
+        waiting = list(self.config.wait_for)
+        asked = 0.0
+        while time.monotonic() < deadline:
+            if not publisher.busy:
+                publisher.offer(backend.frame())
+            if waiting and time.monotonic() >= asked:
+                asked = time.monotonic() + _PROBE_PERIOD
+                waiting = await asyncio.to_thread(self._still_waiting, waiting)
+                if not waiting:
+                    logger.info("sim2: every robot is being driven; starting the world")
+                    break
+            # Slowly. One frame is all a policy needs to see the joints and start commanding,
+            # and the whole reason for the wait is that this machine is busy -- every module
+            # that wants a view of the room is compiling its own copy of it right now. Holding
+            # at 200 Hz would be the sim competing with the arming it is waiting for.
+            await asyncio.sleep(_HOLD_PERIOD)
+        else:
+            if waiting:
+                logger.warning(
+                    f"sim2: started the world on the {self.config.startup_delay}s cap with "
+                    f"{[m.remote_name for m in waiting]} not driving yet"
+                )
+        backend.restart_clock()
+
+    def _still_waiting(self, mounts: list[Any]) -> list[Any]:
+        """Those of `mounts` that are not driving yet. One that cannot say is not waited for."""
+        left = []
+        for mount in mounts:
+            try:
+                if not driving(mount, self.rpc):
+                    left.append(mount)
+            except Exception as error:
+                logger.info(
+                    f"sim2: {mount.remote_name} cannot say whether it is driving: {error!r}"
+                )
+        return left
 
     def _on_actions(self, message: WorldAction) -> None:
         backend = self._backend

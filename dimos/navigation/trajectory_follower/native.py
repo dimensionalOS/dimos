@@ -29,7 +29,7 @@ from dimos.navigation.embodiment.base import Embodiment
 
 
 class TrajectoryFollowerNativeConfig(NativeModuleConfig):
-    source_dir: str | None = "dimos/navigation/trajectory_follower/fancy/rust"
+    source_dir: str | None = "dimos/navigation/trajectory_follower/rust"
     executable: str = "result/bin/trajectory_follower"
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True

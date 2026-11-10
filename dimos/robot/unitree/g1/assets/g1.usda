@@ -4,7 +4,7 @@
         string creator = "MuJoCo USD Converter v0.9.0"
     }
     defaultPrim = "g1_29dof_rev_1_0"
-    doc = """Converted from assets/g1_29dof.xml by scripts/mjcf_to_usd.py."""
+    doc = "Converted from assets/g1_29dof.xml by scripts/mjcf_to_usd.py."
     kilogramsPerUnit = 1
     metersPerUnit = 1
     upAxis = "Z"
@@ -94,7 +94,7 @@ def Xform "g1_29dof_rev_1_0" (
                 rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -119,7 +119,7 @@ def Xform "g1_29dof_rev_1_0" (
                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                 uniform int mjc:group = 2
                 uniform token orientation = "rightHanded"
-                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                     interpolation = "constant"
                 )
                 float[] primvars:displayOpacity = [1] (
@@ -214,7 +214,7 @@ def Xform "g1_29dof_rev_1_0" (
                     rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -249,7 +249,7 @@ def Xform "g1_29dof_rev_1_0" (
                     uniform token orientation = "rightHanded"
                     uniform token physics:approximation = "convexHull"
                     float physics:density = 1000
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -288,7 +288,7 @@ def Xform "g1_29dof_rev_1_0" (
                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -361,7 +361,7 @@ def Xform "g1_29dof_rev_1_0" (
                             rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -434,7 +434,7 @@ def Xform "g1_29dof_rev_1_0" (
                                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                 uniform int mjc:group = 2
                                 uniform token orientation = "rightHanded"
-                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                     interpolation = "constant"
                                 )
                                 float[] primvars:displayOpacity = [1] (
@@ -507,7 +507,7 @@ def Xform "g1_29dof_rev_1_0" (
                                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                     uniform int mjc:group = 2
                                     uniform token orientation = "rightHanded"
-                                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                         interpolation = "constant"
                                     )
                                     float[] primvars:displayOpacity = [1] (
@@ -580,7 +580,7 @@ def Xform "g1_29dof_rev_1_0" (
                                         rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                                         uniform int mjc:group = 2
                                         uniform token orientation = "rightHanded"
-                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                        color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                                             interpolation = "constant"
                                         )
                                         float[] primvars:displayOpacity = [1] (
@@ -898,7 +898,7 @@ def Xform "g1_29dof_rev_1_0" (
                     rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -933,7 +933,7 @@ def Xform "g1_29dof_rev_1_0" (
                     uniform token orientation = "rightHanded"
                     uniform token physics:approximation = "convexHull"
                     float physics:density = 1000
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -972,7 +972,7 @@ def Xform "g1_29dof_rev_1_0" (
                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1045,7 +1045,7 @@ def Xform "g1_29dof_rev_1_0" (
                             rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1118,7 +1118,7 @@ def Xform "g1_29dof_rev_1_0" (
                                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                 uniform int mjc:group = 2
                                 uniform token orientation = "rightHanded"
-                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                     interpolation = "constant"
                                 )
                                 float[] primvars:displayOpacity = [1] (
@@ -1191,7 +1191,7 @@ def Xform "g1_29dof_rev_1_0" (
                                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                     uniform int mjc:group = 2
                                     uniform token orientation = "rightHanded"
-                                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                         interpolation = "constant"
                                     )
                                     float[] primvars:displayOpacity = [1] (
@@ -1264,7 +1264,7 @@ def Xform "g1_29dof_rev_1_0" (
                                         rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                                         uniform int mjc:group = 2
                                         uniform token orientation = "rightHanded"
-                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                        color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                                             interpolation = "constant"
                                         )
                                         float[] primvars:displayOpacity = [1] (
@@ -1582,7 +1582,7 @@ def Xform "g1_29dof_rev_1_0" (
                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                     uniform int mjc:group = 2
                     uniform token orientation = "rightHanded"
-                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                         interpolation = "constant"
                     )
                     float[] primvars:displayOpacity = [1] (
@@ -1620,7 +1620,7 @@ def Xform "g1_29dof_rev_1_0" (
                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                         uniform int mjc:group = 2
                         uniform token orientation = "rightHanded"
-                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                             interpolation = "constant"
                         )
                         float[] primvars:displayOpacity = [1] (
@@ -1658,7 +1658,7 @@ def Xform "g1_29dof_rev_1_0" (
                             rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1718,7 +1718,7 @@ def Xform "g1_29dof_rev_1_0" (
                             rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1753,7 +1753,7 @@ def Xform "g1_29dof_rev_1_0" (
                             uniform token orientation = "rightHanded"
                             uniform token physics:approximation = "convexHull"
                             float physics:density = 1000
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1779,7 +1779,7 @@ def Xform "g1_29dof_rev_1_0" (
                             rel material:binding = </g1_29dof_rev_1_0/Materials/black>
                             uniform int mjc:group = 2
                             uniform token orientation = "rightHanded"
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1814,7 +1814,7 @@ def Xform "g1_29dof_rev_1_0" (
                             uniform token orientation = "rightHanded"
                             uniform token physics:approximation = "convexHull"
                             float physics:density = 1000
-                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            color3f[] primvars:displayColor = [(0.03310476, 0.033104762, 0.03310476)] (
                                 interpolation = "constant"
                             )
                             float[] primvars:displayOpacity = [1] (
@@ -1875,7 +1875,7 @@ def Xform "g1_29dof_rev_1_0" (
                                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                 uniform int mjc:group = 2
                                 uniform token orientation = "rightHanded"
-                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                     interpolation = "constant"
                                 )
                                 float[] primvars:displayOpacity = [1] (
@@ -1941,7 +1941,7 @@ def Xform "g1_29dof_rev_1_0" (
                                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                     uniform int mjc:group = 2
                                     uniform token orientation = "rightHanded"
-                                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                         interpolation = "constant"
                                     )
                                     float[] primvars:displayOpacity = [1] (
@@ -2007,7 +2007,7 @@ def Xform "g1_29dof_rev_1_0" (
                                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                         uniform int mjc:group = 2
                                         uniform token orientation = "rightHanded"
-                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                             interpolation = "constant"
                                         )
                                         float[] primvars:displayOpacity = [1] (
@@ -2080,7 +2080,7 @@ def Xform "g1_29dof_rev_1_0" (
                                             rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                             uniform int mjc:group = 2
                                             uniform token orientation = "rightHanded"
-                                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                            color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                 interpolation = "constant"
                                             )
                                             float[] primvars:displayOpacity = [1] (
@@ -2153,7 +2153,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                 uniform int mjc:group = 2
                                                 uniform token orientation = "rightHanded"
-                                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                     interpolation = "constant"
                                                 )
                                                 float[] primvars:displayOpacity = [1] (
@@ -2226,7 +2226,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                     uniform int mjc:group = 2
                                                     uniform token orientation = "rightHanded"
-                                                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                         interpolation = "constant"
                                                     )
                                                     float[] primvars:displayOpacity = [1] (
@@ -2299,7 +2299,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                         uniform int mjc:group = 2
                                                         uniform token orientation = "rightHanded"
-                                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                             interpolation = "constant"
                                                         )
                                                         float[] primvars:displayOpacity = [1] (
@@ -2359,7 +2359,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                         uniform int mjc:group = 2
                                                         uniform token orientation = "rightHanded"
-                                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                             interpolation = "constant"
                                                         )
                                                         float[] primvars:displayOpacity = [1] (
@@ -2593,7 +2593,7 @@ def Xform "g1_29dof_rev_1_0" (
                                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                 uniform int mjc:group = 2
                                 uniform token orientation = "rightHanded"
-                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                     interpolation = "constant"
                                 )
                                 float[] primvars:displayOpacity = [1] (
@@ -2659,7 +2659,7 @@ def Xform "g1_29dof_rev_1_0" (
                                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                     uniform int mjc:group = 2
                                     uniform token orientation = "rightHanded"
-                                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                         interpolation = "constant"
                                     )
                                     float[] primvars:displayOpacity = [1] (
@@ -2725,7 +2725,7 @@ def Xform "g1_29dof_rev_1_0" (
                                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                         uniform int mjc:group = 2
                                         uniform token orientation = "rightHanded"
-                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                             interpolation = "constant"
                                         )
                                         float[] primvars:displayOpacity = [1] (
@@ -2798,7 +2798,7 @@ def Xform "g1_29dof_rev_1_0" (
                                             rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                             uniform int mjc:group = 2
                                             uniform token orientation = "rightHanded"
-                                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                            color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                 interpolation = "constant"
                                             )
                                             float[] primvars:displayOpacity = [1] (
@@ -2871,7 +2871,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                 rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                 uniform int mjc:group = 2
                                                 uniform token orientation = "rightHanded"
-                                                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                     interpolation = "constant"
                                                 )
                                                 float[] primvars:displayOpacity = [1] (
@@ -2944,7 +2944,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                     rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                     uniform int mjc:group = 2
                                                     uniform token orientation = "rightHanded"
-                                                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                    color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                         interpolation = "constant"
                                                     )
                                                     float[] primvars:displayOpacity = [1] (
@@ -3017,7 +3017,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                         uniform int mjc:group = 2
                                                         uniform token orientation = "rightHanded"
-                                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                             interpolation = "constant"
                                                         )
                                                         float[] primvars:displayOpacity = [1] (
@@ -3077,7 +3077,7 @@ def Xform "g1_29dof_rev_1_0" (
                                                         rel material:binding = </g1_29dof_rev_1_0/Materials/metal>
                                                         uniform int mjc:group = 2
                                                         uniform token orientation = "rightHanded"
-                                                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                                        color3f[] primvars:displayColor = [(0.4479884, 0.44798842, 0.44798836)] (
                                                             interpolation = "constant"
                                                         )
                                                         float[] primvars:displayOpacity = [1] (

@@ -14,6 +14,7 @@
 
 
 from collections.abc import Iterable, Mapping, Sequence
+import os
 from pathlib import Path
 import re
 from threading import Lock
@@ -30,12 +31,33 @@ from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
 
+logger = setup_logger()
+
 _SINGLE_DOF = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
 _MOVED = 1e-6
+# Where to write the world before it is stepped, when something asks. Off unless set, because
+# a dump of this scene is a 150 MB file.
+_DUMP = "DIMOS_WORLD_DUMP"
+
+
+def _dump_asked_for(spec: mujoco.MjSpec, model: mujoco.MjModel) -> None:
+    """Serialize the world at the one point it is complete and nothing has stepped yet.
+
+    Two builds of the same room that behave differently differ in the compiled model, and the
+    model is the hardest thing to read off a running sim. `$DIMOS_WORLD_DUMP=<dir>` writes it
+    here instead, where it can be diffed against the same dump from another revision.
+    """
+    into = os.environ.get(_DUMP)
+    if not into:
+        return
+    from dimos.sim2.mujoco.dump import dump_world
+
+    logger.info(f"sim2: wrote the world to {dump_world(spec, model, Path(into))}")
 
 
 def _xyzw(wxyz: np.ndarray) -> list[float]:
@@ -56,7 +78,9 @@ class MujocoBackend:
         self._max_burst_seconds = max_burst_seconds
         self._scene_layer = usd_layer(usd)
         self._robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(self._scene_layer, simulated).compile()
+        spec = compile_world(self._scene_layer, simulated)
+        self.model = spec.compile()
+        _dump_asked_for(spec, self.model)
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)
         self._acted = {robot.robot_id: 0 for robot in self._controllers}
@@ -125,6 +149,10 @@ class MujocoBackend:
             for action in actions:
                 if isinstance(action, JointCommand) and action.entity in self._acted:
                     self._acted[action.entity] += 1
+
+    def restart_clock(self) -> None:
+        """Start counting real time from now, so a wait before the first step costs no sim time."""
+        self._rebase = True
 
     def _due(self) -> tuple[str, ...]:
         now = self.data.time
@@ -240,16 +268,30 @@ class MujocoBackend:
             for robot_id, r in self._robots.items()
         }
         robot_roots = set(roots.values())
+        # The body a robot hangs off is not a thing in its own right. In a composed scene the
+        # robot is grafted under a frame of the scene's -- `/office_555/main` -- which is where
+        # `_free_if_unjointed` then puts the freejoint, so it is parented to the world and it is
+        # jointed, and it would come through here as an object. Worse, it shortens to the same
+        # name as the robot it holds, so it overwrote the robot's own entity: every consumer was
+        # told the robot's pose was its mount's, 0.793 m below its pelvis, and drew it that far
+        # into the floor. A body that is the root of a robot's tree is that robot's, not a
+        # separate object.
+        holders = {int(model.body_rootid[body]) for body in robot_roots}
         jointed = set(model.body_rootid[model.jnt_bodyid])
         objects = [
             body
             for body in range(1, model.nbody)
-            if model.body_parentid[body] == 0 and body not in robot_roots and body in jointed
+            if model.body_parentid[body] == 0
+            and body not in robot_roots
+            and body not in holders
+            and body in jointed
         ]
         names = [model.body(body).name or f"body{body}" for body in objects]
         short = short_names(names)
         for body, name in zip(objects, names, strict=True):
-            roots[short[name]] = body
+            # And never let an object take a robot's name, whatever it is called.
+            if short[name] not in roots:
+                roots[short[name]] = body
         return roots
 
     def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldObservations:
@@ -294,15 +336,30 @@ class MujocoBackend:
         self._announced = True
 
     def _joints_of(self, name: str, body: int) -> tuple[list[int], list[str]]:
+        """The single-dof joints in this body's subtree.
+
+        Its subtree and not its kinematic tree: in a composed scene the robot hangs off a frame
+        of the scene's, and that frame is the root of the tree, so a robot whose entity is its
+        own root body would own no joints at all -- nothing would report a joint state and no
+        policy could ever arm.
+        """
         model = self.model
         joints = [
             j
             for j in range(model.njnt)
-            if model.body_rootid[model.jnt_bodyid[j]] == body
+            if self._descends(int(model.jnt_bodyid[j]), body)
             and int(model.jnt_type[j]) in _SINGLE_DOF
         ]
         prefix = f"{name}/" if name in self._robots else ""
         return joints, [model.joint(j).name.removeprefix(prefix) for j in joints]
+
+    def _descends(self, body: int, ancestor: int) -> bool:
+        parents = self.model.body_parentid
+        while body > 0:
+            if body == ancestor:
+                return True
+            body = int(parents[body])
+        return body == ancestor
 
 
 def _close(a: np.ndarray, b: np.ndarray) -> bool:
