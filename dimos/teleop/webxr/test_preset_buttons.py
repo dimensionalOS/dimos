@@ -65,7 +65,8 @@ def planner() -> Mock:
     planner.plan_to_joints.return_value = PlanResult(
         PlanStatus.SUCCEEDED, plan=GeneratedPlan(("manipulator",), JointTrajectory())
     )
-    planner.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
+    planner.execute.return_value = ExecutionResult(ExecutionStatus.ACCEPTED)
+    planner.wait_for_execution.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
     planner.cancel.return_value = ExecutionResult(ExecutionStatus.NO_EXECUTION)
     return planner
 
@@ -79,19 +80,19 @@ def module(planner: Mock) -> Iterator[PresetButtonsModule]:
 
 
 class _LongMove:
-    """Makes the fake planner's execute() last until finish() or a cancel."""
+    """Makes the fake planner's move last until finish() or a cancel."""
 
     def __init__(self, planner: Mock) -> None:
         self.started = threading.Event()
         self._done = threading.Event()
         self._result = ExecutionResult(ExecutionStatus.COMPLETED)
-        planner.execute.side_effect = self._execute
+        planner.wait_for_execution.side_effect = self._wait
         planner.cancel.side_effect = self._cancel
 
     def finish(self) -> None:
         self._done.set()
 
-    def _execute(self, *args: Any, **kwargs: Any) -> ExecutionResult:
+    def _wait(self, *args: Any, **kwargs: Any) -> ExecutionResult:
         self.started.set()
         self._done.wait(timeout=5.0)
         return self._result
@@ -171,6 +172,42 @@ def test_a_grip_during_a_preset_move_cancels_it(module: PresetButtonsModule, pla
     _wait_until_idle(module)
 
     planner.cancel.assert_called_once()
+
+
+def test_a_grip_while_the_move_is_planning_sends_no_motion(
+    module: PresetButtonsModule, planner: Mock
+) -> None:
+    planning = threading.Event()
+    release = threading.Event()
+    plan = planner.plan_to_joints.return_value
+
+    def slow_plan(*args: Any, **kwargs: Any) -> PlanResult:
+        planning.set()
+        release.wait(timeout=5.0)
+        return plan
+
+    planner.plan_to_joints.side_effect = slow_plan
+    _tap(module, "left_primary")
+    assert planning.wait(timeout=5.0)
+
+    module._on_buttons(_buttons("left_grip"))
+    release.set()
+    _wait_until_idle(module)
+
+    planner.execute.assert_not_called()
+
+
+def test_stop_cancels_a_running_preset_move(module: PresetButtonsModule, planner: Mock) -> None:
+    move = _LongMove(planner)
+    _tap(module, "left_primary")
+    assert move.started.wait(timeout=5.0)
+
+    module.stop()
+    _tap(module, "left_secondary")
+
+    planner.cancel.assert_called_once()
+    assert not module._moving
+    assert _planned_targets(planner) == [INIT]
 
 
 def test_x_before_the_start_pose_is_known_moves_nothing(

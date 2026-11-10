@@ -25,7 +25,12 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.manipulation_spec import ManipulationSpec, PlanningGroupInfo
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    ManipulationSpec,
+    PlanningGroupInfo,
+)
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.sdk import Arm
 from dimos.teleop.webxr.controller_types import Buttons
@@ -40,6 +45,9 @@ _PRESET_BITS: dict[str, int] = {
     "home": 1 << Buttons.BITS["left_secondary"],
 }
 _GRIP_BITS = (1 << Buttons.BITS["left_grip"]) | (1 << Buttons.BITS["right_grip"])
+# Longest stop() waits for a preset move to wind down, in seconds. A move still
+# planning past this never sends motion, because stop() has already cancelled it.
+_STOP_TIMEOUT_S = 15.0
 
 
 class PresetButtonsConfig(ModuleConfig):
@@ -66,6 +74,8 @@ class PresetButtonsModule(Module):
         self._held = 0
         self._moving = False
         self._cancelling = False
+        self._stopping = False
+        self._worker: threading.Thread | None = None
         self._arm: Arm | None = None
 
     @rpc
@@ -75,6 +85,18 @@ class PresetButtonsModule(Module):
 
     @rpc
     def stop(self) -> None:
+        """Ignore further presses, cancel a running preset move and wait for it to end."""
+        with self._lock:
+            self._stopping = True
+            moving = self._moving
+            self._cancelling = moving
+            worker = self._worker
+        if moving:
+            self._cancel_move()
+        if worker is not None:
+            worker.join(timeout=_STOP_TIMEOUT_S)
+            if worker.is_alive():
+                logger.warning("Preset move still finishing at stop; it will not move the arm")
         super().stop()
 
     def _on_buttons(self, msg: Buttons) -> None:
@@ -85,6 +107,8 @@ class PresetButtonsModule(Module):
         with self._lock:
             pressed = held & ~self._held
             self._held = held
+            if self._stopping:
+                return
             if held & _GRIP_BITS:
                 if self._moving and not self._cancelling:
                     self._cancelling = True
@@ -93,31 +117,63 @@ class PresetButtonsModule(Module):
                 preset = next((name for name, bit in _PRESET_BITS.items() if pressed & bit), None)
                 if preset is not None:
                     self._moving = True
-        # Planning and moving take seconds, so they run on their own thread
-        # instead of holding up the button stream.
+                    # Planning and moving take seconds, so they run on their own
+                    # thread instead of holding up the button stream.
+                    self._worker = threading.Thread(
+                        target=self._move_to, args=(preset,), name="preset-move", daemon=True
+                    )
+                    self._worker.start()
         if cancel:
             threading.Thread(target=self._cancel_move, name="preset-cancel", daemon=True).start()
-        if preset is not None:
-            threading.Thread(
-                target=self._move_to, args=(preset,), name="preset-move", daemon=True
-            ).start()
 
     def _move_to(self, preset: str) -> None:
         """Plan and run a move to `preset` ("init" or "home"), logging instead of raising."""
         try:
-            self._selected_arm().move_to_preset(preset)
-            logger.info("Arm reached preset", preset=preset)
-        except Exception as exc:
-            with self._lock:
-                cancelled = self._cancelling
-            if cancelled:
+            result = self._plan_and_run(preset)
+            if result is not None and result.status is ExecutionStatus.COMPLETED:
+                logger.info("Arm reached preset", preset=preset)
+            elif result is None or self._cancel_requested():
                 logger.info("Preset move cancelled; VR teleop has the arm", preset=preset)
             else:
-                logger.warning("Preset move not done", preset=preset, reason=str(exc))
+                logger.warning("Preset move not done", preset=preset, reason=result.message)
+        except Exception as exc:
+            logger.warning("Preset move not done", preset=preset, reason=str(exc))
         finally:
             with self._lock:
                 self._moving = False
                 self._cancelling = False
+                self._worker = None
+
+    def _plan_and_run(self, preset: str) -> ExecutionResult | None:
+        """Plan a move to `preset` and run it to the end.
+
+        Returns None when a cancel came in before any motion was sent. Raises
+        ValueError when the preset is not saved yet, RuntimeError when planning fails.
+        """
+        arm = self._selected_arm()
+        presets = arm.state().joint_presets
+        if preset not in presets:
+            raise ValueError(f"No {preset!r} pose saved; known: {sorted(presets)}")
+        if self._cancel_requested():
+            return None
+        plan = self.manipulation.plan_to_joints({arm.info.id: presets[preset]})
+        if not plan.succeeded or plan.plan is None:
+            raise RuntimeError(f"Planning failed: {plan.message or plan.status.name}")
+        if self._cancel_requested():
+            return None
+        sent = self.manipulation.execute(blocking=False, plan_id=plan.plan.plan_id)
+        if sent.status is not ExecutionStatus.ACCEPTED:
+            return sent
+        # A cancel that arrived between the check above and the send found no
+        # motion to stop, so it is stopped here. One that arrives after this check
+        # reaches the planner after the send and stops it there.
+        if self._cancel_requested():
+            self._cancel_move()
+        return self.manipulation.wait_for_execution()
+
+    def _cancel_requested(self) -> bool:
+        with self._lock:
+            return self._cancelling
 
     def _cancel_move(self) -> None:
         """Stop the running preset move so VR teleop can take over."""
