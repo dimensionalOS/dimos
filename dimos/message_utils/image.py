@@ -32,9 +32,9 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image as PILImage
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.std_msgs.msg import Header
 
 _FORMATS = {
     "rgb8": ("u1", 3),

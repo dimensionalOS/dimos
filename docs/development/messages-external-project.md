@@ -1,10 +1,10 @@
 # External message projects
 
 An external project owns its `.msg` definitions and registers its generated
-message provider through the `dimos.messages` entry-point group.
+message provider through the `dimos_messages` entry-point group.
 
 The [standalone example](/examples/external-messages/README.md) declares
-dimOS as both a build and runtime dependency and `dimos.messages` as its message
+dimOS as both a build and runtime dependency and `dimos_messages` as its message
 dependency. Its small `setup.py` passes cdrgen's `setup_arguments` to setuptools.
 Configuration, generation, provider registration and packaging belong to cdrgen;
 dimOS does not implement another backend or generator.

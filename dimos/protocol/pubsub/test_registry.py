@@ -31,9 +31,9 @@ from dimos.core.transport import (
 )
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils import image, time as message_time
-from dimos.messages.geometry_msgs.msg import Vector3
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Vector3
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.registry import (
     make_pubsub_transport,
     parse_pubsub_uri,

@@ -19,7 +19,7 @@ import math
 import pytest
 
 from dimos.message_utils import geometry
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.static_tf_publisher import frames_to_edge_transforms
 
 

@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("aiortc")
 
