@@ -24,8 +24,8 @@ from pydantic import Field
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.nav_msgs.msg import Odometry, Path
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.nav_msgs.msg import Odometry, Path
 from dimos.visualization.rerun.cdr import path_archetype
 
 

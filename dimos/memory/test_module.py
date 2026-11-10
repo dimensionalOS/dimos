@@ -32,11 +32,11 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.transform import Transformer
 from dimos.memory.type.observation import Observation
-from dimos.messages.builtin_interfaces.msg import Time as GeneratedTime
-from dimos.messages.dimos_msgs.msg import LineSegments3D as GeneratedSegments
-from dimos.messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header as GeneratedHeader
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.builtin_interfaces.msg import Time as GeneratedTime
+from dimos_messages.dimos_msgs.msg import LineSegments3D as GeneratedSegments
+from dimos_messages.geometry_msgs.msg import Pose, Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header as GeneratedHeader
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.threadpool import get_max_workers
 

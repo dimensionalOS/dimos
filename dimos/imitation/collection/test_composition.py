@@ -24,7 +24,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import CollectionModule, collect
 from dimos.imitation.dataprep.schema import FeatureSpec
-from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.sensor_msgs.msg import Image, JointState
 
 
 @pytest.fixture

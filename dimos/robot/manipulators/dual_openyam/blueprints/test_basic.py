@@ -21,7 +21,7 @@ import pytest
 from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_control_model,

@@ -27,8 +27,8 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
-from dimos.messages.std_msgs.msg import Int32, UInt32
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.std_msgs.msg import Int32, UInt32
 from dimos.robot.deeprobotics.m20 import connection as m20_connection
 from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_CHARGING,

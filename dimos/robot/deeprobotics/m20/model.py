@@ -25,7 +25,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.mjcf import mjcf_to_urdf
 from dimos.robot.deeprobotics.m20.assets.description import SparseDescriptionSource
 

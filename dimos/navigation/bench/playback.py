@@ -28,8 +28,8 @@ from numpy.typing import NDArray
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE
 from dimos.navigation.bench.runner import (
     RECORDING_FILE,

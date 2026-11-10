@@ -29,10 +29,10 @@ from scipy.spatial.transform import Rotation
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import geometry
-from dimos.messages.dimos_msgs.msg import Contact, Contacts
-from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped, Twist
-from dimos.messages.nav_msgs.msg import Path as PathMsg
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.dimos_msgs.msg import Contact, Contacts
+from dimos_messages.geometry_msgs.msg import PointStamped, PoseStamped, Twist
+from dimos_messages.nav_msgs.msg import Path as PathMsg
+from dimos_messages.std_msgs.msg import Bool
 from dimos.navigation.bench.suite import Point, Rules
 from dimos.simulation.scenes.procedural import Scene
 from dimos.simulation.sim_world.body import BodyShape

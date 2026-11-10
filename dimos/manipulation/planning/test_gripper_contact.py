@@ -27,10 +27,10 @@ import pytest
 from dimos.manipulation.planning.gripper_contact import GraspContactChecker, scene_obstacles
 from dimos.manipulation.planning.spec.gripper import GripperConfig
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Pose, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Pose, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.transform_utils import matrix_to_pose
 
 CONTACT_MARGIN = 0.005

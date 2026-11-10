@@ -43,7 +43,7 @@ from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.utils.fsync_trigger import trigger_gmsl_cameras
 from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
 from dimos.message_utils import camera_info as calibration, time as message_time
-from dimos.messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
+from dimos_messages.sensor_msgs.msg import CameraInfo, RegionOfInterest
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

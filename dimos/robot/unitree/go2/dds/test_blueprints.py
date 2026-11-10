@@ -21,7 +21,7 @@ import pytest
 import rerun as rr
 
 from dimos.message_utils import camera_info, time as message_time
-from dimos.messages.sensor_msgs.msg import CompressedImage
+from dimos_messages.sensor_msgs.msg import CompressedImage
 from dimos.robot.unitree.go2.dds.blueprints import CAMERA_ENTITY, go2_nav_viewer
 
 

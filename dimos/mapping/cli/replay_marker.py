@@ -68,7 +68,7 @@ def main(
     from dimos.memory.transform import QualityWindow, SpeedLimit
     from dimos.memory.vis.color import Color
     from dimos.message_utils import image
-    from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+    from dimos_messages.sensor_msgs.msg import Image, PointCloud2
     from dimos.perception.fiducial.marker_transformer import DetectMarkers
     from dimos.robot.unitree.go2.calibration import front_camera_calibration
     from dimos.visualization.rerun.cdr import camera_pinhole, image_archetype

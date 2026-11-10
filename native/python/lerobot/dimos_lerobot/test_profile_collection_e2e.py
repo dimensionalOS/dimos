@@ -31,8 +31,8 @@ from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import image, joint_state, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 
 @pytest.fixture

@@ -46,8 +46,8 @@ from dimos.memory.vis.space.elements import (
     heading,
     position,
 )
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory.vis.space.space import Space

@@ -19,7 +19,7 @@ from typing import get_args
 import numpy as np
 import pytest
 
-from dimos.messages.dimos_msgs.msg import Contact
+from dimos_messages.dimos_msgs.msg import Contact
 from dimos.navigation.bench.scorer import (
     Commands,
     ContactSample,

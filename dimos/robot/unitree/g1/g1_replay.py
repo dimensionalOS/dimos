@@ -27,9 +27,9 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.memory.cli.dataset import resolve_dataset
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

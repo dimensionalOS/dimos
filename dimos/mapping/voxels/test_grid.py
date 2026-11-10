@@ -17,7 +17,7 @@ import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 
 @pytest.fixture

@@ -5,7 +5,7 @@ import pytest
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.std_msgs.msg import String
 
 
 @pytest.mark.parametrize("compressed", [False, True])

@@ -24,7 +24,7 @@ from typing import Any, Generic, TypeVar, cast
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub, PubSub

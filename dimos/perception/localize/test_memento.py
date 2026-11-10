@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import pointcloud
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.perception.localize.localize import LocalizeTrace, answer_window, memory_key
 from dimos.perception.localize.memento import FrameSpan, Gap, Memento, Sighting
 from dimos.perception.localize.tools.tool_localize import XARM_PARAMS
@@ -599,14 +599,14 @@ def test_forgotten_time_is_read_again_and_only_it(desk: Desk) -> None:
 def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
     from dimos.memory.store.memory import MemoryStore
     from dimos.message_utils import camera_info, image, time as message_time
-    from dimos.messages.geometry_msgs.msg import (
+    from dimos_messages.geometry_msgs.msg import (
         Quaternion,
         Transform,
         TransformStamped,
         Vector3,
     )
-    from dimos.messages.sensor_msgs.msg import Image
-    from dimos.messages.std_msgs.msg import Header
+    from dimos_messages.sensor_msgs.msg import Image
+    from dimos_messages.std_msgs.msg import Header
     from dimos.perception.localize.localize import index_frames
     from dimos.perception.localize.rig import Rig, RigCamera, camera_hz
     from dimos.perception.localize.tools.tool_localize import GO2_PARAMS, parse_params
@@ -676,13 +676,13 @@ def test_embed_hz_in_params_and_capped_at_camera_rate() -> None:
 
 def test_thin_mask_depth_lift() -> None:
     from dimos.message_utils import camera_info, image, time as message_time
-    from dimos.messages.geometry_msgs.msg import (
+    from dimos_messages.geometry_msgs.msg import (
         Quaternion,
         Transform,
         TransformStamped,
         Vector3,
     )
-    from dimos.messages.std_msgs.msg import Header
+    from dimos_messages.std_msgs.msg import Header
     from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 

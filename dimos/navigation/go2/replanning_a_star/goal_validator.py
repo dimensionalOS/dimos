@@ -19,11 +19,11 @@ import numpy as np
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.message_utils import occupancy as occupancy_utils
-from dimos.messages.geometry_msgs.msg import Point, Vector3
+from dimos_messages.geometry_msgs.msg import Point, Vector3
 
 VectorLike = Sequence[float]
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 
 
 def _world_point(costmap: OccupancyGrid, coordinates: tuple[int, int]) -> Point:

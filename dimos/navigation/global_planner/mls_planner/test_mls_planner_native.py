@@ -28,8 +28,8 @@ from pytest_mock import MockerFixture
 
 from dimos.core.stream import Stream, Transport
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 
 _GOAL = PointStamped(

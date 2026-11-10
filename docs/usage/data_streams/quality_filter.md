@@ -52,7 +52,7 @@ For camera streams, pass `image_utils.sharpness` to `quality_barrier` to select 
 Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Storage & Replay](/docs/usage/data_streams/storage_replay.md) toolkit, which provides access to recorded robot data:
 
 ```python skip session=qb
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils
 from dimos.utils.reactive import quality_barrier
 from dimos.utils.testing.replay import TimedSensorReplay

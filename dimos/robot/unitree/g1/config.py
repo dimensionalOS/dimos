@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
 
 
 @dataclass(frozen=True)

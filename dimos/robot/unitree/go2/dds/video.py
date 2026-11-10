@@ -38,8 +38,8 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.memory.transform import Transformer
 from dimos.message_utils import image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 
 if TYPE_CHECKING:

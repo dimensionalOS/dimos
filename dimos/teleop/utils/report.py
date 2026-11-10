@@ -34,9 +34,9 @@ import numpy as np
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import VideoStats
-from dimos.messages.geometry_msgs.msg import PoseStamped, TwistStamped
-from dimos.messages.std_msgs.msg import UInt32
+from dimos_messages.dimos_msgs.msg import VideoStats
+from dimos_messages.geometry_msgs.msg import PoseStamped, TwistStamped
+from dimos_messages.std_msgs.msg import UInt32
 from dimos.teleop.utils.stream_stats import pcts
 from dimos.utils.logging_config import setup_logger
 

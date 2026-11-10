@@ -53,14 +53,14 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.message_utils import geometry, joint_state, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.sensor_msgs.msg import PointCloud2
 
 # How far (metres) beyond the object's points scene points are kept: farther
 # than any part of the gripper reaches from a grasp on the object.

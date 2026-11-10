@@ -37,7 +37,7 @@ from dimos.control.contract.limits import (
     model_limit,
     movable_joints,
 )
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.testing.cbor import roundtrip
 

@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.messages.dimos_msgs.msg import PointCloudRegion, RegionBounds
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.dimos_msgs.msg import PointCloudRegion, RegionBounds
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.spec import mapping
 
 # Max stamp gap between a cloud and the transform used to register it (s).

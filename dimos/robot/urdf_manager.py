@@ -30,10 +30,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header, String
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header, String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.types.file import File
 from dimos.utils.logging_config import setup_logger

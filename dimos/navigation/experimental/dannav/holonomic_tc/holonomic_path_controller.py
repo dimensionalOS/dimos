@@ -26,8 +26,8 @@ import math
 import numpy as np
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_messages.nav_msgs.msg import Path
 from dimos.navigation.experimental.dannav.geometry.path_distancer import project_to_polyline
 from dimos.navigation.experimental.dannav.geometry.path_speed_profile import profile_speed
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_tracking_controller import (

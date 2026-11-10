@@ -47,7 +47,7 @@ from dimos.hosted.config import HostConfig
 from dimos.hosted.daemon import HostDaemon
 from dimos.hosted.deploy import deployed, wait_for_hosts
 from dimos.hosted.machine import code_revision
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.std_msgs.msg import String
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 

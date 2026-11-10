@@ -11,8 +11,8 @@ The host contract subscribes to:
 - `button_pressed: UInt32`
 - `teleop_buttons: UInt32`
 
-These are generated CDR messages from `dimos.messages.sensor_msgs.msg` and
-`dimos.messages.std_msgs.msg`. Images must use `rgb8` at the configured size;
+These are generated CDR messages from `dimos_messages.sensor_msgs.msg` and
+`dimos_messages.std_msgs.msg`. Images must use `rgb8` at the configured size;
 row padding is respected. Joint positions are selected by the configured
 names. The packed button bit layout stays the same as WebXR.
 

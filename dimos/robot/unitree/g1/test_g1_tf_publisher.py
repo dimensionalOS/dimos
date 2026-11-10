@@ -17,7 +17,7 @@
 import math
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.g1.g1_tf_publisher import (
     D435_PITCH,

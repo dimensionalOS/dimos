@@ -40,8 +40,8 @@ from dimos.imitation.dataprep.schema import (
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.message_utils import image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 
 def _register_channel(

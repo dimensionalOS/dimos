@@ -36,10 +36,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.control_msgs.msg import DynamicJointState
-from dimos.messages.geometry_msgs.msg import TransformStamped, Vector3
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import (
+from dimos_messages.control_msgs.msg import DynamicJointState
+from dimos_messages.geometry_msgs.msg import TransformStamped, Vector3
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import (
     BatteryState,
     CompressedImage,
     Imu,
@@ -47,8 +47,8 @@ from dimos.messages.sensor_msgs.msg import (
     Joy,
     PointCloud2,
 )
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.unitree.go2.base import Go2Base, Go2BaseConfig
 from dimos.robot.unitree.go2.dds.pointcloud import sensor_cloud, sensor_field
 from dimos.utils.logging_config import setup_logger

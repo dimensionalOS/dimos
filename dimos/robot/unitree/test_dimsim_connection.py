@@ -28,10 +28,10 @@ import pytest
 
 from dimos.core import transport as transport_module
 from dimos.message_utils import image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2, PointField
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2, PointField
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree import dimsim_connection
 from dimos.robot.unitree.dimsim_connection import DimSimConnection, _odom_to_tf

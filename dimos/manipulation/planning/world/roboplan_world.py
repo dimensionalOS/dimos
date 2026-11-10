@@ -33,8 +33,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 try:
     import roboplan.core as roboplan_core
@@ -64,8 +64,8 @@ from dimos.manipulation.planning.world.roboplan_model import (
     RoboPlanModel,
     build_roboplan_model,
 )
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 

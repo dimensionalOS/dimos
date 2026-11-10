@@ -15,8 +15,8 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.vision_msgs.msg import Detection2DArray
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.vision_msgs.msg import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 from dimos.robot.unitree.go2.connection import GO2Connection

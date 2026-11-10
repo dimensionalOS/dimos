@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
 import numpy as np
-from dimos.messages.std_msgs.msg import String, Bool, Header
+from dimos_messages.std_msgs.msg import String, Bool, Header
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.message_utils import image as image_utils
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -37,11 +37,11 @@ from dimos.core.stream import In, Out
 from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import CameraInfo
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import CameraInfo
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.navigation.experimental.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.experimental.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec

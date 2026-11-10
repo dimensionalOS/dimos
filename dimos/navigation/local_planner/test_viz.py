@@ -22,9 +22,9 @@ from numpy.typing import NDArray
 import rerun as rr
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.embodiment.go2 import GO2
 from dimos.navigation.local_planner.viz import (
     motion_visual_override,

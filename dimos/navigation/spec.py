@@ -26,10 +26,10 @@ blind local planner.
 from typing import Protocol
 
 from dimos.core.stream import IO, In, Out
-from dimos.messages.geometry_msgs.msg import PointStamped, Twist
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import PointStamped, Twist
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 class GlobalPlanner(Protocol):

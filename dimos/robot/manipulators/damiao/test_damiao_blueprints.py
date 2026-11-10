@@ -22,7 +22,7 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.global_config import global_config
 from dimos.message_utils import time as message_time
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.damiao.connection import (

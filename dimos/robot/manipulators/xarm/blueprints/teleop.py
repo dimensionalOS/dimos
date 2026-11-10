@@ -22,8 +22,8 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Float32
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Float32
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
     teleop_ik_task,

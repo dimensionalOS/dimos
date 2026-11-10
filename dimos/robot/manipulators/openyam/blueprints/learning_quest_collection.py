@@ -21,7 +21,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
-from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.sensor_msgs.msg import Image, JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_webxr_openyam
 from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 from dimos.robot.manipulators.openyam.joints import OPENYAM_GRIPPER_JOINT

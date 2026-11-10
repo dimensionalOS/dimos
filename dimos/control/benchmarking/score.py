@@ -35,8 +35,8 @@ from dimos.control.benchmarking.benchmark import RunRecording
 from dimos.control.benchmarking.scoring import ExecutedTrajectory, TrajectoryTick, score_run
 from dimos.control.benchmarking.tuning import OperatingPoint, OperatingPointMap, invert_tolerance
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

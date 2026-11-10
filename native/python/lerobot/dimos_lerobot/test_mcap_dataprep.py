@@ -33,8 +33,8 @@ from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.memory.codecs.cdrjpeg import CdrjpegCodec
 from dimos.message_utils import image, joint_state, time as message_time
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 JOINTS = [f"joint_{i}" for i in range(14)]
 

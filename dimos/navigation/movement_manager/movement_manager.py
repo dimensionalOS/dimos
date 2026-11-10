@@ -31,8 +31,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Twist, Vector3
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

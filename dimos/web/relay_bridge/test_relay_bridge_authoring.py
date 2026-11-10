@@ -37,14 +37,14 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
 from dimos.message_utils import image as image_utils
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PointStamped,
     PoseStamped,
     PoseStamped as GeneratedPoseStamped,
     Twist,
 )
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path as NavPath
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path as NavPath
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.web import _test_values as message_values
 from dimos.web.cockpit import Channel, Chat, Map2D, Stats, Video, cockpit

@@ -35,9 +35,9 @@ from dimos.manipulation.manipulation_spec import (
 )
 from dimos.manipulation.pick_and_place_module import TARGET_BOX, PickAndPlaceModule
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.transform_utils import pose_to_matrix
 
 PLANNED = PlanResult(PlanStatus.SUCCEEDED)

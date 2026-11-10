@@ -43,8 +43,8 @@ from dimos.imitation.dataprep.schema import (
     SyncConfig,
 )
 from dimos.message_utils import image, joint_state, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 EXPECTED_STATE = np.asarray(
     [[0, 100], [1, 101], [2, 102], [20, 120], [21, 121], [22, 122]], dtype=np.float32

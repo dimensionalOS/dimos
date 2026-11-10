@@ -22,14 +22,14 @@ import pytest
 
 from dimos.mapping.experimental.mesh import MESH_ENTITY, MeshColours
 from dimos.message_utils import camera_info, image, mesh as mesh_utils, time as message_time
-from dimos.messages.dimos_msgs.msg import TriangleMesh
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.geometry_msgs.msg import (
     Quaternion,
     Transform,
     TransformStamped,
     Vector3,
 )
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.stereo.rgbd_mesh import RgbdMesh
 from dimos.visualization.rerun.bridge import RerunEntry, is_keyed_by_seq
 

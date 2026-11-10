@@ -30,7 +30,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 from dimos.simulation.dimsim.config import DIMSIM_PORT
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 

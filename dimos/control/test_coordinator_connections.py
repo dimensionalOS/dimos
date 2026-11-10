@@ -62,10 +62,10 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import joint_state as joint_state_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, Quaternion, Twist, Vector3
-from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.geometry_msgs.msg import PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.testing.waiting import wait_until
 

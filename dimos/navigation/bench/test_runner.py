@@ -32,9 +32,9 @@ import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.bench.driver import TERMINAL_FILE
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.playback import Puppet, find_episode, frames
@@ -72,8 +72,8 @@ import json, signal, subprocess, sys, time
 from pathlib import Path
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Bool, Header
 
 args = dict(a.split("=", 1) for a in sys.argv if a.startswith("--") and "=" in a)
 out = Path(args["--episodedriver.out-dir"])

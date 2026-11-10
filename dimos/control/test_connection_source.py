@@ -26,7 +26,7 @@ import pytest
 from dimos.control.connection_source import ConnectionSource
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.message_utils import joint_state as joint_state_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -35,8 +35,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.testing.waiting import wait_until
 

@@ -18,20 +18,20 @@ from dataclasses import dataclass
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseWithCovariance, Quaternion
 
 if TYPE_CHECKING:
     from typing_extensions import Self
     from ultralytics.engine.results import Results
 
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
 import numpy as np
 from rich.console import Console
 from rich.text import Text
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.vision_msgs.msg import (
+from dimos_messages.vision_msgs.msg import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
     ObjectHypothesis,

@@ -110,7 +110,7 @@ def recorded_payload_type(payload_module: str) -> type[Any] | None:
 
     Recordings name a native channel in one of three ways: the canonical
     registered name (``std_msgs/msg/String``), the generated module qualname
-    (``dimos.messages.std_msgs.msg.String``), or the retired historical form
+    (``dimos_messages.std_msgs.msg.String``), or the retired historical form
     (``dimos.msgs.std_msgs.String.String``). All three resolve here, through the
     message registry only — an arbitrary Python module is never imported — and
     anything unrecognised returns ``None`` so the channel stays raw bytes.

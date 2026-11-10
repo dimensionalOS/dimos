@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
 from dimos.robot.manipulators.damiao.arm import PhysicalModel

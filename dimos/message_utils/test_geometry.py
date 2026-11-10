@@ -22,8 +22,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import geometry
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -35,8 +35,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.std_msgs.msg import Header
 
 
 @pytest.mark.parametrize("seconds,nanoseconds", [(0, 0), (-1, 500000000), (1700000000, 123456789)])

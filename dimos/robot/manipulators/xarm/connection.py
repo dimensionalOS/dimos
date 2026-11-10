@@ -38,7 +38,7 @@ from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.xarm.config import (
     XARM_ARMS,
     XArmGripperType,

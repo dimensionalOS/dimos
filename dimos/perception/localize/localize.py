@@ -38,7 +38,7 @@ import numpy as np
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.message_utils import geometry, image, pointcloud, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.localize.association import (

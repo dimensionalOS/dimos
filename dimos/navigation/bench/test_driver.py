@@ -27,7 +27,7 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     PointStamped,
     Pose,
@@ -36,8 +36,8 @@ from dimos.messages.geometry_msgs.msg import (
     Twist,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Path as PathMsg
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.nav_msgs.msg import Path as PathMsg
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE, EpisodeDriver
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.suite import Case, Manifest, Rules

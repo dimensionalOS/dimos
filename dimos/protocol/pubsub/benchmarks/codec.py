@@ -22,7 +22,7 @@ from typing import Any
 from dimos.core.stream import Stream
 from dimos.core.transport import PubSubTransport
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 
 
 class CompressedCodec(PubSubTransport[Image]):

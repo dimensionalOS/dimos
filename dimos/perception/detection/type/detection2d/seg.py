@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     import torch
     from ultralytics.engine.results import Results
 
-    from dimos.messages.sensor_msgs.msg import Image
+    from dimos_messages.sensor_msgs.msg import Image
 
 
 @dataclass

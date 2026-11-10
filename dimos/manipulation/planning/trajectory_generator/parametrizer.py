@@ -27,9 +27,9 @@ from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
 _STATIONARY_HOLD_DURATION = 0.01

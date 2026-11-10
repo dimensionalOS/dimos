@@ -46,10 +46,10 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos.messages.geometry_msgs.msg import PointStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.geometry_msgs.msg import PointStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Bool
 from dimos.web.cdr_codec import export_schema as export_cdr_schema
 from dimos.web.codecs import default_encoding, is_generic_cdr_encoding, is_generic_lcm_encoding
 from dimos.web.lcm_codec import export_schema, schema_class_for

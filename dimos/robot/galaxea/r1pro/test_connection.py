@@ -16,7 +16,7 @@ import threading
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 from dimos.robot.galaxea.r1pro.connection import R1ProConnection
 
 

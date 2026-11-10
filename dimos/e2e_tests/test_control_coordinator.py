@@ -35,9 +35,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.core.rpc_client import RPCClient
 from dimos.message_utils.time import duration_from_seconds, time_from_seconds
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 pytestmark = pytest.mark.self_hosted_large
 

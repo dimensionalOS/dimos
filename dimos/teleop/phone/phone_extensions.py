@@ -21,7 +21,7 @@ Available subclasses:
 
 from dimos.core.core import rpc
 from dimos.core.stream import Out
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
 from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
 
 

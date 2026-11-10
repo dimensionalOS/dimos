@@ -34,7 +34,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     PointStamped,
     Pose,
@@ -42,8 +42,8 @@ from dimos.messages.geometry_msgs.msg import (
     Quaternion,
     Twist,
 )
-from dimos.messages.nav_msgs.msg import Path as PathMsg
-from dimos.messages.std_msgs.msg import Bool, Header, String
+from dimos_messages.nav_msgs.msg import Path as PathMsg
+from dimos_messages.std_msgs.msg import Bool, Header, String
 from dimos.navigation.bench.ground_truth import Envelope, GroundTruth
 from dimos.navigation.bench.scorer import GOAL_ECHO_M, Commands, Poses, no_progress, stalled
 from dimos.navigation.bench.suite import Manifest

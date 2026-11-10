@@ -29,9 +29,9 @@ from dimos.memory.cli.dataset import open_dataset, open_store
 from dimos.memory.replay_module import stream_types_of
 from dimos.memory.store.mcap import McapStore
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import Imu
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.geometry_msgs.msg import Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Imu
+from dimos_messages.std_msgs.msg import Header, String
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
 from dimos.robot.unitree.go2.dds.store import Go2McapStore

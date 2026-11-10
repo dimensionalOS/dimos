@@ -41,9 +41,9 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.messages.dimos_msgs.msg import LineSegments3D
-    from dimos.messages.foxglove_msgs.msg import CompressedVideo
-    from dimos.messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.dimos_msgs.msg import LineSegments3D
+    from dimos_messages.foxglove_msgs.msg import CompressedVideo
+    from dimos_messages.sensor_msgs.msg import CameraInfo
     from dimos.visualization.rerun.bridge import VisualOverride
 
 

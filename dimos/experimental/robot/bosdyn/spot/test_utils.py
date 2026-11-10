@@ -32,8 +32,8 @@ from dimos.experimental.robot.bosdyn.spot.utils import (
 )
 from dimos.message_utils import camera_info, geometry, image
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.geometry_msgs.msg import Point, Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_camera_mount_transforms_uses_loaded_robot_topology(tmp_path: Path) -> None:

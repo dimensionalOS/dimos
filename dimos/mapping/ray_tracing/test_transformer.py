@@ -21,7 +21,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 
@@ -33,10 +33,10 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 def _cloud(points, frame_id="lidar", timestamp=0.0):

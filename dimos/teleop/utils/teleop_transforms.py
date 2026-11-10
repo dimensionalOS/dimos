@@ -24,7 +24,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

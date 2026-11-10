@@ -28,8 +28,8 @@ from pydantic import Field
 
 from dimos.core.stream import In, Out
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import JointState, PointCloud2
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import JointState, PointCloud2
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection

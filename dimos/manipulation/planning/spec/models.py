@@ -34,9 +34,9 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.groups.models import PlanningGroup
     from dimos.manipulation.planning.spec.validation import PreparedRobotModel
-    from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
-    from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+    from dimos_messages.geometry_msgs.msg import PoseStamped, TransformStamped
+    from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 
 PlanningGroupID: TypeAlias = str
 """Stable public planning-group name."""

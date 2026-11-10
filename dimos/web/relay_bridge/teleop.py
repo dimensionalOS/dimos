@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import math
 import time
 
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 from dimos.utils.generic import finite_number
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (

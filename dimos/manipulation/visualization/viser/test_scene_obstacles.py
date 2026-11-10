@@ -21,15 +21,15 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
 from dimos.manipulation.visualization.viser.scene import ViserManipulationScene
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 
 def _scene() -> ViserManipulationScene:

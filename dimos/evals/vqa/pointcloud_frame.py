@@ -29,9 +29,9 @@ from dimos.memory.tf import StreamTF
 from dimos.message_utils import camera_info as camera_info_utils, image as image_utils
 from dimos.message_utils.geometry import transform_from_matrix, transform_matrix
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream

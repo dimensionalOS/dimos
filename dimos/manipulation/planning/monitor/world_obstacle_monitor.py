@@ -38,15 +38,15 @@ from dimos.manipulation.planning.spec.models import (
     Obstacle,
 )
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
-    from dimos.messages.vision_msgs.msg import Detection3D
+    from dimos_messages.vision_msgs.msg import Detection3D
     from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
@@ -57,7 +57,7 @@ class WorldObstacleMonitor:
 
     This class handles updates from:
     - Explicit collision objects (CollisionObjectMessage)
-    - Perception detections (Detection3D from dimos.messages.vision_msgs.msg)
+    - Perception detections (Detection3D from dimos_messages.vision_msgs.msg)
 
     ## Thread Safety
 
@@ -268,7 +268,7 @@ class WorldObstacleMonitor:
         - Removes obstacles for detections that are no longer present
 
         Args:
-            detections: List of Detection3D messages from dimos.messages.vision_msgs.msg
+            detections: List of Detection3D messages from dimos_messages.vision_msgs.msg
         """
         if not self._running:
             return

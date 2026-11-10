@@ -18,13 +18,13 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.sensor_msgs.msg import CameraInfo
 
 
 @dataclass

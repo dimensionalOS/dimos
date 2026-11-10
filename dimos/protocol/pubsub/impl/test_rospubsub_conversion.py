@@ -5,7 +5,7 @@ from types import ModuleType
 
 from dimos_cdrgen.registry import encode
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.protocol.pubsub.impl.rospubsub_conversion import (
     derive_ros_type,
     dimos_to_ros,

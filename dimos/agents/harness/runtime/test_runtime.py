@@ -54,8 +54,8 @@ from dimos.core.stream import Out
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Vector3
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import Vector3
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.spec.utils import Spec
 
 
@@ -503,7 +503,7 @@ import threading
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
 from dimos.core.stream import Out
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 
 class Ticker(AgentModule):
@@ -551,7 +551,7 @@ from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 
 class Watcher(AgentModule):
@@ -773,7 +773,7 @@ def test_agent_module_errors_are_visible(runtime: Client, state_home: Path, tmp_
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 
 class Divider(AgentModule):

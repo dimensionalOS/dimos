@@ -21,12 +21,12 @@ from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.memory.vis.space.elements import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
 from dimos.memory.vis.space.space import Space
 from dimos.message_utils import image as image_utils, occupancy
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs import msg as geometry_messages
-from dimos.messages.geometry_msgs.msg import Point as GeoPoint, PoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path as Path
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import BoundingBox3D, Detection3D
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs import msg as geometry_messages
+from dimos_messages.geometry_msgs.msg import Point as GeoPoint, PoseStamped
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path as Path
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import BoundingBox3D, Detection3D
 
 
 def _header():
@@ -96,7 +96,7 @@ class TestElementTypes:
         assert p.msg.pose.position.x == pytest.approx(3.0)
 
     def test_box3d_from_center_size(self):
-        from dimos.messages.geometry_msgs.msg import Vector3
+        from dimos_messages.geometry_msgs.msg import Vector3
 
         b = Box3D(center=_pose_value(5, 3, 0), size=Vector3(2, 1, 0.5), label="table")
         assert b.center.position.x == pytest.approx(5.0)
@@ -331,7 +331,7 @@ class TestSVGRender:
         assert "<polyline" in svg
 
     def test_box3d_renders_rect(self):
-        from dimos.messages.geometry_msgs.msg import Vector3
+        from dimos_messages.geometry_msgs.msg import Vector3
 
         s = Space()
         s.add(Box3D(center=_pose_value(5, 3, 0), size=Vector3(2, 1, 0), label="table"))

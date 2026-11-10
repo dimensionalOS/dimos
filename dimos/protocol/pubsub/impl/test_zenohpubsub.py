@@ -28,9 +28,9 @@ pytest.importorskip("zenoh")
 import zenoh
 
 from dimos.core.transport import ZenohTransport
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Int32
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Int32
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     Topic,

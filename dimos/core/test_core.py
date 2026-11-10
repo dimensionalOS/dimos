@@ -22,8 +22,8 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 class Navigation(Module):

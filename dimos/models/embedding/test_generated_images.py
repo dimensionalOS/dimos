@@ -21,8 +21,8 @@ from transformers.feature_extraction_utils import BatchFeature
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 from dimos.message_utils import image as image_utils
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.embedding.dino import DINOModel
 from dimos.models.embedding.siglip import SigLIPModel

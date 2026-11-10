@@ -4,9 +4,9 @@
 from pathlib import Path
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 
@@ -32,7 +32,7 @@ def test_camera_info_configuration_resolves_numpy_annotations():
 
     from dimos.core.module import ModuleConfig
     from dimos.message_utils.camera_info import from_intrinsics
-    from dimos.messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.sensor_msgs.msg import CameraInfo
 
     class Configuration(ModuleConfig):
         camera_info: CameraInfo

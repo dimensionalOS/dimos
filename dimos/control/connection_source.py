@@ -49,9 +49,9 @@ from dimos.control.contract.limits import Limits, model_limit, movable_joints
 from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped
-from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped
+from dimos_messages.sensor_msgs.msg import Imu, JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

@@ -35,10 +35,10 @@ from dimos.memory.vis.space.elements import (
     SpaceElement,
     Text,
 )
-from dimos.messages.geometry_msgs.msg import Point as GeoPoint, Pose as GeoPose, PoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path as NavPath
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.vision_msgs.msg import Detection3D
+from dimos_messages.geometry_msgs.msg import Point as GeoPoint, Pose as GeoPose, PoseStamped
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path as NavPath
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.vision_msgs.msg import Detection3D
 
 
 def _autocolor_value(item: Any) -> float | None:

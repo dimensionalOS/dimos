@@ -20,7 +20,7 @@ from reactivex import create
 from reactivex.disposable import CompositeDisposable
 from reactivex.observable import Observable
 
-from dimos.messages.builtin_interfaces.msg import Time as ROSTime
+from dimos_messages.builtin_interfaces.msg import Time as ROSTime
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.timeseries.inmemory import InMemoryStore

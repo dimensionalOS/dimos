@@ -32,9 +32,9 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.teleop.hosted.blueprints.cloudflare import (
     teleop_hosted_go2_multicam,
     teleop_hosted_go2_transport,

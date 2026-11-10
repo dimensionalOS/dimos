@@ -23,8 +23,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("roboplan.cartesian_planning")
 roboplan_world_module = importlib.import_module("dimos.manipulation.planning.world.roboplan_world")
@@ -51,8 +51,8 @@ from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import
     SimpleTrapezoidParametrizer,
 )
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.messages.geometry_msgs.msg import PoseStamped, Transform
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import PoseStamped, Transform
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
     seeed_b601_dm_planner_coordinator,

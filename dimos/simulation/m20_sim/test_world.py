@@ -22,7 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from dimos.messages.dimos_msgs.msg import Contact
+from dimos_messages.dimos_msgs.msg import Contact
 from dimos.robot.deeprobotics.m20.constants import FRONT_LIDAR_XYZ_M, REAR_LIDAR_XYZ_M
 from dimos.simulation.m20_sim.body import LeggedM20
 from dimos.simulation.m20_sim.policy import M20Policy

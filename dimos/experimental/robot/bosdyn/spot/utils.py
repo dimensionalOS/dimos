@@ -24,9 +24,9 @@ import numpy as np
 
 from dimos.message_utils import camera_info as camera_info_utils, geometry, image as image_utils
 from dimos.message_utils.time import header_now, time_from_seconds
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.logging_config import setup_logger
 

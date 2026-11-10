@@ -34,8 +34,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

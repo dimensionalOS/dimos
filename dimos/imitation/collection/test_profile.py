@@ -25,7 +25,7 @@ from dimos.imitation.dataprep.schema import (
     RecordingSchema,
 )
 from dimos.message_utils import joint_state as joint_state_utils
-from dimos.messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.sensor_msgs.msg import Image, JointState
 
 
 @pytest.fixture

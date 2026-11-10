@@ -27,8 +27,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
 

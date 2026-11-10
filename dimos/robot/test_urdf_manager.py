@@ -25,9 +25,9 @@ import pytest
 import trimesh
 
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import JointState, PointCloud2, PointField
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import JointState, PointCloud2, PointField
+from dimos_messages.std_msgs.msg import Header, String
 from dimos.protocol.tf.tf import TF
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel

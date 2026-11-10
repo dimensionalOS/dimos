@@ -31,7 +31,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 Span = tuple[float, float]  # closed [start, end], seconds
 FrameSpan = tuple[str, float, float]  # (camera, start, end), every frame in it detected

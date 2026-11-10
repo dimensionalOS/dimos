@@ -47,9 +47,9 @@ from dimos.evals.types import (
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import image as image_utils
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 
 
 def _pose(x: float, y: float) -> PoseStamped:

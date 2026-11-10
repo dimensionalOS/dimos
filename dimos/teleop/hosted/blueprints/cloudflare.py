@@ -36,8 +36,8 @@ from dimos.core.transport import (
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels.module import VoxelGridMapper
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.manipulators.xarm.blueprints.teleop import (

@@ -19,13 +19,13 @@ import math
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
     Quaternion,
 )
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.nav_msgs.msg import Path
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

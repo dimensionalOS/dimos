@@ -21,7 +21,7 @@ import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
 from dimos.protocol.pubsub.benchmarks.image_roundtrip import make_image

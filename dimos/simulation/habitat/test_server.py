@@ -25,10 +25,10 @@ import numpy as np
 
 from dimos.memory.codecs.legacy import decode_lcm
 from dimos.message_utils import camera_info, image, pointcloud
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.simulation.habitat import server
 
 SERVER_PY = Path(server.__file__)

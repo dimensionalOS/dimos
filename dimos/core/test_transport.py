@@ -25,7 +25,7 @@ from dimos.core.transport import (
     LCMTransport,
     pLCMTransport,
 )
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.encode.cbor import decode, encode
 
 if DDS_AVAILABLE:

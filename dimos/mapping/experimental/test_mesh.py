@@ -16,7 +16,7 @@ import numpy as np
 
 from dimos.mapping.experimental.mesh import ChunkQueue, _code
 from dimos.message_utils import mesh as mesh_utils, time as message_time
-from dimos.messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.dimos_msgs.msg import TriangleMesh
 
 
 def _region(lo: int, hi: int) -> np.ndarray:

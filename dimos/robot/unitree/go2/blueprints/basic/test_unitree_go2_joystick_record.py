@@ -15,7 +15,7 @@
 import numpy as np
 
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import Joy
+from dimos_messages.sensor_msgs.msg import Joy
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_joystick_record import (
     record_rerun_config,
 )

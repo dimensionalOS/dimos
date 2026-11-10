@@ -39,7 +39,7 @@ from dimos.cli.spy.core import (
     default_sources,
     split_type_suffix,
 )
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.protocol.pubsub import codec
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase

@@ -28,7 +28,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
 
 # base_link <- lidar rotation (lidar points -> base frame: p_base = EXT_R @ p_lidar + EXT_T)
 EXT_R = np.array(

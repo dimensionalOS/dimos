@@ -31,9 +31,9 @@ from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
     settled_gripper,
 )
 from dimos.message_utils import joint_state, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 
 def _table() -> PointCloud2:

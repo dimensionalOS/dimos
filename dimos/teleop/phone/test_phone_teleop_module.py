@@ -18,9 +18,9 @@ from dimos_cdrgen.registry import encode
 from fastapi.testclient import TestClient
 import pytest
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
 from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
 

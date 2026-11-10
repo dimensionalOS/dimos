@@ -19,7 +19,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
 from dimos.utils.trigonometry import angle_diff
 
 

@@ -32,8 +32,8 @@ from dimos.evals.types import RunningEnvironment
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import image as image_utils, pointcloud as pointcloud_utils
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_no_dimos_defaults_the_excluded_keywords_but_keeps_explicit_ones() -> None:

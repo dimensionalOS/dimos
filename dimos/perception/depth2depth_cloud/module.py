@@ -23,8 +23,8 @@ from pydantic import Field, field_validator, model_validator
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
-from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import CameraInfo, CompressedImage, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 def has_nvidia_gpu() -> bool:

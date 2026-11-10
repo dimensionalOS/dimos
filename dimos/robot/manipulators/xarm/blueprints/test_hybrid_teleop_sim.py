@@ -45,8 +45,8 @@ from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.module_coordinator import resolve_module_refs
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Bool
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Bool
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim import (
     OperatorHoldCoordinator,
     hybrid_teleop_sim,

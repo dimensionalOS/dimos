@@ -34,9 +34,9 @@ import typer
 
 from dimos.memory.cli.dataset import open_dataset
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 from dimos.navigation.go2.loop_closure.premap import Premap
 from dimos.navigation.go2.loop_closure.relocalizer import PremapMatcher, attempt_fix

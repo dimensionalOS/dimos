@@ -22,7 +22,7 @@ from dimos.core.transport import ZenohTransport
 from dimos.hosted.fragment import RemoteModuleReference
 from dimos.hosted.fragment_compiler import compile_fragments, resolve_hosted_assignments
 from dimos.hosted.protocol import HostDescriptor, run_module_rpc_name
-from dimos.messages.std_msgs.msg import Bool, String
+from dimos_messages.std_msgs.msg import Bool, String
 
 
 class SourceModule(Module):

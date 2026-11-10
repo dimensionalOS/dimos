@@ -35,10 +35,10 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.manipulation.visualization.operator import ManipulationOperator
 from dimos.message_utils import time as message_time
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.dimos_msgs.msg import TrajectoryStatus
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.dimos_msgs.msg import TrajectoryStatus
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import PlanarBaseDefinition
 
 

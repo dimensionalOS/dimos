@@ -34,7 +34,7 @@ import pytest
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.limits import limits
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm import connection
 from dimos.robot.manipulators.xarm.config import XARM_ARMS, xarm_model

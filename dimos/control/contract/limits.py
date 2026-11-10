@@ -31,7 +31,7 @@ from dimos.control.contract.keys import Interface, Key
 
 if TYPE_CHECKING:
     from dimos.control.connection.connection_module import ConnectionConfig
-    from dimos.messages.geometry_msgs.msg import Twist
+    from dimos_messages.geometry_msgs.msg import Twist
     from dimos.robot.assets.model import JointDescription, RobotModel
 
 #: The one part a base is: it is driven as a whole, not as wheels.

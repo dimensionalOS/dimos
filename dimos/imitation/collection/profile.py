@@ -29,7 +29,7 @@ from dimos.imitation.dataprep.schema import (
     SyncConfig,
     validate_source_kinds,
 )
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.protocol.service.spec import BaseConfig
 
 

@@ -27,8 +27,8 @@ import numpy as np
 
 from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 

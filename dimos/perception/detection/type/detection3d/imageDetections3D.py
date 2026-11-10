@@ -18,8 +18,8 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 from dimos.perception.detection.type.imageDetections import ImageDetections
 

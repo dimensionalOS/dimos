@@ -34,9 +34,9 @@ import struct
 import pytest
 
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.web.cockpit import Channel, cockpit
 from dimos.web.codecs import EncodedPayload, web_encoder
 from dimos.web.relay_bridge.locate import find_web_dir

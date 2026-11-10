@@ -27,7 +27,7 @@ from pydantic import model_validator
 from dimos.evals.environments.sim import Sim, SimConfig
 from dimos.message_utils.geometry import vector_array
 from dimos.message_utils.time import to_seconds
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 from dimos.simulation.habitat.server import HabitatProp
 
 if TYPE_CHECKING:

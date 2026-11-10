@@ -25,8 +25,8 @@ pytest.importorskip("dimos_mls_planner")
 
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.global_planner.mls_planner.transformer import MLSPlan
 
 

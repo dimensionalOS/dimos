@@ -28,8 +28,8 @@ from dimos.imitation.collection.episode_monitor import (
     EpisodeMonitorModuleConfig,
 )
 from dimos.imitation.collection.recorder import CollectionModule
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import String
 from dimos.robot.get_all_blueprints import get_by_name
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule

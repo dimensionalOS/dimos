@@ -17,8 +17,8 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
 from dimos.robot.urdf_manager import UrdfManager

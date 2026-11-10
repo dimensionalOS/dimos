@@ -20,10 +20,10 @@ import numpy as np
 from dimos.memory.cli.render import _frame_first_seen, _pair_camera_infos, render_store
 from dimos.memory.store.memory import MemoryStore
 from dimos.message_utils import camera_info, image, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 def _entry(name: str, data: object) -> tuple:  # type: ignore[type-arg]
@@ -198,7 +198,7 @@ def test_frame_first_seen_takes_first_ts_per_frame() -> None:
 def test_render_store_attaches_entities_to_their_frame(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     import rerun as rr
 
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.sensor_msgs.msg import PointCloud2
 
     logged: list[tuple[str, object]] = []
     real_log = rr.log
@@ -230,7 +230,7 @@ def test_render_store_themes_meshes(tmp_path, monkeypatch) -> None:  # type: ign
     import rerun as rr
 
     from dimos.message_utils import mesh as mesh_utils
-    from dimos.messages.dimos_msgs.msg import TriangleMesh
+    from dimos_messages.dimos_msgs.msg import TriangleMesh
 
     logged: list[tuple[str, object]] = []
     real_log = rr.log

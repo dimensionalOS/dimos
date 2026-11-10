@@ -44,10 +44,10 @@ from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import time as message_time, trajectory as trajectory_utils
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.dimos_msgs.msg import TrajectoryStatus
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import TrajectoryStatus
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 pytestmark = pytest.mark.self_hosted

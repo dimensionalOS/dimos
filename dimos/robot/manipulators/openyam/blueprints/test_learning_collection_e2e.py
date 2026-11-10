@@ -33,9 +33,9 @@ from dimos.imitation.dataprep.core import extract_episodes
 from dimos.imitation.dataprep.schema import EpisodeExtractor
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import image as message_image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 from dimos.robot.manipulators.openyam.blueprints.learning_quest_collection import (
     openyam_quest_collection,

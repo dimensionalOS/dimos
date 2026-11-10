@@ -22,9 +22,9 @@ import numpy as np
 
 from dimos.core.global_config import global_config
 from dimos.message_utils import pointcloud
-from dimos.messages.geometry_msgs.msg import PointStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import PointStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap, g1_odometry_tf_override, g1_static_robot
 from dimos.visualization.vis_module import vis_module
 

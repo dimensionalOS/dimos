@@ -19,8 +19,8 @@ from typing import Any
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
-from dimos.messages.std_msgs.msg import Int32, String
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion, Vector3
+from dimos_messages.std_msgs.msg import Int32, String
 from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     CborLCM,

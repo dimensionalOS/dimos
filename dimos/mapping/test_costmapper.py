@@ -21,7 +21,7 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.mapping.costmapper import Config, CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig, general_occupancy
 from dimos.message_utils import occupancy, pointcloud, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_general_algorithm_accepts_base_config_dict() -> None:

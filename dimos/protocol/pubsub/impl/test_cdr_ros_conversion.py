@@ -28,10 +28,10 @@ import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
 from dimos.core.transport import LCMTransport, ROSTransport
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import Image, Imu
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Image, Imu
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl import rospubsub, rospubsub_conversion as conversion
 
 

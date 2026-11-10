@@ -342,7 +342,7 @@ class TestTopic:
     def test_str_with_generated_type_is_the_plain_channel(self) -> None:
         # CDR carries its schema out of band, so a generated-type topic stays the
         # plain channel name (unlike the retired legacy LCM ``#Type`` suffix).
-        from dimos.messages.geometry_msgs.msg import Vector3
+        from dimos_messages.geometry_msgs.msg import Vector3
 
         topic = Topic(topic="my_topic", lcm_type=Vector3)
         assert str(topic) == "my_topic"

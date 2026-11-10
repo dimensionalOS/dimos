@@ -30,9 +30,9 @@ from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.mapping.voxels.module import VoxelGridMapper, VoxelMapTransformer
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.threadpool import get_max_workers
 

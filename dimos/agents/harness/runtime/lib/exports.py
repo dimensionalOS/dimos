@@ -32,7 +32,7 @@ from dimos.agents.harness.runtime.constants import (
     MAX_EXPORT_POINTS,
 )
 from dimos.message_utils import image as image_utils, pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 
 Exportable: TypeAlias = Image | PointCloud2
 

@@ -23,7 +23,7 @@ from pytest_mock import MockerFixture
 import rerun as rr
 from scipy.spatial.transform import Rotation
 
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 
@@ -35,10 +35,10 @@ from dimos.mapping.relocalization.lidar.replay import recorded_fix, replay, writ
 from dimos.mapping.relocalization.module import fix_error
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import geometry as geometry_utils, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 @pytest.fixture

@@ -39,7 +39,7 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,

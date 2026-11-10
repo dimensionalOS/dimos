@@ -1,0 +1,18 @@
+# Rendered by build_example.py: the DimOS owner version is filled in from the
+# installed distribution so this example never pins a stale release.
+[build-system]
+requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.2", "dimos==@DIMOS_VERSION@"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+description = "An external message reusing the installed DimOS Header"
+requires-python = ">=3.12"
+dependencies = ["dimos==@DIMOS_VERSION@", "dimos-cdrgen==0.1.2"]
+
+[tool.dimos.messages]
+python-module = "acme_telemetry"
+
+[tool.dimos.messages.dependencies]
+"dimos_messages" = "@DIMOS_VERSION@"

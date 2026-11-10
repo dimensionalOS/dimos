@@ -19,8 +19,8 @@ import pytest
 
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver, PoseTargetIKTaskConfig
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_webxr_openyam
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver

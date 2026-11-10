@@ -18,8 +18,8 @@ import numpy as np
 from dimos.mapping.occupancy.operations import _grid_coordinates
 from dimos.mapping.occupancy.visualizations import _map_image, visualize_occupancy_grid
 from dimos.message_utils import geometry, image as image_utils
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.sensor_msgs.msg import Image
 
 
 def visualize_path(

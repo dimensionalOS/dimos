@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseWithCovariance,
@@ -43,9 +43,9 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.data import resolve_named_path
 
 if TYPE_CHECKING:

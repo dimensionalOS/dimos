@@ -40,11 +40,11 @@ from dimos.message_utils import (
     mesh as mesh_utils,
     time as message_time,
 )
-from dimos.messages.dimos_msgs.msg import TriangleMesh
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
