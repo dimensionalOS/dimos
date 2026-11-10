@@ -38,7 +38,7 @@ def camera_usd(frame_id: str, *, name: str, fovy: float) -> list[str]:
 
     pxr = load_pxr()
     root, usd = frame_usd(frame_id, name=name)
-    layer = layer_from(pxr, usd, name)
+    layer = layer_from(pxr, usd, name, root)
     stage = pxr.Usd.Stage.Open(layer)
     mount = link_prim_paths(stage)[frame_id]
     camera = pxr.UsdGeom.Camera.Define(
