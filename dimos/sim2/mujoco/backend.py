@@ -268,16 +268,30 @@ class MujocoBackend:
             for robot_id, r in self._robots.items()
         }
         robot_roots = set(roots.values())
+        # The body a robot hangs off is not a thing in its own right. In a composed scene the
+        # robot is grafted under a frame of the scene's -- `/office_555/main` -- which is where
+        # `_free_if_unjointed` then puts the freejoint, so it is parented to the world and it is
+        # jointed, and it would come through here as an object. Worse, it shortens to the same
+        # name as the robot it holds, so it overwrote the robot's own entity: every consumer was
+        # told the robot's pose was its mount's, 0.793 m below its pelvis, and drew it that far
+        # into the floor. A body that is the root of a robot's tree is that robot's, not a
+        # separate object.
+        holders = {int(model.body_rootid[body]) for body in robot_roots}
         jointed = set(model.body_rootid[model.jnt_bodyid])
         objects = [
             body
             for body in range(1, model.nbody)
-            if model.body_parentid[body] == 0 and body not in robot_roots and body in jointed
+            if model.body_parentid[body] == 0
+            and body not in robot_roots
+            and body not in holders
+            and body in jointed
         ]
         names = [model.body(body).name or f"body{body}" for body in objects]
         short = short_names(names)
         for body, name in zip(objects, names, strict=True):
-            roots[short[name]] = body
+            # And never let an object take a robot's name, whatever it is called.
+            if short[name] not in roots:
+                roots[short[name]] = body
         return roots
 
     def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldObservations:
