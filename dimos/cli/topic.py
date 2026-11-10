@@ -101,7 +101,7 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
     typed_pattern = rf"^{re.escape(topic)}#.*"
 
     def on_msg(channel: str, data: bytes) -> None:
-        print(_decode_typed_lcm_message(channel, data))
+        print(_decode_typed_lcm_message(channel, data), flush=True)
 
     assert bus.l is not None
     bus.l.subscribe(typed_pattern, on_msg)
@@ -122,7 +122,7 @@ def _topic_echo_inferred_zenoh(topic: str) -> None:
     # a wildcard subscription decodes each message from that suffix. Untyped keys
     # don't resolve to a type and are skipped by the encoder. The ignore reflects the
     # pattern Topic vs the encoder's concrete-topic protocol (see lcmpubsub.py).
-    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg))  # type: ignore[arg-type]
+    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg, flush=True))  # type: ignore[arg-type]
 
     _listen_forever(
         f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "

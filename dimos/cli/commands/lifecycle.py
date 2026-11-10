@@ -41,6 +41,7 @@ from dimos.core.global_config import global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.cache import cache_usage_guard, cache_usage_locked
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.topic_descriptors import with_topic_metadata
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -98,6 +99,8 @@ def _run_registered(
 
 def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
     """Append one relay bridge to an enabled CLI run after blueprint resolution."""
+    if global_config.topic_metadata:
+        blueprint = with_topic_metadata(blueprint)
     if not (global_config.local_relay or global_config.relay_url):
         return blueprint
 
