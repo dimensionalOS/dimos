@@ -19,7 +19,6 @@ import copy
 from dataclasses import dataclass, field
 import json
 import os
-import platform
 import socket
 import threading
 import time
@@ -30,6 +29,12 @@ import zenoh
 
 from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
+from dimos.protocol.service.zenoh_wire import (
+    ALL_INTERFACES as ALL_INTERFACES,
+    LOOPBACK_INTERFACE as LOOPBACK_INTERFACE,
+    LOOPBACK_LISTEN as LOOPBACK_LISTEN,
+    make_zenoh_config,
+)
 from dimos.utils.logging_config import setup_logger
 
 ZENOH_LOG_DIRECTIVES = "zenoh=warn,zenoh_shm::watchdog::periodic_task=error"
@@ -46,18 +51,6 @@ ROBOT_ZENOH_PORT = 7447
 
 # Poll interval while waiting for connect endpoints to link.
 _CONNECT_POLL_INTERVAL = 0.05
-
-# Interface scouting falls back to when network discovery is off.
-# Darwin spells loopback differently.
-LOOPBACK_INTERFACE = "lo0" if platform.system() == "Darwin" else "lo"
-
-# Zenoh's own name for "every multicast-capable interface".
-ALL_INTERFACES = "auto"
-
-# Zenoh's own default listener binds every interface, so an unconfigured session
-# is reachable from the LAN. A session whose discovery never leaves loopback
-# listens here instead: loopback only, on a port the kernel picks.
-LOOPBACK_LISTEN = "tcp/127.0.0.1:0"
 
 
 def split_csv(value: str) -> list[str]:
@@ -229,33 +222,9 @@ def _warn_client_single_link(config: ZenohConfig) -> None:
         )
 
 
-# Wire setting to the zenoh config key that carries it. A python session inserts
-# these into a zenoh.Config, a native module reads the same values off stdin.
-_ZENOH_KEYS = {
-    "mode": "mode",
-    "connect": "connect/endpoints",
-    "listen": "listen/endpoints",
-    "multicast": "scouting/multicast/enabled",
-    "scout_addr": "scouting/multicast/address",
-    "interface": "scouting/multicast/interface",
-    "gossip": "scouting/gossip/enabled",
-    "connect_timeout_ms": "connect/timeout_ms",
-}
-
-# Settings zenoh decides for itself when we send nothing. An empty listen list
-# means its own default port, and a zero timeout means its own retry policy.
-_ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "scout_addr", "connect_timeout_ms")
-
-
 def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
     """The zenoh session config these settings open."""
-    zconfig = zenoh.Config()
-    for name, value in config.to_wire().items():
-        if not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY:
-            continue
-        zconfig.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
-    # Off: shared-memory transfer silently loses payloads over 3 kB between some sessions.
-    zconfig.insert_json5("transport/shared_memory/enabled", "false")
+    zconfig = make_zenoh_config(config.to_wire())
     if config.adminspace:
         zconfig.insert_json5("adminspace/enabled", "true")
     for source, on in (

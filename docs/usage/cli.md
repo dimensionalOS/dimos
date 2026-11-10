@@ -384,12 +384,12 @@ Works with any agentic blueprint. Does not require MCP. Publishes directly to th
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `McpClient` in the blueprint find the endpoint themselves).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `Agent` in the blueprint find the endpoint themselves).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `Agent.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 
@@ -397,7 +397,7 @@ from dimos.core.coordination.blueprints import autoconnect
 my_mcp_blueprint = autoconnect(
     # my_robot_stack,
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
     # my_skill_containers,
 )
 ```
@@ -507,5 +507,5 @@ dimos rerun-bridge --help
 | Path | Contents |
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
-| `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
+| `logs/<run-id>/main.jsonl` (Git checkout) or `~/.local/state/dimos/logs/<run-id>/main.jsonl` (installed package) | Structured logs (main process + all workers) |
 | `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |

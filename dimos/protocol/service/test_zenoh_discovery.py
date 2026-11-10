@@ -21,7 +21,8 @@ import zenoh
 
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.service import zenohservice
-from dimos.protocol.service.zenohservice import _ZENOH_KEYS, ZenohConfig, ZenohSessionPool
+from dimos.protocol.service.zenoh_wire import ZENOH_KEYS
+from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 
 def test_multicast_defaults_on(zenoh_defaults):
@@ -80,12 +81,12 @@ def test_unset_gossip_pools_with_its_resolved_value(zenoh_defaults):
 
 
 def test_zenoh_knows_every_key_we_write():
-    """Zenoh rejects an unknown config key, so a typo in _ZENOH_KEYS fails here."""
+    """Zenoh rejects an unknown config key, so a typo in ZENOH_KEYS fails here."""
     config = zenoh.Config()
     wire = ZenohConfig().to_wire()
-    assert set(wire) == set(_ZENOH_KEYS)
+    assert set(wire) == set(ZENOH_KEYS)
     for name, value in wire.items():
-        config.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
+        config.insert_json5(ZENOH_KEYS[name], json.dumps(value))
 
 
 @pytest.mark.parametrize("multicast", [True, False])
