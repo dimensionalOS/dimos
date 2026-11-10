@@ -273,6 +273,7 @@ all_modules = {
     "go2-base": "dimos.robot.unitree.go2.base.Go2Base",
     "go2-command-module": "dimos.teleop.hosted.go2_command.Go2CommandModule",
     "go2-connection": "dimos.robot.unitree.go2.connection.GO2Connection",
+    "go2-coordinator": "dimos.robot.unitree.go2.coordinator.Go2Coordinator",
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
     "go2-l1-lidar": "dimos.robot.unitree.go2.dds.module.GO2L1Lidar",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
