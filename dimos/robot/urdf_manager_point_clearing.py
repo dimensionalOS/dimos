@@ -68,7 +68,9 @@ class UrdfManagerPointClearing(UrdfManager):
         if kept is not None:
             return kept
         return LoadedRobotModel(
-            usd_to_urdf(self._description.usd), self._description.source_path, {}
+            usd_to_urdf(self._description.usd, root=self._description._asset_root()),
+            self._description.source_path,
+            {},
         )
 
     async def handle_pointcloud(self, cloud: PointCloud2) -> None:
