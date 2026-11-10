@@ -47,7 +47,6 @@ from dimos.control.tasks.policy_execution import (
     OnnxActor,
     PolicyTask,
     PolicyTick,
-    PolicyTickScheduler,
     preferred_onnx_providers,
 )
 from dimos.protocol.service.spec import BaseConfig
@@ -289,8 +288,8 @@ class G1GrootWBCTask(PolicyTask):
         super().__init__(
             name,
             config.joint_names,
-            scheduler=PolicyTickScheduler.every(config.decimation),
             priority=config.priority,
+            every_n_ticks=config.decimation,
             dry_run=config.auto_dry_run,
         )
 
@@ -405,7 +404,7 @@ class G1GrootWBCTask(PolicyTask):
                 self._arming = False
                 self._armed = True
                 self._reset_policy_state()
-                self.begin_session_locked(state.t_now, clear_command=False)
+                self.begin_session(state.t_now, clear_command=False)
                 logger.info("G1GrootWBCTask armed (no ramp)", task=self._name)
             self._arm_pending = False
 
@@ -414,8 +413,8 @@ class G1GrootWBCTask(PolicyTask):
         # pure damping (tau = -kd * dq), which mirrors the reference
         # backend's inactive "hold current pose" behaviour.
         if not self._armed and not self._arming:
-            self._hold.set(current_15)
-            return self._hold.output()
+            self._set_command(current_15)
+            return self._command()
 
         # Arming: lerp ramp_start -> default_15 over arming_duration.
         if self._arming:
@@ -425,26 +424,26 @@ class G1GrootWBCTask(PolicyTask):
                 1.0 if self._arming_duration <= 0.0 else min(1.0, elapsed / self._arming_duration)
             )
             target = self._ramp_start + alpha * (self._default_15 - self._ramp_start)
-            self._hold.set(target)
+            self._set_command(target)
             if alpha >= 1.0:
                 self._arming = False
                 self._armed = True
                 self._reset_policy_state()
-                self.begin_session_locked(state.t_now, clear_command=False)
+                self.begin_session(state.t_now, clear_command=False)
                 # Re-emit the final ramp target on the completion tick.
-                self._hold.set(target)
+                self._set_command(target)
                 logger.info(
                     "G1GrootWBCTask ramp complete - policy armed",
                     task=self._name,
                     mode="dry-run" if self.dry_run else "live",
                 )
-            return self._hold.output()
+            return self._command()
 
         # Armed: run the policy every N ticks.  Between inference ticks,
         # re-emit the last target so the coordinator keeps driving the
         # joints (or nothing, in dry-run).
-        if not self._scheduler.poll(state.t_now):
-            return self._hold.hold()
+        if not self._cadence_due(state.t_now):
+            return self._held_command()
 
         # State was refreshed up top (with fall-back-to-last-good on
         # missing joints). Snapshot the caches now so concurrent state
@@ -534,7 +533,7 @@ class G1GrootWBCTask(PolicyTask):
         self._arm_pending = False
         self._ramp_start = None
         self._reset_policy_state()
-        self.invalidate_session_locked()
+        self.end_session()
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_set:
@@ -583,8 +582,8 @@ class G1GrootWBCTask(PolicyTask):
             self._armed = False
             self._arming = False
             self._arm_pending = False
-            self._hold.set_dry_run(self._config.auto_dry_run)
-            self._hold.clear()
+            self.set_dry_run(self._config.auto_dry_run)
+            self._clear_command()
             self._reset_policy_state()
         with self._cmd_lock:
             self._cmd[:] = 0.0
@@ -651,7 +650,7 @@ class G1GrootWBCTask(PolicyTask):
             self._arm_pending = False
             self._ramp_start = None
             self._reset_policy_state()
-            self.invalidate_session_locked()
+            self.end_session()
         logger.info("G1GrootWBCTask disarmed (holding current pose)", task=self._name)
         return True
 
@@ -676,7 +675,7 @@ class G1GrootWBCTask(PolicyTask):
             self._cached_dq_29[:] = 0.0
             self._cached_q_15[:] = self._default_15
             self._reset_policy_state()
-            self.invalidate_session_locked()
+            self.end_session()
             with self._cmd_lock:
                 self._cmd[:] = 0.0
                 self._last_cmd_time = 0.0
@@ -702,9 +701,9 @@ class G1GrootWBCTask(PolicyTask):
         """
         new_val = bool(enabled)
         with self._lock:
-            if new_val == self._hold.dry_run:
+            if new_val == self._dry_run:
                 return
-            self._hold.set_dry_run(new_val)
+            self._dry_run = new_val
         self._last_dry_run_log_t = 0.0
         logger.info("G1GrootWBCTask dry_run changed", task=self._name, dry_run=new_val)
 
@@ -716,7 +715,7 @@ class G1GrootWBCTask(PolicyTask):
                 "armed": self._armed,
                 "arming": self._arming,
                 "arm_pending": self._arm_pending,
-                "dry_run": self._hold.dry_run,
+                "dry_run": self._dry_run,
                 "arming_duration": self._arming_duration,
             }
 
@@ -727,7 +726,6 @@ class G1GrootWBCTask(PolicyTask):
         self._last_action[:] = 0.0
         self._obs_buf[:] = 0.0
         self._first_inference = True
-        self._scheduler.reset()
 
     def _build_obs(
         self,
