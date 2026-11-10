@@ -29,6 +29,7 @@ from pytest_mock import MockerFixture
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.BatteryState import BatteryState
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
 from dimos.robot.deeprobotics.m20 import connection as m20_connection
@@ -54,7 +55,7 @@ from dimos.robot.deeprobotics.m20.connection import (
 )
 
 INPUTS = ("requested_cmd_vel", "command_ready", "motion_state", "gait_state", "odometry")
-OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "odom", "goal")
+OUTPUTS = ("cmd_vel", "motion_state_cmd", "gait_cmd", "odom", "goal", "battery")
 
 MAGIC = bytes.fromhex("eb91eb90")
 HEADER = struct.Struct("<4sHHB7s")
@@ -62,9 +63,25 @@ JSON_ENCODING = 1
 REPORT_TYPE = 1002
 MOTION_STATUS_REPORT = 4
 ERROR_LIST_REPORT = 3
+BATTERY_STATUS_REPORT = 5
 BASIC_STATUS_REPORT = 6
 CHARGE_MESSAGE = (2, 24)
 HEARTBEAT_MESSAGE = (100, 100)
+
+
+# BatteryStatus of a Type 1002 Command 5 report, as an M20 sends it from its dock.
+BATTERY_STATUS: dict[str, Any] = {
+    "VoltageLeft": 83,
+    "VoltageRight": 81,
+    "BatteryLevelLeft": 82,
+    "BatteryLevelRight": 98,
+    "battery_temperatureLeft": 34.29999923706055,
+    "battery_temperatureRight": 35.79999923706055,
+    "chargeLeft": True,
+    "chargeRight": True,
+    "serialLeft": "",
+    "serialRight": "",
+}
 
 
 class FakeTransport:
@@ -95,6 +112,7 @@ class FakeBasicServer:
         self.charge = CHARGE_IDLE
         self.usage_mode = USAGE_MODE_NAVIGATION
         self.errors: list[int] = []
+        self.battery: dict[str, Any] = dict(BATTERY_STATUS)
         self.received: list[dict[str, Any]] = []
         self.raw: list[bytes] = []
         self.reporting = True
@@ -133,6 +151,7 @@ class FakeBasicServer:
                 b"garbage",
                 MAGIC + b"\0" * 12 + b"{not json",
                 self._report(MOTION_STATUS_REPORT, {"MotionStatus": {"Height": 0.5}}),
+                self._report(BATTERY_STATUS_REPORT, {"BatteryStatus": self.battery}),
                 self._report(
                     BASIC_STATUS_REPORT,
                     {
@@ -164,6 +183,7 @@ class Mocks:
     goal: MagicMock
     motion_state_cmd: MagicMock
     gait_cmd: MagicMock
+    battery: MagicMock
     start_tool: MagicMock
     tool_update: MagicMock
     stop_tool: MagicMock
@@ -196,7 +216,7 @@ def connection(
         dock_timeout_s=1.5,
         undock_timeout_s=1.5,
     )
-    for name in ("cmd_vel", "goal", "motion_state_cmd", "gait_cmd"):
+    for name in ("cmd_vel", "goal", "motion_state_cmd", "gait_cmd", "battery"):
         mocker.patch.object(module, name, getattr(mocks, name))
     for name in ("start_tool", "tool_update", "stop_tool"):
         mocker.patch.object(module, name, getattr(mocks, name))
@@ -285,15 +305,17 @@ def test_reports_update_the_status_past_malformed_frames(
 ) -> None:
     server.charge = CHARGE_CHARGING
     _wait_for_status(connection, CHARGE_CHARGING)
-    assert connection.charge_status() == "charging"
+    assert connection.charge_status() == "charging, battery 90%"
 
     server.errors = [0x8506]
     _wait_until(lambda: connection._basic_server.charge_error == 0x8506)
-    assert connection.charge_status() == "charging, error 0x8506 no current from the dock"
+    assert (
+        connection.charge_status() == "charging, battery 90%, error 0x8506 no current from the dock"
+    )
 
     server.errors = []
     _wait_until(lambda: connection._basic_server.charge_error is None)
-    assert connection.charge_status() == "charging"
+    assert connection.charge_status() == "charging, battery 90%"
 
 
 def test_charge_status_is_unknown_when_reports_go_stale(
@@ -301,8 +323,50 @@ def test_charge_status_is_unknown_when_reports_go_stale(
 ) -> None:
     _wait_for_status(connection, CHARGE_IDLE)
     server.reporting = False
-    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._REPORT_MAX_AGE_S", 0.05)
     _wait_until(lambda: connection.charge_status() == "unknown")
+
+
+def test_battery_reports_publish_one_state_for_both_packs(
+    started: Callable[..., M20Connection],
+) -> None:
+    conn = started()
+    sent = _transport(conn.battery).sent
+    _wait_until(lambda: len(sent) > 0)
+
+    state = sent[0]
+    assert isinstance(state, BatteryState)
+    assert state.percentage == pytest.approx(0.90)
+    assert state.voltage == pytest.approx(82.0)
+    assert state.temperature == pytest.approx(35.8, abs=0.01)
+
+
+def test_a_pack_at_zero_volts_is_left_out(
+    started: Callable[..., M20Connection], server: FakeBasicServer
+) -> None:
+    server.battery["VoltageLeft"] = 0
+    conn = started()
+    _wait_for_status(conn, CHARGE_IDLE)
+
+    state = _transport(conn.battery).sent[0]
+    assert state.percentage == pytest.approx(0.98)
+    assert state.voltage == pytest.approx(81.0)
+    assert conn.charge_status() == "idle, battery 98%"
+
+
+@pytest.mark.parametrize(
+    "battery",
+    [{"VoltageLeft": 0, "VoltageRight": 0}, {"BatteryLevelLeft": "82"}],
+)
+def test_a_report_without_a_usable_pack_is_dropped(
+    started: Callable[..., M20Connection], server: FakeBasicServer, battery: dict[str, Any]
+) -> None:
+    server.battery.update(battery)
+    conn = started()
+    _wait_for_status(conn, CHARGE_IDLE)
+
+    assert _transport(conn.battery).sent == []
+    assert conn.charge_status() == "idle"
 
 
 def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
@@ -640,7 +704,7 @@ def test_the_dock_guards_hold_when_reports_go_stale(
     connection.config.auto_stand = True
     _wait_for_status(connection, CHARGE_CHARGING)
     server.reporting = False
-    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
+    monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._REPORT_MAX_AGE_S", 0.05)
     _wait_until(lambda: connection.charge_status() == "unknown")
 
     assert connection.move(Twist.zero()) is False
