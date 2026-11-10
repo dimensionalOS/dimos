@@ -167,7 +167,9 @@ These parts predate the TypeScript agent and serve dimOS blueprints and Claude C
   [skill_result.py](/dimos/agents/skill_result.py) is its return type. [capabilities.py](/dimos/agents/capabilities.py) keeps two skills that need
   the same capability, such as movement, from running at once.
 - [mcp/](/dimos/agents/mcp/README.md) holds `McpServer`, which serves every `@skill` of a running system as an MCP tool on port 9990,
-  `Agent`, the LangGraph agent that calls them, and `McpAdapter`.
+  and `McpAdapter`, a JSON-RPC client for it.
+- [agent.py](/dimos/agents/agent.py) is `Agent`, the LangGraph agent that calls those tools, on the chat streams of
+  [base_agent.py](/dimos/agents/base_agent.py).
 - [system_prompt.py](/dimos/agents/system_prompt.py) is the Go2 system prompt for that agent. [skills/](/dimos/agents/skills/) holds the skill
   containers: navigation, observation, speech, GPS, person following and more.
 - [Python agent runtime](/docs/usage/agent/runtime.md) is `HarnessRuntime`, the dimOS module the gateway talks to: inventory, stream
