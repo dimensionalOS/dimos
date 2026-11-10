@@ -147,11 +147,20 @@ def usd_with_frames(
         transform[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
         transform[:3, 3] = xyz
         prim.AddTransformOp().Set(usd_matrix(pxr, transform))
-        _weld_frame(pxr, stage, parent_path, str(path), name)
+        _weld_frame(pxr, stage, parent_path, str(path), name, xyz, rpy)
     return str(layer.ExportToString())
 
 
-def _weld_frame(pxr: Pxr, stage: Stage, parent_path: str, path: str, name: str) -> None:
+def _weld_frame(
+    pxr: Pxr, stage: Stage, parent_path: str, path: str, name: str, xyz: Vector, rpy: Vector
+) -> None:
+    """Weld the added frame where its own transform puts it.
+
+    A joint's local frames are what a reader has to go on -- the prim transform places the
+    body, but anything rebuilding the kinematics (usd_to_urdf, and so tf) reads body0's local
+    pose. Leaving them identity says the child sits on top of its parent, which silently drops
+    the offset and the rotation the frame was added for.
+    """
     parent = stage.GetPrimAtPath(pxr.Sdf.Path(parent_path))
     joint = pxr.UsdPhysics.FixedJoint.Define(
         stage, pxr.Sdf.Path(path).AppendChild(prim_identifier(pxr, f"{name}_joint"))
@@ -159,8 +168,9 @@ def _weld_frame(pxr: Pxr, stage: Stage, parent_path: str, path: str, name: str) 
     if parent and parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
         joint.CreateBody0Rel().SetTargets([parent.GetPath()])
     joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
-    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
-    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    x, y, z, w = Rotation.from_euler("xyz", rpy).as_quat()
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(*(float(value) for value in xyz)))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(float(w), float(x), float(y), float(z)))
     joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
     joint.GetPrim().SetDisplayName(f"{name}_joint")
