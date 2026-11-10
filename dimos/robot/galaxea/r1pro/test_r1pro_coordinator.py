@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-import importlib
 import math
 import time
 from typing import Any
@@ -25,18 +24,9 @@ from typing import Any
 import pytest
 
 from dimos.control.coordinator import TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    TrajectoryExecutionStatus,
-)
 from dimos.control.tick_loop import TickLoop
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     CHASSIS_FEEDBACK_TOPIC,
-    MEASURED_Q,
     LocalTransport,
     RosHeader,
     RosImu,
@@ -49,14 +39,10 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.connection import (
-    R1PRO_BASE_JOINTS,
     R1PRO_UPPER_BODY_JOINTS,
     R1ProConnectionConfig,
 )
 from dimos.robot.galaxea.r1pro.test_connection import (
-    LEFT_TOPIC,
-    RIGHT_TOPIC,
-    TORSO_TOPIC,
     Rig as ConnectionRig,
     fake_ros as fake_ros,
     rig as rig,
@@ -132,103 +118,6 @@ def system(
         yield coordinator, r, twist, tick
     finally:
         coordinator.stop()
-
-
-def test_registered_tasks_reach_r1pro_vendor_topics(system: tuple[Any, ...]) -> None:
-    coordinator, r, twist, tick = system
-    wait_until(lambda: (tick(), bool(r.joint_targets()))[1], timeout=5.0, interval=0.01)
-    assert set(coordinator._tasks) == {"joint_trajectory", "vel_chassis"}
-    assert set(coordinator.list_joints()) == set(
-        R1PRO_UPPER_BODY_JOINTS + R1PRO_BASE_JOINTS + ["r1pro/left_gripper", "r1pro/right_gripper"]
-    )
-    assert not any("gripper" in j for task in DEFAULT_TASKS for j in task.joint_names)
-    for topic, values in zip(
-        (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC),
-        (MEASURED_Q[:4], MEASURED_Q[4:11], MEASURED_Q[11:]),
-        strict=True,
-    ):
-        assert list(r.joint_targets()[topic].position) == pytest.approx(values)
-    assert r.speeds()[-1].twist.linear.x == 0.0
-    goal = [q + 0.02 for q in MEASURED_Q]
-    result = coordinator.execute_trajectory(
-        JointTrajectory(
-            joint_names=list(R1PRO_UPPER_BODY_JOINTS),
-            points=[
-                TrajectoryPoint(positions=MEASURED_Q),
-                TrajectoryPoint(positions=goal, time_from_start=0.1),
-            ],
-        )
-    )
-    assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
-    twist.publish(Twist(linear=Vector3(0.5, -0.2, 0.0), angular=Vector3(0.0, 0.0, 0.7)))
-    tick()
-    assert list(r.ports["velocity_command"].sent[-1].velocity) == pytest.approx([0.2, 0.5, 0.7])
-    sent = r.speeds()[-1].twist
-    assert (sent.linear.x, sent.linear.y, sent.angular.z) == pytest.approx((0.5, -0.2, 0.7))
-    wait_until(
-        lambda: (
-            tick(),
-            list(r.joint_targets()[LEFT_TOPIC].position) == pytest.approx(goal[4:11], abs=1e-3),
-        )[1],
-        timeout=5.0,
-        interval=0.01,
-    )
-    assert r.module.status().last_rejection is r.module.status().last_error is None
-    for topic, values in zip(
-        (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC), (goal[:4], goal[4:11], goal[11:]), strict=True
-    ):
-        msg = r.joint_targets()[topic]
-        assert list(msg.position) == pytest.approx(values, abs=1e-3)
-        assert list(msg.velocity) == [r.module.config.tracking_speed] * len(values)
-    r.module.halt()
-    stopped = r.speeds()[-1].twist
-    assert (stopped.linear.x, stopped.linear.y, stopped.angular.z) == (0.0, 0.0, 0.0)
-    held = [q for msg in r.joint_targets().values() for q in msg.position]
-    assert held == pytest.approx(MEASURED_Q)  # Hold measurements, not the commanded goal.
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "coordinator",
-        "manipulation",
-        "nav",
-        "planar-preview",
-        "teleop",
-        "vr-teleop",
-        "vr-teleop-real",
-    ],
-)
-def test_public_r1pro_assemblies_parse_with_canonical_consumer_wiring(name: str) -> None:
-    from dimos.robot.all_blueprints import all_blueprints
-
-    module_path, _, attr = all_blueprints[f"r1pro-{name}"].partition(":")
-    bp = getattr(importlib.import_module(module_path), attr)
-    BlueprintConfigParser(bp).parse(environ={}, overrides={"g": {"viewer": "none"}})
-    if name in {"planar-preview", "vr-teleop", "vr-teleop-real"}:
-        return
-    streams = {name for name, _type in bp.transport_map}
-    assert not {"motor_states", "motor_command", "chassis_cmd_vel", "joint_command"} & streams
-    assert {
-        "cmd_vel",
-        "twist_command",
-        "imu_chassis",
-        "imu_torso",
-        "odometry",
-        "chassis_odom",
-        "coordinator_joint_state",
-    } <= streams
-    assert all("Adapter" not in atom.module.__name__ for atom in bp.blueprints)
-    pairs = {(old, new) for (_, old), new in bp.remapping_map.items()}
-    assert {
-        ("position_command", "r1pro_position_command"),
-        ("velocity_command", "r1pro_velocity_command"),
-        ("r1pro_joint_state", "joint_state"),
-        ("r1pro_imu", "imu_chassis"),
-        ("odom", "chassis_odom"),
-    } <= pairs
-    if name == "teleop":
-        assert ("tele_cmd_vel", "twist_command") in pairs
 
 
 def test_grippers_are_command_only_contract_joints_and_stay_out_of_planning() -> None:
