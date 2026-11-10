@@ -13,7 +13,7 @@ import numpy as np
 
 from dimos.message_utils import image, pointcloud
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -22,7 +22,7 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 
 class _MessageState:

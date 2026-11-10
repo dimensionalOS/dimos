@@ -23,7 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.pubsub.codec import CDRCodec
 from dimos.protocol.pubsub.encoders import DecodingError, PubSubEncoderMixin
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic

@@ -28,9 +28,9 @@ from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 
 
 class _Transport(Transport[Any]):

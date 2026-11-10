@@ -24,9 +24,9 @@ from typer.testing import CliRunner
 
 from dimos.memory.cli.app import mem_app
 from dimos.memory.test_convert_recording import read_mcap, write_mcap
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 
 def source_file(path, payload=b'"hello"'):

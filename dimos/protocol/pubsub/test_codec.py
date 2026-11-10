@@ -18,8 +18,8 @@ import pickle
 
 import pytest
 
-from dimos.messages.geometry_msgs.msg import Vector3
-from dimos.messages.std_msgs.msg import Int32, String
+from dimos_messages.geometry_msgs.msg import Vector3
+from dimos_messages.std_msgs.msg import Int32, String
 from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, _key_expr_to_topic
