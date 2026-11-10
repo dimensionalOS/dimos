@@ -104,7 +104,7 @@ class JointVelocityTask(BaseControlTask):
         self._num_joints = len(config.joint_names)
 
         # Current velocities (thread-safe)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._velocities: list[float] | None = None
         self._last_update_time: float = 0.0
         self._active = False

@@ -15,7 +15,7 @@
 """Turn the standard robot messages into named values, and back.
 
 Connection modules and the coordinator talk in standard messages
-(``Twist``, ``JointState``, ``MotorCommandArray``, ``PoseStamped``, ``Imu``).
+(``JointState``, ``MotorCommandArray``, ``Imu``).
 Inside, both work with named values such as ``{"arm/joint1/position": 0.3}``.
 These functions convert between the two, and both sides use the same ones, so
 they always agree on what each field means.
@@ -34,14 +34,11 @@ Every ``_from_values`` needs each value its message carries, and raises
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
-import math
 from typing import TYPE_CHECKING
 
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import PD_INTERFACES, movable_joints
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -82,36 +79,6 @@ def motor_joints(model: RobotModel, source: str) -> list[str]:
         joint.name if SEPARATOR in joint.name else f"{source}{SEPARATOR}{joint.name}"
         for joint in movable_joints(model)
     ]
-
-
-def twist_to_values(twist: Twist, joints: tuple[str, str, str], *, yaw: float) -> dict[str, float]:
-    """Body-frame Twist to declared world-frame planar joint velocities.
-
-    ``yaw`` must be real odometry, never an assumed zero orientation.
-    """
-    if not math.isfinite(yaw):
-        raise ValueError("odometry yaw must be finite")
-    c, s = math.cos(yaw), math.sin(yaw)
-    vx, vy = twist.linear.x, twist.linear.y
-    speeds = (c * vx - s * vy, s * vx + c * vy, twist.angular.z)
-    if not all(math.isfinite(value) for value in speeds):
-        raise ValueError("Twist conversion produced non-finite velocities")
-    return {_key(joint, Interface.VELOCITY): v for joint, v in zip(joints, speeds, strict=True)}
-
-
-def twist_from_values(
-    values: Mapping[str, float], joints: tuple[str, str, str], *, yaw: float
-) -> Twist:
-    """Declared world-frame planar joint velocities to a body-frame Twist."""
-    _require(values, joints, (Interface.VELOCITY,))
-    if not math.isfinite(yaw):
-        raise ValueError("odometry yaw must be finite")
-    vx, vy, wz = [values[_key(joint, Interface.VELOCITY)] for joint in joints]
-    c, s = math.cos(yaw), math.sin(yaw)
-    body = (c * vx + s * vy, -s * vx + c * vy, wz)
-    if not all(math.isfinite(value) for value in body):
-        raise ValueError("Twist conversion produced non-finite velocities")
-    return Twist(linear=Vector3(body[0], body[1], 0.0), angular=Vector3(0.0, 0.0, body[2]))
 
 
 def joint_state_to_values(msg: JointState, fields: Collection[str]) -> dict[str, float]:
@@ -210,35 +177,6 @@ def motor_command_from_values(
     _require(values, joints, PD_INTERFACES)
     q, dq, tau, kp, kd = ([values[_key(j, i)] for j in joints] for i in PD_INTERFACES)
     return MotorCommandArray(q=q, dq=dq, kp=kp, kd=kd, tau=tau, timestamp=ts)
-
-
-def pose_to_values(pose: PoseStamped, joints: tuple[str, str, str]) -> dict[str, float]:
-    """World-frame planar coordinates from odometry, bound to model joint names."""
-    q = pose.orientation
-    if not all(
-        math.isfinite(value) for value in (pose.position.x, pose.position.y, q.x, q.y, q.z, q.w)
-    ):
-        raise ValueError("odometry pose must be finite")
-    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-    return {
-        _key(joint, Interface.POSITION): value
-        for joint, value in zip(joints, (pose.position.x, pose.position.y, yaw), strict=True)
-    }
-
-
-def pose_from_values(
-    values: Mapping[str, float],
-    joints: tuple[str, str, str],
-    ts: float | None = None,
-    frame_id: str = "",
-) -> PoseStamped:
-    """World-frame planar coordinates to an odometry pose."""
-    _require(values, joints, (Interface.POSITION,))
-    x, y, yaw = [values[_key(joint, Interface.POSITION)] for joint in joints]
-    orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
-    return PoseStamped(
-        ts=ts, frame_id=frame_id, position=Vector3(x, y, 0.0), orientation=orientation
-    )
 
 
 def imu_to_values(imu: Imu, sensor: str) -> dict[str, float]:

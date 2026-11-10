@@ -17,8 +17,8 @@
 A connection module subclasses ``ConnectionModule``, gives it a config that
 says what the robot is told, and fills in ``connect``, ``write`` and
 ``halt``. It declares its own ports, hands their messages to ``command`` as
-named values (``dimos.control.contract.convert``), and publishes its
-readings however suits its SDK.
+named values (``dimos.control.contract.convert``), and publishes canonical
+joint readings. Vendor geometry and frame conversion stay inside that implementation.
 """
 
 from __future__ import annotations
@@ -53,8 +53,6 @@ class ConnectionConfig(ModuleConfig):
             limits. Needed when joints are commanded.
         joint_commands: Model joint name to the interfaces it accepts. Only
             listed joints are commanded; planar axes are ordinary joints.
-        twist_joints: Explicit full joint names in world x/y/yaw order for
-            body-frame Twist transport. Conversion requires measured odometry yaw.
         clamp_commands: Full keys whose model bounds clamp instead of reject.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
@@ -63,9 +61,6 @@ class ConnectionConfig(ModuleConfig):
     source: str
     model: RobotModel | None = None
     joint_commands: dict[str, tuple[Interface, ...]] = {}
-    # Explicit transport binding: world-frame planar coordinates, in x/y/yaw order.
-    # Twist is body-frame; converting it requires actual odometry yaw.
-    twist_joints: tuple[str, str, str] | None = None
     clamp_commands: frozenset[str] = frozenset()
     deadman_timeout_s: float = 0.1
 

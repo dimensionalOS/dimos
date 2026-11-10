@@ -221,6 +221,37 @@ class PIDController:
         pass  # Handle preemption
 ```
 
+## Connection wire and Twist inputs
+
+Shared `ConnectionModule` declarations describe named model joints and their
+supported interfaces. Planar virtual joints are ordinary joints: positions and
+velocities travel on `joint_state`, and commands on `position_command` or
+`velocity_command`, all `JointState`. IMU telemetry has its own stream. A concrete
+connection converts vendor odometry/body velocities and commands internally;
+`ConnectionSource` does not own a chassis protocol or frame rotation.
+
+For a body-frame Twist input, explicitly configure its consuming task:
+
+```python
+TaskConfig(
+    name="drive", type="twist_velocity",
+    joint_names=["r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"],
+    params={"axes": ["linear.x", "linear.y", "angular.z"],
+            "yaw_joint": "r1pro/base_yaw"},
+)
+```
+
+`yaw_joint` selects measured yaw for body-to-world rotation on **every tick**.
+Without it, the configured axes are aligned with the input (as in the existing
+body-axis adapters). Neither joint names nor hardware type imply a mapping.
+The task keeps input receipt time unchanged while rotating; timeout emits zero,
+and E-stop clears intent so only fresh post-clear input can restart motion.
+Like `JointVelocityTask`, ordinary `stop()` only deactivates output; it does not
+latch input rejection or discard intent. New input reactivates the stream, and
+`start()` can resume an unexpired command. Use `clear()` to discard cached intent;
+E-stop is the latched stop.
+The coordinator subscribes only to task-card inputs and forwards raw messages.
+
 ## Task Cards
 
 Each task type ships a manifest at `dimos/control/tasks/<task>/_registry.py`.

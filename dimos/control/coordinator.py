@@ -36,16 +36,14 @@ from typing import TYPE_CHECKING, Any
 from reactivex.disposable import Disposable
 
 from dimos.control.components import (
-    TWIST_SUFFIX_MAP,
     HardwareComponent,
     HardwareId,
     HardwareType,
     JointName,
     TaskName,
-    split_joint_name,
 )
 from dimos.control.connection.connection_module import ConnectionConfig
-from dimos.control.connection_source import CMD_VEL, COMMAND_PORTS, READING_PORTS, ConnectionSource
+from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -146,21 +144,19 @@ class ControlCoordinator(Module):
     onto the connection module's ports::
 
         class Go2Coordinator(ControlCoordinator):
-            go2_cmd_vel: Out[Twist]
-            go2_odom: In[PoseStamped]
+            go2_velocity_command: Out[JointState]
+            go2_joint_state: In[JointState]
 
         autoconnect(Go2Coordinator.blueprint(connections=[declaration]),
                     Go2Connection.blueprint(**declaration.model_dump())).remappings([
-            (Go2Connection, "cmd_vel", "go2_cmd_vel"),
-            (Go2Coordinator, "go2_odom", "odom"),
+            (Go2Connection, "velocity_command", "go2_velocity_command"),
+            (Go2Coordinator, "go2_joint_state", "joint_state"),
         ])
 
     The kinds are listed in ``connection_source.COMMAND_PORTS`` and
     ``READING_PORTS``. Joints, interfaces and bounds come from the same
     ``config.connections`` declarations supplied to the connections. Ports do
-    not grant capabilities. A Twist transport explicitly binds model joints
-    (e.g. ``r1pro/base_x``) and rotates world-frame velocities using real
-    odometry yaw. Velocity-only joints no task drives get zero. A robot is
+    not grant capabilities. Velocity-only joints no task drives get zero. A robot is
     commanded every tick once it has reported, and not while its newest
     reading is older than ``config.reading_timeout_s``. In a fleet, each
     connection module sets ``frame_id_prefix`` to its robot's name so
@@ -261,13 +257,6 @@ class ControlCoordinator(Module):
         # Subscription handles for card-routed streams, keyed by stream name
         self._stream_unsubs: dict[str, Callable[[], None]] = {}
         self._subscribe_lock = threading.Lock()
-
-        # Hardware-side hooks run on the raw stream callback before card
-        # dispatch. They must stay out of _dispatch: the twist mapper itself
-        # dispatches joint_command, and _task_lock is not reentrant.
-        self._stream_pre_hooks: dict[str, Callable[[Any], None]] = {
-            "twist_command": self._map_twist_to_base_joints,
-        }
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -757,25 +746,17 @@ class ControlCoordinator(Module):
     def _sync_stream_subscriptions(self) -> None:
         """Subscribe streams that gained consumers; drop those whose last consumer left.
 
-        A consumer is a card-declared task route, or a base — BASE hardware
-        or a connection module's base port — for ``twist_command``. The whole compute+apply runs under
-        ``_subscribe_lock`` (with ``_task_lock`` and ``_hardware_lock`` taken
-        sequentially inside it) so concurrent syncs cannot apply a stale
-        ``active`` set last. The nesting is deadlock-free: no code path
-        acquires ``_subscribe_lock`` while holding either inner lock.
+        A consumer is a card-declared task route. The whole compute+apply runs under
+        ``_subscribe_lock`` (with ``_task_lock`` taken inside it) so concurrent
+        syncs cannot apply a stale ``active`` set last. No code path acquires
+        ``_subscribe_lock`` while holding ``_task_lock``.
         """
         with self._subscribe_lock:
             if not (self._tick_loop and self._tick_loop.is_running):
                 return
             with self._task_lock:
                 active = {stream for stream, entries in self._routes.items() if entries}
-            with self._hardware_lock:
-                has_base = any(
-                    hw.component.hardware_type == HardwareType.BASE
-                    for hw in self._hardware.values()
-                ) or any(CMD_VEL in source.command_ports for source in self._connections.values())
-            if has_base:
-                active.add("twist_command")
+
             for stream in active - self._stream_unsubs.keys():
                 try:
                     unsub = getattr(self, stream).subscribe(self._make_stream_cb(stream))
@@ -796,11 +777,7 @@ class ControlCoordinator(Module):
                 )
 
     def _make_stream_cb(self, stream: str) -> "Callable[[Any], None]":
-        pre_hook = self._stream_pre_hooks.get(stream)
-
         def _on_message(msg: Any) -> None:
-            if pre_hook is not None:
-                pre_hook(msg)
             self._dispatch(stream, msg)
 
         return _on_message
@@ -851,38 +828,6 @@ class ControlCoordinator(Module):
                         task_name=task.name,
                         stream=stream,
                     )
-
-    def _map_twist_to_base_joints(self, msg: Twist) -> None:
-        """Map Twist onto BASE virtual joints and connection base axes via joint_command."""
-        names: list[str] = []
-        velocities: list[float] = []
-
-        with self._hardware_lock:
-            for hw in self._hardware.values():
-                if hw.component.hardware_type != HardwareType.BASE:
-                    continue
-                for joint_name in hw.joint_names:
-                    # Extract suffix (e.g., "base/vx" → "vx")
-                    _, suffix = split_joint_name(joint_name)
-                    mapping = TWIST_SUFFIX_MAP.get(suffix)
-                    if mapping is None:
-                        continue
-                    group, axis = mapping
-                    value = getattr(getattr(msg, group), axis)
-                    names.append(joint_name)
-                    velocities.append(value)
-            for source in self._connections.values():
-                try:
-                    values = source.twist_values(msg)
-                except ValueError:
-                    continue  # No odometry yet: do not authorize an untransformed command.
-                for key, value in values.items():
-                    names.append(key.rsplit("/", 1)[0])
-                    velocities.append(value)
-
-        if names:
-            joint_state = JointState(name=names, velocity=velocities)
-            self._dispatch("joint_command", joint_state)
 
     @rpc
     def set_estop(self, estopped: bool) -> bool:
@@ -1125,8 +1070,7 @@ class ControlCoordinator(Module):
         )
         self._tick_loop.start()
 
-        # Subscribe the streams that registered tasks' cards consume, plus
-        # twist_command when BASE hardware demands the twist mapping.
+        # Subscribe only streams that registered tasks' cards consume.
         self._sync_stream_subscriptions()
 
         # Arming + dry-run are RPC-only; no stream subscription here.
