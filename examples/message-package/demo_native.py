@@ -24,9 +24,9 @@ from tempfile import TemporaryDirectory
 from dimos_cdrgen.native_build import prepare_cpp, write_cmake_toolchain
 from dimos_cdrgen.registry import decode, encode
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages_schemas.provider import package_root  # type: ignore[import-untyped]
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages_schemas.provider import package_root  # type: ignore[import-untyped]
 
 
 def main() -> None:

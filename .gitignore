@@ -106,6 +106,3 @@ optuna.db
 
 # policy blobs are loaded from outside the repository
 *.bin
-
-# Prepared from schema-sources.json; keep downloaded schemas out of Git.
-/packages/dimos-generated/interfaces/

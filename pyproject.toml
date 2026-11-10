@@ -3,7 +3,6 @@ requires = [
     "setuptools>=70",
     "wheel",
     "dimos-cdrgen[prepare]==0.1.2",
-    "pydantic>=2,<3",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -23,7 +22,7 @@ build-backend = "setuptools.build_meta"
 include-package-data = false
 license-files = [
     "LICENSE*", "COPYING*", "NOTICE*", "AUTHORS*",
-    "packages/dimos-generated/interfaces/licenses/*",
+    "packages/dimos-messages/interfaces/licenses/*",
 ]
 
 [tool.setuptools.packages.find]
@@ -40,8 +39,8 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
-"dimos.messages" = ["py.typed", "*.pyi", "**/*.pyi"]
-"dimos.messages_schemas" = ["schemas.json", "schemas/**/*", "package/**/*"]
+"dimos_messages" = ["py.typed", "*.pyi", "**/*.pyi"]
+"dimos_messages_schemas" = ["schemas.json", "schemas/**/*", "package/**/*"]
 # Recursive: matches the extension anywhere under dimos/. Add a line when code
 # starts loading a new data type. NOTE: ".txt" is intentionally scoped (a bare
 # "**/*.txt" would grab CMakeLists.txt from native build dirs).
@@ -885,10 +884,14 @@ ignore = [
 ]
 
 [tool.dimos.messages]
-source = "packages/dimos-generated/interfaces"
+# Committed inputs; builds never download definitions. See sources.py for provenance.
+source = "packages/dimos-messages/interfaces"
+# Native message-package identity: Rust crate `dimos-generated-messages`,
+# C++ CMake package `dimos_generated`, and the registry manifest module name.
 module = "dimos_generated"
-python-module = "dimos.messages"
-resources = ["packages/dimos-generated/schema-sources.json"]
+# Python namespace of the generated messages (`from dimos_messages import ...`).
+python-module = "dimos_messages"
+resources = ["packages/dimos-messages/schema-sources.json"]
 
 [project.entry-points."dimos.messages"]
-dimos = "dimos.messages_schemas.provider"
+dimos_messages = "dimos_messages_schemas.provider"

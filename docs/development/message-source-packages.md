@@ -4,7 +4,7 @@
 support are incomplete. Existing code continues to use `dimos.msgs`.
 
 `setup.py` reads the definitions in `packages/dimos-generated` and calls
-`dimos-cdrgen==0.1.2`. The wheel contains `dimos.messages`, schemas, and native
+`dimos-cdrgen==0.1.2`. The wheel contains `dimos_messages`, schemas, and native
 source code. The examples use these installed files.
 
 The [cdrgen guides](https://tomcc7.github.io/dimos-cdrgen/) describe its APIs and

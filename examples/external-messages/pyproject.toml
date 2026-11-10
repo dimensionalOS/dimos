@@ -10,4 +10,4 @@ requires-python = ">=3.12"
 dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.2"]
 
 [tool.dimos.messages.dependencies]
-"dimos.messages" = "0.0.14"
+"dimos_messages" = "0.0.14"

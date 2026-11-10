@@ -127,7 +127,7 @@ dependencies = ["dimos==0.0.14", "dimos-cdrgen==0.1.2"]
 [tool.dimos.messages]
 python-module = "my_robot.messages"
 [tool.dimos.messages.dependencies]
-"dimos.messages" = "0.0.14"
+"dimos_messages" = "0.0.14"
 """.replace("0.0.14", version)
     )
     (project / "setup.py").write_text(
@@ -143,9 +143,9 @@ python-module = "my_robot.messages"
         """from importlib.metadata import distribution, entry_points, PackageNotFoundError
 import json
 from importlib.util import find_spec
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages_schemas.provider import message_types, package_root
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages_schemas.provider import message_types, package_root
 from my_robot.messages.demo_msgs.msg import Reading
 from my_robot.messages_schemas.provider import package_root as external_root
 from dimos_cdrgen.registry import encode, decode
@@ -158,7 +158,7 @@ except PackageNotFoundError:
 else:
     raise AssertionError("Built-ins must have only the DimOS distribution owner")
 assert len(message_types()) == 73
-assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos"]) == 1
+assert len([ep for ep in entry_points(group="dimos.messages") if ep.name == "dimos_messages"]) == 1
 header = Header(Time(17, 23), "map")
 value = Reading(header=header, value=21.5)
 assert type(value.header) is Header
