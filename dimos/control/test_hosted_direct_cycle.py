@@ -230,8 +230,13 @@ def test_the_cycle_reads_and_writes_in_one_tick_without_an_action_message(
     release.set()
 
 
+@pytest.mark.parametrize(
+    "clear_while_blocked",
+    [False, True],
+    ids=["clear-after-join", "clear-while-blocked"],
+)
 def test_an_estop_during_compute_rejects_the_write_and_a_clear_does_not_replay_it(
-    rig: Callable[..., Rig],
+    rig: Callable[..., Rig], clear_while_blocked: bool
 ) -> None:
     r = rig(deadman_timeout_s=0.05)
     task = BlocksInCompute(0.4)
@@ -253,21 +258,42 @@ def test_an_estop_during_compute_rejects_the_write_and_a_clear_does_not_replay_i
 
     estop = threading.Thread(target=stop)
     estop.start()
+    cleared = threading.Event()
+
+    def clear() -> None:
+        r.coordinator.set_estop(False)
+        cleared.set()
+
+    clearer: threading.Thread | None = None
     try:
         assert stopped.wait(timeout=0.5), "set_estop waits for the task lock compute held"
         assert r.coordinator._command_generation == 1
+        if clear_while_blocked:
+            # Clearing before the old compute returns must invalidate it too:
+            # the generation advances while the tick is still blocked, so its
+            # result cannot ride the now-lowered e-stop flag through.
+            clearer = threading.Thread(target=clear)
+            clearer.start()
+            assert cleared.wait(timeout=0.5), "clearing the e-stop waits for heavy compute"
+            assert r.coordinator._command_generation == 2
+            assert thread.is_alive()
+            assert len(r.arm.writes) == writes
     finally:
         task.release.set()
         thread.join(timeout=5.0)
         estop.join(timeout=5.0)
+        if clearer is not None:
+            clearer.join(timeout=5.0)
 
     assert not thread.is_alive()
+    assert not estop.is_alive()
     assert len(r.arm.writes) == writes
     wait_until(lambda: r.arm.halts > 0, timeout=2.0)
 
     # The clear does not revive the tick computed before it; a fresh tick,
     # computed on a new reading, may write again.
-    r.coordinator.set_estop(False)
+    if not clear_while_blocked:
+        r.coordinator.set_estop(False)
     wait_until(lambda: r.coordinator._command_generation == 2, timeout=5.0)
     assert len(r.arm.writes) == writes
     r.tick()
