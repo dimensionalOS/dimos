@@ -26,9 +26,9 @@ from dimos.cloud import preview
 from dimos.cloud.constants import PREVIEW_SCALE
 from dimos.memory.store.base import Store
 from dimos.message_utils import image, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import Joy, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import Joy, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 
 class Stream:

@@ -17,8 +17,8 @@ import pytest
 
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.message_utils import occupancy, occupancy as occupancy_utils, time as message_time
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
 
 

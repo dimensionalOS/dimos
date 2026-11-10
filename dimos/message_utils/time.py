@@ -17,8 +17,8 @@
 import math
 import time
 
-from dimos.messages.builtin_interfaces.msg import Duration, Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Duration, Time
+from dimos_messages.std_msgs.msg import Header
 
 NANOSECONDS_PER_SECOND = 1_000_000_000
 

@@ -10,7 +10,7 @@ format or the deprecated Python message overlays.
 
 ## Generated message values
 
-Import message classes from `dimos.messages`. Use the registry to encode and
+Import message classes from `dimos_messages`. Use the registry to encode and
 decode them with an agreed schema:
 
 Our LCM implementation [outperformed ROS for most payload sizes in earlier local benchmarks](/docs/usage/transports/index.md#benchmarks).
@@ -36,7 +36,7 @@ Given LCM is so portable, we can easily run dimos [Modules](/docs/usage/modules.
 The `dimos-lcm` package provides base message types that mirror [ROS message definitions](https://docs.ros.org/en/melodic/api/sensor_msgs/html/index.html):
 
 ```python session=lcm_demo ansi=false
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos_cdrgen.registry import encode, decode
 
 message = Vector3(x=1.0, y=2.0, z=3.0)
@@ -54,8 +54,8 @@ source Header:
 ```python session=lcm_demo ansi=false
 import numpy as np
 from dimos.message_utils import pointcloud
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 
 points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
 cloud = pointcloud.from_xyz(
@@ -76,7 +76,7 @@ Declare the same generated type at both ends of each channel:
 
 ```python skip
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 velocity = LCMTransport("/velocity", Vector3)
 velocity.publish(Vector3(1.0, 2.0, 3.0))
@@ -94,7 +94,7 @@ channels remain bytes. See the [transport contract](/docs/usage/transports/index
 ## Third-party messages
 
 A library user can define `.msg` files in an external project, generate a message
-package with cdrgen, and register its provider through the `dimos.messages`
+package with cdrgen, and register its provider through the `dimos_messages`
 entry-point group. External messages use the same typed transports and CDR
 recording boundary as built-in messages. Shared dependencies reuse the registry's
 canonical classes.

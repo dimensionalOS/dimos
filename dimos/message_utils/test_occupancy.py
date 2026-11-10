@@ -20,10 +20,10 @@ from PIL import Image
 import pytest
 
 from dimos.message_utils import geometry, occupancy
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.nav_msgs.msg import MapMetaData, OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_occupancy_cells_keep_ros_row_order_and_do_not_alias_message():

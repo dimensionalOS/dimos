@@ -17,10 +17,10 @@
 from dimos_cdrgen.registry import decode as cdr_decode, encode as cdr_encode
 import rerun as rr
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.dimos_msgs.msg import EntityMarker, EntityMarkers
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.dimos_msgs.msg import EntityMarker, EntityMarkers
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.std_msgs.msg import Header
 from dimos.visualization.rerun.cdr import entity_points
 
 

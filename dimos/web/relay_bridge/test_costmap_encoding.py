@@ -27,7 +27,7 @@ from dimos_cdrgen.registry import decode, encode
 import numpy as np
 import pytest
 
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 from dimos.web import _test_values as message_values
 from dimos.web.relay_bridge.builtin_codecs import encode_costmap
 from dimos.web.relay_bridge.gen_costmap_fixtures import grid_msg

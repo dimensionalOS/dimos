@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 
 from dimos.message_utils import mesh as mesh_utils
-from dimos.messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.dimos_msgs.msg import TriangleMesh
 from dimos.visualization.rerun.bridge import RerunEntry
 
 Key = tuple[int, int, int]

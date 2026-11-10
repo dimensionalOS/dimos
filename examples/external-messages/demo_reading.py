@@ -20,8 +20,8 @@ from acme_telemetry.telemetry_msgs.msg import DeviceReading
 from acme_telemetry_schemas.provider import package_root
 from dimos_cdrgen.registry import decode, encode
 
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 
 
 def main() -> None:

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
-    from dimos.messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.sensor_msgs.msg import CameraInfo
 
 
 def _pair_camera_infos(
@@ -45,7 +45,7 @@ def _pair_camera_infos(
     has one of each; the image's frame_id wins as the pinhole's parent frame.
     Returns (image stream -> (CameraInfo, parent frame), paired stream names).
     """
-    from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+    from dimos_messages.sensor_msgs.msg import CameraInfo, Image
 
     infos = [(n, f.data) for n, _, f in renderable if isinstance(f.data, CameraInfo)]
     images = [(n, f.data) for n, _, f in renderable if isinstance(f.data, Image)]
@@ -83,7 +83,7 @@ def _frame_first_seen(
     first tf message overall (which may be an unrelated or static edge).
     Scans each tf stream only until every frame is found.
     """
-    from dimos.messages.tf2_msgs.msg import TFMessage
+    from dimos_messages.tf2_msgs.msg import TFMessage
 
     seen: dict[str, float] = {}
     for _, stream, first in renderable:
@@ -130,9 +130,9 @@ def render_store(
 
     from dimos.core.introspection.utils import GROUP_COLORS
     from dimos.memory.utils.progress import progress
-    from dimos.messages.nav_msgs.msg import Path as NavPath
-    from dimos.messages.sensor_msgs.msg import CompressedImage, Image, PointCloud2
-    from dimos.messages.tf2_msgs.msg import TFMessage
+    from dimos_messages.nav_msgs.msg import Path as NavPath
+    from dimos_messages.sensor_msgs.msg import CompressedImage, Image, PointCloud2
+    from dimos_messages.tf2_msgs.msg import TFMessage
     from dimos.visualization.rerun.cdr import (
         camera_pinhole,
         cloud_archetype,

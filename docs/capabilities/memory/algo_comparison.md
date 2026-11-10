@@ -9,7 +9,7 @@ from dimos.memory.transform import throttle
 from dimos.memory.vis import color
 from dimos.memory.vis.plot.elements import Style
 from dimos.memory.vis.plot.plot import Plot
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils
 from dimos.utils.data import get_data
 
@@ -102,7 +102,7 @@ from dimos.memory.transform import throttle
 from dimos.memory.vis import color
 from dimos.memory.vis.plot.elements import HLine, Series, Style
 from dimos.memory.vis.plot.plot import Plot
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils
 from dimos.utils.data import get_data
 

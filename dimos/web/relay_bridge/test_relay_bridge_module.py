@@ -43,9 +43,9 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.message_utils import image as image_utils, occupancy
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web import _test_values as message_values
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module, teleop

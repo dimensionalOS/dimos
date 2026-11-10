@@ -34,9 +34,9 @@ from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 _BUILD = "nix build -L path:.#dimos-native-module-examples"
 

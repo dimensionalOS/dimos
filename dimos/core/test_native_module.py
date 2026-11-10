@@ -42,9 +42,9 @@ from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.core.transport_factory import make_transport, rpc_backend, transport_topic
 from dimos.experimental.memory.rust_recorder import RustRecorderConfig
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.sensor_msgs.msg import Imu, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.sensor_msgs.msg import Imu, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.protocol.service import zenohservice
 from dimos.protocol.service.zenohservice import ZenohConfig

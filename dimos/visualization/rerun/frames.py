@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.geometry_msgs.msg import TransformStamped
 
 DEFAULT_LINKS_ROOT = "tf_links"
 DEFAULT_TF_ROOT = "world/tf"

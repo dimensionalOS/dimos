@@ -30,9 +30,9 @@ from numpy.typing import NDArray
 from PIL import Image
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.nav_msgs.msg import MapMetaData, OccupancyGrid
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.nav_msgs.msg import MapMetaData, OccupancyGrid
+from dimos_messages.std_msgs.msg import Header
 
 
 class CostValues(IntEnum):

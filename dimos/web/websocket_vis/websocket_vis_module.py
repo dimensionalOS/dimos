@@ -31,7 +31,7 @@ from pydantic import Field
 from reactivex.disposable import Disposable
 
 # Path to the frontend HTML templates
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.std_msgs.msg import Bool
 
 _TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
 _DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
@@ -45,7 +45,7 @@ from dimos.mapping.models import LatLon
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.message_utils import occupancy, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -54,7 +54,7 @@ from dimos.messages.geometry_msgs.msg import (
     TwistStamped,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.spec import RerunBridgeSpec
 from dimos.web.websocket_vis.optimized_costmap import OptimizedCostmapEncoder

@@ -198,7 +198,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 More on [quality filtering here](/docs/usage/data_streams/quality_filter.md).
 
 ```python skip session=align
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils
 from dimos.utils.reactive import quality_barrier
 

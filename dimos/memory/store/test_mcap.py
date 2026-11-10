@@ -27,8 +27,8 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, Imu
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import Image, Imu
+from dimos_messages.std_msgs.msg import Header, String
 
 
 def _imu(ts: float, frame_id: str = "imu_link"):

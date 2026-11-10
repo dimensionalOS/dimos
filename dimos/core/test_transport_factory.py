@@ -33,9 +33,9 @@ from dimos.core.transport_factory import (
     session_config,
     transport_topic,
 )
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
-from dimos.messages.sensor_msgs.msg import Image, Image as CdrImage, PointCloud2
-from dimos.messages.std_msgs.msg import Int32
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.sensor_msgs.msg import Image, Image as CdrImage, PointCloud2
+from dimos_messages.std_msgs.msg import Int32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, QOS_NEVER_DROP
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
