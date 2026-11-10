@@ -542,8 +542,15 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     direct_connections = [
         atom for atom in all_blueprints if getattr(atom.module, "hosted_direct", False)
     ]
-    if hosted_coordinators and direct_connections:
-        implied = tuple(atom.name for atom in (*hosted_coordinators, *direct_connections))
+    # Only add grouping that the inputs did not already declare. A namespaced
+    # or nested composition already carries one group per pair; covering those
+    # again with one global group would put a module in two groups and fail
+    # validation, and would also merge independently deployed robots.
+    already_grouped = {name for group in all_process_groups for name in group}
+    ungrouped_coordinators = [atom for atom in hosted_coordinators if atom.name not in already_grouped]
+    ungrouped_connections = [atom for atom in direct_connections if atom.name not in already_grouped]
+    if ungrouped_coordinators and ungrouped_connections:
+        implied = tuple(atom.name for atom in (*ungrouped_coordinators, *ungrouped_connections))
         if (
             len(set(implied)) == len(implied)
             and len(implied) >= 2

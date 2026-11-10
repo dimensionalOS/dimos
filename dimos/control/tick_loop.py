@@ -124,6 +124,11 @@ class TickLoop:
         connection_generation: Callable[[], int] | None = None,
         connection_authorized: Callable[[int], bool] | None = None,
     ) -> None:
+        # ``connection_generation`` is the coordinator's command generation:
+        # it moves whenever an e-stop or a cancellation invalidates work that
+        # was already in flight. The tick samples it before compute and uses
+        # that same value for the write, so a result computed under an older
+        # generation can neither be written nor replayed after a clear.
         self._tick_rate = tick_rate
         self._hardware = hardware
         self._connections: dict[str, ConnectionSource] = (
@@ -236,7 +241,14 @@ class TickLoop:
             sensors=self._read_all_sensors(),
         )
 
-        commands = self._compute_all_tasks(state)
+        # Sample invalidation before compute. A heavy task must not hold the
+        # lock that cancellation and e-stop need, so compute runs without the
+        # task lock; if the generation moved while it ran, its result is
+        # stale and this tick writes nothing.
+        generation = (
+            self._connection_generation() if self._connection_generation is not None else 0
+        )
+        commands = self._compute_all_tasks(state, generation)
 
         joint_commands, preemptions = self._arbitrate(commands)
 
@@ -246,7 +258,7 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
-        self._write_all_connections(hw_commands)
+        self._write_all_connections(hw_commands, generation)
 
         if self._publish_callback:
             self._publish_joint_state(joint_states)
@@ -361,25 +373,44 @@ class TickLoop:
         return SensorStateSnapshot(readings=readings)
 
     def _compute_all_tasks(
-        self, state: CoordinatorState
+        self, state: CoordinatorState, generation: int
     ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
-        """Compute outputs from all active tasks."""
+        """Compute outputs from all active tasks, without holding the task lock.
+
+        Taking a snapshot of the tasks under the lock and computing outside it
+        is what lets a cancel or e-stop land while a task is slow: waiting for
+        compute would make invalidation as slow as the work it invalidates.
+        The lock is retaken only to reject results whose task was removed or
+        deactivated, or whose command generation moved, while they computed.
+        """
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
 
         with self._task_lock:
             self._joint_positions = state.joints.joint_positions.copy()
-            for task in self._tasks.values():
-                if not task.is_active():
-                    continue
+            tasks = [task for task in self._tasks.values() if task.is_active()]
 
-                try:
-                    claim = task.claim()
-                    output = task.compute(state)
-                    results.append((task, claim, output))
-                except Exception as e:
-                    logger.error(f"Task {task.name} compute error: {e}")
+        for task in tasks:
+            try:
+                claim = task.claim()
+                output = task.compute(state)
+                results.append((task, claim, output))
+            except Exception as e:
+                logger.error(f"Task {task.name} compute error: {e}")
 
-        return results
+        current = (
+            self._connection_generation() if self._connection_generation is not None else generation
+        )
+        with self._task_lock:
+            if current != generation:
+                logger.info(
+                    "Discarding control task output: command generation changed during compute"
+                )
+                return []
+            return [
+                (task, claim, output)
+                for task, claim, output in results
+                if self._tasks.get(task.name) is task
+            ]
 
     def _arbitrate(
         self,
@@ -550,6 +581,7 @@ class TickLoop:
     def _write_all_connections(
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+        generation: int,
     ) -> None:
         """Send every robot behind a connection module its complete command.
 
@@ -559,15 +591,14 @@ class TickLoop:
 
         A hosted robot is written directly: ``ConnectionModule.command``
         validates and writes its hardware in this thread, immediately before
-        which it rechecks the authorization generation captured for this tick,
-        so an e-stop that landed during compute can still reject the write.
-        Every other robot is still sent its command messages.
+        which it rechecks the authorization generation sampled at this tick's
+        start, so an e-stop or cancellation that landed during compute can
+        still reject the write. Every other robot is still sent its command
+        messages.
         """
         publish = self._connection_command_callback
         if publish is None and not self._hosted:
             return
-        generation_callback = self._connection_generation
-        generation = generation_callback() if generation_callback is not None else 0
         authorized = self._connection_authorized
         authorize = (lambda: authorized(generation)) if authorized is not None else None
         now = time.monotonic()

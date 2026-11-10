@@ -181,7 +181,7 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     assert mock.kwargs["initial_positions"]["left_gripper"] == 0.0
     assert mock.kwargs["initial_positions"]["right_gripper"] == 0.0
     assert mock.kwargs["initial_positions"]["left_joint1"] == pytest.approx(0.0)
-    assert blueprint.remapping_map[(mock.name, "position_command")] == "arm_position_command"
+    assert (mock.name, "position_command") not in blueprint.remapping_map
 
 
 def test_blueprint_composition_is_coordinator_connection_and_remaps():
@@ -197,7 +197,6 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
     assert coordinator.kwargs["model"] == make_openyam_model_config(robot="arm").model
     assert coordinator.kwargs["zero_stiffness_joints"] == []
     assert blueprint.remapping_map == {
-        (connection.name, "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
     }
 

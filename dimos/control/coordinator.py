@@ -62,7 +62,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig, local_module, local_modules
+from dimos.core.module import Module, ModuleBase, ModuleConfig, local_module, local_modules
 from dimos.core.stream import In, Out
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
@@ -254,9 +254,10 @@ class ControlCoordinator(Module):
         # Robots whose connection module is in this worker, by name; the tick
         # loop reads and writes them directly. Guarded by _hardware_lock.
         self._hosted: dict[str, ConnectionModule] = {}
-        # Bumped on every e-stop change; a tick a write was computed under may
-        # not write once it has moved. Guarded by _estop_lock.
-        self._estop_generation = 0
+        # Bumped on every e-stop change and every trajectory cancellation; a
+        # tick a write was computed under may not write, or replay its result,
+        # once it has moved. Guarded by _estop_lock.
+        self._command_generation = 0
         # While set, robots behind connection modules are sent nothing.
         # Guarded by _hardware_lock.
         self._estopped = False
@@ -508,27 +509,55 @@ class ControlCoordinator(Module):
             + (f"; hosted in this process: {sorted(self._hosted)}" if self._hosted else "")
         )
 
-    @staticmethod
-    def _local_connection(robot: str) -> ConnectionModule | None:
-        """The connection module serving ``robot`` in this process, if any."""
-        for name in local_modules():
-            module = local_module(name)
-            if (
-                isinstance(module, ConnectionModule)
-                and getattr(module.config, "source", None) == robot
-            ):
-                return module
-        return None
+    def _local_connection(self, robot: str) -> ConnectionModule | None:
+        """The connection module serving ``robot`` in this process, if any.
+
+        More than one deployed connection can name the same robot when two
+        namespaced blueprints share a worker. Pick the one in this
+        coordinator's namespace instead of the first match; if that is still
+        ambiguous, refuse rather than bind another instance's hardware.
+        """
+        candidates = [
+            module
+            for name in local_modules()
+            if isinstance(module := local_module(name), ConnectionModule)
+            and getattr(module.config, "source", None) == robot
+        ]
+        if len(candidates) <= 1:
+            return candidates[0] if candidates else None
+        namespace = self._module_namespace()
+        matches = [
+            candidate
+            for candidate in candidates
+            if self._module_namespace(candidate) == namespace
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        raise ValueError(
+            f"{len(candidates)} connection modules in this worker drive {robot!r}; "
+            "cannot tell which one belongs to this coordinator. Deploy each "
+            "coordinator/connection pair with its own same_process group."
+        )
+
+    def _module_namespace(self, module: ModuleBase | None = None) -> str:
+        """The instance-name prefix a module is deployed under, or ``""``.
+
+        With no argument, the prefix of this coordinator's own instance name.
+        """
+        target = self if module is None else module
+        config = target.config
+        name = config.rpc_name or config.instance_name or ""
+        return name.rsplit("/", 1)[0] if "/" in name else ""
 
     def _connection_authorized(self, generation: int) -> bool:
         """Whether a command computed under ``generation`` may still be written.
 
         Called by the connection module immediately before it touches the
-        hardware. An e-stop latched during compute, or one that was cleared
-        after this tick started, moves the generation and rejects the write:
-        only a command computed after the clear may move the robot.
+        hardware. An e-stop latched during compute, a cancellation, or a clear
+        that landed after this tick started moves the generation and rejects
+        the write: only a command computed after it may move the robot.
         """
-        return not self._estopped and self._estop_generation == generation
+        return not self._estopped and self._command_generation == generation
 
     def _publish_command(self, robot: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
@@ -669,14 +698,21 @@ class ControlCoordinator(Module):
 
     @rpc
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
-        """Cancel the trajectory under the same lock used to accept submissions."""
-        with self._task_lock:
-            if self._trajectory_task is None:
-                return TrajectoryCancellationResult(
-                    TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
-                    "Control coordinator has no trajectory task",
-                )
-            return self._trajectory_task.cancel()
+        """Cancel the trajectory and invalidate any work already computed for it.
+
+        Cancellation moves the command generation before taking the task lock,
+        so a tick whose compute is still running cannot later write its result,
+        and this call never waits for that compute to finish.
+        """
+        with self._estop_lock:
+            self._command_generation += 1
+            with self._task_lock:
+                if self._trajectory_task is None:
+                    return TrajectoryCancellationResult(
+                        TrajectoryCancellationStatus.NO_TRAJECTORY_TASK,
+                        "Control coordinator has no trajectory task",
+                    )
+                return self._trajectory_task.cancel()
 
     @rpc
     def add_task(
@@ -942,7 +978,7 @@ class ControlCoordinator(Module):
                 # already sending finishes first, and none sends after.
                 with self._hardware_lock:
                     self._estopped = True
-                self._estop_generation += 1
+                self._command_generation += 1
                 self._set_tasks_estop(True)
             else:
                 self._set_tasks_estop(False)
@@ -950,7 +986,7 @@ class ControlCoordinator(Module):
                     for connection in self._connections.values():
                         connection.drop_holds()
                     self._estopped = False
-                self._estop_generation += 1
+                self._command_generation += 1
                 logger.warning("E-STOP cleared at coordinator")
         return True
 
@@ -1163,7 +1199,7 @@ class ControlCoordinator(Module):
             connections=self._connections,
             connection_command_callback=self._publish_command,
             hosted=self._hosted,
-            connection_generation=lambda: self._estop_generation,
+            connection_generation=lambda: self._command_generation,
             connection_authorized=self._connection_authorized,
         )
         self._tick_loop.start()

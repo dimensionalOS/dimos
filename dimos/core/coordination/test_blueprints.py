@@ -224,6 +224,34 @@ def test_autoconnect_does_not_group_without_both_roles() -> None:
     assert autoconnect(HostedConnection.blueprint(), ModuleA.blueprint()).process_groups == ()
 
 
+def test_autoconnect_composes_independent_namespaced_pairs() -> None:
+    pair = autoconnect(HostedCoordinator.blueprint(), HostedConnection.blueprint())
+
+    merged = autoconnect(pair.namespace("one"), pair.namespace("two"))
+
+    # Each pair keeps its own group; the implied grouping must not cover a
+    # module that a nested blueprint already grouped.
+    assert merged.process_groups == (
+        (f"one/{HostedCoordinator.name}", f"one/{HostedConnection.name}"),
+        (f"two/{HostedCoordinator.name}", f"two/{HostedConnection.name}"),
+    )
+
+
+def test_autoconnect_groups_only_the_roles_a_nested_blueprint_left_out() -> None:
+    pair = autoconnect(HostedCoordinator.blueprint(), HostedConnection.blueprint())
+
+    merged = autoconnect(
+        pair.namespace("one"),
+        HostedCoordinator.blueprint(instance_name="spare"),
+        HostedConnection.blueprint(instance_name="spare_conn"),
+    )
+
+    assert merged.process_groups == (
+        (f"one/{HostedCoordinator.name}", f"one/{HostedConnection.name}"),
+        ("spare", "spare_conn"),
+    )
+
+
 def test_same_process_joins_modules_and_namespace_prefixes_the_names() -> None:
     blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).same_process(ModuleA, ModuleB)
 

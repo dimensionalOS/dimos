@@ -79,7 +79,7 @@ def test_stop_disables_releases_views_and_is_idempotent(make_rig, boundary):
     module.stop()
     assert boundary[0].events.count("disable") == 1
     assert module._arm is None
-    assert not module._reader.is_alive()
+    assert module._telemetry is None
     assert not module.status().connected
 
 
@@ -89,7 +89,6 @@ def test_calibration_finishes_before_connected_and_command_acceptance(
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = connection_class()
-    module.set_transport("position_command", LocalTransport())
     module.set_transport("joint_state", LocalTransport())
     native = boundary[0]
     observed = []
@@ -118,7 +117,7 @@ def test_failed_enable_rolls_back_and_preserves_error(connection_class, boundary
     with pytest.raises(RuntimeError, match="calibration failed"):
         module.start()
     assert module._arm is None
-    assert module._reader is None
+    assert module._telemetry is None
     module.command({"arm/joint1/position": 0.7})
     assert native.groups["left_arm"].commands == []
     assert not module.status().connected
@@ -166,93 +165,6 @@ def test_disable_failure_still_releases_all_session_handles(make_rig, boundary):
     module.stop()
 
 
-def test_blocked_read_cannot_publish_after_stop_requested(make_rig, monkeypatch):
-    module, _, readings = make_rig()
-    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
-    failures = []
-    read = module._read_state
-
-    def blocked_read():
-        entered.set()
-        assert release.wait(2)
-        return read()
-
-    monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.001)
-    monkeypatch.setattr(module, "_read_state", blocked_read)
-    assert entered.wait(2)
-    publications = len(readings.sent)
-
-    def stop():
-        try:
-            module.stop()
-        except Exception as error:
-            failures.append(error)
-        finally:
-            stopped.set()
-
-    stopper = threading.Thread(target=stop)
-    stopper.start()
-    try:
-        assert module._stop_reading.wait(2)
-        assert module._reader.is_alive()
-    finally:
-        release.set()
-        stopper.join(timeout=2)
-    assert stopped.is_set()
-    assert failures == []
-    assert not module._reader.is_alive()
-    assert len(readings.sent) == publications
-
-
-def test_reader_timeout_is_visible_after_native_cleanup(make_rig, boundary, monkeypatch):
-    module, _, readings = make_rig()
-    entered, release = threading.Event(), threading.Event()
-
-    def block_publication(_message):
-        entered.set()
-        assert release.wait(2)
-
-    readings.subscribe(block_publication)
-    monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.001)
-    assert entered.wait(2)
-    publications = len(readings.sent)
-    try:
-        with pytest.raises(RuntimeError, match="reader did not stop"):
-            module.stop()
-        assert module._arm is None
-        assert "disable" in boundary[0].events
-        assert not module.status().connected
-        assert "shutdown timeout" in module.status().last_error
-        assert module._reader.is_alive()
-    finally:
-        release.set()
-        module._reader.join(timeout=2)
-    assert not module._reader.is_alive()
-    assert len(readings.sent) == publications
-    module.stop()
-
-
-def test_reader_callback_can_stop_without_joining_itself(make_rig):
-    module, _, readings = make_rig()
-    stopped = threading.Event()
-    failures = []
-
-    def stop_from_callback(_message):
-        try:
-            module.stop()
-        except Exception as error:
-            failures.append(error)
-        finally:
-            stopped.set()
-
-    readings.subscribe(stop_from_callback)
-    assert stopped.wait(2)
-    module._reader.join(timeout=2)
-    assert failures == []
-    assert not module._reader.is_alive()
-    assert module._arm is None
-
-
 def test_robot_data_rejects_unknown_passive_gripper(connection_class):
     with pytest.raises(ValueError, match="unknown passive grippers"):
         replace(connection_class.robot, passive_grippers=frozenset({"missing"}))
@@ -263,8 +175,7 @@ def test_passive_gripper_is_enabled_in_mit_and_never_positioned(connection_class
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = teaching(deadman_timeout_s=10, teach=True)
-    commands, readings = LocalTransport(), LocalTransport()
-    module.set_transport("position_command", commands)
+    readings = LocalTransport()
     module.set_transport("joint_state", readings)
     try:
         module.start()
@@ -292,8 +203,7 @@ def test_active_gripper_is_positioned_through_its_finger_joint(connection_class,
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
     module = connection_class(deadman_timeout_s=10)
-    commands, readings = LocalTransport(), LocalTransport()
-    module.set_transport("position_command", commands)
+    readings = LocalTransport()
     module.set_transport("joint_state", readings)
     try:
         module.start()

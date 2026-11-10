@@ -43,6 +43,8 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
@@ -246,17 +248,82 @@ def test_an_estop_latched_during_compute_rejects_the_write(rig: Callable[..., Ri
     thread = threading.Thread(target=r.tick)
     thread.start()
     assert task.entered.wait(timeout=5.0)
-    # set_estop waits for the task lock compute holds, so run it alongside.
-    estop = threading.Thread(target=r.coordinator.set_estop, args=(True,))
+    # E-stop must not wait for heavy compute: only its own bounded state
+    # change and the hardware lock, which the blocked tick does not hold.
+    stopped = threading.Event()
+
+    def stop() -> None:
+        r.coordinator.set_estop(True)
+        stopped.set()
+
+    estop = threading.Thread(target=stop)
     estop.start()
-    wait_until(lambda: r.coordinator._estop_generation == 1, timeout=5.0)
-    task.release.set()
-    thread.join(timeout=5.0)
-    estop.join(timeout=5.0)
+    try:
+        assert stopped.wait(timeout=0.5), "set_estop waits for the task lock compute held"
+        assert r.coordinator._command_generation == 1
+    finally:
+        task.release.set()
+        thread.join(timeout=5.0)
+        estop.join(timeout=5.0)
 
     assert not thread.is_alive()
     assert len(r.arm.writes) == writes
     wait_until(lambda: r.arm.halts > 0, timeout=2.0)
+
+
+def test_a_cancel_with_a_trajectory_blocked_in_compute_returns_and_drops_its_write(
+    rig: Callable[..., Rig],
+) -> None:
+    r = rig()
+    entered, release = threading.Event(), threading.Event()
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=tuple(MOCK_JOINTS)))
+    original = task.compute
+
+    def blocking_compute(state: CoordinatorState) -> JointCommandOutput | None:
+        entered.set()
+        assert release.wait(timeout=5.0)
+        return original(state)
+
+    task.compute = blocking_compute  # type: ignore[method-assign]
+    r.coordinator.add_task(task)
+    trajectory = JointTrajectory(
+        joint_names=MOCK_JOINTS,
+        points=[
+            TrajectoryPoint(positions=AT_REST, velocities=[0.0] * len(MOCK_JOINTS)),
+            TrajectoryPoint(
+                positions=[value + 0.1 for value in AT_REST],
+                velocities=[0.0] * len(MOCK_JOINTS),
+                time_from_start=0.3,
+            ),
+        ],
+    )
+    assert task.execute(trajectory, {joint: 0.0 for joint in MOCK_JOINTS}).status is (
+        TrajectoryExecutionStatus.ACCEPTED
+    )
+    writes = len(r.arm.writes)
+    compute = threading.Thread(target=r.tick)
+    compute.start()
+    assert entered.wait(timeout=5.0)
+    cancelled = threading.Event()
+
+    def cancel() -> None:
+        r.coordinator.cancel_trajectory()
+        cancelled.set()
+
+    cancellation = threading.Thread(target=cancel)
+    cancellation.start()
+    try:
+        assert cancelled.wait(timeout=0.5), "cancel_trajectory waits for heavy compute"
+        assert r.coordinator._command_generation == 1
+    finally:
+        release.set()
+        compute.join(timeout=5.0)
+        cancellation.join(timeout=5.0)
+
+    assert not compute.is_alive()
+    assert not cancellation.is_alive()
+    # The tick computed before the cancellation may not move the robot.
+    assert len(r.arm.writes) == writes
 
 
 def test_a_command_computed_before_a_clear_is_not_replayed(rig: Callable[..., Rig]) -> None:
@@ -272,7 +339,7 @@ def test_a_command_computed_before_a_clear_is_not_replayed(rig: Callable[..., Ri
     assert task.entered.wait(timeout=5.0)
     estop = threading.Thread(target=r.coordinator.set_estop, args=(True,))
     estop.start()
-    wait_until(lambda: r.coordinator._estop_generation == 1, timeout=5.0)
+    wait_until(lambda: r.coordinator._command_generation == 1, timeout=5.0)
     clear = threading.Thread(target=r.coordinator.set_estop, args=(False,))
     clear.start()
     task.release.set()
@@ -283,7 +350,7 @@ def test_a_command_computed_before_a_clear_is_not_replayed(rig: Callable[..., Ri
     # The tick computed before the stop/clear pair may not move the robot.
     assert len(r.arm.writes) == writes
     # A tick after the clear, computed on a fresh reading, may.
-    wait_until(lambda: r.coordinator._estop_generation == 2, timeout=5.0)
+    wait_until(lambda: r.coordinator._command_generation == 2, timeout=5.0)
     r.tick()
     assert r.arm.writes[-1]["mock/joint1/position"] == pytest.approx(0.4)
 
@@ -298,6 +365,35 @@ def test_a_hosted_coordinator_without_the_connection_in_process_refuses_to_start
             coordinator.start()
     finally:
         coordinator.stop()
+
+
+def test_local_connection_binds_the_instance_in_the_coordinator_namespace(
+    mocker: Any,
+) -> None:
+    from dimos.control.connection.mock_joint_connection import MockJointConnection
+
+    mocker.patch.object(TickLoop, "start")
+    first = MockJointConnection(
+        instance_name="one/arm", source="mock", model=fake_arm_model(), hosted=True
+    )
+    second = MockJointConnection(
+        instance_name="two/arm", source="mock", model=fake_arm_model(), hosted=True
+    )
+    coordinator = HostedArmCoordinator(instance_name="one/control", model=MOCK_MODEL)
+    other = HostedArmCoordinator(instance_name="three/control", model=MOCK_MODEL)
+    try:
+        # Two connections drive the same robot name in this process; the
+        # coordinator must pick its own instance, not whichever registered first.
+        assert coordinator._local_connection("mock") is first
+        assert first is not second
+        # A coordinator in no matching namespace must refuse, not guess.
+        with pytest.raises(ValueError, match="cannot tell which one belongs"):
+            other._local_connection("mock")
+    finally:
+        coordinator.stop()
+        other.stop()
+        first.stop()
+        second.stop()
 
 
 # End to end, with the connection and the coordinator in real worker processes.
