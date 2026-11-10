@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock, Thread
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -211,6 +211,8 @@ class UrdfManager(Module):
         except Exception:
             self.dispose()
             raise
+        self._stop_static_tf = Event()
+        self._static_tf_thread: Thread | None = None
         self._ready.set()
 
     def _own_frame_names(self) -> set[str]:
@@ -248,6 +250,20 @@ class UrdfManager(Module):
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
+        self._stop_static_tf.clear()
+        if self.config.publish_joint_tf and self.static_transforms():
+            self._static_tf_thread = Thread(
+                target=self._publish_static_tf, daemon=True, name="UrdfManagerStaticTf"
+            )
+            self._static_tf_thread.start()
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_static_tf.set()
+        thread, self._static_tf_thread = self._static_tf_thread, None
+        if thread is not None:
+            thread.join(timeout=2.0)
+        super().stop()
 
     @rpc
     def stop(self) -> None:
@@ -463,6 +479,29 @@ class UrdfManager(Module):
         found = Path(path)
         root = self._asset_root()
         return found if found.is_absolute() or not root else Path(root) / found
+
+    def static_transforms(self) -> list[Transform]:
+        """The edges that never move, so they need no joint state to be known."""
+        return [
+            Transform.from_matrix(
+                joint.parent_from_child(0.0),
+                frame_id=self.frame(joint.parent_link),
+                child_frame_id=self.frame(joint.child_link),
+                ts=time.time(),
+            )
+            for joint in self._joints.values()
+            if joint.type == "fixed"
+        ]
+
+    def _publish_static_tf(self) -> None:
+        """A description with no joint-state source still has to put its fixed edges on tf."""
+        period = 1.0 / self.config.unchanged_tf_hz
+        while not self._stop_static_tf.is_set():
+            with self._lock:
+                transforms = self._edges_to_send(self.static_transforms())
+            if transforms:
+                self.tfbuffer.publish(*transforms)
+            self._stop_static_tf.wait(period)
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
