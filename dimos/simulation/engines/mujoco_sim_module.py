@@ -51,7 +51,7 @@ from dimos.message_utils import (
     pointcloud,
     time as message_time,
 )
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -60,15 +60,15 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import (
+from dimos_messages.sensor_msgs.msg import (
     CameraInfo,
     Image,
     Imu,
     JointState,
     PointCloud2,
 )
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,

@@ -53,8 +53,8 @@ from dimos.imitation.dataprep.schema import (
 )
 from dimos.memory.store.mcap import McapStore
 from dimos.message_utils import image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store

@@ -35,7 +35,7 @@ import typer
 import yaml
 
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.protocol.pubsub.registry import subscribe_pubsub_uri
 
 _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg"})

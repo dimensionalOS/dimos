@@ -16,8 +16,8 @@
 import numpy as np
 
 from dimos.message_utils import geometry, pointcloud as pointcloud_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import TransformStamped, Twist, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.geometry_msgs.msg import TransformStamped, Twist, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.protocol.tf.tf import TFLookup

@@ -25,8 +25,8 @@ import numpy as np
 import rerun as rr
 
 from dimos.message_utils import pointcloud
-from dimos.messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.dimos_msgs.msg import LineSegments3D, LineSegments3DRegion, PointCloudRegion
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.visualization.rerun.bridge import RerunEntry, keyed_by, region_entity
 
 if TYPE_CHECKING:

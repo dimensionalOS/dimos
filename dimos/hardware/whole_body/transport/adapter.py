@@ -34,8 +34,8 @@ from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.sensor_msgs.msg import Imu, JointState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

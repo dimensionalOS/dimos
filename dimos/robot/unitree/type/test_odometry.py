@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 from dimos.robot.unitree.type.odometry import pose_from_message
 from dimos.utils.testing.replay import SensorReplay
 

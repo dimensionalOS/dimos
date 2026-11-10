@@ -43,9 +43,9 @@ from dimos.memory.tf import StreamTF, tf_stream
 from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.message_utils import pointcloud
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
 from dimos.navigation.global_planner.mls_planner.viz import graph_edges, graph_nodes, surface_points
 from dimos.navigation.global_planner.viz import (

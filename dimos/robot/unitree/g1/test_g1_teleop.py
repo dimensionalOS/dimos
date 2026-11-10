@@ -33,9 +33,9 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import String
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_TELEOP_MODEL,
     _G1GrootCoordinator,

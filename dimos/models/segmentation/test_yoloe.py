@@ -20,8 +20,8 @@ import numpy as np
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

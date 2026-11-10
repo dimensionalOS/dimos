@@ -16,8 +16,8 @@ import numpy as np
 
 from dimos.mapping.ray_tracing.viz import render_map_region, voxel_map_points
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import PointCloudRegion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import PointCloudRegion
+from dimos_messages.std_msgs.msg import Header
 
 
 def _region(points):

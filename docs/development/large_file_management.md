@@ -59,7 +59,7 @@ F: box "Return path" rad 5px fit wid 170% ht 170%
 
 ```python
 from dimos.utils.data import get_data
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 from dimos.message_utils import image as image_utils
 

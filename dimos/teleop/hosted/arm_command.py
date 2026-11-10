@@ -32,13 +32,13 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
     Twist,
     TwistStamped,
     Vector3,
 )
-from dimos.messages.std_msgs.msg import Float32, Header
+from dimos_messages.std_msgs.msg import Float32, Header
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.teleop.webxr.controller_types import Hand

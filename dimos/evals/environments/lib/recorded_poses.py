@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
-    from dimos.messages.geometry_msgs.msg import TransformStamped
+    from dimos_messages.geometry_msgs.msg import TransformStamped
 
 
 def last_body_transform(recording: Store, body: str) -> TransformStamped:

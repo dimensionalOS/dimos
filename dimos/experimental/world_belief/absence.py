@@ -22,7 +22,7 @@ from dimos.message_utils import (
     camera_info as camera_info_utils,
     geometry,
 )
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
@@ -30,8 +30,8 @@ from dimos.messages.geometry_msgs.msg import (
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.messages.geometry_msgs.msg import TransformStamped, Vector3
-    from dimos.messages.sensor_msgs.msg import CameraInfo
+    from dimos_messages.geometry_msgs.msg import TransformStamped, Vector3
+    from dimos_messages.sensor_msgs.msg import CameraInfo
 
 OUT_OF_VIEW = "out_of_view"
 PRESENT = "present"

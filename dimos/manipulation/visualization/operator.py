@@ -28,10 +28,10 @@ from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.message_utils import geometry
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from dimos.manipulation.manipulation_module import ManipulationModule

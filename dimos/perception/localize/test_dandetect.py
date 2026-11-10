@@ -23,9 +23,9 @@ import pytest
 
 from dimos.memory.store.memory import MemoryStore
 from dimos.message_utils import camera_info, image as image_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.models.embedding.base import Embedding
 from dimos.perception.localize import dandetect
 from dimos.perception.localize.dandetect import DanDetector, NoSegmenter, Option

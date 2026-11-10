@@ -56,10 +56,10 @@ from dimos.evals.constants import (
     RAW_TOPIC_PREFIX,
 )
 from dimos.message_utils import geometry, image as image_utils, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
-from dimos.messages.std_msgs.msg import Float32
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
+from dimos_messages.std_msgs.msg import Float32
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

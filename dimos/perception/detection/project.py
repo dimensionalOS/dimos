@@ -22,15 +22,15 @@ import numpy as np
 
 from dimos.memory.transform import Transformer
 from dimos.message_utils import geometry, image, time as message_time
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from dimos.memory.type.observation import Observation
-    from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+    from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.detection.type.detection3d.pointcloud_filters import PointCloudFilter
     from dimos.protocol.tf.tf import TFLookup

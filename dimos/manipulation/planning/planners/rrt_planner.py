@@ -44,7 +44,7 @@ from dimos.manipulation.planning.spec.models import (
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.message_utils import joint_state as joint_state_utils
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

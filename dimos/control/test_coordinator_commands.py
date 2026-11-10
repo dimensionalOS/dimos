@@ -44,8 +44,8 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 ARM_JOINTS = frozenset({"arm/joint1", "arm/joint2"})
 

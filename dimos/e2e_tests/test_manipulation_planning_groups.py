@@ -37,7 +37,7 @@ from dimos.manipulation.manipulation_spec import (
     ManipulationSnapshot,
     PlanningGroupInfo,
 )
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 
 pytestmark = [pytest.mark.self_hosted_large]
 

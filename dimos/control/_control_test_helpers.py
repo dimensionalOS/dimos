@@ -52,8 +52,8 @@ from dimos.control.task import (
 )
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 
 

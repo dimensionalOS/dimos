@@ -27,8 +27,8 @@ from dimos.control.tasks.planar_base_trajectory_task.planar_base_trajectory_task
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.message_utils import time as message_time, trajectory as trajectory_utils
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.utils.trigonometry import angle_diff
 
 JOINTS = ["base/vx", "base/vy", "base/wz"]

@@ -22,8 +22,8 @@ from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 
 def filter_joint_state_to_selected_joints(

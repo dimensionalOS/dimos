@@ -32,7 +32,7 @@ import numpy as np
 from dimos.control.components import make_humanoid_joints
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 

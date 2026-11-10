@@ -25,8 +25,8 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import image, pointcloud
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import Image, Imu, PointCloud2
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import Image, Imu, PointCloud2
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState

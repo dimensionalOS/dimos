@@ -59,7 +59,7 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
     JointTrajectoryGenerator,
 )
 from dimos.message_utils import trajectory as trajectory_utils
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 
 
 class CoordinatorClient:

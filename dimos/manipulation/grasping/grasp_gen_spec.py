@@ -15,8 +15,8 @@
 
 from typing import Protocol
 
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.spec.utils import Spec
 
 

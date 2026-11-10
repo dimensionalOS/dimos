@@ -22,12 +22,12 @@ from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     Quaternion,
 )
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, JointState
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, JointState
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
 

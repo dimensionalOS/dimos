@@ -14,7 +14,7 @@
 
 from dimos_cdrgen.registry import decode, encode
 
-from dimos.messages.dimos_msgs.msg import VideoStats
+from dimos_messages.dimos_msgs.msg import VideoStats
 from dimos.teleop.utils import video_stats
 
 

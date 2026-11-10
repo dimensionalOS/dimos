@@ -41,7 +41,7 @@ from dimos.memory.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory.type.observation import EmbeddedObservation, Observation
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.utils.human import human_bytes
 from dimos.utils.logging_config import setup_logger
 

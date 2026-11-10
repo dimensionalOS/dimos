@@ -34,7 +34,7 @@ from __future__ import annotations
 import math
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.geometry_msgs.msg import TransformStamped
 from dimos.protocol.tf.static_tf_publisher import (
     FrameSpec,
     StaticTfPublisher,

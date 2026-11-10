@@ -5,7 +5,7 @@
 import numpy as np
 
 from dimos.message_utils import mesh as mesh_utils, time as message_time
-from dimos.messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.dimos_msgs.msg import TriangleMesh
 
 
 def test_colours_recolour_every_chunk_once_the_range_moves() -> None:

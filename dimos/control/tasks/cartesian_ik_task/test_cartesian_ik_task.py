@@ -28,9 +28,9 @@ from dimos.control.tasks.cartesian_ik_task.cartesian_ik_task import (
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import RobotModel
 
 

@@ -3,8 +3,8 @@
 
 import numpy as np
 
-from dimos.messages.sensor_msgs.msg import CameraInfo
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import CameraInfo
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.deeprobotics.m20.camera import M20CameraRelay
 
 

@@ -36,8 +36,8 @@ import time
 import numpy as np
 
 from dimos.message_utils import time as message_time, trajectory as trajectory_utils
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 class JointTrajectoryGenerator:

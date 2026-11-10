@@ -234,8 +234,8 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
 
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.message_utils import pointcloud
-    from dimos.messages.nav_msgs.msg import Odometry
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.nav_msgs.msg import Odometry
+    from dimos_messages.sensor_msgs.msg import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
 
     store = SqliteStore(path=str(db_path), must_exist=True)

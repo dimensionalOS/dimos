@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
-    from dimos.messages.dimos_msgs.msg import LineSegments3D
+    from dimos_messages.dimos_msgs.msg import LineSegments3D
 
 
 def _scene_lines(scene: LineSegments3D) -> Archetype:

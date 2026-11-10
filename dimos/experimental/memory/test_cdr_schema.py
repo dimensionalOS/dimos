@@ -18,7 +18,7 @@ from dimos_cdrgen.registry import schema
 import pytest
 
 from dimos.experimental.memory.cdr_schema import cdr_name, recording_schema
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 
 def test_registry_owner_and_complete_schema_are_reused():

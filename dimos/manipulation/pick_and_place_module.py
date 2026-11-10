@@ -43,10 +43,10 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.message_utils import geometry, pointcloud as pointcloud_utils, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import JointState, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import JointState, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
 

@@ -43,8 +43,8 @@ from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     create_task,
 )
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
@@ -239,7 +239,7 @@ import math
 from dimos.control.tasks.rpp_path_follower_task.rpp_path_follower_task import (
     _with_tangent_headings,
 )
-from dimos.messages.nav_msgs.msg import Path
+from dimos_messages.nav_msgs.msg import Path
 
 
 def _ident_path(points):

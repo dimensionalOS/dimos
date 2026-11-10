@@ -7,8 +7,8 @@ import numpy as np
 from dimos.core.native_module import NativeModule
 from dimos.core.transport import LCMTransport
 from dimos.message_utils import image
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.simulation.habitat import connection, server
 from dimos.simulation.habitat.connection import HabitatConnection
 

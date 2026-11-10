@@ -33,7 +33,7 @@ from dimos.mapping.dim_slam.dim_slam import (
     ImuConfig,
     SourceConfig,
 )
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
 from dimos.robot.diy.alfred.blueprints._nav import _alfred_nav, _alfred_rerun_config
 from dimos.visualization.rerun.cdr import camera_pinhole, image_archetype
 from dimos.visualization.vis_module import vis_module

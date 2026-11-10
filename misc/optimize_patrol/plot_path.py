@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from dimos.core.transport import LCMTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 MIN_DIST = 0.05  # minimum distance (m) between recorded points
 STUCK_RADIUS = 0.6  # if robot stays within this radius (m) ...

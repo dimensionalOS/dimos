@@ -33,9 +33,9 @@ from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.message_utils import geometry, image, time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Float32
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, TwistStamped, Vector3
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Float32
 from dimos.teleop.webxr.controller_types import (
     BUTTON_ALIASES,
     Buttons,

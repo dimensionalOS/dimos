@@ -35,8 +35,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import VideoStats
-from dimos.messages.geometry_msgs.msg import TwistStamped
+from dimos_messages.dimos_msgs.msg import VideoStats
+from dimos_messages.geometry_msgs.msg import TwistStamped
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.command_codec import validate_cdr_payload
 from dimos.teleop.utils import video_stats

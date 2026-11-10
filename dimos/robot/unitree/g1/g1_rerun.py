@@ -20,8 +20,8 @@ from typing import Any
 
 import numpy as np
 
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 from dimos.visualization.rerun.cdr import occupancy_archetype
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,

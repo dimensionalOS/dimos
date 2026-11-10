@@ -21,7 +21,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.core.transport import ZenohTransport
-from dimos.messages.std_msgs.msg import String
+from dimos_messages.std_msgs.msg import String
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 

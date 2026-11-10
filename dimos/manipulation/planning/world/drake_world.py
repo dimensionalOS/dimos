@@ -41,8 +41,8 @@ from dimos.manipulation.planning.spec.validation import (
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -52,10 +52,10 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 from dimos.message_utils import trajectory as trajectory_utils
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import PoseStamped, Transform
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import PoseStamped, Transform
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 
 if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.models import (

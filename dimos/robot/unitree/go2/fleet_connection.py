@@ -37,7 +37,7 @@ else:
     from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from dimos.messages.geometry_msgs.msg import Twist
+    from dimos_messages.geometry_msgs.msg import Twist
 
 logger = setup_logger()
 

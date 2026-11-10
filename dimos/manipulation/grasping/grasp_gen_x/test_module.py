@@ -30,9 +30,9 @@ import pytest
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.manipulation.grasping.grasp_gen_x.module import GraspGenXConfig
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 
 def config(**overrides: Any) -> GraspGenXConfig:

@@ -35,7 +35,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -43,7 +43,7 @@ from dimos.messages.geometry_msgs.msg import (
     Twist,
     TwistStamped,
 )
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.std_msgs.msg import Bool
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
 from dimos.utils.generic import finite_number

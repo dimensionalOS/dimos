@@ -22,10 +22,10 @@ import numpy as np
 
 from dimos.memory.transform import Transformer
 from dimos.message_utils import pointcloud
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.global_planner.mls_planner.mls_planner import MLSPlanner
 from dimos.utils.logging_config import setup_logger
 

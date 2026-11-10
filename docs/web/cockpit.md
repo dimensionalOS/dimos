@@ -153,7 +153,7 @@ Which names a panel can use depends on the stream:
 A second camera, for example:
 
 ```python
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel, Row, Video, cockpit
 
 blueprint = cockpit(

@@ -22,7 +22,7 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,

@@ -34,8 +34,8 @@ from dimos.core.stream import In, Out
 from dimos.hardware.manipulators.registry import adapter_registry
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.testing.waiting import wait_until as wait_for_condition
 
 

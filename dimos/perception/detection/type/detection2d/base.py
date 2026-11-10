@@ -15,8 +15,8 @@
 from abc import abstractmethod
 from collections.abc import Callable
 
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.vision_msgs.msg import Detection2D as ROSDetection2D
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.vision_msgs.msg import Detection2D as ROSDetection2D
 from dimos.types.timestamped import Timestamped
 
 

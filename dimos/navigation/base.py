@@ -15,7 +15,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 
-from dimos.messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.geometry_msgs.msg import PoseStamped
 
 
 class NavigationState(Enum):

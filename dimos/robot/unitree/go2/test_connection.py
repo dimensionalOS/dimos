@@ -38,8 +38,8 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.global_config import GlobalConfig
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils import image, pointcloud, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -47,9 +47,9 @@ from dimos.messages.geometry_msgs.msg import (
     Twist,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.robot.unitree.go2 import connection as go2_conn

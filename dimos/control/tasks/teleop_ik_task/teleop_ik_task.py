@@ -38,8 +38,8 @@ from dimos.control.tasks.pose_target_ik import (
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
-from dimos.messages.std_msgs.msg import Header, UInt32
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.std_msgs.msg import Header, UInt32
 from dimos.protocol.service.spec import BaseConfig
 from dimos.teleop.webxr.controller_types import Buttons
 

@@ -4,9 +4,9 @@
 import numpy as np
 
 from dimos.message_utils import camera_info, image, pointcloud
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, PointStamped
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, PointStamped
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.diy.alfred.blueprints.vis_nav import _ir_image, _ir_pinhole
 from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_vis import (
     _global_map_colors,

@@ -27,8 +27,8 @@ from dimos.message_utils import (
     pointcloud as pointcloud_utils,
     time as message_time,
 )
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -37,9 +37,9 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.vision_msgs.msg import (
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.vision_msgs.msg import (
     BoundingBox3D,
     Detection3D as ROSDetection3D,
     Detection3DArray,

@@ -18,9 +18,9 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import PoseStamped, TransformStamped
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import PoseStamped, TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2 import connection
 from dimos.utils.data import get_data

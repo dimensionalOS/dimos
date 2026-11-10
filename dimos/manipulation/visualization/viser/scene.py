@@ -45,9 +45,9 @@ from dimos.manipulation.visualization.viser.runtime import (
     VISER_URDF_INSTALL_HINT,
 )
 from dimos.message_utils import geometry
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 

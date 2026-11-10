@@ -44,9 +44,9 @@ from dimos.control.tasks.holonomic_pose_follower_task.progress_reference import 
     ProgressPathReference,
 )
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Float32, Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Float32, Header
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff

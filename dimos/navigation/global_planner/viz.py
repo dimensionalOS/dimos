@@ -32,8 +32,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
-    from dimos.messages.geometry_msgs.msg import PointStamped
-    from dimos.messages.nav_msgs.msg import Path
+    from dimos_messages.geometry_msgs.msg import PointStamped
+    from dimos_messages.nav_msgs.msg import Path
     from dimos.visualization.rerun.bridge import VisualOverride
 
 # rerun is imported inside the renderers: it is heavy and only viewers load it.

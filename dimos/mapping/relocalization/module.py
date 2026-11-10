@@ -35,9 +35,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import resolve_named_path
 from dimos.utils.logging_config import setup_logger
 

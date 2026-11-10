@@ -42,7 +42,7 @@ from dimos.manipulation.planning.spec.joint_space import (
 )
 from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.message_utils import joint_state as joint_state_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -51,8 +51,8 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 

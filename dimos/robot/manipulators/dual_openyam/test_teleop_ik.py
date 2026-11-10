@@ -19,8 +19,8 @@ import pytest
 
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     _dual_openyam_webxr_tasks,
 )

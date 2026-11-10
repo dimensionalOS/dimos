@@ -216,7 +216,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.message_utils import image as image_utils, time as message_time
 
 class TickerCameraConfig(ModuleConfig):
@@ -377,7 +377,7 @@ LCM is UDP multicast. It’s very fast on a robot LAN, but it’s **best-effort*
 For local emission it autoconfigures system in a way in which it's more robust and faster then other more common protocols like ROS, DDS
 
 ```python
-from dimos.messages.geometry_msgs.msg import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 
 lcm = LCM()

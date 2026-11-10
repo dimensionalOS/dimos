@@ -59,9 +59,9 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 from dimos.web.codecs import EncodedPayload, encoder_definition
 

@@ -59,8 +59,8 @@ from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.message_utils import time as message_time
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 ARM_JOINTS = make_joints("arm", 3)
 ARM_POSITIONS = [0.1, 0.2, 0.3]

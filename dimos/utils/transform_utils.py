@@ -18,7 +18,7 @@ from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,

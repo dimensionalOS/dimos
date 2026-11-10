@@ -33,8 +33,8 @@ from dimos.control._control_test_helpers import FakeArm
 from dimos.control.connection.connection_module import ConnectionStatus
 from dimos.control.contract.limits import Limits
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.testing.cbor import roundtrip
 
 JOINT1 = "mock/joint1/position"

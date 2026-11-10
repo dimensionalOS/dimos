@@ -26,9 +26,9 @@ from reactivex.disposable import Disposable
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.message_utils.time import time_from_seconds
-from dimos.messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.web.cockpit import Map2D, Map3D, Row, cockpit
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.gen_costmap_fixtures import grid_msg

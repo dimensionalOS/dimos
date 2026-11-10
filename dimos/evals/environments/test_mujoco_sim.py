@@ -27,7 +27,7 @@ from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
 from dimos.message_utils import image as image_utils
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -36,9 +36,9 @@ from dimos.messages.geometry_msgs.msg import (
     TransformStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 def environment(**kwargs):

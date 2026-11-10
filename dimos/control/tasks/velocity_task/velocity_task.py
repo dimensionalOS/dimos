@@ -38,7 +38,7 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.messages.sensor_msgs.msg import JointState
+    from dimos_messages.sensor_msgs.msg import JointState
 
 logger = setup_logger()
 

@@ -29,9 +29,9 @@ from dimos_cdrgen.registry import encode
 import pytest
 
 from dimos.core.transport import LCMTransport, WebRTCTransport
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Twist, TwistStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig
 from dimos.robot.unitree.go2.connection import GO2Connection

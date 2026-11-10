@@ -37,7 +37,7 @@ def main(
     from dimos_cdrgen.registry import decode
     import rerun as rr
 
-    from dimos.messages.sensor_msgs.msg import PointCloud2
+    from dimos_messages.sensor_msgs.msg import PointCloud2
     from dimos.visualization.rerun.cdr import cloud_archetype
     from dimos.visualization.rerun.init import rerun_init
 

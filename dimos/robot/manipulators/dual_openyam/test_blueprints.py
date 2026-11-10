@@ -23,9 +23,9 @@ from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Float32
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Float32
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoTeleopCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (

@@ -29,11 +29,11 @@ from reactivex.disposable import Disposable
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.memory.codecs.legacy import decode_lcm
-from dimos.messages.geometry_msgs.msg import Twist
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohPubSubBase
 from dimos.simulation.habitat.constants import HABITAT_ROOT, HM3D_EXAMPLE_DATASET_CONFIG
 from dimos.simulation.habitat.server import HabitatProp

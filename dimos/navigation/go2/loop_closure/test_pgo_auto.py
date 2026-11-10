@@ -20,8 +20,8 @@ import pytest
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo_auto import (
     FRAME_BODY,
     FRAME_WORLD_CORRECTED,

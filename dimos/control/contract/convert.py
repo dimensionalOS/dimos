@@ -43,10 +43,10 @@ import numpy as np
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.limits import PD_INTERFACES, movable_joints
 from dimos.message_utils import time as message_time
-from dimos.messages.dimos_msgs.msg import MotorCommandArray
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.messages.sensor_msgs.msg import Imu, JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import MotorCommandArray
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos_messages.sensor_msgs.msg import Imu, JointState
+from dimos_messages.std_msgs.msg import Header
 
 if TYPE_CHECKING:
     from dimos.robot.assets.model import RobotModel

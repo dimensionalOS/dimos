@@ -239,8 +239,8 @@ from pathlib import Path
 os.environ["DIMOS_LOG_LEVEL"] = "WARNING"  # keep doc output stable
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.message_utils import time as message_time
 
 Path("/tmp/evals_intro.db").unlink(missing_ok=True)
@@ -413,7 +413,7 @@ ends when the agent finishes or `timeout_s` hits, the environment stops, and
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
 from dimos.evals.types import EvalCase, recording
-from dimos.messages.geometry_msgs.msg import Point
+from dimos_messages.geometry_msgs.msg import Point
 from dimos.message_utils import geometry
 
 BED = Point(-3.567, -1.332, 0.0)
