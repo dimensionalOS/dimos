@@ -49,41 +49,28 @@ def _manifest(**overrides) -> PolicyManifest:
     )
 
 
-def test_zero_action_holds_home():
-    decoder = ActionDecoder(_manifest())
-    command = decoder.decode(np.zeros(12, np.float32))
-    assert np.allclose(command, HOME)
-    assert np.allclose(decoder.previous_action, 0.0)
-
-
-def test_action_scale_and_low_pass_are_applied_in_order():
+def test_decode_applies_clip_scale_low_pass_and_slew_in_training_order():
+    """One step from home pins the whole order: clip, scale, low-pass, slew."""
     manifest = _manifest()
+
+    zero = ActionDecoder(manifest)
+    assert np.allclose(zero.decode(np.zeros(12, np.float32)), HOME)
+    assert np.allclose(zero.previous_action, 0.0)
+
     decoder = ActionDecoder(manifest)
-    command = decoder.decode(np.ones(12, np.float32))
-    desired_step = np.clip(
+    step = np.clip(
         manifest.action.low_pass_alpha * manifest.action.action_scale,
         -manifest.action.slew_limit,
         manifest.action.slew_limit,
     )
-    expected = np.asarray(HOME) + desired_step
-    assert np.allclose(command, expected, atol=1e-6)
-
-
-def test_saturation_clips_action_before_decoding():
-    manifest = _manifest()
-    decoder = ActionDecoder(manifest)
-    saturated = decoder.decode(np.full(12, 10.0, np.float32))
-    clipped = ActionDecoder(manifest).decode(np.full(12, 1.0, np.float32))
-    assert np.allclose(saturated, clipped)
-    assert np.allclose(decoder.previous_action, 1.0)
-
-
-def test_per_tick_slew_limit_caps_every_joint():
-    manifest = _manifest()
-    decoder = ActionDecoder(manifest)
-    previous = decoder.issued
     command = decoder.decode(np.ones(12, np.float32))
-    assert np.all(np.abs(command - previous) <= manifest.action.slew_limit + 1e-6)
+    assert np.allclose(command, np.asarray(HOME) + step, atol=1e-6)
+    assert np.all(np.abs(command - np.asarray(HOME)) <= manifest.action.slew_limit + 1e-6)
+
+    # The raw action is clipped to [-1, 1] before the scale is applied.
+    saturated = ActionDecoder(manifest)
+    assert np.allclose(saturated.decode(np.full(12, 10.0, np.float32)), command)
+    assert np.allclose(saturated.previous_action, 1.0)
 
 
 def test_desired_target_stays_inside_training_limits_with_margin():
@@ -100,30 +87,22 @@ def test_desired_target_stays_inside_training_limits_with_margin():
     )
 
 
-def test_reset_seeds_from_measured_pose_not_home():
-    manifest = _manifest()
-    decoder = ActionDecoder(manifest)
+def test_reset_seeds_from_measured_pose_and_rejects_out_of_limit():
+    decoder = ActionDecoder(_manifest())
     measured = np.asarray(HOME, np.float32) + 0.05
     decoder.reset(measured)
     assert np.allclose(decoder.issued, measured)
     assert np.allclose(decoder.previous_action, 0.0)
 
-
-def test_reset_rejects_measured_pose_outside_training_limits():
-    decoder = ActionDecoder(_manifest())
     invalid = np.asarray(HOME, np.float32)
     invalid[2] = -0.5
     with pytest.raises(PolicyContractError, match="outside the trained limits"):
         decoder.reset(invalid)
 
 
-def test_decode_rejects_non_finite_actions():
+def test_decode_rejects_non_finite_and_wrong_shape():
     decoder = ActionDecoder(_manifest())
     with pytest.raises(PolicyContractError, match="non-finite"):
         decoder.decode(np.full(12, np.nan, np.float32))
-
-
-def test_decode_rejects_wrong_shape():
-    decoder = ActionDecoder(_manifest())
     with pytest.raises(PolicyContractError, match="shape"):
         decoder.decode(np.zeros(11, np.float32))

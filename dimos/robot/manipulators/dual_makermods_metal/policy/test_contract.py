@@ -54,58 +54,62 @@ def _manifest(**overrides) -> PolicyManifest:
     )
 
 
-def test_manifest_round_trips_through_json(tmp_path):
+def test_manifest_round_trips_and_publishes_the_schema(tmp_path):
     manifest = _manifest()
     path = write_manifest(manifest, tmp_path / "manifest.json")
-    loaded = load_manifest(path)
-    assert loaded == manifest
+    assert json.loads(path.read_text())["schema"] == SCHEMA
+    assert load_manifest(path) == manifest
+    assert PolicyManifest.model_validate(manifest.model_dump(by_alias=True)) == manifest
 
 
-def test_manifest_rejects_unknown_schema():
-    payload = _manifest().model_dump(by_alias=True)
+def _unknown_schema(payload):
     payload["schema"] = "dimos.metal_arm_policy.manifest/0"
-    with pytest.raises(PolicyContractError, match="schema"):
-        validate_manifest(payload)
 
 
-def test_manifest_rejects_unknown_keys():
-    payload = _manifest().model_dump(by_alias=True)
+def _unknown_key(payload):
     payload["controller"] = {"gain": 1.0}
-    with pytest.raises(PolicyContractError, match="Extra inputs"):
-        validate_manifest(payload)
 
 
-def test_manifest_rejects_reordered_joints():
-    payload = _manifest().model_dump(by_alias=True)
+def _reordered_joints(payload):
     payload["observation"]["joint_order"] = list(reversed(JOINT_ORDER))
-    with pytest.raises(PolicyContractError, match="joint order"):
-        validate_manifest(payload)
 
 
-def test_manifest_rejects_foreign_frame_layout():
-    payload = _manifest().model_dump(by_alias=True)
+def _foreign_frame_layout(payload):
     payload["observation"]["frame_fields"] = [{"name": "q", "width": 576}]
-    with pytest.raises(PolicyContractError, match="frame layout"):
-        validate_manifest(payload)
 
 
-def test_manifest_rejects_home_outside_limits():
-    payload = _manifest().model_dump(by_alias=True)
+def _home_outside_limits(payload):
     payload["action"]["lower"] = [-0.1] * 12
     payload["action"]["upper"] = [0.1] * 12
-    with pytest.raises(PolicyContractError, match="home pose"):
-        validate_manifest(payload)
 
 
-def test_manifest_rejects_inconsistent_observation_dimensions():
-    payload = _manifest().model_dump(by_alias=True)
+def _inconsistent_obs_dim(payload):
     payload["model"]["obs_dim"] = 96
-    with pytest.raises(PolicyContractError, match="obs_dim"):
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (_unknown_schema, "schema"),
+        (_unknown_key, "Extra inputs"),
+        (_reordered_joints, "joint order"),
+        (_foreign_frame_layout, "frame layout"),
+        (_home_outside_limits, "home pose"),
+        (_inconsistent_obs_dim, "obs_dim"),
+    ],
+    ids=["schema", "unknown-key", "joint-order", "frame-layout", "home-limits", "obs-dim"],
+)
+def test_manifest_rejects_invalid_payloads(mutate, match):
+    payload = _manifest().model_dump(by_alias=True)
+    mutate(payload)
+    with pytest.raises(PolicyContractError, match=match):
         validate_manifest(payload)
 
 
-def test_artifact_hashes_are_verified(tmp_path):
-    manifest = _manifest()
+def test_artifacts_are_verified_before_inference(tmp_path):
+    with pytest.raises(PolicyContractError, match="not found"):
+        _manifest().verify_artifacts(tmp_path)
+
     onnx = tmp_path / "metal_arm_policy.onnx"
     normalizer = tmp_path / "metal_arm_policy.normalizer.npz"
     onnx.write_bytes(b"not-a-real-graph")
@@ -117,11 +121,6 @@ def test_artifact_hashes_are_verified(tmp_path):
     onnx.write_bytes(b"tampered")
     with pytest.raises(PolicyContractError, match="hash mismatch"):
         manifest.verify_artifacts(tmp_path)
-
-
-def test_missing_artifact_fails_before_inference(tmp_path):
-    with pytest.raises(PolicyContractError, match="not found"):
-        _manifest().verify_artifacts(tmp_path)
 
 
 def test_normalizer_rejects_non_finite_and_wrong_width(tmp_path):
@@ -150,11 +149,6 @@ def test_feedback_outside_training_limits_is_rejected():
         check_feedback(np.full(12, np.nan, np.float32), np.zeros(12, np.float32), manifest)
 
 
-def test_manifest_json_matches_published_schema_name(tmp_path):
-    path = write_manifest(_manifest(), tmp_path / "manifest.json")
-    assert json.loads(path.read_text())["schema"] == SCHEMA
-
-
 @pytest.mark.parametrize("missing", ["omitted", "null"], ids=["omitted", "null"])
 def test_manifest_requires_schema_on_every_validation_surface(tmp_path, missing):
     payload = _manifest().model_dump(by_alias=True)
@@ -170,13 +164,6 @@ def test_manifest_requires_schema_on_every_validation_surface(tmp_path, missing)
         load_manifest(path)
     with pytest.raises(ValidationError, match="schema"):
         PolicyManifest.model_validate(payload)
-
-
-def test_manifest_schema_round_trips_through_the_canonical_model():
-    manifest = _manifest()
-    payload = manifest.model_dump(by_alias=True)
-    assert payload["schema"] == SCHEMA
-    assert PolicyManifest.model_validate(payload) == manifest
 
 
 NON_FINITE_SCALARS = (

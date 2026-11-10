@@ -37,13 +37,11 @@ def _goal() -> DualHandGoal:
     )
 
 
-def test_quaternion_conversion_is_a_proper_rotation():
-    matrix = quaternion_xyzw_to_matrix((0.0, 0.0, 0.0, 2.0))
-    assert np.allclose(matrix, np.eye(3))
+def test_pose24_round_trips_a_proper_rotation():
+    # Non-unit quaternions are normalized; a quarter yaw is right-handed.
+    assert np.allclose(quaternion_xyzw_to_matrix((0.0, 0.0, 0.0, 2.0)), np.eye(3))
     assert np.allclose(QUARTER_Z @ np.array([1.0, 0.0, 0.0]), [0.0, 1.0, 0.0], atol=1e-9)
 
-
-def test_pose24_round_trip_preserves_both_hands():
     goal = DualHandGoal(
         HandGoal((0.4, -0.2, 0.3), tuple(map(tuple, QUARTER_Z))),
         HandGoal((0.4, 0.2, 0.3), IDENTITY),
@@ -54,14 +52,11 @@ def test_pose24_round_trip_preserves_both_hands():
     assert recovered.left.position == goal.left.position
 
 
-def test_pose24_rejects_non_rotation():
+def test_pose24_rejects_invalid_rotations_and_non_finite():
     pose = _goal().to_pose24()
     pose[6:15] = 0.5
     with pytest.raises(GoalError, match="orthonormal"):
         DualHandGoal.from_pose24(pose)
-
-
-def test_pose24_rejects_reflection_and_non_finite():
     pose = _goal().to_pose24()
     pose[6:15] = np.diag([1.0, 1.0, -1.0]).reshape(-1)
     with pytest.raises(GoalError, match="determinant"):
@@ -72,10 +67,14 @@ def test_pose24_rejects_reflection_and_non_finite():
         DualHandGoal.from_pose24(pose)
 
 
-def test_offset_moves_only_the_requested_hand():
+def test_offset_and_hand_goal_validation():
     moved = _goal().offset("left", (0.0, -0.1, 0.02))
     assert np.allclose(moved.left.position, (0.4, -0.3, 0.32))
     assert moved.right == _goal().right
+    with pytest.raises(GoalError, match="3-vector"):
+        HandGoal((0.0, 0.0), IDENTITY)
+    with pytest.raises(GoalError, match="3-vector"):
+        HandGoal((0.0, 0.0, np.inf), IDENTITY)
 
 
 def test_webxr_mapping_requires_engagement_then_tracks_relative_motion():
@@ -108,10 +107,3 @@ def test_webxr_rotation_is_relative_to_engagement_not_absolute():
     rotated = mapper.update(turned, turned)
     assert np.allclose(rotated.left.matrix, QUARTER_Z)
     assert np.allclose(rotated.right.matrix, QUARTER_Z)
-
-
-def test_hand_goal_rejects_bad_position():
-    with pytest.raises(GoalError, match="3-vector"):
-        HandGoal((0.0, 0.0), IDENTITY)
-    with pytest.raises(GoalError, match="3-vector"):
-        HandGoal((0.0, 0.0, np.inf), IDENTITY)

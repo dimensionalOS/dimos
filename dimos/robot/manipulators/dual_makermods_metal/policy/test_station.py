@@ -41,33 +41,28 @@ def test_station_defaults_are_the_trained_mounts_not_the_bench_example():
     assert geometry.left_mount_xyz[1] < 0.0 < geometry.right_mount_xyz[1]
     assert np.allclose(geometry.tcp_offset_xyz, (0.0, 0.0, 0.06))
 
-
-def test_rpy_zero_is_identity_and_yaw_is_right_handed():
+    # Mount rpy: zero is identity and a positive yaw is right-handed.
     assert np.allclose(rpy_to_matrix((0.0, 0.0, 0.0)), np.eye(3))
     assert np.allclose(rpy_to_matrix((0.0, 0.0, np.pi / 2)) @ [1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
 
 
-def test_home_pose_is_finite_and_left_right_are_distinct():
+def test_home_pose_is_finite_and_each_arm_moves_only_its_own_tcp():
     kinematics = MetalStationKinematics()
-    pose = kinematics.pose24(np.asarray(HOME, dtype=np.float64))
+    home = np.asarray(HOME, dtype=np.float64)
+    pose = kinematics.pose24(home)
     assert pose.shape == (24,)
     assert np.isfinite(pose).all()
     assert pose[1] < 0.0 < pose[4]  # left TCP at -Y, right TCP at +Y
     assert not np.allclose(pose[:6], 0.0)
 
-
-def test_each_arm_moves_its_own_tcp():
-    kinematics = MetalStationKinematics()
-    home = np.asarray(HOME, dtype=np.float64)
     posed = home.copy()
     posed[JOINT_ORDER.index("left_joint1")] += 0.3
-    before = kinematics.pose24(home)
     after = kinematics.pose24(posed)
-    assert not np.allclose(before[:3], after[:3])
-    assert np.allclose(before[3:6], after[3:6])
+    assert not np.allclose(pose[:3], after[:3])
+    assert np.allclose(pose[3:6], after[3:6])
     # Rotating the shoulder yaws the whole arm, so the left TCP frame turns too.
-    assert not np.allclose(before[6:15], after[6:15])
-    assert np.allclose(before[15:24], after[15:24])
+    assert not np.allclose(pose[6:15], after[6:15])
+    assert np.allclose(pose[15:24], after[15:24])
 
 
 def test_fk_rejects_wrong_shape_and_non_finite():
