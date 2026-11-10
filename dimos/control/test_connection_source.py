@@ -88,7 +88,9 @@ def arm(
         if model
         else {"joint1": interfaces},
     )
-    return ConnectionSource(declaration, commands, readings, timeout, zero_stiffness_joints=zero_stiffness_joints)
+    return ConnectionSource(
+        declaration, commands, readings, timeout, zero_stiffness_joints=zero_stiffness_joints
+    )
 
 
 def base(readings: Collection[str] = ("joint_state",)) -> ConnectionSource:
