@@ -15,11 +15,21 @@
 import re
 import subprocess
 import sys
+from typing import get_type_hints
 
 import pytest
 
 from dimos.core import dynamic_module
-from dimos.core.dynamic_module import PortSpec, make_module_class
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import resolve_module_refs
+from dimos.core.core import rpc
+from dimos.core.dynamic_module import (
+    MethodSpec,
+    PortSpec,
+    RefSpec,
+    make_module_class,
+    make_spec_class,
+)
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -42,10 +52,24 @@ class _MarkerB:
     pass
 
 
+class _Greeter(Module):
+    @rpc
+    def greet(self, name: str) -> str:
+        return f"hello {name}"
+
+
+class _OtherGreeter(Module):
+    @rpc
+    def greet(self, name: str) -> str:
+        return f"hi {name}"
+
+
 _PORTS = (
     PortSpec("sensor_ping", Vector3, "in"),
     PortSpec("operator_note", str, "out"),
 )
+_GREETER_SPEC = make_spec_class("GreeterRole", [MethodSpec("greet", ("name",))])
+_REFS = (RefSpec("greeter", _GREETER_SPEC),)
 
 
 def test_ports_in_any_order_give_identical_class():
@@ -115,6 +139,33 @@ def test_digest_collision_raises(monkeypatch):
         make_module_class(_BaseA, [PortSpec("collide_a", Vector3, "in")])
 
 
+def test_role_ref_resolves_to_matching_provider():
+    consumer = make_module_class(_BaseB, [], refs=_REFS)
+    resolved = resolve_module_refs(autoconnect(consumer.blueprint(), _Greeter.blueprint()))
+    assert resolved == {(consumer.name, "greeter"): _Greeter.name}
+
+
+def test_role_ref_without_provider_fails():
+    consumer = make_module_class(_BaseB, [], refs=_REFS)
+    with pytest.raises(Exception, match="No module met that spec"):
+        resolve_module_refs(autoconnect(consumer.blueprint()))
+
+
+def test_role_ref_with_two_providers_fails():
+    consumer = make_module_class(_BaseB, [], refs=_REFS)
+    blueprint = autoconnect(consumer.blueprint(), _Greeter.blueprint(), _OtherGreeter.blueprint())
+    with pytest.raises(Exception, match="Multiple modules met that spec"):
+        resolve_module_refs(blueprint)
+
+
+def test_cbor_roundtrip_keeps_refs():
+    generated = make_module_class(_BaseA, _PORTS, refs=_REFS)
+    assert generated is not make_module_class(_BaseA, _PORTS)
+    assert decode(encode(_GREETER_SPEC)) is _GREETER_SPEC
+    assert decode(encode(generated)) is generated
+    assert get_type_hints(generated)["greeter"] is _GREETER_SPEC
+
+
 _RELOAD_SCRIPT = """
 import importlib, sys
 from dimos.core.test_dynamic_module import _BaseA
@@ -122,13 +173,22 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.encode.cbor import decode, encode
 import dimos.core.dynamic_module as dynamic_module
 
-C = dynamic_module.make_module_class(_BaseA, [dynamic_module.PortSpec("reload_feed", Vector3, "in")])
+S = dynamic_module.make_spec_class("ReloadRole", [dynamic_module.MethodSpec("poke", ("x",))])
+C = dynamic_module.make_module_class(
+    _BaseA,
+    [dynamic_module.PortSpec("reload_feed", Vector3, "in")],
+    refs=[dynamic_module.RefSpec("reload_role", S)],
+)
 data = encode(C)
 mod = importlib.reload(sys.modules["dimos.core.dynamic_module"])
 assert getattr(mod, C.__name__) is C, "restart getattr lost the class"
 assert decode(data) is C, "pre-reload payload lost identity"
 assert decode(encode(C)) is C, "re-encode after reload failed"
-again = mod.make_module_class(_BaseA, [mod.PortSpec("reload_feed", Vector3, "in")])
+again = mod.make_module_class(
+    _BaseA,
+    [mod.PortSpec("reload_feed", Vector3, "in")],
+    refs=[mod.RefSpec("reload_role", mod.make_spec_class("ReloadRole", [mod.MethodSpec("poke", ("x",))]))],
+)
 assert again is C, "factory lost identity after reload"
 """
 
