@@ -49,7 +49,7 @@ _TARGET = re.compile(r"[A-Za-z_]\w*\.[A-Za-z_]\w*")
 
 
 class DefinitionError(ValueError):
-    """A machine file that fails to parse or check."""
+    """A state machine file that fails to parse or check."""
 
 
 def _parse_duration(value: JsonValue) -> float:
@@ -91,8 +91,8 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class MachineInfo(_Strict):
-    """The machine's name and its top-level initial state."""
+class StateMachineInfo(_Strict):
+    """The state machine's name and its top-level initial state."""
 
     name: str
     initial: str
@@ -193,9 +193,9 @@ class State(_Strict):
 
 
 class StateMachineDefinition(_Strict):
-    """A whole machine file."""
+    """A whole state machine file."""
 
-    machine: MachineInfo
+    state_machine: StateMachineInfo = Field(alias="machine")
     params: dict[str, JsonValue] = Field(default_factory=dict)
     vars: dict[str, JsonValue] = Field(default_factory=dict)
     inputs: dict[str, str] = Field(default_factory=dict)
@@ -308,7 +308,7 @@ def _problems(definition: StateMachineDefinition) -> list[str]:
             cycle = " -> ".join([state.name for state in chain] + [name])
             problems.append(f"state {name!r}: parent: cycle {cycle}")
 
-    initial = definition.machine.initial
+    initial = definition.state_machine.initial
     if initial not in by_name:
         problems.append(f"machine: initial: unknown state {initial!r}")
     elif by_name[initial].parent in by_name:
@@ -384,7 +384,7 @@ def _messages(error: ValidationError, raw: dict[str, JsonValue]) -> list[str]:
 
 
 def load_definition(path: Path | str) -> StateMachineDefinition:
-    """Load and check a machine file, raising DefinitionError on any problem."""
+    """Load and check a state machine file, raising DefinitionError on any problem."""
     with open(path, "rb") as file:
         try:
             raw = tomllib.load(file)

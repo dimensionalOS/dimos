@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CEL expressions over a machine's params, vars, inputs and event."""
+"""CEL expressions over a state machine's params, vars, inputs and event."""
 
 from __future__ import annotations
 
@@ -116,7 +116,7 @@ class Expression:
 
 
 class Environment:
-    """The names a machine's expressions can use, and a cache of compiled expressions."""
+    """The names a state machine's expressions can use, and a cache of compiled expressions."""
 
     def __init__(
         self,

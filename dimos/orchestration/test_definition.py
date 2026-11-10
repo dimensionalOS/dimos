@@ -27,14 +27,14 @@ from dimos.orchestration.definition import (
 )
 from dimos.orchestration.expressions import Environment
 
-MACHINES = Path(__file__).parent / "cases" / "machines"
+STATE_MACHINES = Path(__file__).parent / "cases" / "state_machines"
 
 
 def test_m20_patrol_loads() -> None:
-    definition = load_definition(MACHINES / "m20_patrol.toml")
+    definition = load_definition(STATE_MACHINES / "m20_patrol.toml")
     states = {state.name: state for state in definition.states}
 
-    assert definition.machine.initial == "active"
+    assert definition.state_machine.initial == "active"
     assert definition.vars == {"wp": 0, "tries": 0, "skips": 0, "dock_tries": 0, "why": ""}
     assert states["goto"].parent == "patrol"
     assert states["patrol"].initial == "goto"
@@ -66,7 +66,7 @@ def test_m20_patrol_loads() -> None:
 
 
 def test_m20_expressions_evaluate() -> None:
-    definition = load_definition(MACHINES / "m20_patrol.toml")
+    definition = load_definition(STATE_MACHINES / "m20_patrol.toml")
     env = Environment(definition.params, definition.vars, definition.inputs)
     scope = env.scope({**definition.vars, "wp": 2}, {}, {"reason": "blocked"})
 
