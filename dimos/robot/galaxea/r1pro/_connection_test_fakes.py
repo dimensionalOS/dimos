@@ -172,7 +172,7 @@ def install_fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
     fake = FakeRos()
 
     # Real module objects preserve lazy import behavior without a ROS installation.
-    modules = {
+    modules: dict[str, dict[str, Any]] = {
         "rclpy.qos": {
             "QoSProfile": types.SimpleNamespace,
             "ReliabilityPolicy": types.SimpleNamespace(BEST_EFFORT=1),
