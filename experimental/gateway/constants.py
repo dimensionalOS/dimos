@@ -78,7 +78,3 @@ ACCOUNT_CACHE_S = 20.0
 # cloud account: reading the login touches the OS keyring, which can stall; past this the request
 # answers with an error instead of never answering at all
 ACCOUNT_TIMEOUT_S = 15.0
-# blueprint view: a first `vite build` of the view's frontend (deno installs its npm packages) can take minutes
-VIEW_BUILD_TIMEOUT_S = 300.0
-# msgs.js: building the message decoders bundle, past this it answers 503
-MSGS_BUILD_TIMEOUT_S = 120.0

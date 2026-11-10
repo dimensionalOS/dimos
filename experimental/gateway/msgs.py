@@ -21,13 +21,11 @@ import importlib.metadata
 import inspect
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
 from typing import Any
 
-from experimental.gateway import constants
 from experimental.gateway.errors import ApiError
 
 if sys.version_info >= (3, 13):
@@ -57,19 +55,6 @@ def message_classes() -> list[tuple[str, type[Any]]]:
     return found
 
 
-def reason(type_name: str, error: str) -> str:
-    # TODO(core): lcm_codec should raise a typed error instead of the text this matches
-    own = re.search(r"declares its own LCM fingerprint (\w+) but the \S+ schema has (\w+)", error)
-    if own:
-        return (
-            f"hand-written, its own fingerprint {own.group(1)} (dimos_lcm.{type_name} is another "
-            f"message of the same name, fingerprint {own.group(2)})"
-        )
-    if "hand-written" in error or "has no generated" in error:
-        return f"hand-written, no dimos_lcm.{type_name} class"
-    return error
-
-
 def scan() -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     """Every message type's LCM schema, and why each type without one has none."""
     from dimos.web.lcm_codec import export_schema, schema_class_for
@@ -81,7 +66,7 @@ def scan() -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
         try:
             schema = export_schema(schema_class_for(cls))
         except ValueError as error:
-            missing[type_name] = f"{reason(type_name, str(error))} [{where}]"
+            missing[type_name] = f"{error} [{where}]"
             continue
         multi = [
             f"{struct}.{field}"
@@ -181,17 +166,12 @@ async def built_js(cache_dir: Path) -> Path:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        try:
-            _, err = await asyncio.wait_for(child.communicate(), constants.MSGS_BUILD_TIMEOUT_S)
-        except asyncio.TimeoutError:
-            child.kill()
-            await child.wait()
-            raise ApiError(
-                503, f"building msgs.js took over {constants.MSGS_BUILD_TIMEOUT_S:g} s"
-            ) from None
+        _, err = await child.communicate()
         if child.returncode != 0:
-            last = err.decode(errors="replace").strip().splitlines()[-1:] or ["no output"]
-            raise ApiError(503, f"building msgs.js failed: {last[0]}")
+            raise ApiError(
+                503,
+                f"building msgs.js failed: {err.decode(errors='replace').strip() or 'no output'}",
+            )
         for old in cache_dir.glob("msgs-*.js"):
             if old != target:
                 old.unlink(missing_ok=True)

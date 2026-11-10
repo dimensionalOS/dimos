@@ -17,18 +17,17 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import hashlib
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
-import threading
-import time
 
 from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge import relay_process
-from experimental.gateway import constants
 
 logger = setup_logger()
 
@@ -77,21 +76,30 @@ def ensure_built(app: Path) -> Path | None:
     # TODO(core): relay_process should expose its build helpers
     dist = app / "dist"
     if (app / "src").is_dir():
-        cancel = threading.Event()
-        deadline = time.monotonic() + constants.VIEW_BUILD_TIMEOUT_S
-        with relay_process._build_lock(app, deadline, cancel) as locked:
+        # the same lock file relay_process uses, held until another process's build ends however long it takes
+        with (app / ".build.lock").open("w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
             wanted = stamp(app)
-            if locked and relay_process._read_stamp(dist) != wanted:
+            if relay_process._read_stamp(dist) != wanted:
                 logger.warning("blueprint view is missing or stale; building it")
                 out = Path(tempfile.mkdtemp(prefix=".dist-new-", dir=app))
                 out.chmod(0o755)
                 try:
                     cmd = [deno_on_path(), "run", "--frozen", "-A", "npm:vite", "build"]
-                    if relay_process._run_build(
-                        [*cmd, "--outDir", str(out)], app, deadline, cancel
-                    ):
+                    done = subprocess.run(
+                        [*cmd, "--outDir", str(out)],
+                        cwd=app,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                    )
+                    if done.returncode == 0:
                         (out / relay_process._STAMP_NAME).write_text(wanted)
                         relay_process._swap_dist(app, out)
+                    else:
+                        output = done.stdout.decode(errors="replace").strip()
+                        logger.error(
+                            f"blueprint view build failed (exit {done.returncode}):\n{output}"
+                        )
                 finally:
                     shutil.rmtree(out, ignore_errors=True)
     return dist if (dist / "index.html").is_file() else None
