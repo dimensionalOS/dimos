@@ -45,6 +45,7 @@ from dimos.robot.galaxea.r1pro.connection import (
 from dimos.robot.galaxea.r1pro.test_connection import (
     Rig as ConnectionRig,
     fake_ros as fake_ros,
+    feedback_clock as feedback_clock,
     rig as rig,
 )
 from dimos.utils.testing.waiting import wait_until
@@ -79,7 +80,7 @@ GRIPPER_TASKS = [
 
 @pytest.fixture
 def system(
-    request: pytest.FixtureRequest, rig: Callable[..., ConnectionRig], mocker: Any
+    request: pytest.FixtureRequest, rig: Callable[..., ConnectionRig], mocker: Any, feedback_clock
 ) -> Iterator[tuple[Any, ...]]:
     """One real R1Pro connection, the shipped tasks, and a hand-stepped coordinator."""
     mocker.patch.object(TickLoop, "start", lambda self: self._stop_event.clear())
@@ -150,6 +151,7 @@ def test_grippers_are_command_only_contract_joints_and_stay_out_of_planning() ->
 @pytest.mark.parametrize("system", [{"tasks": GRIPPER_TASKS}], indirect=True)
 def test_a_gripper_task_drives_only_its_own_jaw_through_the_whole_chain(
     system: tuple[Any, ...],
+    feedback_clock,
 ) -> None:
     from dimos.robot.galaxea.r1pro._connection_test_fakes import gripper_feedback
 
@@ -210,6 +212,7 @@ def test_a_gripper_task_drives_only_its_own_jaw_through_the_whole_chain(
 )
 def test_a_jaw_whose_feedback_drops_loses_its_target_and_is_not_replayed(
     system: tuple[Any, ...],
+    feedback_clock,
 ) -> None:
     from dimos.robot.galaxea.r1pro._connection_test_fakes import gripper_feedback
 
@@ -238,15 +241,18 @@ def test_a_jaw_whose_feedback_drops_loses_its_target_and_is_not_replayed(
     )
     sent = r.fake.control.sent_to("/motion_target/target_position_gripper_left")
     assert len(sent) == 1
-    deadline = time.monotonic() + 0.5
-    while time.monotonic() < deadline:
-        tick()
-        time.sleep(0.01)
+    feedback_clock[0] += 0.2
+    tick()
     r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
-    deadline = time.monotonic() + 0.3
-    while time.monotonic() < deadline:
-        tick()
-        time.sleep(0.01)
+    wait_until(
+        lambda: (
+            tick(),
+            coordinator.task_invoke("r1pro_left_gripper", "get_normalized", {})
+            == [pytest.approx(0.2)],
+        )[1],
+        timeout=5.0,
+        interval=0.01,
+    )
     assert len(r.fake.control.sent_to("/motion_target/target_position_gripper_left")) == 1
     assert coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
     deadline = time.monotonic() + 5.0

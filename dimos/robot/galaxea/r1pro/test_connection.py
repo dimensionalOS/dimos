@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import math
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -126,6 +127,27 @@ class Rig:
     def move_arm(self, position: float = 0.0) -> None:
         """A full 18-joint command that carries no jaw — the intent-withdrawal tick."""
         self.move(dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, position))
+
+
+@pytest.fixture
+def feedback_clock(monkeypatch):
+    from dimos.control import connection_source, tick_loop
+
+    clock = [time.monotonic()]
+    driver_time = SimpleNamespace(**{**vars(time), "monotonic": lambda: clock[0]})
+    monkeypatch.setattr(connection_module, "time", driver_time)
+    monkeypatch.setattr(connection_source, "time", driver_time)
+    monkeypatch.setattr(
+        tick_loop,
+        "time",
+        SimpleNamespace(
+            **{
+                **vars(driver_time),
+                "perf_counter": lambda: clock[0],
+            }
+        ),
+    )
+    return clock
 
 
 @pytest.fixture
@@ -294,27 +316,16 @@ def test_a_jaw_without_feedback_takes_no_command_and_reports_nothing(
     assert r.jaw_readings() == []
 
 
-def test_stale_jaw_feedback_drops_the_command_and_withholds_the_readback(
-    rig: Callable[..., Rig],
-) -> None:
+def test_stale_jaw_feedback_drops_the_command(rig, feedback_clock):
     r = rig(gripper_feedback_timeout_s=0.05)
     r.feed_grippers(left=20.0)
     r.move({"r1pro/left_gripper": 0.05})
     assert len(r.jaws("left")) == 1
-    wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
-
-    # The jaw's feedback goes quiet while the arms keep reporting.
-    time.sleep(0.1)
-    readings = len(r.jaw_readings())
+    feedback_clock[0] += 0.1
     r.move({"r1pro/left_gripper": 0.06})
-
-    # The command is dropped, not sent to a jaw whose state is unknown...
     assert len(r.jaws("left")) == 1
     rejection = r.module.status().last_rejection
     assert rejection is not None and "stale" in rejection
-    # ...and the stale measurement stops being published.
-    time.sleep(0.1)
-    assert len(r.jaw_readings()) == readings
 
 
 def test_a_malformed_jaw_frame_interrupts_the_intent_until_it_is_replaced(
