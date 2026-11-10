@@ -52,6 +52,7 @@ _EXCLUDED_MODULE_NAMES = {
     "DamiaoConnection",
     "SimWorld",
     "CollectionModule",  # Requires profile-owned ports; compose with collect(profile=...).
+    "StateMachineModule",  # Requires a machine file; compose with state_machine(path).
 }
 
 

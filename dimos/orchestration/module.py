@@ -27,13 +27,14 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import time
 from typing import TypeVar
 import uuid
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 import numpy as np
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, PrivateAttr, ValidationError, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
 
@@ -81,6 +82,11 @@ from dimos.orchestration.engine import (
 from dimos.orchestration.expressions import kind_of
 from dimos.utils.logging_config import setup_logger
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 logger = setup_logger()
 
 _T = TypeVar("_T")
@@ -98,13 +104,24 @@ _FINAL_STATUS = {
 
 
 class StateMachineConfig(ModuleConfig):
-    definition: StateMachineDefinition
+    definition: dict[str, JsonValue]
     state_file: Path | None = None
     params: dict[str, JsonValue] = Field(default_factory=dict)
 
+    _parsed: StateMachineDefinition = PrivateAttr()
+
+    @property
+    def parsed(self) -> StateMachineDefinition:
+        """The definition parsed from the raw table."""
+        return self._parsed
+
     @model_validator(mode="after")
-    def _check_params(self) -> Self:
-        defaults = self.definition.params
+    def _check(self) -> Self:
+        try:
+            self._parsed = StateMachineDefinition.model_validate(self.definition)
+        except ValidationError as error:
+            raise ValueError(str(error)) from error
+        defaults = self._parsed.params
         for name, value in self.params.items():
             if name not in defaults:
                 raise ValueError(f"params: unknown param {name!r}")
@@ -133,7 +150,7 @@ class StateMachineModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        definition = self.config.definition
+        definition = self.config.parsed
         params = {**definition.params, **self.config.params}
         self._engine = Engine(
             definition.model_copy(update={"params": params}),
@@ -159,7 +176,7 @@ class StateMachineModule(Module):
     @rpc
     def send_event(self, name: str, data: dict[str, str | float | bool] | None = None) -> str:
         """Send a declared external event and return the status after it is handled."""
-        events = self.config.definition.events
+        events = self.config.parsed.events
         if name not in events:
             return f"Unknown event {name!r}. Declared events: {', '.join(events) or 'none'}"
         event = ExternalEvent(name, dict(data or {}))
@@ -191,7 +208,7 @@ class StateMachineModule(Module):
         return self._loop
 
     def _state_file(self) -> Path:
-        name = self.config.definition.state_machine.name
+        name = self.config.parsed.state_machine.name
         return self.config.state_file or MACHINES_DIR / f"{name}.json"
 
     async def _begin(self) -> None:
@@ -444,17 +461,19 @@ def _ports(definition: StateMachineDefinition) -> list[PortSpec]:
 def state_machine(path: Path | str) -> Blueprint:
     """Load a state machine file and return a blueprint that runs it."""
     definition = load_definition(path)
+    with open(path, "rb") as file:
+        raw = tomllib.load(file)
     try:
         cls = make_module_class(StateMachineModule, _ports(definition), refs=_refs(definition))
     except (DefinitionError, TypeError, ValueError) as error:
         raise DefinitionError(f"{path}: {error}") from error
-    return cls.blueprint(definition=definition, instance_name=definition.state_machine.name)
+    return cls.blueprint(definition=raw, instance_name=definition.state_machine.name)
 
 
 _ACTION_RESULT = StreamRef("action_result", GoalStatus, "out")
 
 
-def check_state_machines(blueprint: Blueprint) -> Blueprint:
+def check_state_machines(blueprint: Blueprint) -> None:
     """Raise DefinitionError if a state machine's args or actions don't fit the modules serving its roles."""
     resolved = resolve_module_refs(blueprint)
     atoms = {atom.name: atom for atom in blueprint.active_blueprints}
@@ -462,7 +481,8 @@ def check_state_machines(blueprint: Blueprint) -> Blueprint:
     for atom in atoms.values():
         if not issubclass(atom.module, StateMachineModule):
             continue
-        for use in _role_uses(atom.kwargs["definition"]):
+        definition = StateMachineDefinition.model_validate(atom.kwargs["definition"])
+        for use in _role_uses(definition):
             provider = atoms.get(resolved.get((atom.name, use.role), ""))
             if provider is None:
                 continue
@@ -478,4 +498,3 @@ def check_state_machines(blueprint: Blueprint) -> Blueprint:
                 )
     if problems:
         raise DefinitionError("\n".join(problems))
-    return blueprint

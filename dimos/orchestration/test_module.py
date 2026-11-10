@@ -25,6 +25,7 @@ pytest.importorskip("cel_expr_python")
 
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -33,6 +34,7 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.String import String
 from dimos.orchestration.definition import DefinitionError
 from dimos.orchestration.module import (
+    StateMachineConfig,
     StateMachineModule,
     check_state_machines,
     state_machine,
@@ -99,6 +101,13 @@ def test_blueprint_has_file_ports_and_role_refs(tmp_path: Path) -> None:
     }
 
 
+def test_definition_survives_the_blueprint_config_parser(tmp_path: Path) -> None:
+    blueprint = state_machine(_write(tmp_path, "toy"))
+    kwargs = BlueprintConfigParser(blueprint).parse().module_kwargs("toy")
+    config = StateMachineConfig(**kwargs)
+    assert config.parsed.states[1].do is not None
+
+
 def test_unknown_message_type_fails_at_load(tmp_path: Path) -> None:
     with pytest.raises(DefinitionError, match="unknown message type 'std_msgs.Nope'"):
         state_machine(_write(tmp_path, "toy", input_type="std_msgs.Nope"))
@@ -141,8 +150,7 @@ class _ResultlessWorker(Module):
 
 
 def test_check_accepts_a_fitting_provider(tmp_path: Path) -> None:
-    blueprint = autoconnect(state_machine(_write(tmp_path, "toy")), _Worker.blueprint())
-    assert check_state_machines(blueprint) is blueprint
+    check_state_machines(autoconnect(state_machine(_write(tmp_path, "toy")), _Worker.blueprint()))
 
 
 def test_check_rejects_a_wrong_arg_name(tmp_path: Path) -> None:

@@ -1,0 +1,96 @@
+[machine]
+name = "demo_state_machine"
+initial = "running"
+
+[params]
+threshold = 5
+step = 3
+retries = 2
+
+[vars]
+total = 0
+rounds = 0
+tries = 0
+why = ""
+
+[inputs]
+count = "std_msgs.Int32"
+
+[outputs]
+notice = "std_msgs.String"
+
+[events]
+pause = {}
+resume = {}
+
+[[state]]
+name = "running"
+initial = "A"
+
+[[state.transition]]
+event = "pause"
+to = "paused"
+
+[[state.transition]]
+event = "do.failed"
+to = "given_up"
+set = { why = "event.reason" }
+
+[[state]]
+name = "A"
+parent = "running"
+
+[[state.transition]]
+when = "inputs.count.data >= params.threshold"
+to = "B"
+
+[[state]]
+name = "B"
+parent = "running"
+do = { call = "worker.add", args = { a = "vars.total", b = "params.step" }, timeout = "5s" }
+
+[[state.transition]]
+event = "do.succeeded"
+to = "C"
+set = { total = "event.result", tries = 0 }
+
+[[state]]
+name = "C"
+parent = "running"
+do = { action = "worker.count_to", args = { target = "vars.total" }, timeout = "10s" }
+
+[[state.transition]]
+event = "do.succeeded"
+to = "D"
+set = { rounds = "vars.rounds + 1" }
+
+[[state.transition]]
+event = "do.failed"
+if = "vars.tries < params.retries"
+to = "C"
+set = { tries = "vars.tries + 1" }
+
+[[state]]
+name = "D"
+parent = "running"
+entry = [{ publish = "notice", value = "'round ' + string(vars.rounds) + ', total ' + string(vars.total)" }]
+
+[[state.transition]]
+after = "3s"
+to = "A"
+
+[[state]]
+name = "paused"
+entry = [{ publish = "notice", value = "'paused'" }]
+
+[[state.transition]]
+event = "resume"
+to = "running"
+
+[[state]]
+name = "given_up"
+entry = [{ publish = "notice", value = "'gave up: ' + vars.why" }]
+
+[[state.transition]]
+event = "resume"
+to = "running"
