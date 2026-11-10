@@ -47,7 +47,7 @@ from dimos.robot.manipulators.piper.config import (
     piper_model,
 )
 from dimos.robot.manipulators.piper.connection import PiperConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _piper_keyboard_hw = make_piper_hardware(
@@ -180,7 +180,7 @@ _ARM_REMAPS: list[tuple[type[ModuleBase], str, str]] = [
 
 def _teleop() -> Blueprint:
     """Jog a Piper's end and open and close its gripper from the Desktop
-    Manipulation app, through ``PiperConnection``. ``UrdfManager`` serves the
+    Manipulation app, through ``PiperConnection``. ``UsdManager`` serves the
     Piper's URDF and puts its joints on tf, so the app can draw it.
 
     Wire it up with ``.remappings(_ARM_REMAPS)``. The CAN port is given at run
@@ -221,7 +221,7 @@ def _teleop() -> Blueprint:
             ],
         ),
         PiperConnection.blueprint(gripper=True),
-        UrdfManager.blueprint(model=model),
+        UsdManager.blueprint(model=model),
     )
 
 
