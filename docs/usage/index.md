@@ -6,6 +6,7 @@ This page explains general dimOS concepts that you'd use to build applications: 
 
 - [Modules](/docs/usage/modules.md): The primary units of deployment in dimOS, modules run in parallel and are python classes.
 - [Streams](/docs/usage/data_streams/index.md): How modules communicate, a Pub / Sub system.
+- [CDR messages](/docs/usage/cdr.md): generated message values, CDR encoding, transport selection, recording/replay and viewer APIs.
 - [Blueprints](/docs/usage/blueprints.md): a way to group modules together and define their connections to each other.
 - [Distributed runs](/docs/usage/distributed/index.md): one blueprint across several machines.
 - [RPC](/docs/usage/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).

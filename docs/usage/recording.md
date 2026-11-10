@@ -33,7 +33,8 @@ The Rust engine records exact `LCMTransport` and `ZenohTransport` streams. It
 rejects DDS, ROS, WebRTC, untyped, JPEG-transport, mixed LCM/Zenoh, and
 other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
-those transports. Payloads must also be dimOS LCM message types.
+those transports. Legacy stream payloads must be dimOS LCM message types;
+generated messages are recorded as CDR (see [CDR recordings](#cdr-recordings)).
 
 The engine automatically prepares `dimos-memory-recorder` through the shared
 [native source workflow](/docs/usage/native_modules.md#native-sources-in-pip-installations).
@@ -49,6 +50,42 @@ Preparation, configuration, and subscription failures stop startup. If it exits 
 the error is logged and the rest of `dimos run` continues. Normal shutdown sends
 SIGTERM and lets the existing native module runtime flush the artifact. There is
 no automatic fallback to Python.
+
+### CDR recordings
+
+Generated messages are recorded through the same Rust engine. The recorder
+stores the original CDR bytes and the message's ROS 2 schema (including nested
+definitions) in MCAP, so the file is self-describing:
+
+- channel encoding is `cdr`;
+- the schema is the ROS 2 definition, for example
+  `geometry_msgs/msg/PoseStamped` with `ros2msg` encoding;
+- each payload is an XCDR1 encapsulation (`00 01 00 00` for little-endian);
+- observation timestamps use reception time; `header.stamp` stays in the
+  payload.
+
+Read a CDR recording with `CdrMcapStore`:
+
+```python
+from dimos.memory.store.cdr_mcap import CdrMcapStore
+
+with CdrMcapStore(path="recordings/<run-id>/memory.mcap") as store:
+    print(store.list_streams())
+    for observation in store.stream("pose"):
+        print(observation.ts, observation.data)
+```
+
+Replay republishes the recorded streams with their recorded type names:
+
+```bash
+dimos --replay-db recordings/<run-id>/memory.mcap run replay
+```
+
+Use `--zenoh-domain` to isolate the replay from other local processes. Legacy
+LCM recordings stay readable through the legacy `McapStore`; the CDR store is
+additive and selected by the file's channel encoding. The complete runnable
+walkthrough is [`examples/cdr-recording`](/examples/cdr-recording/README.md);
+API details are in [CDR messages](/docs/usage/cdr.md).
 
 ## Choosing streams
 
