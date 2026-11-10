@@ -14,6 +14,7 @@
 
 
 from collections.abc import Iterable, Mapping, Sequence
+import os
 from pathlib import Path
 import re
 from threading import Lock
@@ -30,12 +31,33 @@ from dimos.sim2.mujoco.world import compile_world
 from dimos.sim2.spec import Simulated, SimulatedRobot
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import ACT, REFUSED, WorldWriter
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.robot.assets.model import UsdModel
 
+logger = setup_logger()
+
 _SINGLE_DOF = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
 _MOVED = 1e-6
+# Where to write the world before it is stepped, when something asks. Off unless set, because
+# a dump of this scene is a 150 MB file.
+_DUMP = "DIMOS_WORLD_DUMP"
+
+
+def _dump_asked_for(spec: mujoco.MjSpec, model: mujoco.MjModel) -> None:
+    """Serialize the world at the one point it is complete and nothing has stepped yet.
+
+    Two builds of the same room that behave differently differ in the compiled model, and the
+    model is the hardest thing to read off a running sim. `$DIMOS_WORLD_DUMP=<dir>` writes it
+    here instead, where it can be diffed against the same dump from another revision.
+    """
+    into = os.environ.get(_DUMP)
+    if not into:
+        return
+    from dimos.sim2.mujoco.dump import dump_world
+
+    logger.info(f"sim2: wrote the world to {dump_world(spec, model, Path(into))}")
 
 
 def _xyzw(wxyz: np.ndarray) -> list[float]:
@@ -56,7 +78,9 @@ class MujocoBackend:
         self._max_burst_seconds = max_burst_seconds
         self._scene_layer = usd_layer(usd)
         self._robots = {d.robot_id: d for d in simulated if isinstance(d, SimulatedRobot)}
-        self.model = compile_world(self._scene_layer, simulated).compile()
+        spec = compile_world(self._scene_layer, simulated)
+        self.model = spec.compile()
+        _dump_asked_for(spec, self.model)
         self._controllers = [r for r in self._robots.values() if r.control_period is not None]
         self._next_ticks = [0.0] * len(self._controllers)
         self._acted = {robot.robot_id: 0 for robot in self._controllers}
@@ -125,6 +149,10 @@ class MujocoBackend:
             for action in actions:
                 if isinstance(action, JointCommand) and action.entity in self._acted:
                     self._acted[action.entity] += 1
+
+    def restart_clock(self) -> None:
+        """Start counting real time from now, so a wait before the first step costs no sim time."""
+        self._rebase = True
 
     def _due(self) -> tuple[str, ...]:
         now = self.data.time
