@@ -14,6 +14,7 @@
 
 """Every retained entry uses one connection and one consistent deployed schema."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -210,6 +211,14 @@ def test_shipped_metal_blueprint_runs_the_direct_cycle_in_real_workers(tmp_path)
     )
     environment["DIMOS_FAKE_DAMIAO_LOG"] = str(tmp_path / "fake-native.jsonl")
     environment["DIMOS_FAKE_DAMIAO_FAIL"] = str(tmp_path / "fake-native-fail")
+    # A private discovery bus: this machine also may run an unrelated stack
+    # that serves a ControlCoordinator, and sharing a bus would race its
+    # replies against this run's. The group is unique per test invocation so
+    # parallel runs stay apart too.
+    digest = hashlib.sha256(str(tmp_path).encode()).digest()
+    environment["DIMOS_FAKE_DAMIAO_SCOUT"] = (
+        f"239.255.{digest[0] % 250}.{digest[1] % 250}:{27000 + digest[2] % 1000}"
+    )
 
     completed = subprocess.run(
         [sys.executable, "-m", "dimos.robot.manipulators.damiao._shipped_worker_check"],
@@ -233,7 +242,10 @@ def test_shipped_metal_blueprint_runs_the_direct_cycle_in_real_workers(tmp_path)
     assert evidence["status_connected"] and evidence["last_command_time"] is not None
     assert evidence["last_error"] is None
     assert evidence["deadman_fired_then_cleared"]
-    assert evidence["fault"].startswith("feedback failed:"), evidence["fault"]
+    assert (
+        "feedback failed: RuntimeError: fake Damiao feedback failure requested by the test"
+        in (evidence["fault"])
+    )
     assert evidence["workers_exited"]
 
 

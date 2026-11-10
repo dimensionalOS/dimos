@@ -547,8 +547,12 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     # again with one global group would put a module in two groups and fail
     # validation, and would also merge independently deployed robots.
     already_grouped = {name for group in all_process_groups for name in group}
-    ungrouped_coordinators = [atom for atom in hosted_coordinators if atom.name not in already_grouped]
-    ungrouped_connections = [atom for atom in direct_connections if atom.name not in already_grouped]
+    ungrouped_coordinators = [
+        atom for atom in hosted_coordinators if atom.name not in already_grouped
+    ]
+    ungrouped_connections = [
+        atom for atom in direct_connections if atom.name not in already_grouped
+    ]
     if ungrouped_coordinators and ungrouped_connections:
         implied = tuple(atom.name for atom in (*ungrouped_coordinators, *ungrouped_connections))
         if (

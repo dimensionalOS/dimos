@@ -527,9 +527,7 @@ class ControlCoordinator(Module):
             return candidates[0] if candidates else None
         namespace = self._module_namespace()
         matches = [
-            candidate
-            for candidate in candidates
-            if self._module_namespace(candidate) == namespace
+            candidate for candidate in candidates if self._module_namespace(candidate) == namespace
         ]
         if len(matches) == 1:
             return matches[0]

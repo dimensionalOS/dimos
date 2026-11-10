@@ -34,6 +34,7 @@ import time
 from typing import Any
 
 import fake_native
+
 from dimos.control.contract.limits import movable_joints
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -47,6 +48,10 @@ from dimos.utils.testing.waiting import wait_until
 
 EVIDENCE_PREFIX = "EVIDENCE:"
 TARGET_STEP = 0.02
+#: Environment carrying the private multicast group this run's RPC bus joins.
+#: Without it the run can share a bus with an unrelated stack on the machine
+#: that also serves a ``ControlCoordinator``, and calls race between the two.
+SCOUT_ENV = "DIMOS_FAKE_DAMIAO_SCOUT"
 
 
 def _alive(pid: int) -> bool:
@@ -71,7 +76,11 @@ def _pairing(
     events: list[dict[str, Any]], start: float, end: float
 ) -> tuple[bool, list[dict[str, Any]], list[tuple[int, int, str]]]:
     """Whether every write in the window follows a read of its own cycle/thread."""
-    window = [event for event in events if start <= event["time"] <= end and event["event"] in ("read", "write")]
+    window = [
+        event
+        for event in events
+        if start <= event["time"] <= end and event["event"] in ("read", "write")
+    ]
     pairs: list[dict[str, Any]] = []
     writers: set[tuple[int, int, str]] = set()
     ok = True
@@ -112,7 +121,13 @@ def main() -> int:
     )
 
     blueprint = metal_control()
-    parsed = BlueprintConfigParser(blueprint).parse(["--can-port", "fake-test-can"], environ={})
+    scout_addr = os.environ.get(SCOUT_ENV)
+    assert scout_addr, f"{SCOUT_ENV} must name a private multicast group for this run"
+    parsed = BlueprintConfigParser(blueprint).parse(
+        ["--can-port", "fake-test-can"],
+        environ={},
+        global_overrides={"zenoh_scout_addr": scout_addr},
+    )
     built = ModuleCoordinator.build(blueprint, parsed)
     manager: Any = built._managers["python"]
     pids = [worker.pid for worker in manager.workers if worker.pid is not None]
@@ -131,15 +146,30 @@ def main() -> int:
         coordinator = built.get_instance(ControlCoordinator)
         connection = built.get_instance(MetalConnection)
         joints = [f"arm/{name}" for name in MetalConnection.robot.arm_joint_names]
-        wait_until(
-            lambda: all(joint in coordinator.get_joint_positions() for joint in joints),
-            timeout=15.0,
-        )
-        start_positions = coordinator.get_joint_positions()
         limits = {
             joint.name: (joint.lower, joint.upper)
             for joint in movable_joints(MetalConnection.robot.model)
         }
+
+        # Readiness is one atomic, complete snapshot. The tick replaces the
+        # whole positions dict, so a snapshot must never be assembled from
+        # several reads: that would manufacture a pose out of partial samples
+        # and hide a real loss of feedback.
+        holder: dict[str, dict[str, float]] = {}
+        incomplete: list[list[str]] = []
+
+        def complete() -> bool:
+            seen = coordinator.get_joint_positions()
+            missing = sorted(set(joints) - set(seen))
+            if missing:
+                incomplete.append(missing)
+                return False
+            holder["snapshot"] = seen
+            return True
+
+        wait_until(complete, timeout=15.0)
+        start_positions = holder["snapshot"]
+        assert all(joint in start_positions for joint in joints), incomplete[-1:]
         target = []
         for joint in joints:
             lower, upper = limits[joint.removeprefix("arm/")]
@@ -147,7 +177,11 @@ def main() -> int:
             step = TARGET_STEP if upper is None or value + TARGET_STEP <= upper else -TARGET_STEP
             if lower is not None and value + step < lower:
                 step = 0.005 if upper is None or value + 0.005 <= upper else -0.005
-            target.append(value + step)
+            goal = value + step
+            assert (lower is None or goal >= lower) and (upper is None or goal <= upper), (
+                f"{joint}: start {value} and target {goal} must be inside {lower}..{upper}"
+            )
+            target.append(goal)
         trajectory = JointTrajectory(
             joint_names=joints,
             points=[
@@ -164,10 +198,6 @@ def main() -> int:
         )
         started = time.monotonic()
         result = coordinator.execute_trajectory(trajectory)
-        print(
-            f"DEBUG result={result!r} status_type={type(result.status)} accepted={TrajectoryExecutionStatus.ACCEPTED!r}",
-            file=sys.stderr,
-        )
         assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
         def reached() -> bool:
@@ -187,6 +217,7 @@ def main() -> int:
         evidence.update(
             {
                 "joints": len(joints),
+                "incomplete_snapshots": len(incomplete),
                 "target": target,
                 "start": [start_positions[joint] for joint in joints],
                 "status_connected": status.connected,
@@ -234,13 +265,18 @@ def main() -> int:
         assert trigger, f"{fake_native.FAIL_ENV} must name the fault trigger file"
         with open(trigger, "w") as handle:
             handle.write("fail the next reading\n")
+        # The connection latches the feedback failure; the hold commands that
+        # follow then fail against that latch, so the last recorded error is a
+        # write failure that carries the feedback failure. Assert the fault
+        # itself is recorded, not the shape of whichever report came last.
+        expected_fault = f"feedback failed: RuntimeError: {fake_native.FAILURE_MESSAGE}"
         wait_until(
-            lambda: (connection.status().last_error or "").startswith("feedback failed:"),
+            lambda: expected_fault in (connection.status().last_error or ""),
             timeout=15.0,
         )
         os.unlink(trigger)
         fault = connection.status().last_error
-        assert fault and fault.startswith("feedback failed:"), fault
+        assert fault and expected_fault in fault, fault
         evidence["fault"] = fault
     finally:
         built.stop()

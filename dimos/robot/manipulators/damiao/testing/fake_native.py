@@ -42,6 +42,8 @@ import numpy as np
 
 LOG_ENV = "DIMOS_FAKE_DAMIAO_LOG"
 FAIL_ENV = "DIMOS_FAKE_DAMIAO_FAIL"
+#: What a triggered feedback fault raises, so tests can assert the latch.
+FAILURE_MESSAGE = "fake Damiao feedback failure requested by the test"
 
 #: Read epoch, bumped by every ``refresh``; a write records the epoch it saw.
 _epoch = 0
@@ -72,7 +74,7 @@ def _log(event: str, **fields: Any) -> None:
 class FakeArm:
     """One bus's arm motors. A write moves the reported position to the target."""
 
-    def __init__(self, count: int, initial: float = 0.2) -> None:
+    def __init__(self, count: int, initial: float = 0.0) -> None:
         self.q = np.full(count, initial, dtype=np.float64)
         self.dq = np.zeros(count, dtype=np.float64)
         self.tau = np.zeros(count, dtype=np.float64)
@@ -133,7 +135,11 @@ class FakeRobot:
     """The in-memory robot the vendor ``Robot`` would be."""
 
     def __init__(self) -> None:
-        self.default_position = 0.2
+        # Zero is inside every joint range of the shipped Damiao models. A
+        # uniform non-zero pose can be outside a joint's declared limits (for
+        # example Metal's joint2 is -3.14..0), and the coordinator would then
+        # correctly refuse to command it.
+        self.default_position = 0.0
         self.groups: dict[str, FakeArm | FakeGripper] = {}
         self.events: list[str] = []
 
@@ -157,7 +163,7 @@ class FakeRobot:
         _epoch += 1
         self.events.append("refresh")
         if os.environ.get(FAIL_ENV) and os.path.exists(os.environ[FAIL_ENV]):
-            raise RuntimeError("fake Damiao feedback failure requested by the test")
+            raise RuntimeError(FAILURE_MESSAGE)
         _log("read")
 
     def tick(self, deadline: int) -> None:

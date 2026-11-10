@@ -155,7 +155,7 @@ class ConnectionStatus:
     last_error: str | None
 
 
-class ConnectionNotReady(RuntimeError):
+class ConnectionNotReadyError(RuntimeError):
     """``read_measured`` was called before the connection finished starting.
 
     A coordinator's cycle starts as soon as it can, and its worker starts the

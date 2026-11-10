@@ -38,7 +38,7 @@ from typing_extensions import Self
 from dimos.control.connection.connection_module import (
     ConnectionConfig,
     ConnectionModule,
-    ConnectionNotReady,
+    ConnectionNotReadyError,
     Values,
 )
 from dimos.control.contract.keys import Interface
@@ -209,7 +209,7 @@ class DamiaoConnection(ConnectionModule):
             if not self._connected:
                 # The coordinator may tick while this module is still starting
                 # in the same worker. That is not a hardware fault.
-                raise ConnectionNotReady(f"{type(self).__name__} is not connected yet")
+                raise ConnectionNotReadyError(f"{type(self).__name__} is not connected yet")
             if self._fault is not None:
                 raise RuntimeError(self._fault)
             reading = self._read_state()
@@ -242,4 +242,3 @@ class DamiaoConnection(ConnectionModule):
                 arm.disable()
             except Exception as disable_error:
                 self._report(f"{self._fault}; disable failed: {disable_error}")
-

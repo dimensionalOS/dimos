@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import threading
 
 import numpy as np
 import pytest

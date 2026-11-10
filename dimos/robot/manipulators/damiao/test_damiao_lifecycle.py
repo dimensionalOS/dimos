@@ -27,6 +27,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from dimos.control.contract.convert import joint_state_to_values
+from dimos.control.contract.keys import Interface
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
@@ -39,8 +41,6 @@ from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openyam.config import OPENYAM
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.seeed_b601_dm.connection import B601DMConnection
-from dimos.control.contract.convert import joint_state_to_values
-from dimos.control.contract.keys import Interface
 from dimos.utils.testing.waiting import wait_until
 
 _LFS = pytest.mark.self_hosted

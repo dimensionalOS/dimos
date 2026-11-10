@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
-from dimos.control.connection.connection_module import ConnectionNotReady
+from dimos.control.connection.connection_module import ConnectionNotReadyError
 from dimos.control.connection_source import JOINT_STATE
 from dimos.control.task import (
     ControlTask,
@@ -246,9 +246,7 @@ class TickLoop:
         # lock that cancellation and e-stop need, so compute runs without the
         # task lock; if the generation moved while it ran, its result is
         # stale and this tick writes nothing.
-        generation = (
-            self._connection_generation() if self._connection_generation is not None else 0
-        )
+        generation = self._connection_generation() if self._connection_generation is not None else 0
         commands = self._compute_all_tasks(state, generation)
 
         joint_commands, preemptions = self._arbitrate(commands)
@@ -314,7 +312,7 @@ class TickLoop:
                     continue
                 try:
                     reading = connection.read_measured()
-                except ConnectionNotReady:
+                except ConnectionNotReadyError:
                     # The coordinator ticks as soon as it starts; the
                     # connection in the same worker may still be connecting.
                     logger.debug(f"{name} has not finished starting")

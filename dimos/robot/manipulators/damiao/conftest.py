@@ -114,7 +114,9 @@ def make_rig(connection_class, boundary, mocker):
         commands, readings = LocalTransport(), LocalTransport()
         # The connection has no command subscription: this ingress is the
         # test's stand-in for the coordinator's direct call.
-        commands.subscribe(lambda msg: module.command(joint_state_to_values(msg, (Interface.POSITION,))))
+        commands.subscribe(
+            lambda msg: module.command(joint_state_to_values(msg, (Interface.POSITION,)))
+        )
         module.set_transport("joint_state", readings)
         made.append(module)
         module.start()

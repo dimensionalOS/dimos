@@ -1,8 +1,8 @@
 # Test YAM, OpenArm, and Metal connections
 
 These robots use `ConnectionModule` directly. Each connection owns one native
-`can_motor_control.Robot`, its CAN buses, gripper calibration, state reader,
-and MIT commands. Position-control stacks retire their former whole-body
+`can_motor_control.Robot`, its CAN buses, gripper calibration, direct state
+reads, and MIT commands. Position-control stacks retire their former whole-body
 adapters and registry entries. Seeed B601-DM and OpenYAM hand-guided collection
 use the same connection path: the generic Damiao whole-body adapter and its
 OpenYAM/Seeed compatibility factories are gone, so every Damiao robot now has
