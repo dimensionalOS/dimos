@@ -321,3 +321,29 @@ with closing(follow_log(path, stop=emit_warning)) as records:
     assert json.loads(next(records))["event"] == "first warning"
 """,
     )
+
+
+def test_console_prints_traceback_of_exc_info(monkeypatch, tmp_path):
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+from dimos.utils.logging_config import setup_logger
+logger = setup_logger()
+try:
+    1 / 0
+except ZeroDivisionError:
+    logger.error("Error during worker shutdown", exc_info=True)
+""",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=True,
+    )
+    lines = result.stdout.splitlines()
+    assert lines[0].endswith("Error during worker shutdown")
+    assert lines[1] == "Traceback (most recent call last):"
+    assert lines[-1] == "ZeroDivisionError: division by zero"

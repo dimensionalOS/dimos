@@ -230,11 +230,13 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
     # Event message
     event = event_dict.pop("event", "")
 
+    # Traceback rendered by format_exc_info, printed under the line
+    exception = event_dict.pop("exception", "")
+
     # Remove internal / callsite / exception fields
     for key in (
         "func_name",
         "lineno",
-        "exception",
         "exc_info",
         "exception_type",
         "exception_message",
@@ -265,6 +267,9 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         line = f"{time_str} [{level_short}][{file_path}] {event}"
         if kv_str:
             line += " " + kv_str
+
+    if exception:
+        line += f"\n{exception}"
 
     return line
 
@@ -337,7 +342,7 @@ def setup_exception_handler() -> None:
         # Get a logger for uncaught exceptions
         logger = setup_logger()
 
-        # Log the exception with full traceback to JSON
+        # The console handler prints the traceback under the line
         logger.error(
             "Uncaught exception occurred",
             exc_info=(exc_type, exc_value, exc_traceback),
@@ -345,18 +350,6 @@ def setup_exception_handler() -> None:
             exception_message=str(exc_value),
             traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
         )
-
-        # Still display the exception nicely on console using Rich if available
-        try:
-            from rich.console import Console
-            from rich.traceback import Traceback
-
-            console = Console()
-            tb = Traceback.from_exception(exc_type, exc_value, exc_traceback)
-            console.print(tb)
-        except ImportError:
-            # Fall back to standard exception display if Rich is not available
-            sys.__excepthook__(exc_type, exc_value, exc_traceback)
 
     # Set our custom exception handler
     sys.excepthook = handle_exception
