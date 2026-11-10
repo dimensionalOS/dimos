@@ -36,7 +36,6 @@ from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
@@ -52,22 +51,22 @@ class ConnectionConfig(ModuleConfig):
         source: The robot's name, and the first part of every key, e.g. "go2".
         model: The robot's model (its URDF): its joints, their order and their
             limits. Needed when joints are commanded.
-        joint_commands: What every joint that moves accepts: position,
-            velocity, effort.
-        pd: The joints take position, velocity, effort, kp and kd in one
-            message, as a humanoid's do.
-        base_range: The fastest the base may be told to go, either way:
-            ``linear.x`` and ``linear.y`` in m/s, ``angular.z`` in rad/s. A
-            speed past it is clamped. ``None`` for a robot with no base.
+        joint_commands: Model joint name to the interfaces it accepts. Only
+            listed joints are commanded; planar axes are ordinary joints.
+        twist_joints: Explicit full joint names in world x/y/yaw order for
+            body-frame Twist transport. Conversion requires measured odometry yaw.
+        clamp_commands: Full keys whose model bounds clamp instead of reject.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
     """
 
     source: str
     model: RobotModel | None = None
-    joint_commands: tuple[Interface, ...] = ()
-    pd: bool = False
-    base_range: Twist | None = None
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
+    # Explicit transport binding: world-frame planar coordinates, in x/y/yaw order.
+    # Twist is body-frame; converting it requires actual odometry yaw.
+    twist_joints: tuple[str, str, str] | None = None
+    clamp_commands: frozenset[str] = frozenset()
     deadman_timeout_s: float = 0.1
 
 
@@ -105,7 +104,7 @@ class ConnectionModule(Module, ABC):
         class ArmConfig(ConnectionConfig):
             source: str = "arm"
             model: RobotModel | None = ARM_MODEL
-            joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
+            joint_commands: dict[str, tuple[Interface, ...]] = {"joint1": (Interface.POSITION,)}
 
         class ArmConnection(ConnectionModule):
             config: ArmConfig

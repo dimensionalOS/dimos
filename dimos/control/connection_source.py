@@ -30,13 +30,12 @@ from dataclasses import dataclass
 import math
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from dimos.control.connection.connection_module import ConnectionConfig
 from dimos.control.contract.convert import (
     IMU_INTERFACES,
     JOINT_STATE_FIELDS,
-    POSE_INTERFACES,
-    TWIST_INTERFACES,
     imu_to_values,
     joint_state_from_values,
     joint_state_to_values,
@@ -44,8 +43,8 @@ from dimos.control.contract.convert import (
     twist_from_values,
     twist_to_values,
 )
-from dimos.control.contract.keys import SEPARATOR, Interface
-from dimos.control.contract.limits import Limits, model_limit, movable_joints
+from dimos.control.contract.keys import SEPARATOR, Interface, Key
+from dimos.control.contract.limits import Limits, limits as limits_of
 from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
@@ -56,9 +55,6 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.robot.assets.model import RobotModel
 
 logger = setup_logger()
 
@@ -89,9 +85,6 @@ READING_PORTS: Mapping[str, type] = {
     BASE_VELOCITY: TwistStamped,
     IMU: Imu,
 }
-
-#: The kinds of port that carry joints; a robot with one has joints to read from the model.
-_JOINT_PORTS = frozenset({POSITION_COMMAND, VELOCITY_COMMAND, MOTOR_COMMAND, JOINT_STATE})
 
 # Which part of a joint each task control mode drives.
 _INTERFACE_BY_MODE: dict[ControlMode, str] = {
@@ -152,11 +145,9 @@ class ConnectionSource:
     held where it is once readings return. Does no I/O.
 
     Args:
-        robot: The robot's name, the first part of its joint names, e.g. "arm".
+        config: The same model and per-joint interfaces supplied to the connection.
         commands: Port kinds it is commanded on, from ``COMMAND_PORTS``.
         readings: Port kinds it is read from, from ``READING_PORTS``.
-        model: Its joints and position limits, named ``<robot>/...``; ``None``
-            for a robot with no joint ports.
         reading_timeout_s: How old its newest reading may be, in seconds.
         zero_stiffness_joints: Joints the connection commands with zero
             stiffness, so tasks such as hand guiding may follow them by hand.
@@ -169,78 +160,67 @@ class ConnectionSource:
 
     def __init__(
         self,
-        robot: str,
+        config: ConnectionConfig,
         commands: Collection[str],
         readings: Collection[str],
-        model: RobotModel | None,
         reading_timeout_s: float,
         *,
         zero_stiffness_joints: Collection[str] = (),
     ) -> None:
+        robot = config.source
         if commands and not readings:
-            raise ValueError(
-                f"{robot!r} reports nothing, so the coordinator cannot tell it is there; "
-                f"it needs a reading port, e.g. `{robot}_{JOINT_STATE}: In[JointState]`"
-            )
+            raise ValueError(f"{robot!r} reports nothing; it needs a reading port")
         if MOTOR_COMMAND in commands:
             raise ValueError(
-                f"{robot!r}: {robot}_{MOTOR_COMMAND} needs stiffness and damping, which the "
-                "coordinator cannot send"
+                f"{robot!r}: {robot}_{MOTOR_COMMAND} needs stiffness and damping, "
+                "which the coordinator cannot send"
             )
-        joints: Mapping[str, Limits] = {}
-        if _JOINT_PORTS & {*commands, *readings}:
-            if VELOCITY_COMMAND not in commands and not (
-                POSITION_COMMAND in commands and JOINT_STATE in readings
-            ):
-                raise ValueError(
-                    f"{robot!r}: its joints cannot be held when no task drives them; they need "
-                    f"to take a velocity ({robot}_{VELOCITY_COMMAND}), or take a position "
-                    f"({robot}_{POSITION_COMMAND}) they report ({robot}_{JOINT_STATE})"
-                )
-            if model is None:
-                raise ValueError(
-                    f"{robot!r} has joint ports but no model to read its joints from; set "
-                    "`model` on the coordinator"
-                )
-            joints = _robot_joints(robot, model)
-
+        table = limits_of(config)
         self._robot = robot
         self._timeout = reading_timeout_s
-        self._joint_ports: dict[str, str] = {}
-        if POSITION_COMMAND in commands:
-            self._joint_ports[Interface.POSITION] = POSITION_COMMAND
-        if VELOCITY_COMMAND in commands:
-            self._joint_ports[Interface.VELOCITY] = VELOCITY_COMMAND
+        self._limits = table
+        self._twist_joints = config.twist_joints
+        if CMD_VEL in commands and self._twist_joints is None:
+            raise ValueError("cmd_vel requires an explicit twist_joints binding")
+        if self._twist_joints is not None and (CMD_VEL not in commands or ODOM not in readings):
+            raise ValueError("world-frame twist_joints require cmd_vel and real odometry")
+        self._joint_ports = {
+            interface: port
+            for interface, port in (
+                (Interface.POSITION, POSITION_COMMAND),
+                (Interface.VELOCITY, VELOCITY_COMMAND),
+            )
+            if port in commands
+        }
         self._base_port = CMD_VEL if CMD_VEL in commands else None
-        self._base = f"{robot}{SEPARATOR}base"
-        self._joints = [
-            _Joint(
-                name=name,
-                state_keys={i: f"{name}{SEPARATOR}{i}" for i in JOINT_STATE_FIELDS},
-                command_keys={i: f"{name}{SEPARATOR}{i}" for i in self._joint_ports},
-                position_limit=limit,
-            )
-            for name, limit in joints.items()
-        ]
-        unknown = frozenset(zero_stiffness_joints) - set(joints)
-        if unknown:
-            raise ValueError(
-                f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}"
-            )
-        #: Joints this robot's connection commands with zero stiffness.
-        self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
-        # Convert Twist keys to velocity-only joint descriptors
-        # once, at the port declaration boundary. No synthetic position state.
-        if self._base_port is not None:
-            for interface in TWIST_INTERFACES:
-                key = f"{self._base}{SEPARATOR}{interface}"
-                self._joints.append(
-                    _Joint(
-                        name=key,
-                        state_keys={Interface.VELOCITY: key} if BASE_VELOCITY in readings else {},
-                        command_keys={Interface.VELOCITY: key},
-                    )
+        keys: dict[str, dict[str, str]] = {}
+        for raw_key in table:
+            key = Key(raw_key)
+            keys.setdefault(key.joint, {})[key.interface] = key
+        self._joints = []
+        for name, command_keys in keys.items():
+            for interface in command_keys:
+                via_twist = self._twist_joints is not None and name in self._twist_joints
+                if interface not in self._joint_ports and not (
+                    via_twist and interface == Interface.VELOCITY
+                ):
+                    raise ValueError(f"{name}: declared {interface} has no command transport")
+            if Interface.VELOCITY not in command_keys and not (
+                Interface.POSITION in command_keys and JOINT_STATE in readings
+            ):
+                raise ValueError(f"{name}: cannot be held; needs velocity or reported position")
+            self._joints.append(
+                _Joint(
+                    name=name,
+                    state_keys={i: f"{name}/{i}" for i in JOINT_STATE_FIELDS},
+                    command_keys=command_keys,
+                    position_limit=table.get(f"{name}/position", Limits()),
                 )
+            )
+        unknown = frozenset(zero_stiffness_joints) - set(keys)
+        if unknown:
+            raise ValueError(f"{robot!r}: zero-stiffness joints are not in its model: {sorted(unknown)}")
+        self.zero_stiffness_joints = frozenset(zero_stiffness_joints)
         imu = f"{robot}{SEPARATOR}imu"
         self._sensors = (
             [_SensorReading(imu, i, f"{imu}{SEPARATOR}{i}") for i in IMU_INTERFACES]
@@ -253,21 +233,29 @@ class ConnectionSource:
         # (for joints, any key of each joint).
         self._readers: dict[str, Callable[[Any], Values]] = {}
         self._needed: dict[str, list[tuple[str, ...]]] = {}
-        own: set[str] = set()
+        self._port_keys: dict[str, frozenset[str]] = {}
         for port in readings:
             if port == JOINT_STATE:
                 self._readers[port] = _read_joint_state
                 groups = [
                     tuple(joint.state_keys.values())
                     for joint in self._joints
-                    if joint.name in joints
+                    if self._twist_joints is None or joint.name not in self._twist_joints
                 ]
             elif port == ODOM:
-                self._readers[port] = _reader(pose_to_values, self._base, robot)
-                groups = [(f"{self._base}{SEPARATOR}{i}",) for i in POSE_INTERFACES]
+                if self._twist_joints is None:
+                    raise ValueError("odom requires an explicit twist_joints binding")
+                self._readers[port] = _reader(pose_to_values, self._twist_joints, robot)
+                groups = [(f"{name}/position",) for name in self._twist_joints]
             elif port == BASE_VELOCITY:
-                self._readers[port] = _reader(twist_to_values, self._base, robot)
-                groups = [(f"{self._base}{SEPARATOR}{i}",) for i in TWIST_INTERFACES]
+                if self._twist_joints is None:
+                    raise ValueError("base_velocity requires an explicit twist_joints binding")
+                self._readers[port] = _reader(
+                    lambda msg, joints: twist_to_values(msg, joints, yaw=self._yaw()),
+                    self._twist_joints,
+                    robot,
+                )
+                groups = [(f"{name}/velocity",) for name in self._twist_joints]
             elif port == IMU:
                 self._readers[port] = _reader(imu_to_values, imu, robot)
                 groups = [(sensor.key,) for sensor in self._sensors]
@@ -277,8 +265,7 @@ class ConnectionSource:
                     f"one of {', '.join(READING_PORTS)}"
                 )
             self._needed[port] = groups
-            own.update(key for group in groups for key in group)
-        self._own_keys = frozenset(own)
+            self._port_keys[port] = frozenset(key for group in groups for key in group)
 
         # Guards the readings and flags below, which readings change and the
         # tick loop reads.
@@ -291,6 +278,7 @@ class ConnectionSource:
         self._received_at = 0.0
         # When the last reading arrived, by time.monotonic().
         self._freshness = Freshness()
+        self._port_receipts: dict[str, float] = {}
         # Readings came back after stopping for longer than the timeout, or
         # after drop_holds. The tick loop drops the holds when it sees this.
         self._resumed = False
@@ -298,8 +286,6 @@ class ConnectionSource:
         self._restart = False
         # Joint name -> the position it is held at. Only the tick loop touches it.
         self._holds: dict[str, float] = {}
-        self._holding = False
-        self._hold_token: object = None
         self._last_warned = float("-inf")
 
     @property
@@ -312,16 +298,26 @@ class ConnectionSource:
         """Every joint, e.g. ["arm/joint1", "arm/joint2"]."""
         return [joint.name for joint in self._joints]
 
-    @property
-    def base_joint_names(self) -> list[str]:
-        """The base's axes as a task claims them, e.g. ["go2/base/vx", ...].
+    def twist_values(self, msg: Twist) -> Values:
+        """Map body-frame input at the transport boundary, using measured odometry yaw."""
+        if self._twist_joints is None:
+            return {}
+        if not self.ready_for_control():
+            raise ValueError("Twist input requires fresh readings")
+        return twist_to_values(msg, self._twist_joints, yaw=self._yaw())
 
-        Empty for a robot with no base port. A base axis is a velocity only:
-        a task drives it in ``ControlMode.VELOCITY``.
-        """
-        if self._base_port is None:
-            return []
-        return [f"{self._base}{SEPARATOR}{i}" for i in TWIST_INTERFACES]
+    def _yaw(self) -> float:
+        if self._twist_joints is None:
+            raise ValueError("no Twist binding")
+        key = f"{self._twist_joints[2]}/position"
+        with self._lock:
+            stamp = self._port_receipts.get(ODOM)
+            if self._restart or stamp is None or time.monotonic() - stamp > self._timeout:
+                raise ValueError("Twist conversion requires fresh odometry yaw")
+            yaw = self._latest[key]
+        if not math.isfinite(yaw):
+            raise ValueError("odometry yaw must be finite")
+        return yaw
 
     @property
     def command_ports(self) -> list[str]:
@@ -353,13 +349,15 @@ class ConnectionSource:
         """
         try:
             values = self._readers[port](msg)
+            if any(not math.isfinite(value) for value in values.values()):
+                raise ValueError("reading contains non-finite values")
         except ValueError as error:
             now = time.monotonic()
             if now - self._last_warned >= 1.0:
                 self._last_warned = now
                 logger.warning(f"Dropped a {port} message for {self._robot!r}: {error}")
             return
-        mine = {key: value for key, value in values.items() if key in self._own_keys}
+        mine = {key: value for key, value in values.items() if key in self._port_keys[port]}
         if not mine:
             return
         now = time.monotonic()
@@ -370,6 +368,7 @@ class ConnectionSource:
                 # Back after a silence, or holds dropped: wait for a whole new
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
+                self._port_receipts.clear()
                 self._resumed = True
                 self._restart = False
             # Replaced whole, so the tick loop never sees half of one update.
@@ -380,6 +379,7 @@ class ConnectionSource:
                 reported = reported | {port}
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
+            self._port_receipts[port] = now
             self._received_at = time.time()
             self._freshness.mark(now)
 
@@ -391,9 +391,10 @@ class ConnectionSource:
             self._restart = True
 
     def ready_for_control(self, now: float | None = None) -> bool:
-        """Whether a command can be sent: every reading port has reported (a
-        joint port, for every joint) and the newest reading is no older than
-        ``reading_timeout_s``.
+        """Whether every required reading port has reported and is fresh.
+
+        Joint ports need a reading for each declared joint; traffic on one
+        port cannot refresh another port's cached state.
 
         Args:
             now: The current ``time.monotonic()``, in seconds. Defaults to now.
@@ -401,8 +402,8 @@ class ConnectionSource:
         if now is None:
             now = time.monotonic()
         with self._lock:
-            return len(self._reported) == len(self._needed) and not self._freshness.is_stale(
-                now, self._timeout
+            return len(self._reported) == len(self._needed) and all(
+                now - self._port_receipts[port] <= self._timeout for port in self._needed
             )
 
     def unreported(self) -> list[str]:
@@ -442,21 +443,13 @@ class ConnectionSource:
     def command(
         self,
         winners: Mapping[str, tuple[float, ControlMode]],
-        *,
-        holding: bool = False,
-        hold_token: object = None,
     ) -> Values:
         """The complete command to send the robot this tick, by key.
 
         Args:
             winners: Each winning joint's value and control mode, e.g.
-                ``{"arm/joint1": (0.3, ControlMode.POSITION)}``. Includes
-                velocity-only aliases declared by the connection's ports.
-            holding: Internal operator safety state. Freeze positional resources
-                at measured positions and zero velocity-only resources. The tick
-                loop supplies no task winners while this is set.
-            hold_token: Internal hold-session identity, so release/re-request
-                between command ticks captures a new measured position.
+                ``{"arm/joint1": (0.3, ControlMode.POSITION)}``. Each interface
+                must be authorized by the connection declaration.
 
         Raises:
             ValueError: If a task drives a joint in a way it does not accept,
@@ -477,27 +470,26 @@ class ConnectionSource:
             interface = interfaces[name]
             if interface is None or interface not in joint.command_keys:
                 raise ValueError(f"{joint.name} cannot be told its {interface}")
-            limit = joint.position_limit
-            if interface == Interface.POSITION and not _within(value, limit):
-                raise ValueError(f"{joint.name} told {value}, outside {limit.lo}..{limit.hi}")
             if not math.isfinite(value):
                 raise ValueError(f"{name} told {value}, not a finite speed")
-        # Validation above is transactional: even a rejected recovery tick
-        # cannot change a hold. Safety holds capture measured positions, not
-        # the last target; velocity-only resources stop regardless of priority.
+            limit = self._limits[joint.command_keys[interface]]
+            if not limit.clamp and not _within(value, limit):
+                raise ValueError(f"{joint.name} told {value}, outside {limit.lo}..{limit.hi}")
         with self._lock:
             latest = self._latest
-            if self._resumed or (holding and (not self._holding or hold_token != self._hold_token)):
+            if self._resumed:
                 self._holds.clear()
             self._resumed = False
-        self._holding = holding
-        self._hold_token = hold_token
         values: Values = {}
         for joint in self._joints:
-            if not holding and joint.name in winners:
+            if joint.name in winners:
                 interface = interfaces[joint.name]
                 assert interface is not None
                 value, _ = winners[joint.name]
+                limit = self._limits[joint.command_keys[interface]]
+                if limit.clamp:
+                    assert limit.lo is not None and limit.hi is not None
+                    value = max(limit.lo, min(value, limit.hi))
                 values[joint.command_keys[interface]] = value
                 if interface == Interface.POSITION:
                     self._holds[joint.name] = value
@@ -527,13 +519,23 @@ class ConnectionSource:
             joints = [
                 j.name
                 for j in self._joints
-                if j.command_keys.get(interface) == f"{j.name}{SEPARATOR}{interface}"
+                if (
+                    interface != Interface.VELOCITY
+                    or self._twist_joints is None
+                    or j.name not in self._twist_joints
+                )
+                and j.command_keys.get(interface) == f"{j.name}{SEPARATOR}{interface}"
                 and j.command_keys[interface] in values
             ]
             if joints:
                 messages.append(PortMessage(port, joint_state_from_values(values, joints, ts)))
         if self._base_port is not None:
-            messages.append(PortMessage(self._base_port, twist_from_values(values, self._base)))
+            assert self._twist_joints is not None
+            messages.append(
+                PortMessage(
+                    self._base_port, twist_from_values(values, self._twist_joints, yaw=self._yaw())
+                )
+            )
         return messages
 
     def _hold(self, joint: _Joint, latest: Values) -> float | None:
@@ -561,26 +563,6 @@ class ConnectionSource:
         return held
 
 
-def _robot_joints(robot: str, model: RobotModel) -> dict[str, Limits]:
-    """The model's movable joints named ``<robot>/...``, each with its position limit.
-
-    Raises:
-        ValueError: If there are none, or the model lacks a joint's position range.
-    """
-    prefix = f"{robot}{SEPARATOR}"
-    joints = {
-        joint.name: model_limit(joint, Interface.POSITION)
-        for joint in movable_joints(model)
-        if joint.name.startswith(prefix)
-    }
-    if not joints:
-        raise ValueError(
-            f"the model has no movable joint named {prefix}...; name {robot!r}'s joints after "
-            "it, e.g. with `RobotModel.with_renamed_joints`"
-        )
-    return joints
-
-
 def _read_joint_state(msg: Any) -> Values:
     return joint_state_to_values(msg, JOINT_STATE_FIELDS)
 
@@ -595,7 +577,7 @@ def _within(value: float, limit: Limits) -> bool:
 
 
 def _reader(
-    convert: Callable[[Any, str], Values], part: str, robot: str
+    convert: Callable[[Any, Any], Values], part: Any, robot: str
 ) -> Callable[[Any], Values]:
     """``convert(msg, part)`` for a message in one of this robot's frames.
 

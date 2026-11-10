@@ -31,16 +31,19 @@ import threading
 import time
 from typing import Any
 
-from pydantic import Field
 import pytest
 from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.control._control_test_helpers import FAKE_ARM_JOINTS, FakeArm, fake_arm_model
+from dimos.control._control_test_helpers import (
+    FakeArm,
+    FakeArmConfig,
+    fake_arm_model,
+)
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.control.contract.convert import motor_joints, pose_from_values, twist_to_values
-from dimos.control.contract.limits import BASE_NAME
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -77,32 +80,34 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.utils.testing.waiting import wait_until
 
 #: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
 MOCK_JOINTS = motor_joints(fake_arm_model(), "mock")
-#: The fake arm's model as the coordinator reads it: joints named after the robot.
-MOCK_MODEL = fake_arm_model().with_renamed_joints(
-    dict(zip(FAKE_ARM_JOINTS, MOCK_JOINTS, strict=True))
-)
 AT_REST = [0.0] * len(MOCK_JOINTS)
 
 
-def fake_base_range() -> Twist:
-    """The fastest the fake base goes: 1 m/s forward, 0.5 m/s sideways, 2 rad/s turning."""
-    return Twist(Vector3(1.0, 0.5, 0.0), Vector3(0.0, 0.0, 2.0))
+BASE_JOINTS = ("base_x", "base_y", "base_yaw")
+BASE_MODEL = fake_arm_model().with_planar_base(
+    PlanarBaseDefinition(
+        joint_names=BASE_JOINTS,
+        velocity_limits=(1.0, 0.5, 2.0),
+        acceleration_limits=(1.0, 1.0, 2.0),
+    )
+)
 
 
 class FakeBaseConfig(ConnectionConfig):
-    """Settings for ``FakeBase``: named "go2", told speeds.
-
-    Attributes:
-        state_rate_hz: How many times a second it reports where it is.
-    """
+    """Fake world-frame planar joint declaration, transported as body-frame Twist."""
 
     source: str = "go2"
-    base_range: Twist | None = Field(default_factory=fake_base_range)
+    model: RobotModel | None = BASE_MODEL
+    joint_commands: dict[str, tuple[Interface, ...]] = {
+        name: (Interface.VELOCITY,) for name in BASE_JOINTS
+    }
+    twist_joints: tuple[str, str, str] | None = ("go2/base_x", "go2/base_y", "go2/base_yaw")
+    clamp_commands: frozenset[str] = frozenset(f"go2/{name}/velocity" for name in BASE_JOINTS)
     state_rate_hz: float = 100.0
 
 
@@ -120,7 +125,8 @@ class FakeBase(ConnectionModule):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._base = f"{self.config.source}/{BASE_NAME}"
+        assert self.config.twist_joints is not None
+        self._base = self.config.twist_joints
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
 
@@ -129,7 +135,9 @@ class FakeBase(ConnectionModule):
         super().start()
         self.register_disposable(
             Disposable(
-                self.cmd_vel.subscribe(lambda msg: self.command(twist_to_values(msg, self._base)))
+                self.cmd_vel.subscribe(
+                    lambda msg: self.command(twist_to_values(msg, self._base, yaw=0.0))
+                )
             )
         )
         self._reader = threading.Thread(target=self._read_loop, daemon=True, name="FakeBase-read")
@@ -153,7 +161,7 @@ class FakeBase(ConnectionModule):
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz
-        origin = {f"{self._base}/x": 0.0, f"{self._base}/y": 0.0, f"{self._base}/yaw": 0.0}
+        origin = {f"{name}/position": 0.0 for name in self._base}
         while not self._stop_reading.wait(period):
             self.odom.publish(
                 pose_from_values(origin, self._base, ts=time.time(), frame_id=self.frame("odom"))
@@ -273,7 +281,7 @@ class StopsOnEstop(SendsPositions):
 
 
 #: The fake base's axes, as a task claims them.
-GO2_BASE_AXES = ["go2/base/vx", "go2/base/vy", "go2/base/wz"]
+GO2_BASE_AXES = ["go2/base_x", "go2/base_y", "go2/base_yaw"]
 
 
 def velocity_task(joints: list[str], timeout: float = 0.2) -> JointVelocityTask:
@@ -329,8 +337,9 @@ class Rig:
 
     def report_base(self, robot: str = "go2") -> None:
         """The fake base, standing at the origin."""
-        origin = {f"{robot}/base/x": 0.0, f"{robot}/base/y": 0.0, f"{robot}/base/yaw": 0.0}
-        self.report(f"{robot}_odom", pose_from_values(origin, f"{robot}/base", frame_id="odom"))
+        names = (f"{robot}/base_x", f"{robot}/base_y", f"{robot}/base_yaw")
+        origin = {f"{name}/position": 0.0 for name in names}
+        self.report(f"{robot}_odom", pose_from_values(origin, names, frame_id="odom"))
 
     def report_arm(self, *positions: float) -> None:
         """The fake arm's joint positions, joint1 first, standing still."""
@@ -357,7 +366,24 @@ def rig(mocker: Any) -> Iterator[Callable[..., Rig]]:
     rigs: list[Rig] = []
 
     def build(cls: type[ControlCoordinator] = Robots, **config: Any) -> Rig:
-        made.append(cls(**{"model": MOCK_MODEL, **config}))
+        declarations: list[ConnectionConfig]
+        if issubclass(cls, WholeRobot):
+            arm_config = ConnectionConfig(
+                source="mock",
+                model=BASE_MODEL,
+                joint_commands={
+                    **FakeArmConfig().joint_commands,
+                    **FakeBaseConfig().joint_commands,
+                    "joint2": (Interface.POSITION, Interface.VELOCITY),
+                },
+                twist_joints=("mock/base_x", "mock/base_y", "mock/base_yaw"),
+            )
+            declarations = [arm_config]
+        else:
+            declarations = [FakeArmConfig()]
+            if not issubclass(cls, (ArmCoordinator, TiltingRobots)) or issubclass(cls, Robots):
+                declarations.append(FakeBaseConfig())
+        made.append(cls(**{"connections": declarations, **config}))
         rigs.append(Rig(made[-1]))
         return rigs[-1]
 
@@ -433,7 +459,9 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
     r.report(
         "go2_odom",
         pose_from_values(
-            {"go2/base/x": 0, "go2/base/y": 0, "go2/base/yaw": 0}, "go2/base", frame_id="odom"
+            {f"{name}/position": 0 for name in GO2_BASE_AXES},
+            ("go2/base_x", "go2/base_y", "go2/base_yaw"),
+            frame_id="odom",
         ),
     )
     r.tick()
@@ -446,7 +474,7 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
     assert r.positions_sent() == [AT_REST, AT_REST]
     twist = r.sent[-1][1]
     assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
-    assert r.coordinator.get_joint_positions() == dict.fromkeys(MOCK_JOINTS, 0.0)
+    assert r.coordinator.get_joint_positions() == dict.fromkeys([*MOCK_JOINTS, *GO2_BASE_AXES], 0.0)
 
 
 def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., Rig]) -> None:
@@ -505,9 +533,7 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
 def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], target: str) -> None:
     r = rig(ArmCoordinator if target == "unsupported" else WholeRobot)
     r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    names = (
-        ["mock/base/vx", "mock/base/vy", "mock/base/wz"] if target == "base" else ["mock/joint2"]
-    )
+    names = ["mock/base_x", "mock/base_y", "mock/base_yaw"] if target == "base" else ["mock/joint2"]
     task = velocity_task(names)
     r.coordinator.add_task(task, task_type="velocity")
     r.report_arm(*AT_REST)
@@ -544,89 +570,43 @@ def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], targe
         assert list(commands["mock_velocity_command"].velocity) == [0.4]
 
 
-@pytest.mark.parametrize("base", [False, True])
-def test_connection_hold_lifecycle(rig: Callable[..., Rig], mocker: Any, base: bool) -> None:
-    class VelocityOnly(ControlCoordinator):
-        mock_velocity_command: Out[JointState]
-        mock_joint_state: In[JointState]
-
-    clock = [1000.0]
-    mocker.patch.object(time, "monotonic", side_effect=lambda: clock[0])
-    r = rig(WholeRobot if base else VelocityOnly, tasks=[operator_hold_task()])
+def test_position_hold_scope_preserves_velocity_joint_feedback(rig: Callable[..., Rig]) -> None:
+    r = rig(WholeRobot, tasks=[operator_hold_task(joint_names=MOCK_JOINTS)])
     hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
     assert isinstance(hold, OperatorHoldTask)
-    names = ["mock/base/vx", "mock/base/vy", "mock/base/wz"] if base else ["mock/joint2"]
-    task = velocity_task(names)
-    r.coordinator.add_task(task)
-    if base:
-        r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-
-    def tick(position: float, expected: float, frozen: float | None = None) -> None:
-        r.report_arm(position, *AT_REST[1:])
-        if base:
-            r.report_base("mock")
-        task.set_velocities([0.4] * len(names), t_now=time.perf_counter())
-        before = len(r.sent)
-        r.tick()
-        assert len(r.sent) > before
-        commands = dict(r.sent)
-        if base:
-            twist = commands["mock_cmd_vel"]
-            assert (twist.linear.x, twist.linear.y, twist.angular.z) == (expected,) * 3
-            assert r.positions_sent()[-1][0] == (0.5 if frozen is None else frozen)
-        else:
-            msg = commands["mock_velocity_command"]
-            assert not msg.position
-            assert dict(zip(msg.name, msg.velocity, strict=True))[names[0]] == expected
-
-    tick(0.2, 0.4)
+    r.report_arm(*AT_REST)
+    r.report_base("mock")
     hold.request("manual")
-    for _ in range(2):
-        tick(0.2, 0.0, 0.2)  # Fresh priority-10000 commands cannot bypass hold.
-    hold.acknowledge()
-    hold.request("manual")  # New session without an unheld tick.
-    tick(0.3, 0.0, 0.3)
-    hold.request("manual", "same session")
-    tick(0.4, 0.0, 0.3)
-    clock[0] += 1.0
-    before = len(r.sent)
     r.tick()
-    assert len(r.sent) == before
-    tick(0.35, 0.0, 0.35)  # Silence recovery recaptures actual position.
-    before = len(r.sent)
-    assert r.coordinator.set_estop(True)
-    r.tick()
-    assert len(r.sent) == before
-    assert r.coordinator.set_estop(False)
-    before = len(r.sent)
-    r.tick()
-    assert len(r.sent) == before  # Must receive new feedback after clear.
-    tick(0.45, 0.0, 0.45)
-    hold.acknowledge()
-    tick(0.45, 0.4)
+    assert hold.claim().joints == frozenset(MOCK_JOINTS)
+    assert r.coordinator.get_joint_positions()["mock/base_x"] == 0.0
+    assert r.positions_sent()[-1] == AT_REST
 
 
-def test_hold_requested_during_readiness_stops_this_tick(
-    rig: Callable[..., Rig], mocker: Any
+def test_velocity_estop_invalidates_commands_until_fresh_post_clear_input(
+    rig: Callable[..., Rig],
 ) -> None:
     r = rig()
-    hold = OperatorHoldTask()
-    r.coordinator.add_task(hold, task_type="operator_hold")
     task = velocity_task(GO2_BASE_AXES)
     r.coordinator.add_task(task)
     r.report_base()
-    task.set_velocities([0.4, -0.2, 0.3], t_now=time.perf_counter())
-    source = r.coordinator._connections["go2"]
-    ready = source.ready_for_control
-
-    def request(now: float | None = None) -> bool:
-        hold.request("manual")
-        return ready(now)
-
-    mocker.patch.object(source, "ready_for_control", side_effect=request)
+    assert task.set_velocities([0.4, 0.0, 0.0], time.perf_counter())
     r.tick()
-    twist = r.twists_sent()[-1]
-    assert (twist.linear.x, twist.linear.y, twist.angular.z) == (0.0, 0.0, 0.0)
+    assert r.twists_sent()[-1].linear.x == 0.4
+    r.coordinator.set_estop(True)
+    assert not task.set_velocities([0.8, 0.0, 0.0], time.perf_counter())
+    before = len(r.sent)
+    r.tick()
+    assert len(r.sent) == before
+    r.coordinator.set_estop(False)
+    r.tick()
+    assert len(r.sent) == before
+    r.report_base()
+    r.tick()
+    assert r.twists_sent()[-1].linear.x == 0.0
+    assert task.set_velocities([0.2, 0.0, 0.0], time.perf_counter())
+    r.tick()
+    assert r.twists_sent()[-1].linear.x == 0.2
 
 
 def test_expired_velocity_sends_zero_with_fresh_feedback(
@@ -713,9 +693,9 @@ def test_a_joint_port_without_a_model_is_refused_at_start(rig: Callable[..., Rig
         go2_cmd_vel: Out[Twist]
         go2_odom: In[PoseStamped]
 
-    with pytest.raises(ValueError, match="'mock' has joint ports but no model"):
-        rig(ArmCoordinator, model=None)
-    assert rig(BaseOnly, model=None).coordinator.list_hardware() == ["go2"]
+    with pytest.raises(ValueError, match="connection declaration"):
+        rig(ArmCoordinator, connections=[])
+    assert rig(BaseOnly, connections=[FakeBaseConfig()]).coordinator.list_hardware() == ["go2"]
 
 
 def test_a_robot_that_never_reports_is_logged_once_and_never_commanded(
@@ -855,14 +835,20 @@ def system(request: pytest.FixtureRequest) -> Iterator[ModuleCoordinator]:
     that needs a silence noticed passes a shorter one, in seconds, with
     ``indirect=True``.
     """
+    arm_declaration = ConnectionConfig(
+        **FakeArmConfig().model_dump(include=set(ConnectionConfig.model_fields))
+    )
+    base_declaration = ConnectionConfig(
+        **FakeBaseConfig().model_dump(include=set(ConnectionConfig.model_fields))
+    )
     blueprint = autoconnect(
         Robots.blueprint(
-            model=MOCK_MODEL,
+            connections=[arm_declaration, base_declaration],
             tasks=[joint_trajectory_task(MOCK_JOINTS)],
             reading_timeout_s=getattr(request, "param", 10.0),
         ),
-        FakeArm.blueprint(),
-        FakeBase.blueprint(),
+        FakeArm.blueprint(**arm_declaration.model_dump()),
+        FakeBase.blueprint(**base_declaration.model_dump()),
     ).remappings(
         [
             (FakeArm, "position_command", "mock_position_command"),

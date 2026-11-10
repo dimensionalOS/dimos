@@ -56,10 +56,6 @@ JOINT_STATE_FIELDS: tuple[Interface, ...] = (
     Interface.VELOCITY,
     Interface.EFFORT,
 )
-#: What a Twist carries for a base: forwards, leftwards, turning.
-TWIST_INTERFACES: tuple[Interface, ...] = (Interface.VX, Interface.VY, Interface.WZ)
-#: What a PoseStamped carries for a base: where it is and which way it faces.
-POSE_INTERFACES: tuple[Interface, ...] = (Interface.X, Interface.Y, Interface.YAW)
 #: What an Imu carries: orientation, turn rates, accelerations.
 IMU_INTERFACES: tuple[Interface, ...] = (
     Interface.QX,
@@ -82,32 +78,40 @@ def motor_joints(model: RobotModel, source: str) -> list[str]:
     The message has no names, so the sender and the connection module must
     both build the order with this.
     """
-    return [f"{source}{SEPARATOR}{joint.name}" for joint in movable_joints(model)]
+    return [
+        joint.name if SEPARATOR in joint.name else f"{source}{SEPARATOR}{joint.name}"
+        for joint in movable_joints(model)
+    ]
 
 
-def twist_to_values(twist: Twist, base: str) -> dict[str, float]:
-    """A base's speeds from a Twist.
+def twist_to_values(twist: Twist, joints: tuple[str, str, str], *, yaw: float) -> dict[str, float]:
+    """Body-frame Twist to declared world-frame planar joint velocities.
 
-    Only forwards (``linear.x``), leftwards (``linear.y``) and turning
-    (``angular.z``) are read; a base on the floor has no other axes.
-
-    Args:
-        twist: Speeds in m/s and rad/s, measured from the base itself.
-        base: The base's full name, e.g. "chassis/base".
+    ``yaw`` must be real odometry, never an assumed zero orientation.
     """
-    vx, vy, wz = twist.linear.x, twist.linear.y, twist.angular.z
-    return {
-        _key(base, Interface.VX): vx,
-        _key(base, Interface.VY): vy,
-        _key(base, Interface.WZ): wz,
-    }
+    if not math.isfinite(yaw):
+        raise ValueError("odometry yaw must be finite")
+    c, s = math.cos(yaw), math.sin(yaw)
+    vx, vy = twist.linear.x, twist.linear.y
+    speeds = (c * vx - s * vy, s * vx + c * vy, twist.angular.z)
+    if not all(math.isfinite(value) for value in speeds):
+        raise ValueError("Twist conversion produced non-finite velocities")
+    return {_key(joint, Interface.VELOCITY): v for joint, v in zip(joints, speeds, strict=True)}
 
 
-def twist_from_values(values: Mapping[str, float], base: str) -> Twist:
-    """A Twist from a base's ``vx``, ``vy`` and ``wz`` (m/s, m/s, rad/s): a
-    speed to command, or one the base measured."""
-    vx, vy, wz = _take(values, base, TWIST_INTERFACES)
-    return Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
+def twist_from_values(
+    values: Mapping[str, float], joints: tuple[str, str, str], *, yaw: float
+) -> Twist:
+    """Declared world-frame planar joint velocities to a body-frame Twist."""
+    _require(values, joints, (Interface.VELOCITY,))
+    if not math.isfinite(yaw):
+        raise ValueError("odometry yaw must be finite")
+    vx, vy, wz = [values[_key(joint, Interface.VELOCITY)] for joint in joints]
+    c, s = math.cos(yaw), math.sin(yaw)
+    body = (c * vx + s * vy, -s * vx + c * vy, wz)
+    if not all(math.isfinite(value) for value in body):
+        raise ValueError("Twist conversion produced non-finite velocities")
+    return Twist(linear=Vector3(body[0], body[1], 0.0), angular=Vector3(0.0, 0.0, body[2]))
 
 
 def joint_state_to_values(msg: JointState, fields: Collection[str]) -> dict[str, float]:
@@ -208,24 +212,29 @@ def motor_command_from_values(
     return MotorCommandArray(q=q, dq=dq, kp=kp, kd=kd, tau=tau, timestamp=ts)
 
 
-def pose_to_values(pose: PoseStamped, base: str) -> dict[str, float]:
-    """Where a base is (``x``, ``y`` in m) and which way it faces (``yaw`` in
-    rad, 0 along x, growing to the left), from a PoseStamped."""
+def pose_to_values(pose: PoseStamped, joints: tuple[str, str, str]) -> dict[str, float]:
+    """World-frame planar coordinates from odometry, bound to model joint names."""
     q = pose.orientation
+    if not all(
+        math.isfinite(value) for value in (pose.position.x, pose.position.y, q.x, q.y, q.z, q.w)
+    ):
+        raise ValueError("odometry pose must be finite")
     yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
     return {
-        _key(base, Interface.X): pose.position.x,
-        _key(base, Interface.Y): pose.position.y,
-        _key(base, Interface.YAW): yaw,
+        _key(joint, Interface.POSITION): value
+        for joint, value in zip(joints, (pose.position.x, pose.position.y, yaw), strict=True)
     }
 
 
 def pose_from_values(
-    values: Mapping[str, float], base: str, ts: float | None = None, frame_id: str = ""
+    values: Mapping[str, float],
+    joints: tuple[str, str, str],
+    ts: float | None = None,
+    frame_id: str = "",
 ) -> PoseStamped:
-    """A PoseStamped from a base's ``x``, ``y`` (m) and ``yaw`` (rad), flat on
-    the floor."""
-    x, y, yaw = _take(values, base, POSE_INTERFACES)
+    """World-frame planar coordinates to an odometry pose."""
+    _require(values, joints, (Interface.POSITION,))
+    x, y, yaw = [values[_key(joint, Interface.POSITION)] for joint in joints]
     orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
     return PoseStamped(
         ts=ts, frame_id=frame_id, position=Vector3(x, y, 0.0), orientation=orientation

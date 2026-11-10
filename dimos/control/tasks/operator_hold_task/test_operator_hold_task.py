@@ -227,8 +227,5 @@ def test_blueprint_helper_and_factory():
 
     with pytest.raises(ValueError, match="must be named"):
         create_task(TaskConfig(name="hold", type="operator_hold"), hardware={})
-    with pytest.raises(ValueError, match="leave joint_names empty"):
-        create_task(
-            TaskConfig(name=OPERATOR_HOLD_TASK_NAME, type="operator_hold", joint_names=["a/b"]),
-            hardware={},
-        )
+    scoped = create_task(operator_hold_task(joint_names=["a/b"]), hardware={})
+    assert scoped._joint_names == frozenset({"a/b"})

@@ -97,7 +97,7 @@ class XArmConfig(ConnectionConfig):
     ip: str
     gripper: XArmGripperType | None = None
     source: str = "arm"
-    joint_commands: tuple[Interface, ...] = (Interface.POSITION, Interface.VELOCITY)
+    joint_commands: dict[str, tuple[Interface, ...]] = {}
     jump_limit_s: float = 0.1
 
     @field_validator("ip")
@@ -112,6 +112,13 @@ class XArmConfig(ConnectionConfig):
             raise ValueError("the Lite 6 gripper has no joint, so XArmConnection cannot drive it")
         if self.model is None:
             self.model = xarm_model(self.arm, self.gripper)
+        if not self.joint_commands:
+            from dimos.control.contract.limits import movable_joints
+
+            self.joint_commands = {
+                joint.name: (Interface.POSITION, Interface.VELOCITY)
+                for joint in movable_joints(self.model)
+            }
         return self
 
 
