@@ -905,7 +905,7 @@ def test_get_usd_reports_the_directory_its_asset_paths_resolve_against(
 
 
 def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
     mocker: MockerFixture,
 ) -> None:
     pytest.importorskip("pxr")
@@ -924,7 +924,7 @@ def test_a_scene_naming_an_asset_that_cannot_be_opened_says_so_once(
 
 
 def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
-    make_manager: Callable[..., UrdfManager],
+    make_manager: Callable[..., UsdManager],
     tmp_path: Path,
 ) -> None:
     pytest.importorskip("pxr")
