@@ -1,0 +1,14 @@
+[package]
+name = "package_ping"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone, including when built from inside the DimOS checkout.
+[workspace]
+
+[dependencies]
+dimos-module = { git = "https://github.com/dimensionalOS/dimos.git", rev = "dbb630f8e298218e9862e03dc24d6ba47080d20c" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
