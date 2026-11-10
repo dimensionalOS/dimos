@@ -31,6 +31,7 @@ import pytest
 
 from dimos.control.components import make_humanoid_joints
 from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.tasks import policy_execution
 from dimos.control.tasks.g1_groot_wbc_task import g1_groot_wbc_task
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTask,
@@ -86,9 +87,9 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             providers=providers,
         )
 
-    monkeypatch.setattr(g1_groot_wbc_task.ort, "InferenceSession", _factory)
+    monkeypatch.setattr(policy_execution.ort, "InferenceSession", _factory)
     monkeypatch.setattr(
-        g1_groot_wbc_task.ort,
+        policy_execution.ort,
         "get_available_providers",
         lambda: ["CPUExecutionProvider"],
     )
