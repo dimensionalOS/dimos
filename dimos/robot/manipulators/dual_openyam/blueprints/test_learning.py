@@ -21,10 +21,10 @@ from dimos.imitation.dataprep.core import resolve_field
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.learning_collection import (
+    DUAL_OPENYAM_COLLECTION_JOINTS,
     dual_openyam_quest_collection,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
 DUAL_OPENYAM_COLLECTION = next(
     atom.kwargs["recording_schema"]
@@ -36,7 +36,7 @@ DUAL_OPENYAM_COLLECTION = next(
 def test_dual_profile_projects_canonical_joint_order_and_records_both_cameras():
     schema = DUAL_OPENYAM_COLLECTION
     message = JointState(
-        name=list(reversed(DUAL_OPENYAM_JOINTS)), position=list(reversed(range(14)))
+        name=list(reversed(DUAL_OPENYAM_COLLECTION_JOINTS)), position=list(reversed(range(14)))
     )
     np.testing.assert_array_equal(resolve_field(message, schema.action["action"]), np.arange(14))
     np.testing.assert_array_equal(
@@ -75,9 +75,9 @@ def test_dual_collection_configures_both_cameras_and_buses_through_run(tmp_path)
             str(tmp_path / "dual"),
             "--episodes.task",
             "fold towel",
-            "--controlcoordinator.left-can-port",
+            "--left-can-port",
             "follower_l",
-            "--controlcoordinator.right-can-port",
+            "--right-can-port",
             "follower_r",
             "--left-wrist.hardware.camera-index",
             "/dev/video2",
@@ -90,8 +90,9 @@ def test_dual_collection_configures_both_cameras_and_buses_through_run(tmp_path)
     assert [camera.name for camera in cameras] == ["left_wrist", "right_wrist"]
     assert blueprint.remapping_map[("left_wrist", "color_image")] == "left_wrist_image"
     assert blueprint.remapping_map[("right_wrist", "color_image")] == "right_wrist_image"
-    assert parsed.module_configs["ControlCoordinator"]["left_can_port"] == "follower_l"
-    assert parsed.module_configs["ControlCoordinator"]["right_can_port"] == "follower_r"
+    connection = parsed.module_kwargs("dualopenyamconnection")
+    assert connection["left_can_port"] == "follower_l"
+    assert connection["right_can_port"] == "follower_r"
     assert parsed.module_configs["left_wrist"]["hardware"]["camera_index"] == "/dev/video2"
     assert parsed.module_configs["right_wrist"]["hardware"]["camera_index"] == "/dev/video4"
 
@@ -100,12 +101,19 @@ def test_collection_exposes_inherited_viser_without_changing_teleop(tmp_path, mo
     download = mocker.patch(
         "dimos.utils.data.get_data", side_effect=AssertionError("Config must not download models")
     )
-    args = ["--recorder.recording", str(tmp_path / "dual"), "--episodes.task", "fold towel"]
+    can_ports = ["--left-can-port", "follower_l", "--right-can-port", "follower_r"]
+    args = [
+        "--recorder.recording",
+        str(tmp_path / "dual"),
+        "--episodes.task",
+        "fold towel",
+        *can_ports,
+    ]
     parser = BlueprintConfigParser(dual_openyam_quest_collection)
     collection = parser.parse(args, environ={}).module_kwargs("manipulationmodule")
     teleop = (
         BlueprintConfigParser(teleop_webxr_dual_openyam)
-        .parse(environ={})
+        .parse(can_ports, environ={})
         .module_kwargs("manipulationmodule")
     )
 

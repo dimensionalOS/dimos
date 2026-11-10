@@ -27,13 +27,16 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import build_dual_openyam_webxr
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_JOINTS
 
+# The connection publishes every joint under its robot name, "arm".
+DUAL_OPENYAM_COLLECTION_JOINTS = [f"arm/{name}" for name in DUAL_OPENYAM_JOINTS]
+
 _state = FeatureSpec(
     stream="coordinator_joint_state",
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(DUAL_OPENYAM_JOINTS),),
-    names=list(DUAL_OPENYAM_JOINTS),
+    shape=(len(DUAL_OPENYAM_COLLECTION_JOINTS),),
+    names=DUAL_OPENYAM_COLLECTION_JOINTS,
 )
 _profile = CollectionProfile(
     observations={
