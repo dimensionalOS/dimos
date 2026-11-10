@@ -88,6 +88,7 @@ class MujocoSim(Module):
         publisher = self._publisher
         assert publisher is not None
         await asyncio.to_thread(self._all_started.wait)
+        await self._settle_before_stepping(backend, publisher)
         while True:
             _when, frame = backend.step()
             if backend.waiting_for:
@@ -100,6 +101,22 @@ class MujocoSim(Module):
             elif not publisher.busy:
                 publisher.offer(frame)
             await asyncio.sleep(0.001)
+
+    async def _settle_before_stepping(self, backend: Any, publisher: Any) -> None:
+        """Publish the world for `startup_delay`, then start it.
+
+        See `startup_delay` in `SimulatedWorldConfig` for why the wait is here at all. The
+        world is published throughout, because that is what the policies are waiting on: they
+        read the joints out of these observations, and until they have them they send nothing.
+        Nothing is stepped, so none of the wait is time a robot can fall over in.
+        """
+        deadline = time.monotonic() + self.config.startup_delay
+        while time.monotonic() < deadline:
+            if not publisher.busy:
+                publisher.offer(backend.frame())
+            await asyncio.sleep(0.005)
+        backend.restart_clock()
+        logger.info(f"sim2: waited {self.config.startup_delay}s; starting the world")
 
     def _on_actions(self, message: WorldAction) -> None:
         backend = self._backend

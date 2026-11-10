@@ -55,6 +55,21 @@ class SimulatedWorldConfig(SceneConfig):
     robots: tuple[SimulatedRobot, ...] = ()
     speed: float = 1.0
     controller_timeout: float = 0.5
+    # How long the world stands still, publishing but not stepping, before it starts.
+    #
+    # A robot in a world like this is held up by its policy and not by its servos: left at the
+    # home pose its stiffness was set to, a G1 folds in about a second and a half (measured --
+    # pelvis 0.755 m down to 0.092 m by t=1.5 s, with no controller in the world at all). A
+    # policy cannot command one until it has seen its joints, and it sees them in the
+    # observations this world publishes, so there is always an opening where the robot is
+    # standing on nothing. This is how long the world refuses to spend it.
+    #
+    # Twenty seconds because that is the shape of this scene's startup: every module that needs
+    # a view of the room composes it again and compiles its own copy -- ten compiles of four
+    # thousand geoms for three robots -- and the controllers armed 8.5 to 9.8 s after the world
+    # itself was built while that was going on. Nothing is stepped during the wait, so it costs
+    # no sim time and the robot has nothing to fall over in.
+    startup_delay: float = 20.0
 
 
 class SimulatedWorld(Protocol):

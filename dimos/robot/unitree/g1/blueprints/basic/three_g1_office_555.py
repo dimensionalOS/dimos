@@ -23,7 +23,7 @@ from dimos.core.stream import In
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.unitree.g1.sim2 import G1Sim
+from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.livox import LivoxSim
 from dimos.sim2.sim import sim_module
@@ -84,20 +84,19 @@ def _walker(name: str) -> Blueprint:
 
 
 SCENE_WITH_MOUNTS = UsdModel.from_file(SCENE).with_frames(
-    # On the floor, not at HOME_HEIGHT. This frame used to say HOME_HEIGHT, and the reason
-    # given was that a frame on the floor would be "a G1 with its pelvis at ankle height".
-    # That was true of the old path, where compile_world attached a robot from its own
-    # layer and zeroed its root first (root.pos = (0, 0, 0)), so this frame alone said
-    # where the robot stood. A composed world is the other path: the robot is already in
-    # the scene, nothing zeroes it, and its own layer still carries the offset from its
-    # root up to its pelvis. The two then add. Measured, with the frame at HOME_HEIGHT:
+    # At HOME_HEIGHT, which is where a G1's pelvis is when it stands in the pose it starts in.
+    # The frame says where the robot stands and nothing else does: `compile_world` zeroes the
+    # offset the robot's own layer carries from its root up to its pelvis, in this branch as in
+    # the other, so the two no longer add. They did once, and the robot hung 0.76 m in the air:
     #
     #     freejoint on /office_555/main   z = 0.755   (this frame)
     #                  main/pelvis        z = 1.548   (0.755 + the robot's own 0.793)
     #
-    # so every robot hung 0.76 m in the air and dropped the moment physics began. On the
-    # floor the pelvis comes out at 0.793, which is where a standing G1 keeps it.
-    {name: ("office_555", (x, y, 0.0), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
+    # and the fix of putting this frame on the floor only halved the error -- the pelvis then
+    # started at 0.793, which is where the layer draws it with every joint at zero, 38 mm above
+    # where the same robot's pelvis sits once its knees are bent into the home pose. Zeroing the
+    # root is what makes HOME_HEIGHT mean what it says.
+    {name: ("office_555", (x, y, HOME_HEIGHT), (0.0, 0.0, 0.0)) for name, (x, y) in SPOTS.items()}
 )
 
 
