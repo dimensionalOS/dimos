@@ -220,18 +220,22 @@ class ConnectionModule(Module, ABC):
                 last_error=self._last_error,
             )
 
-    def command(self, values: Values) -> None:
+    def command(self, values: Values, *, ts: float | None = None) -> None:
         """Check one command against the limits table and send it to the hardware.
 
         Call it from a port subscription, on any thread. A refused command
         (an unknown key, a value past a limit that does not clamp) is dropped
         and shown in ``status()``; an accepted one restarts the deadman and
-        goes to ``write``. If ``write`` raises, the robot is halted.
+        goes to ``_accept``, which by default calls ``write`` at once. If
+        ``write`` raises, the robot is halted.
 
         Args:
             values: Named values in each key's unit, e.g.
                 ``{"arm/joint1/position": 0.3}``. Keys of other robots are
                 skipped; a command with none of this robot's does nothing.
+            ts: The command message's source timestamp in Unix seconds, when
+                it carries one. Only connections whose ``_accept`` checks
+                command age use it.
         """
         prefix = f"{self.config.source}{SEPARATOR}"
         own = {key: value for key, value in values.items() if key.startswith(prefix)}
@@ -241,21 +245,40 @@ class ConnectionModule(Module, ABC):
         if isinstance(result, Rejected):
             self._report(f"{result.reason}: {result.detail}", rejection=True)
             return
+        self._accept(result.values, ts=ts)
+
+    def _accept(self, values: Values, *, ts: float | None = None) -> None:
+        """Dispatch one validated command. The default writes it at once.
+
+        The write happens here, on the caller's thread, under the hardware
+        lock, so the caller waits for any other SDK call in progress. A
+        connection with a single I/O-owning thread overrides this to enqueue
+        the command and wake that thread instead; such a connection must
+        document its enqueue-versus-write boundary itself.
+
+        Args:
+            values: The command's validated values, within their limits.
+            ts: The command's source timestamp; unused by the default.
+        """
         with self._hardware_lock:
             if not self._connected:
                 return
-            with self._lock:
-                self._last_command_time = time.time()
-                self._deadman_fired = False
-                self._command_seq += 1
-                seq = self._command_seq
-            self._on_loop(lambda: self._arm_deadman(seq))
+            self._record_command()
             try:
-                self.write(result.values)
+                self.write(values)
             except Exception as error:
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
+
+    def _record_command(self) -> None:
+        """Bookkeep one accepted command: stamp it and restart the deadman."""
+        with self._lock:
+            self._last_command_time = time.time()
+            self._deadman_fired = False
+            self._command_seq += 1
+            seq = self._command_seq
+        self._on_loop(lambda: self._arm_deadman(seq))
 
     def frame(self, name: str) -> str:
         """The frame to stamp a reading with: ``name`` behind the config's

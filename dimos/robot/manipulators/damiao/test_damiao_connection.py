@@ -64,11 +64,14 @@ def test_measured_hold_replaces_prior_targets_and_next_command_recovers(make_rig
     module, commands, _ = make_rig()
     native = boundary[0]
     commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    wait_until(lambda: native.groups["left_arm"].commands, timeout=2)
     native.groups["left_arm"].q[:] = [0.3, 0.4]
     module._on_loop(lambda: module._deadman_expired(module._command_seq))
     wait_until(lambda: module.status().deadman_fired, timeout=2)
     np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.3, 0.4])
+    written = len(native.groups["left_arm"].commands)
     commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
+    wait_until(lambda: len(native.groups["left_arm"].commands) > written, timeout=2)
     np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.7, 0.4])
     assert not module.status().deadman_fired
 
@@ -88,7 +91,9 @@ def test_calibration_finishes_before_connected_and_command_acceptance(
 ):
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
-    module = connection_class()
+    # A long deadman window: the asserted row is the accepted command, not a
+    # deadman hold landing between the owner's write and the assertion.
+    module = connection_class(deadman_timeout_s=10)
     module.set_transport("position_command", LocalTransport())
     module.set_transport("joint_state", LocalTransport())
     native = boundary[0]
@@ -105,6 +110,7 @@ def test_calibration_finishes_before_connected_and_command_acceptance(
         module.command({"arm/joint1/position": 0.7})
         assert observed == [False]
         assert module.status().connected
+        wait_until(lambda: native.groups["left_arm"].commands, timeout=2)
         np.testing.assert_equal(native.groups["left_arm"].commands[-1][:, 2], [0.7, 0.2])
     finally:
         module.stop()
@@ -276,6 +282,10 @@ def test_passive_gripper_is_enabled_in_mit_and_never_positioned(connection_class
         assert right.modes == right.mit_commands == []
 
         module.command({"arm/left_finger/position": 0.02})
+        # The finger target is enqueued; a following arm target proves the
+        # owner flushed it, and the passive jaw was still never positioned.
+        commands.publish(JointState(name=["arm/joint1"], position=[0.5]))
+        wait_until(lambda: boundary[0].groups["left_arm"].commands, timeout=2)
         assert gripper.commands == []
         assert gripper.mit_commands[-1] == (0.0, 0.0, 0.4, 0.0, 0.0)
 
@@ -298,6 +308,7 @@ def test_active_gripper_is_positioned_through_its_finger_joint(connection_class,
     try:
         module.start()
         module.command({"arm/right_finger/position": -0.015})
+        wait_until(lambda: module._arm._grippers["right_gripper"].commands, timeout=2)
         assert module._arm._grippers["right_gripper"].commands[-1] == pytest.approx(0.75)
     finally:
         module.stop()
@@ -372,6 +383,6 @@ def test_feedback_fault_reports_a_failing_disable(make_rig, boundary):
     boundary[0].disable_error = RuntimeError("unplugged")
     boundary[0].refresh_error = RuntimeError("lost feedback")
     wait_until(lambda: module._fault is not None, timeout=2)
-    assert "disable failed" in module.status().last_error
+    wait_until(lambda: "disable failed" in (module.status().last_error or ""), timeout=2)
     boundary[0].disable_error = None
     boundary[0].refresh_error = None
