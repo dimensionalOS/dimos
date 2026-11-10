@@ -22,7 +22,7 @@ import pytest
 from dimos.agents.annotation import skill
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -31,6 +31,7 @@ from experimental.gateway.introspect import (
     Cache,
     IntrospectError,
     blueprint_modules,
+    module_args,
     rpcs,
     run_child,
     spec_topic,
@@ -157,3 +158,19 @@ def test_a_checkout_with_an_older_gateway_of_its_own_is_introspected_with_this_o
         (old / helper).write_text("raise SystemExit('the checkout\\'s own older gateway ran')\n")
     with pytest.raises(IntrospectError, match="r1pro-nav from the branch checkout"):
         asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"]))
+
+
+class NeedsArgsConfig(ModuleConfig):
+    rate_hz: float = 1.0
+
+
+class NeedsArgs(Module):
+    config: NeedsArgsConfig
+
+    @classmethod
+    def blueprint(cls, **kwargs):  # type: ignore[no-untyped-def, override]
+        return super().blueprint(**{"must": kwargs["must"]})
+
+
+def test_a_module_whose_blueprint_needs_arguments_still_lists_its_config() -> None:
+    assert "rate_hz" in module_args(NeedsArgs)

@@ -429,9 +429,11 @@ def settable(schema: Any, root: str) -> set[str]:
 
 
 def module_args(module: Any, values: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.module import ModuleConfig
 
-    schema = parser_schema(module.blueprint())
+    # Blueprint.create, not module.blueprint(): an override may require arguments (CollectionModule's input_types)
+    schema = parser_schema(Blueprint.create(module))
     (only,) = schema.modules
     fields = only.config_cls.model_fields
     keep = settable(schema, only.atom.name)
