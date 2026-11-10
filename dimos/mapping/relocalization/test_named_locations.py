@@ -240,10 +240,11 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
         == 0.5
     )
 
-    # the map names its own frame, so a configured map_frame does not relabel a loaded one
+    # the stream names the frame, but a configured map_frame overrides it
     relabelled, published = make(map_file=run1, map_frame="premap")
     begin(relabelled)
-    assert published[0].poses[0].header.frame_id == "map/v1"
+    assert relabelled.map_frame == "premap"
+    assert published[0].poses[0].header.frame_id == "premap"
     assert positions(published[0]) == {"dock": (1, 2)}
 
 
@@ -331,10 +332,16 @@ def test_which_map_to_load():
         resolve_map(two, None)
     # ... unless one is asked for, which also names the frame
     assert resolve_map(two, "map/v2/cloud") == ("map/v2/cloud", "map/v2", "map/v2/named_locations")
-    # asked for a stream that is not one of its maps: that is the override, so it is taken as is
+    # a stream that is not one of its maps: the override, taken as is, and it names its own frame
     assert resolve_map(["global_map", "named_locations"], "global_map") == (
         "global_map",
-        None,
+        "global_map",
+        "named_locations",
+    )
+    # an .mcap topic's leading slash is not part of the frame
+    assert resolve_map(["/global_map"], "/global_map") == (
+        "/global_map",
+        "global_map",
         "named_locations",
     )
     # ... but a stream the recording does not have at all is a mistake

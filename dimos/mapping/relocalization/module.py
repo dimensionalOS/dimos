@@ -102,6 +102,9 @@ MAP_CLOUD_RE = re.compile(r"^map_(?P<name>.+)_cloud$")
 # of its own, and the recording's own list is the only thing left to seed them from.
 OVERRIDE_LOCATIONS = "named_locations"
 
+# Where a run with no map at all puts its map frame (`new_map`: this run's world frame is the map)
+DEFAULT_MAP_FRAME = "map"
+
 
 def map_cloud_stream(name: str, slashed: bool = True) -> str:
     """The stream a map called *name* keeps its cloud on, in either spelling."""
@@ -118,8 +121,8 @@ def map_names(streams: list[str]) -> dict[str, str]:
     return found
 
 
-def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str | None, str]:
-    """The cloud stream to load, the map's frame (None when nothing names one), its locations.
+def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str, str]:
+    """The cloud stream to load, the frame it is the map of, and the stream its locations are on.
 
     A recording holds its maps under their names, as ``map/<name>/cloud`` beside
     ``map/<name>/named_locations`` (an .mcap; a ``.db`` spells the same streams
@@ -128,8 +131,12 @@ def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str | None
     none is an error too rather than a guess at some other cloud in the recording.
 
     *wanted* overrides all of that: it is the stream to load, whether or not it is a named map.
-    One of the recording's maps still brings its name and its own locations; any other stream has
-    neither, so the frame is left to ``map_frame`` and the locations to the recording's own list.
+    One of the recording's maps still brings its own locations; any other stream has none, so
+    they come from the recording's own list.
+
+    **The stream names the frame.** A named map is the map at ``map/<name>``, whichever way the
+    recording spells its streams, so the same map keeps one frame in a ``.db`` and an ``.mcap``.
+    Any other stream is the map of a frame of its own name. ``map_frame`` overrides either.
     """
     named = map_names(streams)
     if wanted is not None:
@@ -139,7 +146,7 @@ def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str | None
                 raise ValueError(
                     f"the recording has no {wanted!r} stream, it holds {sorted(streams)}"
                 )
-            return wanted, None, OVERRIDE_LOCATIONS
+            return wanted, wanted.lstrip("/"), OVERRIDE_LOCATIONS
     elif len(named) == 1:
         name = next(iter(named))
     elif not named:
@@ -203,7 +210,8 @@ class Config(ModuleConfig):
     # Live fixed frame
     world_frame: str = "world"
     # Frame for the loaded premap
-    map_frame: str = "map"
+    # Frame the premap is placed at, overriding the one its stream names
+    map_frame: str | None = None
     # Seconds between tf republishes of the accepted fix (tf is not latched)
     tf_interval: float = 10.0
     # Seconds between `loaded_map` republishes; 0 publishes once per fix
@@ -261,8 +269,8 @@ class PremapModule(Module):
 
     @property
     def map_frame(self) -> str:
-        """The loaded map's frame: its own name, else ``config.map_frame``."""
-        return self._map_frame or self.config.map_frame
+        """Where the premap is placed: ``config.map_frame`` wins, else the frame its stream names."""
+        return self.config.map_frame or self._map_frame or DEFAULT_MAP_FRAME
 
     def _identity(self) -> Transform:
         return Transform(frame_id=self.config.world_frame, child_frame_id=self.map_frame)
