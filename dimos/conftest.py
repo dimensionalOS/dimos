@@ -84,6 +84,15 @@ else:
     os.environ.setdefault("ZENOH_DOMAIN", _domain(_run_id))
     os.environ.setdefault("MCPSERVER__PORT", str(20000 + _BUCKET))
 
+# Render offscreen unless something has already chosen. MuJoCo's renderer picks GLFW when
+# nothing says otherwise, and GLFW needs a display: in a shell with no `DISPLAY` -- an agent's,
+# a CI runner's, a detached session's -- the first `mujoco.Renderer` raises
+# `an OpenGL platform library has not been loaded into this process`, and a test that renders
+# fails for a reason that has nothing to do with it. EGL is the headless path that works on
+# this hardware; setting it here rather than in the one test that renders keeps the next one
+# from meeting the same wall.
+os.environ.setdefault("MUJOCO_GL", "egl")
+
 # Raise the open-file limit. Each LCM transport opens at least one
 # multicast socket; with pytest-xdist workers running many in parallel,
 # the macOS default soft cap (~256) gets exhausted and tests fail with
