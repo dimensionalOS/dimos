@@ -25,7 +25,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.sim2.actions import read_actions
 from dimos.sim2.dimsim.backend import TIMESTEP, DimSimBackend
-from dimos.sim2.sim import SimulatedWorldConfig, scene_from
+from dimos.sim2.sim import SimulatedWorldConfig, scene_from, until_it_stops
 from dimos.sim2.spec import validate
 from dimos.utils.logging_config import setup_logger
 
@@ -54,7 +54,7 @@ class DimSimSim(Module):
 
     async def main(self) -> AsyncIterator[None]:
         self.actions.subscribe(self._on_actions)
-        running = asyncio.create_task(self._run())
+        running = asyncio.create_task(until_it_stops("the world", self._run()))
         yield
         running.cancel()
 

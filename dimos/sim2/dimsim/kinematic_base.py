@@ -28,6 +28,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.dimsim.backend import BASE_JOINTS
+from dimos.sim2.sim import until_it_stops
 from dimos.sim2.world_observations import WorldMirror
 
 
@@ -52,7 +53,7 @@ class SimKinematicBase(Module):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        self._reporting = asyncio.create_task(self._report())
+        self._reporting = asyncio.create_task(until_it_stops("the base's odometry", self._report()))
         yield
         self._reporting.cancel()
 
