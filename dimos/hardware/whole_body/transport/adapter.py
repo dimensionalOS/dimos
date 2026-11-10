@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Transport-based whole-body adapter: bridges coordinator ↔ Module via pub/sub.
-
-Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
-/{hardware_id}/motor_command. ``network_interface`` is accepted but ignored.
-"""
 
 from __future__ import annotations
 
@@ -36,14 +31,12 @@ logger = setup_logger()
 
 
 class TransportWholeBodyAdapter:
-    """WholeBodyAdapter that bridges to a robot-side Module via pub/sub."""
-
     def __init__(
         self,
         dof: int = 29,
         hardware_id: str = "wholebody",
         transport_cls: Callable[[str, type], Any] = make_transport,
-        network_interface: int | str = "",  # accepted-and-ignored — see module docstring
+        network_interface: int | str = "",
         **_: object,
     ) -> None:
         self._dof = dof
@@ -118,12 +111,10 @@ class TransportWholeBodyAdapter:
             return list(self._latest_motor_states)
 
     def motor_states_ts(self) -> float | None:
-        """The stamp the robot put on the latest motor states, not when they arrived here."""
         with self._lock:
             return self._latest_motor_states_ts
 
     def has_motor_states(self) -> bool:
-        """True once the first motor_states frame has been received."""
         with self._lock:
             return self._latest_motor_states is not None
 
@@ -152,7 +143,6 @@ class TransportWholeBodyAdapter:
         return True
 
     def _on_motor_states(self, msg: JointState) -> None:
-        # Drop short frames; downstream code indexes range(_dof) directly.
         if (
             len(msg.position) < self._dof
             or len(msg.velocity) < self._dof
@@ -171,7 +161,6 @@ class TransportWholeBodyAdapter:
             )
 
     def _on_imu(self, msg: Imu) -> None:
-        # dimos Imu Quaternion is (x,y,z,w); IMUState.quaternion is (w,x,y,z).
         with self._lock:
             self._latest_imu = IMUState(
                 quaternion=(
@@ -195,13 +184,11 @@ class TransportWholeBodyAdapter:
 
 
 def transport_lcm_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
-    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
     kwargs.setdefault("transport_cls", make_transport)
     return TransportWholeBodyAdapter(**kwargs)
 
 
 def transport_ros_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
-    """Factory for the ``transport_ros`` adapter (see ``_registry.py``)."""
     from dimos.core.transport import ROSTransport
 
     kwargs.setdefault("transport_cls", ROSTransport)
