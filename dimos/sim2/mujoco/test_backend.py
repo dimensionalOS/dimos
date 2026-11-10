@@ -141,11 +141,14 @@ def test_a_robot_grafted_under_a_frame_still_reports_its_own_pose(scene, robot_m
 
 
 def test_the_engine_runs_the_robots_the_blueprint_put_in_the_world(scene, robot_model):
-    blueprint = sim_module(scene=scene, robots=[SimulatedRobot("dog", robot_model)])
-    # Its own zenoh domain, as test_sim_time gives each of its runs. Without one this test
-    # asserts its single "dog" and is handed whatever a stack running on this machine is
-    # broadcasting on @shared_config -- three G1s, when the office sim is up. It passed alone
-    # and failed whenever anything else was running, which is the worst shape a test can have.
+    # Its own namespace *and* its own zenoh domain. An RPC goes out on the instance's name, so
+    # a plain `sim_module()` here is called what a sim running on this machine calls its own,
+    # and `describe()` is answered by that one: the test asked for its single "dog" and was
+    # handed the office's three G1s. It passed alone and failed whenever anything else was up,
+    # which is the worst shape a test can have.
+    blueprint = sim_module(scene=scene, robots=[SimulatedRobot("dog", robot_model)]).namespace(
+        f"t{uuid.uuid4().hex[:8]}"
+    )
     overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
     parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
     coordinator = ModuleCoordinator.build(blueprint, parsed)
