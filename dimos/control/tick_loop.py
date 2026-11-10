@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import HardwareType
+from dimos.control.connection_source import JOINT_STATE
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
+    from dimos.control.connection.connection_module import ConnectionModule
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.whole_body.spec import IMUState
@@ -118,6 +120,9 @@ class TickLoop:
         publish_command_callback: Callable[[JointState], None] | None = None,
         connections: dict[str, ConnectionSource] | None = None,
         connection_command_callback: Callable[[str, dict[str, float]], None] | None = None,
+        hosted: dict[str, ConnectionModule] | None = None,
+        connection_generation: Callable[[], int] | None = None,
+        connection_authorized: Callable[[int], bool] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
@@ -125,6 +130,11 @@ class TickLoop:
             connections if connections is not None else {}
         )
         self._connection_command_callback = connection_command_callback
+        # Robots whose connection module is in this process: their feedback is
+        # read and their command written in this cycle, with no message hop.
+        self._hosted: dict[str, ConnectionModule] = hosted if hosted is not None else {}
+        self._connection_generation = connection_generation
+        self._connection_authorized = connection_authorized
         # Robots already told off for never reporting, so each is told off once.
         self._silence_logged: set[str] = set()
         self._started_at = time.monotonic()
@@ -285,6 +295,24 @@ class TickLoop:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
             # Read whether or not a robot can be commanded: one whose readings
             # stopped keeps its last joints in the state.
+            for name, connection in self._hosted.items():
+                source = self._connections.get(name)
+                if source is None:
+                    continue
+                try:
+                    reading = connection.read_measured()
+                except Exception as e:
+                    # The connection records the fault and stops commanding;
+                    # its last reading stays in the state, as for a silence.
+                    logger.error(f"Failed to read {name}: {e}")
+                    continue
+                # This tick's feedback is what tasks compute on, and the same
+                # reading is queued for external consumers without blocking.
+                source.on_message(JOINT_STATE, reading)
+                try:
+                    connection.publish_measured(reading)
+                except Exception:
+                    logger.exception(f"Failed to queue {name} telemetry")
             for source in self._connections.values():
                 joints = source.read_joints()
                 joint_positions.update(joints.joint_positions)
@@ -528,10 +556,20 @@ class TickLoop:
         Every robot that has reported gets one, every tick, whether or not a
         task drives it, so its connection module's deadman never fires while
         the coordinator runs. One whose readings are stale gets none.
+
+        A hosted robot is written directly: ``ConnectionModule.command``
+        validates and writes its hardware in this thread, immediately before
+        which it rechecks the authorization generation captured for this tick,
+        so an e-stop that landed during compute can still reject the write.
+        Every other robot is still sent its command messages.
         """
         publish = self._connection_command_callback
-        if publish is None:
+        if publish is None and not self._hosted:
             return
+        generation_callback = self._connection_generation
+        generation = generation_callback() if generation_callback is not None else 0
+        authorized = self._connection_authorized
+        authorize = (lambda: authorized(generation)) if authorized is not None else None
         now = time.monotonic()
         with self._hardware_lock:
             for name, source in self._connections.items():
@@ -543,7 +581,21 @@ class TickLoop:
                 if name in hw_commands:
                     winners, mode = hw_commands[name]
                 try:
-                    publish(name, source.command(winners, mode))
+                    values = source.command(winners, mode)
+                except Exception as e:
+                    logger.error(f"Failed to build a command for {name}: {e}")
+                    continue
+                connection = self._hosted.get(name)
+                if connection is not None:
+                    try:
+                        connection.command(values, authorize=authorize)
+                    except Exception as e:
+                        logger.error(f"Failed to write a command to {name}: {e}")
+                    continue
+                if publish is None:
+                    continue
+                try:
+                    publish(name, values)
                 except Exception as e:
                     logger.error(f"Failed to send a command to {name}: {e}")
 

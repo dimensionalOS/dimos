@@ -38,6 +38,7 @@ from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 class DamiaoCoordinator(ControlCoordinator):
     """One connection named arm, including a robot with two synchronized arms."""
 
+    hosted_connections = True
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
     left_gripper_command: In[Float32]
@@ -47,6 +48,7 @@ class DamiaoCoordinator(ControlCoordinator):
 class DamiaoTwistCoordinator(ArmTwistCoordinator):
     """End-effector twists and gripper inputs, with joint commands over streams."""
 
+    hosted_connections = True
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
     left_gripper_command: In[Float32]
@@ -56,6 +58,7 @@ class DamiaoTwistCoordinator(ArmTwistCoordinator):
 class DamiaoTeleopCoordinator(TeleopControlCoordinator):
     """WebXR inputs with a direct connection owning the robot."""
 
+    hosted_connections = True
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
 
@@ -83,8 +86,9 @@ def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -
             source="arm",
             model=connection.robot.model,
             initial_positions=mock_initial_positions(connection.robot),
+            hosted=True,
         )
-    return connection.blueprint(source="arm", teach=teach)
+    return connection.blueprint(source="arm", teach=teach, hosted=True)
 
 
 def arm_remaps(

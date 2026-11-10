@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from pydantic import Field
@@ -49,6 +49,8 @@ class MockJointConnection(ConnectionModule):
     config: MockJointConnectionConfig
     position_command: In[JointState]
     joint_state: Out[JointState]
+    #: Can be driven directly by a coordinator in the same worker process.
+    hosted_direct: ClassVar[bool] = True
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -69,6 +71,9 @@ class MockJointConnection(ConnectionModule):
     def start(self) -> None:
         try:
             super().start()
+            if self.config.hosted:
+                self._start_telemetry()
+                return
             self.register_disposable(Disposable(self.position_command.subscribe(self._on_position)))
             self._reader = threading.Thread(target=self._read_loop, daemon=True)
             self._reader.start()
@@ -102,6 +107,19 @@ class MockJointConnection(ConnectionModule):
                 key.removeprefix(prefix).removesuffix("/position"): value
                 for key, value in values.items()
             }
+        )
+
+    def read_measured(self) -> JointState:
+        """The positions the ideal servo holds, as the cycle's measured state."""
+        with self._hardware_lock:
+            positions = dict(self._positions)
+        return JointState(
+            ts=time.time(),
+            frame_id=self._frame,
+            name=[f"{self.config.source}/{name}" for name in positions],
+            position=list(positions.values()),
+            velocity=[0.0] * len(positions),
+            effort=[0.0] * len(positions),
         )
 
     def halt(self) -> None:

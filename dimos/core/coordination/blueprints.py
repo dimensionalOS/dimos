@@ -209,6 +209,10 @@ class Blueprint:
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
     hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
+    # Modules that must be deployed into one worker process, as tuples of
+    # instance names. A module that drives another's hardware in its own cycle
+    # needs it: an RPC hop between them would put the round trip back in.
+    process_groups: tuple[tuple[str, ...], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         module_names = {atom.name for atom in self.blueprints}
@@ -222,6 +226,18 @@ class Blueprint:
         )
         if unknown:
             raise ValueError(f"Hosted placement references unknown modules: {', '.join(unknown)}")
+        unknown_groups = sorted(
+            {
+                name
+                for group in self.process_groups
+                for name in group
+                if name not in module_names
+            }
+        )
+        if unknown_groups:
+            raise ValueError(
+                f"same_process references unknown modules: {', '.join(unknown_groups)}"
+            )
 
     def cbor_encode(self) -> dict[str, Any]:
         state = {f.name: getattr(self, f.name) for f in fields(self)}
@@ -309,6 +325,32 @@ class Blueprint:
             minimum=minimum,
         )
         return replace(self, hosted_placements=(*self.hosted_placements, placement))
+
+    def same_process(
+        self, *modules: type[ModuleBase] | str
+    ) -> "Blueprint":
+        """Deploy these modules into one worker process.
+
+        Use it for a module that drives another module's hardware inside its
+        own cycle, e.g. a control coordinator with the connection it reads and
+        writes directly: an RPC call between them would put a message hop back
+        in the path. Deploying them into one process is not enough on its own,
+        but it is required.
+
+        Args:
+            *modules: Module classes or instance names, at least two.
+
+        Raises:
+            ValueError: With fewer than two modules, or a class with several
+                instances (pass the instance name instead).
+        """
+        names = tuple(self._instance_key(module) for module in modules)
+        if len(set(names)) < 2:
+            raise ValueError(
+                "same_process needs at least two distinct modules; "
+                f"got {', '.join(names) or 'none'}"
+            )
+        return replace(self, process_groups=self.process_groups + (names,))
 
     def remappings(
         self,
@@ -423,6 +465,9 @@ class Blueprint:
                 )
                 for placement in self.hosted_placements
             ),
+            process_groups=tuple(
+                tuple(f"{prefix}/{name}" for name in group) for group in self.process_groups
+            ),
         )
 
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
@@ -475,6 +520,27 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         for placement in blueprint.hosted_placements
         if any(winning_blueprint_indexes.get(name) == index for name in placement.module_names)
     )
+    all_process_groups = tuple(
+        group for blueprint in blueprints for group in blueprint.process_groups
+    )
+    # A coordinator that reads and writes its connection's hardware in its own
+    # cycle must share its worker: an RPC hop between the two would put the
+    # round trip back in. Blueprints declare that by setting
+    # ``hosted_connections`` on the coordinator and ``hosted_direct`` on the
+    # connection; grouping them here keeps every shipped stack honest without
+    # each one repeating the same ``same_process`` call.
+    hosted_coordinators = [
+        atom for atom in all_blueprints if getattr(atom.module, "hosted_connections", False)
+    ]
+    direct_connections = [
+        atom for atom in all_blueprints if getattr(atom.module, "hosted_direct", False)
+    ]
+    if hosted_coordinators and direct_connections:
+        implied = tuple(
+            atom.name for atom in (*hosted_coordinators, *direct_connections)
+        )
+        if len(set(implied)) == len(implied) and len(implied) >= 2 and implied not in all_process_groups:
+            all_process_groups = (*all_process_groups, implied)
 
     return Blueprint(
         blueprints=all_blueprints,
@@ -487,6 +553,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
         hosted_placements=all_hosted_placements,
+        process_groups=all_process_groups,
     )
 
 

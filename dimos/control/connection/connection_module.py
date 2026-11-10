@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 import threading
 import time
@@ -37,12 +38,67 @@ from dimos.control.contract.validate import Rejected, validate_command
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 Values = dict[str, float]
+
+
+class LatestPublisher:
+    """Publishes the newest value from another thread, dropping older ones.
+
+    A control cycle that reads hardware must not wait for a transport to
+    publish its telemetry: a slow or blocked subscriber would then pace the
+    cycle. ``submit`` only swaps a slot, and a daemon thread publishes
+    whatever is in it, so at most one reading is ever waiting and the newest
+    one always wins.
+
+    Args:
+        publish: Called with the newest submitted value, on the publisher
+            thread. An exception is logged and publishing carries on.
+    """
+
+    def __init__(self, publish: Callable[[JointState], None]) -> None:
+        self._publish = publish
+        self._latest: JointState | None = None
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="connection-telemetry"
+        )
+        self._thread.start()
+
+    def submit(self, msg: JointState) -> None:
+        """Queue ``msg`` for publication, replacing any value not yet sent."""
+        with self._lock:
+            self._latest = msg
+        self._ready.set()
+
+    def close(self, *, timeout_s: float = 1.0) -> None:
+        """Stop the publisher thread, without publishing the newest value."""
+        self._stop.set()
+        self._ready.set()
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=timeout_s)
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._ready.wait()
+            if self._stop.is_set():
+                return
+            with self._lock:
+                msg, self._latest = self._latest, None
+                self._ready.clear()
+            if msg is None:
+                continue
+            try:
+                self._publish(msg)
+            except Exception:
+                logger.exception("Failed to publish connection telemetry")
 
 
 class ConnectionConfig(ModuleConfig):
@@ -61,6 +117,11 @@ class ConnectionConfig(ModuleConfig):
             speed past it is clamped. ``None`` for a robot with no base.
         deadman_timeout_s: How long the robot goes without a command, in
             seconds, before it is halted.
+        hosted: A coordinator deployed in this same worker process reads and
+            writes this connection directly, once per control tick, instead of
+            exchanging command and reading messages with it. The connection
+            then starts no reader thread and subscribes to no command port:
+            ``read_measured`` is the only read, and ``command`` the only write.
     """
 
     source: str
@@ -69,6 +130,7 @@ class ConnectionConfig(ModuleConfig):
     pd: bool = False
     base_range: Twist | None = None
     deadman_timeout_s: float = 0.1
+    hosted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +185,13 @@ class ConnectionModule(Module, ABC):
     delivers them, stamped with ``frame``. Once a command is accepted, if no
     other is within ``deadman_timeout_s``, ``halt`` is called once. To close
     the hardware, override ``stop`` and close it after ``super().stop()``.
+
+    With ``config.hosted`` set, a coordinator in the same worker process owns
+    the cycle: it calls ``read_measured`` for the feedback it computes from
+    and ``command`` for the result, so no message hop or independent reader
+    tick sits between them. The module still owns its lifecycle, validation,
+    deadman and fault handling. Readings for external consumers go through
+    ``publish_measured``, which never makes the cycle wait.
     """
 
     config: ConnectionConfig
@@ -133,6 +202,7 @@ class ConnectionModule(Module, ABC):
         super().__init__(**kwargs)
         self._session_id = ""
         self._limits: dict[str, Limits] | None = None
+        self._telemetry: LatestPublisher | None = None
         # Guards the status fields and the stop flag.
         self._lock = threading.Lock()
         # Held around every write() and halt(), so they never overlap, and
@@ -184,6 +254,41 @@ class ConnectionModule(Module, ABC):
         and when the module stops.
         """
 
+    def read_measured(self) -> JointState:
+        """Read the robot's state now and return it, stamped with ``ts``.
+
+        A hosted coordinator calls this once per control tick and computes on
+        the result: it is the cycle's feedback, not a cached or commanded
+        value. Raise if the hardware cannot be read; the coordinator then
+        stops commanding the robot until readings return.
+
+        Returns:
+            A reading named ``<source>/<joint>``, with position, velocity and
+            effort for every joint.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot be driven directly: it has no read_measured()"
+        )
+
+    def publish_measured(self, msg: JointState) -> None:
+        """Queue a measured reading for external consumers, without blocking.
+
+        Uses the publisher started by the subclass in ``start``. It keeps at
+        most one pending reading and drops older ones, so a slow transport
+        never paces the control cycle.
+        """
+        telemetry = self._telemetry
+        if telemetry is None:
+            raise RuntimeError(f"{type(self).__name__} has no telemetry publisher running")
+        telemetry.submit(msg)
+
+    def _start_telemetry(self) -> None:
+        """Start publishing on the subclass's ``joint_state`` output."""
+        joint_state = getattr(self, "joint_state", None)
+        if joint_state is None:
+            raise ValueError(f"{type(self).__name__} has no joint_state output to publish on")
+        self._telemetry = LatestPublisher(joint_state.publish)
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -205,6 +310,9 @@ class ConnectionModule(Module, ABC):
                 self._call_halt()
             self._connected = False
         self._on_loop(self._disarm_deadman)
+        if self._telemetry is not None:
+            self._telemetry.close()
+            self._telemetry = None
         super().stop()
 
     @rpc
@@ -220,18 +328,24 @@ class ConnectionModule(Module, ABC):
                 last_error=self._last_error,
             )
 
-    def command(self, values: Values) -> None:
+    def command(self, values: Values, *, authorize: Callable[[], bool] | None = None) -> None:
         """Check one command against the limits table and send it to the hardware.
 
-        Call it from a port subscription, on any thread. A refused command
-        (an unknown key, a value past a limit that does not clamp) is dropped
-        and shown in ``status()``; an accepted one restarts the deadman and
-        goes to ``write``. If ``write`` raises, the robot is halted.
+        Call it from a port subscription, on any thread, or from a hosted
+        coordinator's cycle. A refused command (an unknown key, a value past a
+        limit that does not clamp) is dropped and shown in ``status()``; an
+        accepted one restarts the deadman and goes to ``write``. If ``write``
+        raises, the robot is halted.
 
         Args:
             values: Named values in each key's unit, e.g.
                 ``{"arm/joint1/position": 0.3}``. Keys of other robots are
                 skipped; a command with none of this robot's does nothing.
+            authorize: Called under the hardware lock immediately before the
+                write. Returning False drops the whole command without
+                touching the hardware, e.g. because an e-stop arrived while it
+                was being computed. Its deadman is left as it was, so the
+                robot halts unless a fresh authorized command follows.
         """
         prefix = f"{self.config.source}{SEPARATOR}"
         own = {key: value for key, value in values.items() if key.startswith(prefix)}
@@ -243,6 +357,8 @@ class ConnectionModule(Module, ABC):
             return
         with self._hardware_lock:
             if not self._connected:
+                return
+            if authorize is not None and not authorize():
                 return
             with self._lock:
                 self._last_command_time = time.time()

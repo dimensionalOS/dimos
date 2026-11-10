@@ -30,6 +30,7 @@ from typing import (
     get_origin,
     get_type_hints,
 )
+from weakref import WeakValueDictionary
 
 from pydantic import Field
 import reactivex as rx
@@ -61,6 +62,48 @@ if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
     from dimos.core.rpc_client import RPCClient
+
+#: Modules constructed in this process, by the name they serve RPCs under. A
+#: module that has to touch another module's hardware in its own cycle resolves
+#: it here: calling the RPC proxy would put a message hop back in the path.
+#: Entries are weak, so a stopped module leaves nothing behind; in a worker,
+#: only the modules deployed into that worker are ever in it.
+_local_modules: "WeakValueDictionary[str, ModuleBase]" = WeakValueDictionary()
+_local_modules_lock = threading.Lock()
+
+
+def local_module(name: str) -> "ModuleBase | None":
+    """The module serving RPCs as ``name`` in this process, or ``None``.
+
+    Args:
+        name: The module's ``rpc_name``, else its ``instance_name``, else its
+            class name -- the name its RPC proxy is addressed to.
+    """
+    with _local_modules_lock:
+        return _local_modules.get(name)
+
+
+def local_modules() -> list[str]:
+    """The names of every module constructed in this process, sorted."""
+    with _local_modules_lock:
+        return sorted(_local_modules)
+
+
+def _local_name(module: "ModuleBase") -> str:
+    """The name ``module`` serves RPCs under, the key ``local_module`` uses."""
+    return module.config.rpc_name or module.config.instance_name or type(module).__name__
+
+
+def _register_local_module(module: "ModuleBase") -> None:
+    with _local_modules_lock:
+        _local_modules[_local_name(module)] = module
+
+
+def _forget_local_module(module: "ModuleBase") -> None:
+    with _local_modules_lock:
+        name = _local_name(module)
+        if _local_modules.get(name) is module:
+            del _local_modules[name]
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -185,6 +228,7 @@ class ModuleBase(Configurable, CompositeResource):
             )
         except ValueError:
             ...
+        _register_local_module(self)
 
     @classproperty
     def name(self) -> str:
@@ -224,6 +268,7 @@ class ModuleBase(Configurable, CompositeResource):
                 return
             self._module_closed = True
 
+        _forget_local_module(self)
         self._close_all_tools()
         self._close_rpc()
 

@@ -31,7 +31,7 @@ import functools
 import inspect
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from reactivex.disposable import Disposable
 
@@ -44,6 +44,7 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
+from dimos.control.connection.connection_module import ConnectionModule
 from dimos.control.connection_source import COMMAND_PORTS, READING_PORTS, ConnectionSource
 from dimos.control.hardware_interface import (
     ConnectedHardware,
@@ -61,7 +62,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import Module, ModuleConfig, local_module, local_modules
 from dimos.core.stream import In, Out
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
@@ -200,6 +201,12 @@ class ControlCoordinator(Module):
     # simulated manipulator adapters without one of their own attach to.
     _mujoco_sim: MujocoSimSpec | None = None
 
+    #: Drive connection modules in this same worker process directly, once per
+    #: tick, instead of exchanging messages with them. A coordinator that sets
+    #: it must be deployed with its connections (``Blueprint.same_process``):
+    #: a missing local connection is a start-time error, never a stream fallback.
+    hosted_connections: ClassVar[bool] = False
+
     # Output: Aggregated joint state for external consumers
     coordinator_joint_state: Out[JointState]
     # Intended position-command updates for recording.
@@ -244,6 +251,12 @@ class ControlCoordinator(Module):
         # command ports by kind. Filled on start; guarded by _hardware_lock.
         self._connections: dict[str, ConnectionSource] = {}
         self._command_ports: dict[str, dict[str, Out[Any]]] = {}
+        # Robots whose connection module is in this worker, by name; the tick
+        # loop reads and writes them directly. Guarded by _hardware_lock.
+        self._hosted: dict[str, ConnectionModule] = {}
+        # Bumped on every e-stop change; a tick a write was computed under may
+        # not write once it has moved. Guarded by _estop_lock.
+        self._estop_generation = 0
         # While set, robots behind connection modules are sent nothing.
         # Guarded by _hardware_lock.
         self._estopped = False
@@ -455,9 +468,24 @@ class ControlCoordinator(Module):
                     ],
                 )
                 self._connections[robot] = source
-                self._command_ports[robot] = {
-                    kind: self.outputs[f"{robot}_{kind}"] for kind in source.command_ports
-                }
+                if self.hosted_connections:
+                    connection = self._local_connection(robot)
+                    if connection is None:
+                        raise ValueError(
+                            f"{type(self).__name__} needs {robot!r}'s connection module in its "
+                            f"worker process but found none; deploy them together, e.g. "
+                            f"Blueprint.same_process({type(self).__name__}, <connection class>)"
+                        )
+                    if not connection.config.hosted:
+                        raise ValueError(
+                            f"{robot!r}'s connection module was not built to be driven "
+                            f"directly; pass hosted=True to its blueprint"
+                        )
+                    self._hosted[robot] = connection
+                else:
+                    self._command_ports[robot] = {
+                        kind: self.outputs[f"{robot}_{kind}"] for kind in source.command_ports
+                    }
                 for joint in source.joint_names:
                     self._joint_to_hardware[joint] = robot
         declared = {joint for source in self._connections.values() for joint in source.joint_names}
@@ -467,11 +495,37 @@ class ControlCoordinator(Module):
                 f"zero-stiffness joints belong to no robot driven here: {sorted(unknown)}"
             )
         for robot, source in self._connections.items():
+            if robot in self._hosted:
+                # The tick loop reads it directly; subscribing would feed the
+                # same readings in twice, from a hop behind.
+                continue
             for kind in source.reading_ports:
                 handler = functools.partial(source.on_message, kind)
                 port = self.inputs[f"{robot}_{kind}"]
                 self.register_disposable(Disposable(port.subscribe(handler)))
-        logger.info(f"Driving robots through connection modules: {robots}")
+        logger.info(
+            f"Driving robots through connection modules: {robots}"
+            + (f"; hosted in this process: {sorted(self._hosted)}" if self._hosted else "")
+        )
+
+    @staticmethod
+    def _local_connection(robot: str) -> ConnectionModule | None:
+        """The connection module serving ``robot`` in this process, if any."""
+        for name in local_modules():
+            module = local_module(name)
+            if isinstance(module, ConnectionModule) and getattr(module.config, "source", None) == robot:
+                return module
+        return None
+
+    def _connection_authorized(self, generation: int) -> bool:
+        """Whether a command computed under ``generation`` may still be written.
+
+        Called by the connection module immediately before it touches the
+        hardware. An e-stop latched during compute, or one that was cleared
+        after this tick started, moves the generation and rejects the write:
+        only a command computed after the clear may move the robot.
+        """
+        return not self._estopped and self._estop_generation == generation
 
     def _publish_command(self, robot: str, values: dict[str, float]) -> None:
         """Send one robot its command for this tick. Called by the tick loop,
@@ -885,6 +939,7 @@ class ControlCoordinator(Module):
                 # already sending finishes first, and none sends after.
                 with self._hardware_lock:
                     self._estopped = True
+                self._estop_generation += 1
                 self._set_tasks_estop(True)
             else:
                 self._set_tasks_estop(False)
@@ -892,6 +947,7 @@ class ControlCoordinator(Module):
                     for connection in self._connections.values():
                         connection.drop_holds()
                     self._estopped = False
+                self._estop_generation += 1
                 logger.warning("E-STOP cleared at coordinator")
         return True
 
@@ -1103,6 +1159,9 @@ class ControlCoordinator(Module):
             log_ticks=self.config.log_ticks,
             connections=self._connections,
             connection_command_callback=self._publish_command,
+            hosted=self._hosted,
+            connection_generation=lambda: self._estop_generation,
+            connection_authorized=self._connection_authorized,
         )
         self._tick_loop.start()
 

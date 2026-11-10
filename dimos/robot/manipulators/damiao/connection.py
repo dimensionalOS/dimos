@@ -82,6 +82,8 @@ class DamiaoConnection(ConnectionModule):
 
     #: The robot this connection deploys: motors, gains, grippers and models.
     robot: ClassVar[DamiaoRobot]
+    #: Can be driven directly by a coordinator in the same worker process.
+    hosted_direct: ClassVar[bool] = True
     config: DamiaoConnectionConfig
     position_command: In[JointState]
     joint_state: Out[JointState]
@@ -143,13 +145,16 @@ class DamiaoConnection(ConnectionModule):
                 )
                 arm.enable()
                 self._read_state()
-                self.register_disposable(
-                    Disposable(self.position_command.subscribe(self._on_position))
-                )
-                self._reader = threading.Thread(
-                    target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
-                )
-                self._reader.start()
+                if self.config.hosted:
+                    self._start_telemetry()
+                else:
+                    self.register_disposable(
+                        Disposable(self.position_command.subscribe(self._on_position))
+                    )
+                    self._reader = threading.Thread(
+                        target=self._read_loop, daemon=True, name=f"{self.config.source}-read"
+                    )
+                    self._reader.start()
                 self._connected = True
                 logger.info(
                     "Robot connection ready",
@@ -223,6 +228,21 @@ class DamiaoConnection(ConnectionModule):
         if self._fault is not None or self._arm is None:
             return
         self._arm.hold()
+
+    def read_measured(self) -> JointState:
+        """Read the arm's encoders now: the feedback a hosted cycle computes on."""
+        with self._hardware_lock:
+            if self._fault is not None:
+                raise RuntimeError(self._fault)
+            reading = self._read_state()
+        return JointState(
+            ts=time.time(),
+            frame_id=self._state_frame,
+            name=[f"{self.config.source}/{name}" for name in self.joint_names],
+            position=reading.position,
+            velocity=reading.velocity,
+            effort=reading.effort,
+        )
 
     def _read_state(self) -> ArmReading:
         try:
