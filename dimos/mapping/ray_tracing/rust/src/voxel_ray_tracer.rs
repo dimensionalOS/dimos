@@ -329,13 +329,15 @@ impl VoxelMap {
     /// A non-`premap` seed makes an existing voxel non-premap too.
     fn insert_seed(&mut self, key: VoxelKey, premap: bool) -> bool {
         if let Some(voxel) = self.voxels.get_mut(&key) {
-            voxel.premap &= premap;
+            if !premap {
+                voxel.set_premap(false);
+            }
             return false;
         }
         let support = self.count_healthy_neighbors(key);
         let mut seed = Voxel::with_health(SEED_HEALTH);
-        seed.last_hit = self.frame;
-        seed.premap = premap;
+        seed.set_last_hit(self.frame);
+        seed.set_premap(premap);
         self.voxels.insert(key, seed, support);
         self.health_crossed(key, true);
         true
@@ -444,11 +446,14 @@ pub struct Voxel {
     sum: Vector3<f32>,
     m2: Matrix3<f32>,
     normal: NormalFit,
-    /// The map frame this voxel was last hit (or seeded) in.
-    last_hit: u32,
-    /// Only premap points put it here: a live hit or non-premap seed point clears it.
-    premap: bool,
+    /// The map frame this voxel was last hit (or seeded) in, in the low 31
+    /// bits, and the `PREMAP_BIT` above them.
+    stamp: u32,
 }
+
+/// Set in `Voxel::stamp` while only premap points put the voxel there: a
+/// live hit or non-premap seed point clears it.
+const PREMAP_BIT: u32 = 1 << 31;
 
 impl Default for Voxel {
     fn default() -> Self {
@@ -460,8 +465,7 @@ impl Default for Voxel {
             sum: Vector3::zeros(),
             m2: Matrix3::zeros(),
             normal: NormalFit::Stale,
-            last_hit: 0,
-            premap: false,
+            stamp: 0,
         }
     }
 }
@@ -476,7 +480,24 @@ impl Voxel {
 
     /// Only premap points put it here: a live hit or non-premap seed point clears it.
     pub fn is_premap(&self) -> bool {
-        self.premap
+        self.stamp & PREMAP_BIT != 0
+    }
+
+    fn set_premap(&mut self, premap: bool) {
+        self.stamp = if premap {
+            self.stamp | PREMAP_BIT
+        } else {
+            self.stamp & !PREMAP_BIT
+        };
+    }
+
+    /// The map frame this voxel was last hit (or seeded) in, modulo 2^31.
+    fn last_hit(&self) -> u32 {
+        self.stamp & !PREMAP_BIT
+    }
+
+    fn set_last_hit(&mut self, frame: u32) {
+        self.stamp = (self.stamp & PREMAP_BIT) | (frame & !PREMAP_BIT);
     }
 
     /// Fold a centered point into the running moments. True when the count
@@ -875,7 +896,7 @@ fn emit_points_impl(
             if chunk_inside || bounds.is_none_or(|b| b.contains(x, y, z)) {
                 part.extend_from_slice(&[x, y, z]);
                 if with_premap {
-                    part.push(if hv.voxel.premap { 1.0 } else { 0.0 });
+                    part.push(if hv.voxel.is_premap() { 1.0 } else { 0.0 });
                 }
             }
         },
@@ -1049,8 +1070,8 @@ pub fn update_map(
             changed.insert(v);
         }
         if let Some(voxel) = map.voxels.get_mut(&v) {
-            voxel.last_hit = map.frame;
-            voxel.premap = false;
+            voxel.set_last_hit(map.frame);
+            voxel.set_premap(false);
         }
     }
 
@@ -1559,7 +1580,7 @@ fn find_misses_along_ray(
                 }
             }
             // Nothing has seen this voxel lately: no surface there to protect from a grazing ray.
-            if map_frame.wrapping_sub(c.last_hit) > graze_recent_frames {
+            if map_frame.wrapping_sub(c.last_hit()) & !PREMAP_BIT > graze_recent_frames {
                 walk.misses.insert((x, y, z));
                 continue;
             }
