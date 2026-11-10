@@ -33,17 +33,17 @@ class UploadRequest(BaseModel):
 
 
 @router.get("/cloud/account", response_model=responses.Account)
-async def account(state: GatewayState, fresh: FreshQuery = False) -> dict[str, Any]:
+async def account(state: GatewayState, fresh: FreshQuery = False) -> responses.Account:
     return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
 
 
 @router.post("/cloud/login", response_model=responses.Login)
-async def start_login(state: GatewayState) -> dict[str, Any]:
+async def start_login(state: GatewayState) -> responses.Login:
     return await state.uploads.start_login()
 
 
 @router.delete("/cloud/login", response_model=responses.Account)
-async def cancel_login_or_logout(state: GatewayState) -> dict[str, Any]:
+async def cancel_login_or_logout(state: GatewayState) -> responses.Account:
     if state.uploads.login_state()["state"] in ("starting", "pending"):
         state.uploads.cancel_login()
         answer = await state.uploads.account(False)
@@ -58,7 +58,7 @@ async def upload_list(state: GatewayState) -> dict[str, Any]:
 
 
 @router.post("/cloud/uploads", response_model=responses.Upload)
-async def enqueue(state: GatewayState, request: UploadRequest) -> dict[str, Any]:
+async def enqueue(state: GatewayState, request: UploadRequest) -> responses.Upload:
     if (request.path is None) == (request.retry is None):
         raise ApiError(400, "give either path or retry")
     if request.path is None:
