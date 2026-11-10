@@ -100,7 +100,10 @@ def launch_env_defaults() -> dict[str, str]:
     the blueprint lacks is refused), so a saved setting still wins."""
     from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-    return module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
+    defaults = module_env({RerunBridgeModule.name: {"rerun_open": "none", "rerun_web": True}})
+    if shared_config.shared_config().topics_enabled is True:
+        defaults["TOPIC_METADATA"] = "true"
+    return defaults
 
 
 def parse(raw: Any) -> LaunchConfig:
