@@ -45,8 +45,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_adapter import McpAdapter
-from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skill_result import SkillResult
 from dimos.cli.commands.lifecycle import DEFAULT_CONFIG_PATH
@@ -163,7 +163,7 @@ class Stack:
             blueprint = autoconnect(
                 hybrid_teleop_sim,
                 McpServer.blueprint(),
-                McpClient.blueprint(
+                Agent.blueprint(
                     system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT + AGENT_PROMPT_EXTRA
                 ),
             ).global_config(n_workers=6)
@@ -219,9 +219,7 @@ class Stack:
 
     def restart_agent(self) -> None:
         """A fresh agent, so one trial's chat does not steer the next."""
-        self._proxies["McpClient"] = self._coordinator.restart_module(
-            McpClient, reload_source=False
-        )
+        self._proxies["Agent"] = self._coordinator.restart_module(Agent, reload_source=False)
 
     # The skills the scripted decision-maker uses.
 
