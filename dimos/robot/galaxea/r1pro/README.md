@@ -46,6 +46,46 @@ dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 ```
 
+## Control path
+
+`R1ProConnection` is a connection module: the coordinator talks to it
+directly, with no transport adapters in between. `position_command` carries
+all 18 upper-body joints' targets (rad, `r1pro/<joint>`, positions only;
+the vendor tracker's speed is a tracking-speed cap, not a velocity command),
+`velocity_command` carries a `JointState` for ordinary model joints
+`r1pro/base_x`, `r1pro/base_y`, `r1pro/base_yaw` (world derivatives,
+bounded by ±1/±1 m/s and ±2 rad/s, rejected rather than clipped), and
+feedback goes out on `joint_state`. Every command is checked against the
+URDF limits first; an out-of-range command is refused whole.
+
+Chassis speeds flow `/cmd_vel` bus → the coordinator's `twist_command` →
+the registered `twist_velocity` task `vel_chassis` → ordinary joint arbitration
+→ `r1pro_velocity_command`. Its explicit axes are `linear.x`, `linear.y`,
+`angular.z`; measured `r1pro/base_yaw` rotates raw body intent each compute,
+without refreshing its 0.2 s input timeout. Teleop and nav publishers are unchanged.
+
+**Measured planar feedback.** Set `--r1proconnection.odometry-topic` to a real
+ROS `nav_msgs/Odometry` publisher (default `/odom` is a configurable deployment
+convention, not an assertion that every vendor profile publishes it). The input
+must have pose in `odom` and body twist in `base_link`. The connection publishes
+actual planar positions and world-frame joint velocities, not an integration
+from assumed yaw zero. Nonzero chassis output requires a finite unit quaternion
+and both source timestamp and receipt less than 0.2 s old. Arm/IMU traffic and
+the joint publish timer cannot renew that authority. Missing/invalid/stale
+odometry rejects a mixed batch before arm targets are sent; halt and zero
+velocity still work without odometry. Confirm the deployed publisher and frame
+conventions before enabling motion; hardware timing has not been validated here.
+
+**Deadman.** While the coordinator runs it sends a complete command every
+tick, so the deadman stays quiet. When commands stop, estop, or the
+coordinator going down, `R1ProConnection` halts within
+`deadman_timeout_s` (0.1 s): the chassis is told zero speed once and the
+arms are held where they were last measured. Stale feedback
+(`reading_timeout_s`, 0.2 s) also stops commands until fresh readings
+return. This replaces the old adapter path, where an estopped robot simply
+kept its last position command with no deadman. After clearing software E-stop,
+fresh operator velocity input is required; pre-stop intent is not replayed.
+
 ## Point-LIO
 
 Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
