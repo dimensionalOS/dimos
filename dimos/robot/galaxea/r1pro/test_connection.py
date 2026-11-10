@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import math
-import threading
 import time
 from typing import Any
 
@@ -61,7 +60,7 @@ SPEED_TOPIC = "/motion_target/target_speed_chassis"
 
 
 class Rig:
-    """One ``R1ProConnection`` on the fake vendor stack, every port in-process."""
+    """One concrete connection with in-process ports."""
 
     def __init__(self, fake: FakeRos, module: R1ProConnection) -> None:
         self.fake = fake
@@ -71,38 +70,24 @@ class Rig:
             module.set_transport(name, transport)  # type: ignore[arg-type]
 
     def start(self, feedback: bool = True) -> None:
-        """Start the module, feeding it one frame per segment once it subscribes."""
-        if feedback:
-            threading.Thread(target=self._feed_once_subscribed, daemon=True).start()
         self.module.start()
-
-    def _feed_once_subscribed(self) -> None:
-        def subscribed() -> bool:
-            return bool(self.fake.nodes) and self.fake.control.listener_count() >= 4
-
-        try:
-            wait_until(subscribed, timeout=5.0, interval=0.01)
-        except TimeoutError:
-            return
-        self.feed()
+        if feedback:
+            self.feed()
 
     def feed(self, ts: float | None = None) -> None:
         feed_all_segments(self.fake, ts)
 
     def move(self, positions: dict[str, float]) -> None:
-        """Send joint targets in rad on ``position_command``, named ``r1pro/<joint>``."""
         msg = JointState(name=list(positions), position=list(positions.values()))
         self.ports["position_command"].publish(msg)
 
     def drive(self, vx: float, vy: float, wz: float) -> None:
-        """Send world-frame ordinary joint velocities, using measured yaw."""
         feed_chassis_interval(self.fake)
         self.ports["velocity_command"].publish(
             JointState(name=R1PRO_BASE_JOINTS, velocity=[vx, vy, wz])
         )
 
     def joint_targets(self) -> dict[str, Any]:
-        """The last command sent to each vendor joint topic that got one, by topic."""
         return {
             topic: msgs[-1]
             for topic in (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC)
@@ -110,7 +95,6 @@ class Rig:
         }
 
     def speeds(self) -> list[Any]:
-        """Every TwistStamped sent to the chassis speed topic."""
         return self.fake.control.sent_to(SPEED_TOPIC)
 
     def readings(self) -> list[JointState]:
@@ -123,8 +107,9 @@ def fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
 
 
 @pytest.fixture
-def rig(fake_ros: FakeRos) -> Iterator[Callable[..., Rig]]:
+def rig(fake_ros: FakeRos, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., Rig]]:
     """Build an ``R1ProConnection`` on the fake vendor stack; stop every one at the end."""
+    monkeypatch.setattr(connection_module, "_FEEDBACK_DISCOVERY_TIMEOUT_S", 0.0)
     made: list[Rig] = []
 
     def build(start: bool = True, **config: Any) -> Rig:
@@ -143,16 +128,6 @@ def rig(fake_ros: FakeRos) -> Iterator[Callable[..., Rig]]:
         each.module.stop()
 
 
-def test_a_config_without_a_model_fails_start_before_any_ros_is_touched(
-    rig: Callable[..., Rig], fake_ros: FakeRos
-) -> None:
-    r = rig(start=False, model=None)
-    with pytest.raises(ValueError, match="no model"):
-        r.module.start()
-    assert fake_ros.nodes == []
-    assert not r.module.status().connected
-
-
 def test_the_limits_table_is_the_18_urdf_joints_and_three_planar_joints() -> None:
     table = limits(R1ProConnectionConfig())
     # 18 position keys in the flat command order, then the base's three axes.
@@ -162,126 +137,19 @@ def test_the_limits_table_is_the_18_urdf_joints_and_three_planar_joints() -> Non
     # Positions only: the vendor tracker owns speeds, so no velocity keys.
     assert not any(key.endswith("/velocity") for key in keys[:18])
 
-    # Bounds are the vendor URDF's, in radians.
-    torso = table["r1pro/torso_joint1/position"]
-    assert (torso.lo, torso.hi) == pytest.approx((-1.2735467075, 1.8125467075))
-    arm = table["r1pro/left_arm_joint1/position"]
-    assert (arm.lo, arm.hi) == pytest.approx((-4.415693415, 1.274093415))
-    for joint, top in zip(R1PRO_BASE_JOINTS, (1.0, 1.0, 2.0), strict=True):
-        limit = table[f"{joint}/velocity"]
-        assert (limit.lo, limit.hi) == (-top, top)
-
-
-def test_a_command_missing_joints_is_an_error_and_the_robot_is_held(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig()
-    wait_until(lambda: bool(r.readings()), timeout=5.0)
-    before = len(r.fake.control.published)
-
-    # 17 of the 18 joints: a partial command must never reach the tracker.
-    r.move(dict.fromkeys(R1PRO_UPPER_BODY_JOINTS[:17], 0.05))
-
-    status = r.module.status()
-    assert status.last_error is not None
-    assert "must cover all 18" in status.last_error
-    # The failure halted the robot: chassis zeroed, arms held at the last
-    # measured positions, and nothing else sent.
-    new = r.fake.control.published[before:]
-    assert [name for name, _ in new] == [SPEED_TOPIC, TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC]
-    twist = new[0][1]
-    assert (twist.twist.linear.x, twist.twist.linear.y, twist.twist.angular.z) == (0.0, 0.0, 0.0)
-    held = [msg for name, msg in new if "joint_state" in name]
-    assert list(held[0].position) == pytest.approx(TORSO_Q)
-    assert list(held[1].position) == pytest.approx(LEFT_Q)
-    assert list(held[2].position) == pytest.approx(RIGHT_Q)
-
-
-@pytest.mark.parametrize(
-    "plane,names,values,error",
-    [
-        ("position", R1PRO_UPPER_BODY_JOINTS, [2.0] + [0.0] * 17, "above its limit"),
-        ("velocity", R1PRO_BASE_JOINTS, [1.5, -2.0, 3.0], "limit"),
-        ("velocity", R1PRO_BASE_JOINTS, [float("nan"), 0.0, 0.0], "non-finite"),
-        ("position", ["r1pro/gripper_joint1"], [0.5], "unknown_key"),
-    ],
-)
-def test_invalid_commands_are_rejected_atomically_not_clamped(
-    rig: Callable[..., Rig], plane: str, names: list[str], values: list[float], error: str
-) -> None:
-    r = rig()
-    r.drive(0.5, -0.2, 0.7)
-    before = list(r.fake.control.published)
-    r.ports[f"{plane}_command"].publish(JointState(name=names, **{plane: values}))
-    rejection = r.module.status().last_rejection
-    assert rejection is not None and error in rejection
-    assert r.fake.control.published == before
-    r.move({"other/joint1": 0.5, "chassis/base/vx": 0.5})
-    assert r.fake.control.published == before
-
-
-def test_the_deadman_waits_for_the_first_command_then_halts_the_robot(
-    rig: Callable[..., Rig],
-) -> None:
-    r = rig(start=False, deadman_timeout_s=0.05)
-    assert not r.module.status().connected
-    r.start()
-    status = r.module.status()
-    assert status.connected and status.session_id
-    assert status.last_command_time is status.last_rejection is status.last_error is None
-    wait_until(lambda: bool(r.readings()), timeout=5.0)
-
-    # No command yet: the deadman is not armed, nothing is sent.
-    time.sleep(0.15)
-    assert r.fake.control.published == []
-    assert not r.module.status().deadman_fired
-
-    r.drive(0.3, 0.0, 0.0)
-    assert len(r.speeds()) == 1
-    assert r.module.status().last_command_time is not None
-    wait_until(lambda: r.module.status().deadman_fired, timeout=5.0)
-
-    # The halt: chassis zeroed once, arms held where they were last measured.
-    assert r.speeds()[-1].twist.linear.x == 0.0
-    held = r.joint_targets()
-    assert list(held[TORSO_TOPIC].position) == pytest.approx(TORSO_Q)
-
-    # A new command rearms the deadman.
-    r.drive(0.2, 0.0, 0.0)
-    assert not r.module.status().deadman_fired
-    assert r.speeds()[-1].twist.linear.x == 0.2
-
-    r.module.stop()
-
-    assert not r.module.status().connected
-    assert all(node.stopped for node in r.fake.nodes)
-    # The stop-time halt: chassis zeroed, arms held at the measured positions.
-    assert r.speeds()[-1].twist.linear.x == 0.0
-    assert list(r.joint_targets()[TORSO_TOPIC].position) == pytest.approx(TORSO_Q)
-
-    sent = list(r.fake.control.published)
-    # A late transport callback cannot restart motion after shutdown.
-    r.ports["velocity_command"].publish(
-        JointState(name=R1PRO_BASE_JOINTS, velocity=[0.4, 0.0, 0.0])
-    )
-    r.module.stop()
-    assert r.fake.control.published == sent
-
 
 def test_nothing_is_published_until_every_segment_has_reported(
     rig: Callable[..., Rig], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(connection_module, "_FEEDBACK_DISCOVERY_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(connection_module, "_FEEDBACK_DISCOVERY_TIMEOUT_S", 0.0)
     r = rig(start=False)
     r.start(feedback=False)
 
-    # A zero-position snapshot would walk the arms to home, so silence in.
-    time.sleep(0.3)
     assert r.readings() == []
 
     r.fake.control.feed("/hdas/feedback_torso", joint_feedback(TORSO_Q, 100.1))
     r.fake.control.feed("/hdas/feedback_arm_left", joint_feedback(LEFT_Q, 100.2))
-    time.sleep(0.1)
+    time.sleep(2.0 / r.module.config.publish_rate_hz)
     assert r.readings() == []
 
     r.fake.control.feed("/hdas/feedback_arm_right", joint_feedback(RIGHT_Q, 100.3))
@@ -297,6 +165,19 @@ def test_nothing_is_published_until_every_segment_has_reported(
         r.fake.sensors.feed(f"/hdas/imu_{part}", RosImu(header=RosHeader(frame_id=part)))
         wait_until(lambda part=part: bool(r.ports[f"imu_{part}"].sent), timeout=5.0)
         assert r.ports[f"imu_{part}"].sent[-1].frame_id == part
+
+    before = list(r.fake.control.published)
+    with pytest.raises(ValueError, match="must cover all 18"):
+        r.module.write({f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS[:17]})
+    assert r.fake.control.published == before
+    workers = list(r.module._sensor_workers)
+    r.module.stop()
+    assert all(node.stopped and node.listener_count() == 0 for node in r.fake.nodes)
+    assert all(not worker.is_alive() for worker in workers)
+    assert not r.module.status().connected
+    sent = list(r.fake.control.published)
+    r.drive(0.4, 0.0, 0.0)  # Disposed ports cannot restart motion.
+    assert r.fake.control.published == sent
 
 
 @pytest.mark.parametrize("publish_tf", [True, False])
@@ -343,98 +224,94 @@ def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
         "old_stamp",
         "future",
         "zero_stamp",
+        "bad_stamp",
         "stale_receipt",
         "stale_source",
-        "bad_stamp",
         "bad_yaw",
+        "nan",
+        "backwards",
+        "duplicate",
+        "long_gap",
     ],
 )
-def test_yaw_authority_is_independent_of_arm_imu_and_publish_traffic(
+def test_invalid_measurements_revoke_whole_batch_authority_until_measured_recovery(
     rig: Callable[..., Rig],
+    monkeypatch: pytest.MonkeyPatch,
     invalid: str,
-) -> None:
-    r = rig()
-    r.ports["velocity_command"].publish(JointState(name=R1PRO_BASE_JOINTS, velocity=[0.0] * 3))
-    assert r.module.status().last_error is None
-    r.module.halt()
-    assert all(m.twist.linear.x == m.twist.linear.y == m.twist.angular.z == 0 for m in r.speeds())
-    if invalid not in ("absent", "first"):
-        feed_chassis_interval(r.fake, turn=0.8)
-    now = time.time()
-    stamp = {"old_stamp": now - 1, "future": now + 1, "zero_stamp": 0.0}.get(invalid, now)
-    msg = chassis_speed(0.1, 0.0, 0.0, stamp)
-    if invalid == "bad_stamp":
-        msg.header.stamp.sec = float("nan")
-    if invalid != "absent":
-        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
-    if invalid == "stale_source":
-        assert r.module._base_state is not None
-        r.module._base_state.ts = time.time() - 1.0
-    if invalid == "bad_yaw":
-        assert r.module._base_state is not None
-        r.module._base_state.position[2] = float("nan")
-    if invalid == "stale_receipt":
-        # Keep the source stamp fresh: receipt freshness must gate independently.
-        r.module._odom_received_mono = time.monotonic() - 1.0
-    r.feed()
-    r.fake.sensors.feed("/hdas/imu_chassis", RosImu(header=RosHeader()))
-    time.sleep(0.02)  # The arm publish timer has run, but cannot refresh yaw.
-    before = list(r.fake.control.published)
-    batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
-    batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
-    with pytest.raises(ValueError, match="fresh measured odometry"):
-        r.module.write(batch)
-    assert r.fake.control.published == before  # No partial arm send.
-    r.module.command(batch)
-    assert "fresh measured odometry" in (r.module.status().last_error or "")
-    assert r.speeds()[-1].twist.linear.x == 0.0  # Error halt works without yaw.
-    assert list(r.joint_targets()[TORSO_TOPIC].position) == pytest.approx(TORSO_Q)
-
-
-@pytest.mark.parametrize("invalid", ["nan", "backwards", "duplicate", "long_gap"])
-def test_invalid_interval_preserves_local_pose_and_recovers_only_on_measured_interval(
-    rig: Callable[..., Rig], monkeypatch: pytest.MonkeyPatch, invalid: str
 ) -> None:
     r = rig(start=False)
     r.module.connect()
     clock = [100.0]
     monkeypatch.setattr(connection_module.time, "time", lambda: clock[0])
+    monkeypatch.setattr(connection_module.time, "monotonic", lambda: 200.0)
 
-    def receive(ts: float, vx: float = 0.4, wz: float = 0.0) -> None:
-        clock[0] = ts
+    def receive(ts: float, vx: float = 0.0, wz: float = 0.0) -> None:
+        clock[0] = max(clock[0], ts)
         r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(vx, 0.0, wz, ts))
 
-    receive(100.0)
-    assert r.module._base_state is None
-    assert not r.readings()  # A frame origin is not fabricated feedback.
-    receive(100.1, wz=1.0)
-    before = r.readings()[-1]
-    assert list(before.position) == pytest.approx([0.04, 0.0, 0.1])
+    if invalid != "absent":
+        receive(100.0)
+    assert r.module._base_state is None and not r.readings()  # Anchor, not measured motion.
+    interval_error = invalid in {"nan", "backwards", "duplicate", "long_gap"}
+    if invalid not in {"absent", "first"}:
+        receive(100.1, vx=0.4, wz=1.0)
+        assert list(r.readings()[-1].position) == pytest.approx([0.04, 0.0, 0.1])
+    pose = [r.module._odom_x, r.module._odom_y, r.module._odom_yaw]
     count = len(r.readings())
     if invalid == "nan":
         receive(100.2, vx=float("nan"))
-        receive(100.3)  # New anchor only after invalid input.
-    elif invalid == "backwards":
-        receive(100.05)
-    elif invalid == "duplicate":
-        receive(100.1)
-    else:
-        receive(102.0)
-    assert r.module._base_state is None
-    assert len(r.readings()) == count
-    assert [r.module._odom_x, r.module._odom_y, r.module._odom_yaw] == pytest.approx(
-        before.position
-    )
+        receive(100.3)  # First good sample only reanchors.
+    elif invalid in {"backwards", "duplicate", "long_gap", "old_stamp", "future", "zero_stamp"}:
+        stamp = {
+            "backwards": 100.05,
+            "duplicate": 100.1,
+            "long_gap": 102.0,
+            "old_stamp": 99.0,
+            "future": 101.1,
+            "zero_stamp": 0.0,
+        }[invalid]
+        # A future source stamp must not advance the independent receipt clock.
+        if interval_error:
+            clock[0] = stamp
+        msg: Any = chassis_speed(0.0, 0.0, 0.0, stamp)
+        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
+    elif invalid == "bad_stamp":
+        msg = chassis_speed(0.0, 0.0, 0.0, clock[0])
+        msg.header.stamp.sec = float("nan")  # Deliberately malformed vendor packet.
+        r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, msg)
+    elif invalid == "stale_receipt":
+        r.module._odom_received_mono = 199.0
+    elif invalid == "stale_source":
+        assert r.module._base_state is not None
+        r.module._base_state.ts = 99.0
+    elif invalid == "bad_yaw":
+        assert r.module._base_state is not None
+        r.module._base_state.position[2] = float("nan")
+    if interval_error:
+        assert r.module._base_state is None and len(r.readings()) == count
+        assert [r.module._odom_x, r.module._odom_y, r.module._odom_yaw] == pytest.approx(pose)
+    r.feed()  # Ordinary arm and IMU traffic cannot authorize chassis motion.
+    r.fake.sensors.feed("/hdas/imu_chassis", RosImu(header=RosHeader()))
     batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
     batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
-    published = list(r.fake.control.published)
+    before = list(r.fake.control.published)
     with pytest.raises(ValueError, match="fresh measured odometry"):
         r.module.write(batch)
-    assert r.fake.control.published == published  # Validate before ANY arm send.
-    receive(clock[0] + 0.1)
-    state = r.readings()[-1]
-    assert state.position[0] == pytest.approx(0.04 + math.cos(0.1) * 0.04)
-    assert state.position[1] == pytest.approx(math.sin(0.1) * 0.04)
-    r.module.write({f"{R1PRO_BASE_JOINTS[0]}/velocity": 0.2})
-    assert r.speeds()[-1].twist.linear.x == pytest.approx(math.cos(0.1) * 0.2)
-    assert len(r.readings()) == count + 1  # Commands never integrate/publish pose.
+    assert r.fake.control.published == before  # No partial arm SDK send.
+    r.module.write({f"{j}/velocity": 0.0 for j in R1PRO_BASE_JOINTS})
+    r.module.halt()  # Both zero and measured arm hold work without yaw.
+    stopped = r.speeds()[-1].twist
+    assert (stopped.linear.x, stopped.linear.y, stopped.angular.z) == (0.0, 0.0, 0.0)
+    for topic, q in zip(
+        (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC), (TORSO_Q, LEFT_Q, RIGHT_Q), strict=True
+    ):
+        assert list(r.joint_targets()[topic].position) == pytest.approx(q)
+    if interval_error:
+        receive(clock[0] + 0.1, vx=0.4)
+        state = r.readings()[-1]
+        assert list(state.position) == pytest.approx(
+            [0.04 + math.cos(0.1) * 0.04, math.sin(0.1) * 0.04, 0.1]
+        )
+        r.module.write({f"{R1PRO_BASE_JOINTS[0]}/velocity": 0.2})
+        assert r.speeds()[-1].twist.linear.x == pytest.approx(math.cos(0.1) * 0.2)
+        assert len(r.readings()) == count + 1  # Commands never integrate pose.

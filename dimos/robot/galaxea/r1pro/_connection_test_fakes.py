@@ -24,6 +24,9 @@ from typing import Any
 
 import pytest
 
+from dimos.msgs.geometry_msgs.Twist import Twist as RosTwist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3 as RosVector3
+
 
 @dataclass
 class RosTime:
@@ -46,19 +49,6 @@ class RosJointState:
     position: list[float] = field(default_factory=list)
     velocity: list[float] = field(default_factory=list)
     effort: list[float] = field(default_factory=list)
-
-
-@dataclass
-class RosVector3:
-    x: float = 0.0
-    y: float = 0.0
-    z: float = 0.0
-
-
-@dataclass
-class RosTwist:
-    linear: RosVector3 = field(default_factory=RosVector3)
-    angular: RosVector3 = field(default_factory=RosVector3)
 
 
 @dataclass
@@ -181,14 +171,10 @@ def install_fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
     """Point the connection's lazy ROS imports at the fakes; returns their registry."""
     fake = FakeRos()
 
-    class QoSProfile:
-        def __init__(self, **kwargs: Any) -> None:
-            self.kwargs = kwargs
-
     # Real module objects preserve lazy import behavior without a ROS installation.
     modules = {
         "rclpy.qos": {
-            "QoSProfile": QoSProfile,
+            "QoSProfile": types.SimpleNamespace,
             "ReliabilityPolicy": types.SimpleNamespace(BEST_EFFORT=1),
             "DurabilityPolicy": types.SimpleNamespace(VOLATILE=1),
         },
