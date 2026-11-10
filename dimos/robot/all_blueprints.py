@@ -88,6 +88,7 @@ all_blueprints = {
     "habitat-typesafe": "dimos.simulation.habitat.blueprints:habitat_typesafe",
     "habitat-voxel": "dimos.simulation.habitat.blueprints:habitat_voxel",
     "hybrid-teleop-sim": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim:hybrid_teleop_sim",
+    "hybrid-teleop-sim-collect": "dimos.robot.manipulators.xarm.blueprints.hybrid_teleop_sim:hybrid_teleop_sim_collect",
     "keyboard-teleop-a1z": "dimos.robot.manipulators.a1z.blueprints.teleop:keyboard_teleop_a1z",
     "keyboard-teleop-a750": "dimos.robot.manipulators.a750.blueprints.teleop:keyboard_teleop_a750",
     "keyboard-teleop-lite6": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_lite6",
@@ -215,6 +216,7 @@ all_blueprints = {
 
 
 all_modules = {
+    "agent": "dimos.agents.agent.Agent",
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
@@ -305,7 +307,6 @@ all_modules = {
     "map-compress-module": "dimos.teleop.hosted.map_compress.MapCompressModule",
     "marker-detection-stream-module": "dimos.perception.fiducial.marker_detection_stream_module.MarkerDetectionStreamModule",
     "marker-tf-module": "dimos.perception.fiducial.marker_tf_module.MarkerTfModule",
-    "mcp-client": "dimos.agents.mcp.mcp_client.McpClient",
     "mcp-server": "dimos.agents.mcp.mcp_server.McpServer",
     "memory-module": "dimos.memory.module.MemoryModule",
     "mesh-module": "dimos.mapping.experimental.mesh.MeshModule",
@@ -376,7 +377,7 @@ all_modules = {
     "teleop-recorder": "dimos.teleop.utils.recorder.TeleopRecorder",
     "teleop-skills": "dimos.agents.skills.teleop_skills.TeleopSkills",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory.TemporalMemory",
-    "trajectory-follower-native": "dimos.navigation.trajectory_follower.fancy.native.TrajectoryFollowerNative",
+    "trajectory-follower-native": "dimos.navigation.trajectory_follower.native.TrajectoryFollowerNative",
     "twist-teleop-module": "dimos.teleop.webxr.extensions.TwistTeleopModule",
     "type-safe-agent": "dimos.agents.typesafe.agent.TypeSafeAgent",
     "type-safe-navigation-agent": "dimos.agents.typesafe.navigation.TypeSafeNavigationAgent",

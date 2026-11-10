@@ -319,7 +319,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.observe_skill import ObserveSkill
 
@@ -327,7 +327,7 @@ blueprint = autoconnect(
     GO2Connection.blueprint(),
     ObserveSkill.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
 ).transports({("color_image", Image): make_transport("go2/color_image", Image)})
 
 # Run the blueprint

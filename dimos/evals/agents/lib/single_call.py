@@ -62,7 +62,7 @@ class SingleCallAgent(EvalSubject):
         blocks = self._observation_blocks(env)
         if self.config.chat_model is None:
             # The production factory loads optional model-provider dependencies.
-            from dimos.agents.mcp.mcp_client import init_model
+            from dimos.agents.agent import init_model
 
             chat = init_model(self.config.model, trace_dir=run_dir / "raw")
             model_name = self.config.model
