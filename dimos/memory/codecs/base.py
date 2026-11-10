@@ -34,9 +34,6 @@ def codec_for(payload_type: type[Any] | None = None, sample: Any = None) -> Code
     ``sample`` is a first payload, when one is at hand. ``Image`` covers depth as
     well as colour, and JPEG would destroy depth values, so a depth or 16-bit
     sample selects lossless ``lz4+lcm`` instead.
-
-    Installed generated values (``__msgtype__``) use raw CDR; every legacy
-    ``dimos.msgs`` value keeps the codec it used before CDR existed.
     """
     from dimos.memory.codecs.pickle import PickleCodec
 
@@ -44,26 +41,6 @@ def codec_for(payload_type: type[Any] | None = None, sample: Any = None) -> Code
         from dimos.memory.codecs.cdr import CdrCodec
 
         return CdrCodec(payload_type)
-    if payload_type is not None:
-        from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-
-        if issubclass(payload_type, Image):
-            if isinstance(sample, Image) and sample.format in (
-                ImageFormat.DEPTH,
-                ImageFormat.DEPTH16,
-                ImageFormat.GRAY16,
-            ):
-                from dimos.memory.codecs.lcm import LcmCodec
-                from dimos.memory.codecs.lz4 import Lz4Codec
-
-                return Lz4Codec(LcmCodec(payload_type))
-            from dimos.memory.codecs.jpeg import JpegCodec
-
-            return JpegCodec()
-        if hasattr(payload_type, "lcm_encode") and hasattr(payload_type, "lcm_decode"):
-            from dimos.memory.codecs.lcm import LcmCodec
-
-            return LcmCodec(payload_type)
     return PickleCodec()
 
 
@@ -109,6 +86,19 @@ def resolve_payload_type(payload_module: str) -> type[Any]:
         resolved = resolve_message_type(payload_module)
         if resolved is None:
             raise ValueError(f"Unregistered payload type {payload_module!r}")
+        return resolved
+    if payload_module.startswith("dimos.msgs."):
+        parts = payload_module.split(".")
+        name = f"{parts[2]}/msg/{parts[3]}"
+        name = {
+            "nav_msgs/msg/LineSegments3D": "dimos_msgs/msg/LineSegments3D",
+            "geometry_msgs/msg/Transform": "geometry_msgs/msg/TransformStamped",
+        }.get(name, name)
+        from dimos.protocol.pubsub.message_types import resolve_message_type
+
+        resolved = resolve_message_type(name)
+        if resolved is None:
+            raise ValueError(f"Unknown historical payload type {payload_module!r}")
         return resolved
     parts = payload_module.rsplit(".", 1)
     if len(parts) != 2:

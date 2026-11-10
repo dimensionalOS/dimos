@@ -15,7 +15,7 @@
 use std::io::Write;
 
 use anyhow::{anyhow, Context, Result};
-use lcm_msgs::sensor_msgs::Image;
+use dimos_generated_msgs::sensor_msgs::msg::image::Image;
 use lz4_flex::frame::FrameEncoder;
 use turbojpeg::{PixelFormat, Subsamp};
 
@@ -35,13 +35,11 @@ pub(crate) fn encode(
     observation: DecodedObservation,
 ) -> Result<StoredObservation> {
     let data = match stream.codec {
-        Codec::Lcm => lcm_encode(observation.payload)?,
         Codec::Cdr => cdr_encode(observation.payload)?,
         Codec::Json => match observation.payload {
             DecodedPayload::Json(data) => data,
             _ => return Err(anyhow!("JSON storage codec requires a JSON payload")),
         },
-        Codec::Lz4Lcm => lz4_frame(&lcm_encode(observation.payload)?)?,
         Codec::Lz4Cdr => lz4_frame(&cdr_encode(observation.payload)?)?,
         Codec::Jpeg => jpeg_encode(observation.payload)?,
     };
@@ -51,20 +49,12 @@ pub(crate) fn encode(
     })
 }
 
-fn lcm_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
-    Ok(match payload {
-        DecodedPayload::Lcm(data) => data,
-        DecodedPayload::Image(image) => image.encode(),
-        DecodedPayload::Cdr(_) => return Err(anyhow!("LCM codec cannot store a CDR payload")),
-        DecodedPayload::Json(_) => return Err(anyhow!("LCM codec cannot store JSON payload")),
-    })
-}
-
 fn cdr_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
-    match payload {
-        DecodedPayload::Cdr(data) => Ok(data),
-        _ => Err(anyhow!("CDR codec requires a raw CDR payload")),
-    }
+    Ok(match payload {
+        DecodedPayload::Cdr(data) => data,
+        DecodedPayload::Image(image) => dimos_module::cdr::encode(&image)?,
+        DecodedPayload::Json(_) => return Err(anyhow!("CDR codec cannot store JSON payload")),
+    })
 }
 
 fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
@@ -72,7 +62,13 @@ fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
         return Err(anyhow!("JPEG storage codec requires an Image payload"));
     };
     if image.encoding == "jpeg" {
-        return Ok(image.encode());
+        return Ok(dimos_module::cdr::encode(
+            &dimos_generated_msgs::sensor_msgs::msg::compressed_image::CompressedImage {
+                header: image.header,
+                format: "jpeg".into(),
+                data: image.data,
+            },
+        )?);
     }
 
     let format = pixel_format(&image.encoding)?;
@@ -90,7 +86,13 @@ fn jpeg_encode(payload: DecodedPayload) -> Result<Vec<u8>> {
     image.is_bigendian = 0;
     image.step = 0;
     image.data = jpeg.to_vec();
-    Ok(image.encode())
+    Ok(dimos_module::cdr::encode(
+        &dimos_generated_msgs::sensor_msgs::msg::compressed_image::CompressedImage {
+            header: image.header,
+            format: "jpeg".into(),
+            data: image.data,
+        },
+    )?)
 }
 
 fn pixel_format(encoding: &str) -> Result<PixelFormat> {
