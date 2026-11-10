@@ -175,7 +175,8 @@ class _Joint:
 
 def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
     joint = pxr.UsdPhysics.Joint(prim)
-    parent = _body_name(prim, "physics:body0") or world
+    named = _body_name(prim, "physics:body0")
+    parent = named or world
     child = _body_name(prim, "physics:body1")
     if parent is None or child is None:
         logger.warning(f"skipping joint {prim.GetPath()}: it does not name both bodies")
@@ -194,13 +195,19 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
     origin_rotation = rot0 * rot1.inv()
 
     position = joint.GetLocalPos0Attr().Get()
+    origin_xyz = np.asarray([position[0], position[1], position[2]], dtype=np.float64)
+    origin_rpy = np.asarray(origin_rotation.as_euler("xyz"), dtype=np.float64)
+    if named is None:
+        # Welded to the world: the child's own transform is where it sits, and the joint
+        # carries no offset of its own.
+        origin_xyz, origin_rpy = _placement_of(_body_prim(prim, "physics:body1"))
     return _Joint(
         name=prim.GetDisplayName() or prim.GetName(),
         kind=kind,
         parent=parent,
         child=child,
-        origin_xyz=np.asarray([position[0], position[1], position[2]], dtype=np.float64),
-        origin_rpy=np.asarray(origin_rotation.as_euler("xyz"), dtype=np.float64),
+        origin_xyz=origin_xyz,
+        origin_rpy=origin_rpy,
         axis=axis,
         lower=lower,
         upper=upper,
@@ -213,6 +220,11 @@ def _free_kind(prim: Prim) -> str:
     if all(f"PhysicsLimitAPI:{axis}" in applied for axis in _OUT_OF_PLANE):
         return "planar"
     return "floating"
+
+
+def _body_prim(prim: Prim, relationship: str) -> Prim:
+    targets = prim.GetRelationship(relationship).GetTargets()
+    return prim.GetStage().GetPrimAtPath(targets[0])
 
 
 def _body_name(prim: Prim, relationship: str) -> str | None:
