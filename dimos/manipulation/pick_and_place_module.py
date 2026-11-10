@@ -185,10 +185,10 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Pick one object from the latest scan.
 
-        To choose the grasp, get one from a grasp generator's skill, such as
-        propose_graspgenx_grasps or propose_heuristic_grasps, and pass it as
-        ``grasp``: the pick tries that grasp, exactly where it is, and no other.
-        Without ``grasp``, ranked grasps are generated and tried in order.
+        To choose the grasp, get one from a grasp generator's propose_grasps_for
+        and pass it as ``grasp``: the pick tries that grasp, exactly where it is,
+        and no other. Without ``grasp``, ranked grasps are generated and tried in
+        order.
 
         ``source`` in the result says where the grasps came from: the given
         grasp's ``generator`` ("operator" when it has none), or "provider" for
@@ -200,7 +200,7 @@ class PickAndPlaceModule(Module):
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
-            grasp: One entry of a grasp generator's ``grasps``; only ``position``
+            grasp: One entry of propose_grasps_for's ``grasps``; only ``position``
                 and ``orientation`` are needed.
         """
         if self._holding_object:

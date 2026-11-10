@@ -235,7 +235,7 @@ def test_proposals_by_object_id_name_the_host_module(runtime: Any, mocker: Mocke
     module._scene.get_object_pointcloud_by_object_id.return_value = cloud()
     try:
         module.start()
-        proposed = module.propose_graspgenx_grasps("cup-1")
+        proposed = module.propose_grasps_for("cup-1")
     finally:
         module.stop()
 

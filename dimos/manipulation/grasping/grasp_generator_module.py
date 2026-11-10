@@ -44,10 +44,8 @@ def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
 class GraspGeneratorModule(Module, GraspGenSpec):
     """A grasp generator that also proposes grasps for a scanned object, by its id.
 
-    Subclasses implement ``propose_grasps`` and expose a skill that calls
-    ``_propose_for``. Each subclass names its skill after itself, such as
-    ``propose_heuristic_grasps``: an agent's tools are keyed by method name
-    alone, so two generators with the same skill name would hide one another.
+    Subclasses implement ``propose_grasps`` and expose ``propose_grasps_for`` as
+    a skill that calls ``_propose_for``.
     """
 
     # Looks up a scanned object's points; a stack without a scene has none.
