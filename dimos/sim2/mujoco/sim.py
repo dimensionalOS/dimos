@@ -39,6 +39,10 @@ class MujocoSimConfig(SimulatedWorldConfig):
     max_burst_seconds: float = 0.01
 
 
+# How often the world republishes itself while it is held before the first step.
+_HOLD_PERIOD = 0.05
+
+
 class MujocoSim(Module):
     config: MujocoSimConfig
     actions: In[WorldAction]
@@ -114,7 +118,11 @@ class MujocoSim(Module):
         while time.monotonic() < deadline:
             if not publisher.busy:
                 publisher.offer(backend.frame())
-            await asyncio.sleep(0.005)
+            # Slowly. One frame is all a policy needs to see the joints and start commanding,
+            # and the whole reason for the wait is that this machine is busy -- every module
+            # that wants a view of the room is compiling its own copy of it right now. Holding
+            # at 200 Hz would be the sim competing with the arming it is waiting for.
+            await asyncio.sleep(_HOLD_PERIOD)
         backend.restart_clock()
         logger.info(f"sim2: waited {self.config.startup_delay}s; starting the world")
 
