@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import field
 import functools
 from operator import attrgetter
@@ -42,6 +43,12 @@ from typing import (
 )
 from urllib.parse import urlparse
 
+from dimos_messages.sensor_msgs.msg import (
+    CameraInfo,
+    CompressedImage,
+    Image,
+)
+from dimos_messages.tf2_msgs.msg import TFMessage
 import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -52,10 +59,14 @@ from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import transport_topic
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as LegacyCameraInfo
+from dimos.msgs.sensor_msgs.Image import Image as LegacyImage
+from dimos.msgs.tf2_msgs.TFMessage import (
+    TfFrameTree as LegacyTfFrameTree,
+    TFMessage as LegacyTFMessage,
+)
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
@@ -63,6 +74,7 @@ from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.cdr import camera_pinhole, generated_archetypes, message_frame_id
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
@@ -71,6 +83,7 @@ from dimos.visualization.rerun.constants import (
     RERUN_WEBSOCKET_URL,
     RerunOpenOption,
 )
+from dimos.visualization.rerun.frames import TfFrameTree
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
 from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
 
@@ -146,6 +159,16 @@ class KeyedRenderer(Protocol):
 
 
 RendererT = TypeVar("RendererT", bound=Callable[..., object])
+
+
+def keyed_by(key: Callable[[Any], Any]) -> Callable[[RendererT], RendererT]:
+    """Deliver the latest message for each semantic renderer key."""
+
+    def decorate(renderer: RendererT) -> RendererT:
+        renderer.message_key = key  # type: ignore[attr-defined]
+        return renderer
+
+    return decorate
 
 
 def keyed_by_seq(renderer: RendererT) -> RendererT:
@@ -279,7 +302,12 @@ class Config(ModuleConfig):
     honored.
     """
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    # Construct the selected backend only when the bridge starts. Creating a
+    # blueprint or importing a camera module must not open multicast sockets.
+    pubsubs: list[SubscribeAllCapable[Any, Any]] | None = None
+    # Each explicit transport belongs to this bridge.
+    cdr_transports: dict[str, PubSubTransport[Any]] = field(default_factory=dict)
+    message_types: dict[str, type[Any]] = field(default_factory=dict)
 
     visual_override: dict[Glob | str, VisualOverride] = field(default_factory=dict)
     static: dict[str, Callable[[Any], Any]] = field(default_factory=dict)
@@ -347,6 +375,7 @@ class RerunBridgeModule(Module):
         self._min_intervals: dict[str, float] = {}
         self._tf_lock = threading.Lock()
         self._tf_tree = self._new_tf_tree()
+        self._legacy_tf_tree = self._new_legacy_tf_tree()
 
     def _new_tf_tree(self) -> TfFrameTree | None:
         if self.config.tf_axes <= 0:
@@ -356,9 +385,27 @@ class RerunBridgeModule(Module):
             root=f"{self.config.entity_prefix}/tf",
         )
 
+    def _new_legacy_tf_tree(self) -> LegacyTfFrameTree | None:
+        """The tf tree for legacy DimOS messages, whose transforms are flat."""
+        if self.config.tf_axes <= 0:
+            return None
+        return LegacyTfFrameTree(
+            axis_length=self.config.tf_axes,
+            root=f"{self.config.entity_prefix}/tf",
+        )
+
     @property
     def host(self) -> str:
         return self.config.host
+
+    @rpc
+    def update_message_types(self, additions: dict[str, type[Any]]) -> None:
+        """Register generated topic types discovered when modules are loaded."""
+        for channel, kind in additions.items():
+            existing = self.config.message_types.get(channel)
+            if existing is not None and existing is not kind:
+                raise ValueError(f"Conflicting message types for {channel}: {existing} and {kind}")
+        self.config.message_types.update(additions)
 
     @rpc
     def opens_web_viewer(self) -> bool:
@@ -409,7 +456,7 @@ class RerunBridgeModule(Module):
                 return msg
             if isinstance(msg, RerunConvertible):
                 return msg.to_rerun()
-            return None
+            return generated_archetypes(msg, entity_path)
 
         # compose all converters
         def composed(msg: Any) -> RerunData | None:
@@ -455,13 +502,21 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
-        if self._tf_tree is not None and isinstance(msg, TFMessage):
+        legacy_tf = isinstance(msg, LegacyTFMessage)
+        if self._tf_tree is not None and (legacy_tf or isinstance(msg, TFMessage)):
             with self._tf_lock:
-                for path, archetype in msg.to_rerun(self._tf_tree):
-                    rr.log(path, archetype)
+                if legacy_tf:
+                    for path, archetype in msg.to_rerun(self._legacy_tf_tree):
+                        rr.log(path, archetype)
+                else:
+                    for entry in generated_archetypes(msg, entity_path) or []:
+                        rr.log(entry[0], entry[1])
+                    self._tf_tree.update(msg.transforms)
             return
 
-        if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
+        if isinstance(msg, (CameraInfo, LegacyCameraInfo)) and (
+            entity_path not in self.config.visual_override
+        ):
             self._log_camera_info(entity_path, msg)
             return
 
@@ -470,16 +525,26 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
+        is_image = isinstance(msg, (Image, CompressedImage, LegacyImage))
+        if is_image:
+            self._image_entities.add(entity_path)
+
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
             for entry in rerun_data:
                 rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
             # Pin the base entity to the message frame once, so child entities
             # follow it the way a single archetype does below.
-            frame_id = getattr(msg, "frame_id", None)
+            frame_id = message_frame_id(msg)
             if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                if not any(
+                    entry[0] == entity_path and isinstance(entry[1], rr.Transform3D)
+                    for entry in rerun_data
+                ):
+                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                 self._frame_attached[entity_path] = frame_id
+                if is_image and frame_id in self._camera_infos:
+                    rr.log(entity_path, self._camera_pinhole(self._camera_infos[frame_id]))
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
             if isinstance(msg, Image):
@@ -487,14 +552,20 @@ class RerunBridgeModule(Module):
             # if source msg carries a frame_id, attach the entity to that TF frame
             # should skip if archetype is a Transform3D
             if not isinstance(rerun_data, rr.Transform3D):
-                frame_id = getattr(msg, "frame_id", None)
+                frame_id = message_frame_id(msg)
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
                     rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                     self._frame_attached[entity_path] = frame_id
-                    if isinstance(msg, Image) and frame_id in self._camera_infos:
-                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+                    if is_image and frame_id in self._camera_infos:
+                        rr.log(entity_path, self._camera_pinhole(self._camera_infos[frame_id]))
 
-    def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
+    @staticmethod
+    def _camera_pinhole(info: CameraInfo | LegacyCameraInfo) -> Archetype:
+        if isinstance(info, LegacyCameraInfo):
+            return cast("Archetype", info.to_rerun_pinhole())
+        return camera_pinhole(info)
+
+    def _log_camera_info(self, entity_path: str, info: CameraInfo | LegacyCameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
 
         Rerun draws the frustum only when the Pinhole sits on the image entity,
@@ -503,13 +574,14 @@ class RerunBridgeModule(Module):
         """
         import rerun as rr
 
-        if not info.frame_id:
-            rr.log(entity_path, info.to_rerun_pinhole())
+        frame = message_frame_id(info)
+        if not frame:
+            rr.log(entity_path, self._camera_pinhole(info))
             return
-        self._camera_infos[info.frame_id] = info
+        self._camera_infos[frame] = info
         for image_path, frame_id in self._frame_attached.items():
-            if frame_id == info.frame_id and image_path in self._image_entities:
-                rr.log(image_path, info.to_rerun_pinhole())
+            if frame_id == frame and image_path in self._image_entities:
+                rr.log(image_path, self._camera_pinhole(info))
 
     @rpc
     def start(self) -> None:
@@ -524,6 +596,7 @@ class RerunBridgeModule(Module):
         self._camera_infos = {}
         self._image_entities = set()
         self._tf_tree = self._new_tf_tree()
+        self._legacy_tf_tree = self._new_legacy_tf_tree()
         self._min_intervals = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
@@ -595,35 +668,130 @@ class RerunBridgeModule(Module):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+        for topic, transport in self.config.cdr_transports.items():
+            self._subscribe_cdr(topic, transport)
+
+    def _subscribe_cdr(self, topic: str, transport: PubSubTransport[Any]) -> None:
+        cleanup = ExitStack()
+        cleanup.callback(transport.stop)
+        try:
+            unsubscribe = transport.subscribe(functools.partial(self._on_cdr_message, topic=topic))
+            cleanup.callback(unsubscribe)
+        except BaseException:
+            cleanup.close()
+            raise
+        self.register_disposable(Disposable(cleanup.close))
+
+    def _on_cdr_message(self, msg: Any, *, topic: str) -> None:
+        import rerun as rr
+
+        stamp = getattr(getattr(msg, "header", None), "stamp", None)
+        if stamp is not None:
+            nanos = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+            rr.set_time("source", timestamp=np.datetime64(nanos, "ns"))
+        try:
+            self._on_message(msg, "/" + topic.strip("/"))
+        finally:
+            if stamp is not None:
+                rr.disable_timeline("source")
 
     def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
-        """Subscribe to the named topics, or to everything when none are named.
+        """Subscribe with explicit generated types supplied by the runtime graph.
 
-        A zenoh key is `dimos/<topic>/<Type>`, so one wildcard per name needs no type; LCM cannot do this.
+        Without explicit CDR transports or generated message types this is the
+        legacy path: every topic (or the named ones) on the selected backend,
+        with the seq keying the legacy renderers declare.
         """
-        if not self.config.topics:
-            if isinstance(pubsub, Zenoh):
-                keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
-                return pubsub.subscribe_all(self._on_message, keyed=keyed)
-            return pubsub.subscribe_all(self._on_message)
+        if not self.config.message_types and not self.config.cdr_transports:
+            if not self.config.topics:
+                if isinstance(pubsub, Zenoh):
+                    keyed = {name: attrgetter("seq") for name in self._keyed_topics()}
+                    return pubsub.subscribe_all(self._on_message, keyed=keyed)
+                return pubsub.subscribe_all(self._on_message)
 
-        if not isinstance(pubsub, Zenoh):
-            logger.warning(
-                f"{pubsub.__class__.__name__} cannot subscribe per topic; "
-                f"listening to everything and ignoring topics={self.config.topics}"
+            if not isinstance(pubsub, Zenoh):
+                logger.warning(
+                    f"{pubsub.__class__.__name__} cannot subscribe per topic; "
+                    f"listening to everything and ignoring topics={self.config.topics}"
+                )
+                return pubsub.subscribe_all(self._on_message)
+
+            # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
+            legacy_keys = [
+                f"{transport_topic(name, self.config.g)}/*" for name in self.config.topics
+            ]
+            legacy_unsubs = [
+                pubsub.subscribe(ZenohTopic(key), self._on_message)  # type: ignore[arg-type]
+                for key in legacy_keys
+            ]
+            logger.info(
+                f"bridge subscribed to {len(legacy_unsubs)} topics: {', '.join(self.config.topics)}"
             )
+
+            def legacy_unsubscribe() -> None:
+                for unsub in legacy_unsubs:
+                    unsub()
+
+            return legacy_unsubscribe
+
+        message_types = self.config.message_types
+        for transport in self.config.cdr_transports.values():
+            message_type = getattr(transport.topic, "message_type", None)
+            if message_type is not None:
+                message_types[transport.channel] = message_type
+
+        keyed: dict[str, Callable[[Any], Any]] = {}
+        for channel in message_types:
+            entity = self._get_entity_path(channel)
+            for pattern, renderer in self.config.visual_override.items():
+                if renderer is None or not pattern_matches(pattern, entity):
+                    continue
+                while isinstance(renderer, functools.partial):
+                    renderer = renderer.func
+                key = getattr(renderer, "message_key", None)
+                if callable(key):
+                    keyed[channel] = key
+                elif is_keyed_by_seq(renderer):
+                    keyed[channel] = attrgetter("seq")
+
+        if self.config.topics:
+            allowed = {"dimos/" + name.strip("/") for name in self.config.topics}
+            message_types = {
+                channel: kind
+                for channel, kind in message_types.items()
+                if channel in allowed or channel.strip("/") in self.config.topics
+            }
+            if isinstance(pubsub, Zenoh):
+                unsubs = [
+                    pubsub.subscribe(ZenohTopic(channel, message_type=kind), self._on_message)
+                    for channel, kind in message_types.items()
+                ]
+
+                def unsubscribe() -> None:
+                    for unsub in unsubs:
+                        unsub()
+
+                return unsubscribe
+            logger.warning(
+                f"{pubsub.__class__.__name__} cannot filter named topics before delivery"
+            )
+
+        if isinstance(pubsub, LCM) and self.config.topics:
+            # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
+            keys = [f"{transport_topic(name, self.config.g)}/*" for name in self.config.topics]
+            unsubs = [pubsub.subscribe(ZenohTopic(key), self._on_message) for key in keys]  # type: ignore[arg-type]
+            logger.info(
+                f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}"
+            )
+
+            def unsubscribe() -> None:
+                for unsub in unsubs:
+                    unsub()
+
+            return unsubscribe
+        if isinstance(pubsub, LCM):
             return pubsub.subscribe_all(self._on_message)
-
-        # a pattern over the type segment, not the concrete Topic LCMTopicProto asks for
-        keys = [f"{transport_topic(name, self.config.g)}/*" for name in self.config.topics]
-        unsubs = [pubsub.subscribe(ZenohTopic(key), self._on_message) for key in keys]  # type: ignore[arg-type]
-        logger.info(f"bridge subscribed to {len(unsubs)} topics: {', '.join(self.config.topics)}")
-
-        def unsubscribe() -> None:
-            for unsub in unsubs:
-                unsub()
-
-        return unsubscribe
+        return pubsub.subscribe_all(self._on_message, keyed=keyed)  # type: ignore[call-arg]
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""

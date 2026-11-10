@@ -40,6 +40,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for, codec_from_id
+from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
 from dimos.memory.codecs.lcm import LcmCodec
@@ -50,6 +51,7 @@ from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
+from dimos.protocol.pubsub.message_types import resolve_message_type
 
 
 @runtime_checkable
@@ -87,11 +89,12 @@ class _DimosCodec:
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
     """Split a dimos wire topic into its port name and message type.
 
-    A dimos topic embeds the type in its last segment,
+    A legacy dimos topic embeds the type in its last segment,
     ``dimos/<port>/<msg_name>`` (built by ``zenohpubsub.Topic.key_expr``), so
     every dimos channel describes itself and no per-topic registry is needed.
     None for anything that is not one, which leaves DDS and app channels to
-    the injected codecs.
+    the injected codecs. Raw CDR channels carry their type in the MCAP schema
+    instead (see the ``cdr``/``lz4+cdr`` arms below).
     """
     prefix, _, rest = topic.partition("/")
     port, _, msg_name = rest.rpartition("/")
@@ -282,6 +285,19 @@ class McapStore(Store):
                             f"Cannot decode MCAP stream {ch.topic!r}: install the package "
                             f"providing {payload_type!r} in the dataset reader environment"
                         ) from exc
+                if ch.topic not in self._codecs and ch.message_encoding in {"cdr", "lz4+cdr"}:
+                    schema = summary.schemas.get(ch.schema_id)
+                    kind = resolve_message_type(schema.name) if schema is not None else None
+                    if kind is not None:
+                        self._codecs[ch.topic] = (
+                            Lz4Codec(CdrCodec(kind))
+                            if ch.message_encoding == "lz4+cdr"
+                            else CdrCodec(kind)
+                        )
+                if ch.topic not in self._codecs and ch.message_encoding == "cdrjpeg":
+                    from dimos.memory.codecs.cdrjpeg import CdrjpegCodec
+
+                    self._codecs[ch.topic] = CdrjpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
@@ -299,10 +315,10 @@ class McapStore(Store):
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
                     kind = JsonCodec.payload_type
-                    if (
-                        ch.metadata.get("dimos.payload_type")
-                        == f"{kind.__module__}.{kind.__qualname__}"
-                    ):
+                    if ch.metadata.get("dimos.payload_type") in {
+                        getattr(kind, "__msgtype__", None),
+                        f"{kind.__module__}.{kind.__qualname__}",
+                    }:
                         self._codecs[ch.topic] = JsonCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = self._available.get(name, 0) + count

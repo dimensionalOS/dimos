@@ -53,7 +53,10 @@ impl McapRecordingStore {
                     "publish_time".to_string(),
                 ),
             ]);
-            let schema_id = if let Some(schema) = &stream.json_schema {
+            let schema_id = if let Some(schema) = &stream.cdr_schema {
+                schema.validate()?;
+                writer.add_schema(&schema.name, "ros2msg", schema.data.as_bytes())?
+            } else if let Some(schema) = &stream.json_schema {
                 writer.add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
             } else {
                 0
