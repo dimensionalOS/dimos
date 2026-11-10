@@ -15,8 +15,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+import itertools
 from pathlib import Path
 from threading import Lock
 from types import ModuleType
@@ -114,6 +115,7 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | Non
         if not pxr.Sdf.CopySpec(sub_layer, source.GetPath(), root_layer, target):
             raise ValueError(f"could not copy the subtree USD for {frame_id!r} into the scene")
         _rebase_relationships(pxr, root_layer, target, str(source.GetPath()), str(target))
+        _carry_outside_references(pxr, sub_layer, str(source.GetPath()), root_layer, str(target))
         _mount_joint(pxr, root_stage, attach_path, str(target), frame_id)
 
     return str(root_layer.ExportToString())
@@ -343,27 +345,104 @@ def layer_from(pxr: Pxr, usd: str, what: str, root: Path | str | None) -> Layer:
     return layer
 
 
-def _rebase_relationships(
-    pxr: Pxr, layer: Layer, root: Any, old_prefix: str, new_prefix: str
-) -> None:
+def _specs_under(layer: Layer, root: Any) -> Iterator[Any]:
+    """Every prim spec at or below root, in this layer alone."""
     stack = [layer.GetPrimAtPath(root)]
     while stack:
         spec = stack.pop()
         if spec is None:
             continue
+        yield spec
+        stack.extend(spec.nameChildren)
+
+
+def _rebase_relationships(
+    pxr: Pxr, layer: Layer, root: Any, old_prefix: str, new_prefix: str
+) -> None:
+    # By prim, not by text: a sibling named "arm_sub_2" also starts with "arm_sub".
+    old_path, new_path = pxr.Sdf.Path(old_prefix), pxr.Sdf.Path(new_prefix)
+    for spec in _specs_under(layer, root):
         for prop in spec.properties:
             if not isinstance(prop, pxr.Sdf.RelationshipSpec):
                 continue
             targets = list(prop.targetPathList.explicitItems)
             rebased = [
-                pxr.Sdf.Path(str(t).replace(old_prefix, new_prefix, 1))
-                if str(t).startswith(old_prefix)
-                else t
-                for t in targets
+                t.ReplacePrefix(old_path, new_path) if t.HasPrefix(old_path) else t for t in targets
             ]
             if rebased != targets:
                 prop.targetPathList.explicitItems = rebased
-        stack.extend(spec.nameChildren)
+
+
+_REFERENCE_FIELDS = ("explicitItems", "addedItems", "prependedItems", "appendedItems")
+
+
+def _free_root_name(layer: Layer, name: str) -> str:
+    """A root-level prim name this layer does not already use."""
+    taken = itertools.chain([name], (f"{name}_{n}" for n in itertools.count(1)))
+    return next(candidate for candidate in taken if not layer.GetPrimAtPath(f"/{candidate}"))
+
+
+def _carry_one(pxr: Pxr, sub_layer: Layer, prim_path: Any, root_layer: Layer) -> str:
+    """Copy a prim the subtree referenced from outside itself, under a free name."""
+    at = pxr.Sdf.Path.absoluteRootPath.AppendChild(_free_root_name(root_layer, prim_path.name))
+    if not pxr.Sdf.CopySpec(sub_layer, prim_path, root_layer, at):
+        raise ValueError(f"could not carry over {prim_path}, which the subtree references")
+    _rebase_relationships(pxr, root_layer, at, str(prim_path), str(at))
+    return str(at)
+
+
+def _carry_outside_references(
+    pxr: Pxr, sub_layer: Layer, source: str, root_layer: Layer, target: str
+) -> None:
+    """Repoint the arcs of a subtree we just copied, carrying what they reach outside it.
+
+    A converted asset often keeps its shader networks as root-level prims beside its
+    default prim, and the prims inside reach them by absolute path. Copying the default
+    prim alone leaves those arcs pointing at whatever happens to own that path in the
+    scene, which is how a grafted robot ends up wearing the room's materials -- so bring
+    the referenced prims along under names the scene has not taken. Arcs that point back
+    inside the subtree just move with it.
+    """
+    inside = pxr.Sdf.Path(source)
+    carried: dict[str, str] = {}
+    pending = [target]
+    while pending:
+        for spec in _specs_under(root_layer, pending.pop()):
+            for field in _REFERENCE_FIELDS:
+                arcs = list(getattr(spec.referenceList, field))
+                moved = [
+                    _moved_reference(
+                        pxr, arc, sub_layer, root_layer, inside, source, target, carried, pending
+                    )
+                    for arc in arcs
+                ]
+                if moved != arcs:
+                    setattr(spec.referenceList, field, moved)
+
+
+def _moved_reference(
+    pxr: Pxr,
+    arc: Any,
+    sub_layer: Layer,
+    root_layer: Layer,
+    inside: Any,
+    source: str,
+    target: str,
+    carried: dict[str, str],
+    pending: list[str],
+) -> Any:
+    if arc.assetPath or not arc.primPath:
+        # A file of its own, which brings its own namespace with it.
+        return arc
+    if arc.primPath.HasPrefix(inside):
+        at = str(arc.primPath).replace(source, target, 1)
+    else:
+        at = carried.get(str(arc.primPath)) or ""
+        if not at:
+            at = _carry_one(pxr, sub_layer, arc.primPath, root_layer)
+            carried[str(arc.primPath)] = at
+            pending.append(at)
+    return pxr.Sdf.Reference(arc.assetPath, at, arc.layerOffset, arc.customData)
 
 
 def link_prim_paths(stage: Stage) -> dict[str, str]:
