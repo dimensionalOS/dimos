@@ -104,18 +104,20 @@ export function ConfigModal(
     }, (caught) => setProblem(errorText(caught)));
   }, [name]);
 
-  const savedGlobal = global?.overrides ?? {};
+  const sharedGlobal = global?.overrides ?? {};
+  // what a launch gets: this blueprint's own global overrides win over the shared ones
+  const savedGlobal = { ...sharedGlobal, ...blueprintGlobal };
   const savedModules = modules?.overrides ?? {};
   useEffect(() => {
     if (global && modules) {
       onSaved({
-        global: { ...savedGlobal, ...blueprintGlobal },
+        global: savedGlobal,
         modules: savedModules,
         defaults: global.defaults ?? {},
       });
     }
     // report what's saved whenever it changes
-  }, [global, modules]);
+  }, [global, modules, blueprintGlobal]);
 
   const save = async (action: () => Promise<void>) => {
     setProblem(null);
@@ -125,17 +127,19 @@ export function ConfigModal(
       setProblem(errorText(caught));
     }
   };
-  const saveModules = async (overrides: ModuleOverrides) => {
+  const saveBlueprint = async (globalOverrides: Overrides, overrides: ModuleOverrides) => {
     const saved = await send<SavedBlueprint>(
       "PUT",
       `../../apps/@launcher/config/blueprints/${encodeURIComponent(name)}`,
       {
-        global: blueprintGlobal,
+        global: globalOverrides,
         modules: overrides,
       },
     );
+    setBlueprintGlobal(saved.global ?? {});
     setModules(blueprintConfig(schema!, saved));
   };
+  const saveModules = (overrides: ModuleOverrides) => saveBlueprint(blueprintGlobal, overrides);
   const saveGlobal = async (overrides: Overrides) =>
     setGlobal(await send<GlobalConfig>("PUT", "../../apps/@launcher/config/global", { overrides }));
   const setField = (spec: FieldSpec, value: unknown) =>
@@ -144,13 +148,20 @@ export function ConfigModal(
       if (spec.scope === "module") {
         return saveModules(withModule(savedModules, spec, atBase ? undefined : value));
       }
-      const { [spec.id]: _old, ...rest } = savedGlobal;
+      if (spec.id in blueprintGlobal) {
+        // the blueprint's own override is what launches get: change that one (at its base, drop it)
+        const { [spec.id]: _own, ...others } = blueprintGlobal;
+        return saveBlueprint(atBase ? others : { ...others, [spec.id]: value }, savedModules);
+      }
+      const { [spec.id]: _old, ...rest } = sharedGlobal;
       return saveGlobal(atBase ? rest : { ...rest, [spec.id]: value });
     });
   const resetField = (spec: FieldSpec) => setField(spec, spec.base);
   const valueOf = (spec: FieldSpec) =>
     spec.scope === "module"
-      ? savedModules[spec.module!]?.[spec.name] ?? spec.base
+      ? spec.name in (savedModules[spec.module!] ?? {})
+        ? savedModules[spec.module!][spec.name]
+        : spec.base
       : spec.id in savedGlobal
       ? savedGlobal[spec.id]
       : spec.base;
@@ -176,7 +187,9 @@ export function ConfigModal(
   };
   const setMany = (values: Record<string, unknown>) =>
     save(async () => {
-      const globals = { ...savedGlobal };
+      const shared = { ...sharedGlobal };
+      // a key this blueprint overrides changes there, the rest in the shared settings
+      const own = { ...blueprintGlobal };
       let moduleNext = savedModules;
       for (const [key, value] of Object.entries(values)) {
         if (key.includes(".")) {
@@ -188,17 +201,20 @@ export function ConfigModal(
               sameValue(value, spec.base) ? undefined : value,
             );
           }
-        } else if (sameValue(value, global?.defaults?.[key])) {
-          delete globals[key];
         } else {
-          globals[key] = value;
+          const target = key in own ? own : shared;
+          if (sameValue(value, global?.defaults?.[key])) {
+            delete target[key];
+          } else {
+            target[key] = value;
+          }
         }
       }
-      if (!sameValue(moduleNext, savedModules)) {
-        await saveModules(moduleNext);
+      if (!sameValue(moduleNext, savedModules) || !sameValue(own, blueprintGlobal)) {
+        await saveBlueprint(own, moduleNext);
       }
-      if (!sameValue(globals, savedGlobal)) {
-        await saveGlobal(globals);
+      if (!sameValue(shared, sharedGlobal)) {
+        await saveGlobal(shared);
       }
     });
   const shown = (setting: Recommended) =>
