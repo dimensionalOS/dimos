@@ -20,6 +20,8 @@ import enum
 import functools
 import math
 from pathlib import Path
+import subprocess
+import sys
 import threading
 from types import MappingProxyType
 import typing
@@ -378,6 +380,28 @@ def test_class_and_function_references() -> None:
     assert out.func is module_fn
     assert (out.args, out.keywords) == ((1,), {"k": 2})
     assert out() == 3
+
+
+def test_generated_message_class_reference_registers_typestore() -> None:
+    """A fresh receiver recreates ``rosbags.usertypes`` from the installed packages.
+
+    Generated classes live in rosbags' synthetic module, which exists only after a
+    typestore registered them. A forkserver worker or RPC receiver that has not
+    imported a generated message package still has to resolve the class reference
+    it receives on the wire.
+    """
+    payload = dumps(CBORTag(TAG_CLASS, "rosbags.usertypes:geometry_msgs__msg__Vector3"))
+    script = (
+        "import sys\n"
+        "from dimos.protocol.encode.cbor import decode\n"
+        "cls = decode(sys.stdin.buffer.read())\n"
+        "print(cls.__module__, cls.__name__)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], input=payload, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    assert result.stdout.decode().split() == ["rosbags.usertypes", "geometry_msgs__msg__Vector3"]
 
 
 def test_custom_protocol() -> None:
