@@ -191,7 +191,7 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
 
     rot0 = _quat_rotation(joint.GetLocalRot0Attr().Get())
     rot1 = _quat_rotation(joint.GetLocalRot1Attr().Get())
-    axis = rot1.apply(np.array([0.0, 0.0, 1.0]))
+    axis = rot1.apply(_axis_of(prim))
     origin_rotation = rot0 * rot1.inv()
 
     position = joint.GetLocalPos0Attr().Get()
@@ -351,6 +351,29 @@ def _referenced_path(prim: Prim) -> str | None:
             if path:
                 return path
     return None
+
+
+_AXIS_TOKENS = {
+    "X": (1.0, 0.0, 0.0),
+    "Y": (0.0, 1.0, 0.0),
+    "Z": (0.0, 0.0, 1.0),
+}
+
+
+def _axis_of(prim: Prim) -> NDArray[np.float64]:
+    """The axis a single-DOF joint turns about, in its own local frame.
+
+    UsdPhysics states it as a token and lets the local rotations carry anything that is not a
+    principal axis. ``urdf_to_usd`` writes "Z" and puts the direction in ``localRot1``, so
+    reading only that frame looked right; a layer from MuJoCo's converter writes the token
+    ("Y" for a knee) with identity rotations, and reading only the frame then turned every
+    joint about z -- a waist that pitches drawn as a waist that twists.
+    """
+    attribute = prim.GetAttribute("physics:axis")
+    token = str(attribute.Get()) if attribute and attribute.Get() is not None else "X"
+    if token not in _AXIS_TOKENS:
+        logger.warning(f"{prim.GetPath()} turns about {token!r}, which is no axis; taking X")
+    return np.asarray(_AXIS_TOKENS.get(token, _AXIS_TOKENS["X"]), dtype=np.float64)
 
 
 def _placement_of(prim: Prim) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
