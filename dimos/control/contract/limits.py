@@ -114,11 +114,6 @@ def limits(config: ConnectionConfig) -> dict[str, Limits]:
         raise ValueError(f"{source!r} is told nothing: set joint_commands")
     if config.clamp_commands - table.keys():
         raise ValueError("clamp_commands contains undeclared keys")
-    if config.twist_joints is not None:
-        if len(set(config.twist_joints)) != 3 or any(
-            f"{name}/velocity" not in table for name in config.twist_joints
-        ):
-            raise ValueError("twist_joints must bind three distinct declared velocity joints")
     return table
 
 
