@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from threading import RLock
+from threading import Event, RLock, Thread
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -192,6 +192,8 @@ class UsdManager(Module):
         self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
+        self._stop_static_tf = Event()
+        self._static_tf_thread: Thread | None = None
         self._description = _as_usd(self.config.model or _world_model())
         self._file_paths = self._description.referenced_files()
         self._joints = {joint.name: joint for joint in self._description.joints}
@@ -248,9 +250,19 @@ class UsdManager(Module):
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
+        self._stop_static_tf.clear()
+        if self.config.publish_joint_tf and self.static_transforms():
+            self._static_tf_thread = Thread(
+                target=self._publish_static_tf, daemon=True, name="UrdfManagerStaticTf"
+            )
+            self._static_tf_thread.start()
 
     @rpc
     def stop(self) -> None:
+        self._stop_static_tf.set()
+        thread, self._static_tf_thread = self._static_tf_thread, None
+        if thread is not None:
+            thread.join(timeout=2.0)
         for client in self._subtree_clients.values():
             client.stop_rpc_client()
         self._subtree_clients.clear()
@@ -463,6 +475,29 @@ class UsdManager(Module):
         found = Path(path)
         root = self._asset_root()
         return found if found.is_absolute() or not root else Path(root) / found
+
+    def static_transforms(self) -> list[Transform]:
+        """The edges that never move, so they need no joint state to be known."""
+        return [
+            Transform.from_matrix(
+                joint.parent_from_child(0.0),
+                frame_id=self.frame(joint.parent_link),
+                child_frame_id=self.frame(joint.child_link),
+                ts=time.time(),
+            )
+            for joint in self._joints.values()
+            if joint.type == "fixed"
+        ]
+
+    def _publish_static_tf(self) -> None:
+        """A description with no joint-state source still has to put its fixed edges on tf."""
+        period = 1.0 / self.config.unchanged_tf_hz
+        while not self._stop_static_tf.is_set():
+            with self._lock:
+                transforms = self._edges_to_send(self.static_transforms())
+            if transforms:
+                self.tfbuffer.publish(*transforms)
+            self._stop_static_tf.wait(period)
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
