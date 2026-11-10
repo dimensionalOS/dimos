@@ -2,6 +2,7 @@
   description = "The shared dimos C++ native module SDK, as a source tree for cmake";
 
   inputs = {
+    dimos-source = { url = "path:../.."; flake = false; };
     nix-filter.url = "github:numtide/nix-filter";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
@@ -15,12 +16,14 @@
     pfr = { url = "github:apolukhin/pfr_non_boost/2.3.2"; flake = false; };
   };
 
-  outputs = { self, nix-filter, nixpkgs, flake-utils, zenoh, lcm-extended, pfr }:
+  outputs = { self, dimos-source, nix-filter, nixpkgs, flake-utils, zenoh, lcm-extended, pfr }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        messagePrefix = import (dimos-source + "/native/message-prefix.nix") { inherit pkgs; };
         src = nix-filter.lib { root = ./.; exclude = [ "build" "target" "result" "__pycache__" ]; };
       in {
+        packages.messages = messagePrefix;
         packages.default = pkgs.runCommand "dimos-native-cpp" { } ''
           cp -r ${src} $out
           chmod -R u+w $out
@@ -43,6 +46,7 @@
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DDIMOS_NATIVE_BUILD_TESTS=ON"
+            "-DCMAKE_TOOLCHAIN_FILE=${messagePrefix}/toolchain.cmake"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFETCHCONTENT_SOURCE_DIR_DOCTEST=${pkgs.doctest.src}"
           ];
