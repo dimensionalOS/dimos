@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 import math
 from pathlib import Path
@@ -23,13 +23,8 @@ from typing import Any
 
 import pytest
 
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    TrajectoryExecutionResult,
-    TrajectoryExecutionStatus,
-)
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.teleop.openarm_mini import teleop_module
 from dimos.teleop.openarm_mini.calibration import (
     FEETECH_POSITION_SPAN,
@@ -610,153 +605,6 @@ def test_polling_loop_logs_unexpected_exceptions_without_tight_loop(
         module.stop()
 
 
-class _FakeTrajectoryCall:
-    """Records streamed trajectories and answers each with the next scripted status."""
-
-    def __init__(self, *statuses: TrajectoryExecutionStatus) -> None:
-        self.statuses = list(statuses)
-        self.trajectories: list[JointTrajectory] = []
-
-    def __call__(self, trajectory: JointTrajectory, on_result: Callable[[Any], None]) -> None:
-        self.trajectories.append(trajectory)
-        status = self.statuses.pop(0) if self.statuses else TrajectoryExecutionStatus.ACCEPTED
-        on_result(
-            TrajectoryExecutionResult(status, "" if status.name == "ACCEPTED" else status.name)
-        )
-
-
-def _streaming_module(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    mocker: MockerFixture,
-    buses: Mapping[str, _FakeBus],
-    call: _FakeTrajectoryCall | None,
-    **config: Any,
-) -> tuple[OpenArmMiniTeleopModule, Any]:
-    left_path, right_path = _write_calibrations(tmp_path)
-    _patch_buses(monkeypatch, buses)
-    module = _module(_configured_config(left_path, right_path, **config))
-    module.connect_teleop()
-    module._trajectory_call = call
-    publish = mocker.patch.object(module.joint_command, "publish")
-    return module, publish
-
-
-def test_tick_streams_each_target_as_a_trajectory_from_the_last_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
-) -> None:
-    right = _FakeBus(_readings())
-    call = _FakeTrajectoryCall()
-    module, publish = _streaming_module(
-        tmp_path,
-        monkeypatch,
-        mocker,
-        {"left": _FakeBus(_readings()), "right": right},
-        call,
-        command_filter_cutoff_hz=None,
-        trajectory_horizon_s=0.04,
-    )
-    try:
-        module.tick()
-        right.readings = _readings() | {"joint_1": 1.3}
-        module.tick()
-    finally:
-        module.stop()
-
-    first, second = call.trajectories
-    assert len(first.points) == 1 and first.points[0].time_from_start == 0.0
-    assert [point.time_from_start for point in second.points] == [0.0, 0.04]
-    assert second.points[0].positions == first.points[0].positions
-    index = second.joint_names.index("openarm_right_joint1")
-    assert second.points[1].positions[index] == pytest.approx(1.3)
-    publish.assert_not_called()
-
-
-def test_rejected_trajectory_restarts_from_the_measured_pose(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
-) -> None:
-    call = _FakeTrajectoryCall(
-        TrajectoryExecutionStatus.ACCEPTED,
-        TrajectoryExecutionStatus.START_STATE_MISMATCH,
-        TrajectoryExecutionStatus.ACCEPTED,
-        TrajectoryExecutionStatus.ACCEPTED,
-    )
-    module, publish = _streaming_module(
-        tmp_path,
-        monkeypatch,
-        mocker,
-        {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())},
-        call,
-        command_filter_cutoff_hz=None,
-        trajectory_horizon_s=0.04,
-    )
-    try:
-        for _ in range(4):
-            module.tick()
-    finally:
-        module.stop()
-
-    assert [len(t.points) for t in call.trajectories] == [1, 2, 1, 2]
-    publish.assert_not_called()
-
-
-def test_unserved_trajectory_stream_falls_back_to_joint_command(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
-) -> None:
-    call = _FakeTrajectoryCall(*([TrajectoryExecutionStatus.NO_TRAJECTORY_TASK] * 30))
-    module, publish = _streaming_module(
-        tmp_path,
-        monkeypatch,
-        mocker,
-        {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())},
-        call,
-        command_filter_cutoff_hz=None,
-        trajectory_horizon_s=0.04,
-    )
-    try:
-        for _ in range(30):
-            module.tick()
-    finally:
-        module.stop()
-
-    assert len(call.trajectories) == 25
-    assert publish.call_count == 5
-    assert module._last_sent_by_joint == {}
-
-
-def test_joint_command_stream_without_a_link_or_horizon(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
-) -> None:
-    module, publish = _streaming_module(
-        tmp_path,
-        monkeypatch,
-        mocker,
-        {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())},
-        None,
-    )
-    try:
-        module.tick()
-    finally:
-        module.stop()
-    publish.assert_called_once()
-
-    call = _FakeTrajectoryCall()
-    module, publish = _streaming_module(
-        tmp_path,
-        monkeypatch,
-        mocker,
-        {"left": _FakeBus(_readings()), "right": _FakeBus(_readings())},
-        call,
-        trajectory_horizon_s=None,
-    )
-    try:
-        module.tick()
-    finally:
-        module.stop()
-    publish.assert_called_once()
-    assert call.trajectories == []
-
-
 def test_command_filter_blends_toward_new_readings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -780,8 +628,6 @@ def test_command_filter_blends_toward_new_readings(
     )
 
 
-def test_config_rejects_non_positive_filter_or_horizon() -> None:
+def test_config_rejects_non_positive_filter() -> None:
     with pytest.raises(ValueError):
         OpenArmMiniTeleopModuleConfig(port_left="l", command_filter_cutoff_hz=0.0)
-    with pytest.raises(ValueError):
-        OpenArmMiniTeleopModuleConfig(port_left="l", trajectory_horizon_s=-0.1)

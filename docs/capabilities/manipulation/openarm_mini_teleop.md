@@ -207,18 +207,8 @@ own end of travel as the connection declares it.
 By default the module low-passes the mapped arm targets at 6 Hz
 (`command_filter_cutoff_hz`); on Alfred that took a quarter off the torque
 step on the shoulder joints at no measurable lag. Pass `null` to send raw
-readings.
-
-`trajectory_horizon_s` (off by default) sends each 50 Hz target as a two-point
-trajectory from the previous target over that horizon through the
-coordinator's `execute_trajectory` RPC, non-blocking, instead of streaming
-`joint_command`. The trajectory task restarts a trajectory's clock each time
-one replaces it, so at 50 Hz the arm advances on alternate ticks only; on
-Alfred both 40 ms and 25 ms horizons felt worse than the stream. It stays as
-a knob for a follower whose trajectory task keeps its clock across
-replacements. A rejected trajectory restarts from the measured pose, the
-follower blueprints allow a 0.3 rad start gap for that, and an RPC unserved
-25 times in a row falls back to `joint_command`.
+readings. The remaining step is the follower re-anchoring each streamed
+target on a measured angle that lags the leader; that is follower-side.
 
 ## Driving the real OpenArm follower
 

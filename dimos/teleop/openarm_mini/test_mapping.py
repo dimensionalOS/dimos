@@ -149,18 +149,3 @@ def test_smooth_positions_passes_the_first_sample_then_blends() -> None:
     assert second == {"a": 2.0, "c": 5.0}
     with pytest.raises(ValueError):
         smooth_positions(first, {"a": 1.0}, 0.0)
-
-
-def test_streamed_trajectory_is_one_point_until_a_target_was_sent() -> None:
-    from dimos.teleop.openarm_mini.mapping import streamed_trajectory
-
-    first = streamed_trajectory(None, {"a": 1.0, "b": 2.0}, 0.04)
-    assert len(first.points) == 1 and first.points[0].positions == [1.0, 2.0]
-    second = streamed_trajectory({"a": 1.0, "b": 2.0}, {"a": 1.5, "b": 2.0}, 0.04)
-    assert [point.time_from_start for point in second.points] == [0.0, 0.04]
-    assert second.points[0].positions == [1.0, 2.0]
-    assert second.points[1].positions == [1.5, 2.0]
-    partial = streamed_trajectory({"a": 1.0}, {"a": 1.5, "b": 2.0}, 0.04)
-    assert len(partial.points) == 1
-    with pytest.raises(ValueError):
-        streamed_trajectory(None, {"a": 1.0}, 0.0)

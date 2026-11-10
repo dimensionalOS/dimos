@@ -21,8 +21,6 @@ from dataclasses import dataclass
 import math
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.manipulators.openarm.config import openarm_urdf_joints
 from dimos.teleop.openarm_mini.calibration import (
     OPENARM_MINI_ARM_JOINT_NAMES,
@@ -181,25 +179,3 @@ def smooth_positions(
         )
         for joint, value in positions.items()
     }
-
-
-def streamed_trajectory(
-    last_sent: Mapping[str, float] | None,
-    positions: Mapping[str, float],
-    horizon_s: float,
-) -> JointTrajectory:
-    """Two points from the last streamed target, or one point from the measured position."""
-    if not (math.isfinite(horizon_s) and horizon_s > 0.0):
-        raise ValueError("horizon_s must be positive")
-    names = list(positions)
-    target = [float(positions[name]) for name in names]
-    if last_sent is None or any(name not in last_sent for name in names):
-        return JointTrajectory(joint_names=names, points=[TrajectoryPoint(positions=target)])
-    start = [float(last_sent[name]) for name in names]
-    return JointTrajectory(
-        joint_names=names,
-        points=[
-            TrajectoryPoint(time_from_start=0.0, positions=start),
-            TrajectoryPoint(time_from_start=horizon_s, positions=target),
-        ],
-    )
