@@ -21,6 +21,7 @@ from dimos.core.coordination.module_coordinator import _is_name_unique
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints import leader_teleop
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.spec.utils import spec_structural_compliance
 from dimos.teleop.yam_leader.mapping import yam_follower_joint_names
@@ -29,7 +30,7 @@ from dimos.teleop.yam_leader.teleop_module import (
     YamLeaderTeleopModuleConfig,
 )
 
-_JOINTS = list(DualOpenYamConnection.planning_model("arm").joint_names)
+_JOINTS = list(dual_openyam_model_config(robot="arm").joint_names)
 # The connection has no mock fallback, so every parse needs both selectors.
 _CAN_PORTS = ["--left-can-port=follower_l", "--right-can-port=follower_r"]
 

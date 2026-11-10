@@ -19,13 +19,11 @@ from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM
 
 DUAL_OPENYAM_CAMERAS = ("overhead", "left_wrist", "right_wrist")
-DUAL_OPENYAM_COLLECTION_JOINTS = (
-    *DualOpenYamConnection.planning_model("arm").joint_names,
-    *(f"arm/{name}" for name in DualOpenYamConnection.gripper_joints.values()),
-)
+# The connection publishes every joint of its robot description under the name "arm".
+DUAL_OPENYAM_COLLECTION_JOINTS = tuple(f"arm/{name}" for name in DUAL_OPENYAM.joint_names)
 
 
 def dual_openyam_collection_camera(name: str) -> Blueprint:

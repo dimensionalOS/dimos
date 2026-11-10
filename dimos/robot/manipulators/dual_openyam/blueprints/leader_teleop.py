@@ -18,19 +18,27 @@ from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
-from dimos.robot.manipulators.damiao.damiao_blueprint import connect_damiao
-from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_SIDES
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
+    arm_connection,
+    arm_remaps,
+)
+from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_SIDES,
+    dual_openyam_control_model,
+    dual_openyam_model_config,
+)
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 from dimos.teleop.yam_leader.teleop_module import YamLeaderTeleopModule
 
-# Leader-follower needs human arm speeds; the URDF's 2 rad/s felt slow on the rig.
+# Following a human arm needs more than the URDF's 2 rad/s.
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
 DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S = 4.0
 DUAL_OPENYAM_WRIST_JOINTS = ("joint4", "joint5", "joint6")
 # Named, not scouted; the operator machine overrides it with --zenoh-connect.
 DUAL_OPENYAM_ROUTER = "tcp/127.0.0.1:7447"
 
-_dual_openyam = DualOpenYamConnection.planning_model("arm")
+_dual_openyam = dual_openyam_model_config(robot="arm")
 
 
 def dual_openyam_leader_velocity_limits() -> dict[str, float]:
@@ -61,7 +69,7 @@ def dual_openyam_leader_tasks() -> list[TaskConfig]:
             TaskConfig(
                 name=f"{side}_arm_gripper",
                 type="gripper",
-                joint_names=[f"arm/{DualOpenYamConnection.gripper_joints[f'{side}_gripper']}"],
+                joint_names=[f"arm/{side}_gripper"],
                 priority=20,
                 stream_bind={"gripper_command": f"{side}_gripper_command"},
             )
@@ -72,8 +80,23 @@ def dual_openyam_leader_tasks() -> list[TaskConfig]:
 
 def _follower() -> Blueprint:
     return autoconnect(
-        connect_damiao(DualOpenYamConnection, tasks=dual_openyam_leader_tasks()),
-        ManipulationModule.blueprint(model=_dual_openyam, visualization=ViserVisualizationConfig()),
+        autoconnect(
+            DamiaoCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                model=dual_openyam_control_model(robot="arm"),
+                tasks=dual_openyam_leader_tasks(),
+                zero_stiffness_joints=[],
+            ),
+            arm_connection(DualOpenYamConnection),
+        ).remappings(arm_remaps(DualOpenYamConnection, DamiaoCoordinator)),
+        ManipulationModule.blueprint(
+            gripper_tasks={
+                "left_manipulator": "left_arm_gripper",
+                "right_manipulator": "right_arm_gripper",
+            },
+            model=_dual_openyam,
+            visualization=ViserVisualizationConfig(),
+        ),
     )
 
 

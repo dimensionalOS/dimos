@@ -24,7 +24,7 @@ from typing import Literal
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 
 YamLeaderSide = Literal["left", "right"]
 YAM_LEADER_SIDES: tuple[YamLeaderSide, ...] = ("left", "right")
@@ -49,7 +49,7 @@ GRIPPER_CLOSED = 0.0
 
 _FOLLOWER_GROUPS = {
     group.name: tuple(group.joint_names)
-    for group in DualOpenYamConnection.planning_model("arm").planning_groups
+    for group in dual_openyam_model_config(robot="arm").planning_groups
 }
 
 
