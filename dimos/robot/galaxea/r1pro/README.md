@@ -63,8 +63,10 @@ onto `r1pro_velocity_command: JointState` and the selected connection. The same
 path applies to fake and real, with limits ±1/±1 m/s and ±2 rad/s. Centred,
 missing or stale sticks command zero; arm poses and triggers never drive the
 chassis. Thumbsticks do not require the arm grips. No keyboard/nav input is wired.
-Operator hold arbitrates arm positions and zero base speeds, excluding the
-command-only jaws. E-stop clear leaves the hold latched until acknowledged.
+Operator hold freezes position-capable arm joints, excluding the command-only
+jaws; it does not claim chassis velocity interfaces. E-stop stops command
+publication and invalidates velocity intent. After clearing it, fresh velocity
+input may drive the chassis; the arm position hold still awaits acknowledgement.
 
 It starts on the **fake backend by default** — `FakeR1ProConnection`, an
 in-memory closed loop on the same contract (`position_command`, `velocity_command`,
