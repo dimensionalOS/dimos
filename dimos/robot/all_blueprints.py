@@ -227,6 +227,8 @@ all_modules = {
     "a1-z-keyboard-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZKeyboardCoordinator",
     "a1-z-twist-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZTwistCoordinator",
     "a1-z-web-xr-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZWebXRCoordinator",
+    "a750-connection": "dimos.robot.manipulators.a750.connection.A750Connection",
+    "a750-twist-coordinator": "dimos.robot.manipulators.a750.blueprints.teleop.A750TwistCoordinator",
     "agent": "dimos.agents.agent.Agent",
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",
