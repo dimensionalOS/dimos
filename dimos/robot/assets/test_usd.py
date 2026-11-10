@@ -31,7 +31,13 @@ from dimos.robot.assets.usd import (
     usd_with_drives,
     usd_with_frames,
 )
-from dimos.robot.assets.usd_assets import asset_hash, require_asset_hashes, unhashed_assets
+from dimos.robot.assets.usd_assets import (
+    asset_hash,
+    describe_unopenable_assets,
+    require_asset_hashes,
+    unhashed_assets,
+    unopenable_assets,
+)
 
 pytest.importorskip("pxr")
 
@@ -799,3 +805,96 @@ def test_an_off_diagonal_inertia_is_diagonalised_rather_than_dropped(tmp_path: P
     assert sum(moments) == pytest.approx(0.02 + 0.03 + 0.04)
     axes = mass.GetPrincipalAxesAttr().Get()
     assert axes is not None
+
+
+_REFERENCING_LAYER = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+def Xform "room"
+{
+    def Mesh "there" (
+        prepend references = @meshes/there.usdc@
+    )
+    {
+    }
+
+    def Mesh "pointer" (
+        prepend references = @meshes/pointer.usdc@
+    )
+    {
+    }
+
+    def Mesh "gone" (
+        prepend references = @meshes/gone.usdc@
+    )
+    {
+    }
+}
+"""
+
+
+def _referencing_layer(tmp_path: Path) -> Path:
+    meshes = tmp_path / "meshes"
+    meshes.mkdir()
+    (meshes / "there.usdc").write_bytes(b"not really a crate, but readable")
+    (meshes / "pointer.usdc").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
+    )
+    return tmp_path
+
+
+def test_unopenable_assets_separates_a_pointer_stub_from_a_missing_file(tmp_path: Path) -> None:
+    root = _referencing_layer(tmp_path)
+
+    unopenable = unopenable_assets(_REFERENCING_LAYER, root)
+
+    assert set(unopenable) == {"meshes/pointer.usdc", "meshes/gone.usdc"}
+    assert "Git LFS pointer" in unopenable["meshes/pointer.usdc"]
+    assert "No such file" in unopenable["meshes/gone.usdc"]
+
+
+def test_unopenable_assets_counts_every_relative_asset_when_no_root_was_given(
+    tmp_path: Path,
+) -> None:
+    _referencing_layer(tmp_path)
+
+    unopenable = unopenable_assets(_REFERENCING_LAYER, None)
+
+    assert set(unopenable) == {
+        "meshes/there.usdc",
+        "meshes/pointer.usdc",
+        "meshes/gone.usdc",
+    }
+    assert all("no asset root" in why for why in unopenable.values())
+
+
+def test_unopenable_assets_passes_a_layer_whose_every_reference_is_on_disk(
+    tmp_path: Path,
+) -> None:
+    root = _referencing_layer(tmp_path)
+    (root / "meshes" / "pointer.usdc").write_bytes(b"real now")
+    (root / "meshes" / "gone.usdc").write_bytes(b"here now")
+
+    assert unopenable_assets(_REFERENCING_LAYER, root) == {}
+
+
+def test_describe_unopenable_assets_says_which_files_and_how_to_fetch_them(
+    tmp_path: Path,
+) -> None:
+    root = _referencing_layer(tmp_path)
+
+    message = describe_unopenable_assets(
+        unopenable_assets(_REFERENCING_LAYER, root), what="the office scene"
+    )
+
+    assert "the office scene names 2 asset(s)" in message
+    assert "meshes/pointer.usdc" in message
+    assert 'git lfs pull --include="meshes/*"' in message
+
+
+def test_unopenable_assets_ignores_names_a_scene_published_for_the_bus() -> None:
+    published = _REFERENCING_LAYER.replace("meshes/", "/dimos/assets/room/")
+
+    assert unopenable_assets(published, None) == {}
