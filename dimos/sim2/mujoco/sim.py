@@ -28,7 +28,7 @@ from dimos.msgs.files.File import File
 from dimos.msgs.std_msgs.String import String
 from dimos.sim2.actions import read_actions
 from dimos.sim2.mujoco.backend import MujocoBackend
-from dimos.sim2.sim import SimulatedWorldConfig, driving, scene_from
+from dimos.sim2.sim import SimulatedWorldConfig, driving, scene_from, until_it_stops
 from dimos.sim2.spec import validate
 from dimos.utils.logging_config import setup_logger
 
@@ -67,7 +67,7 @@ class MujocoSim(Module):
     async def main(self) -> AsyncIterator[None]:
         self.actions.subscribe(self._on_actions)
         self._publisher = _LatestPublisher(self.world_observations.publish)
-        running = asyncio.create_task(self._run())
+        running = asyncio.create_task(until_it_stops("the world", self._run()))
         yield
         running.cancel()
 
