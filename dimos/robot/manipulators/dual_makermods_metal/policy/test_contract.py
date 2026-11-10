@@ -23,14 +23,16 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
     JOINT_ORDER,
     SCHEMA,
-    ActionSpec,
     CheckpointSpec,
     ModelSpec,
     PolicyContractError,
     PolicyManifest,
     check_feedback,
+    load_manifest,
     load_normalizer,
     sha256_file,
+    validate_manifest,
+    write_manifest,
 )
 
 
@@ -52,47 +54,52 @@ def _manifest(**overrides) -> PolicyManifest:
 
 def test_manifest_round_trips_through_json(tmp_path):
     manifest = _manifest()
-    path = manifest.dump(tmp_path / "manifest.json")
-    loaded = PolicyManifest.load(path)
+    path = write_manifest(manifest, tmp_path / "manifest.json")
+    loaded = load_manifest(path)
     assert loaded == manifest
 
 
 def test_manifest_rejects_unknown_schema():
-    payload = _manifest().to_json()
+    payload = _manifest().model_dump(by_alias=True)
     payload["schema"] = "dimos.metal_arm_policy.manifest/0"
     with pytest.raises(PolicyContractError, match="schema"):
-        PolicyManifest.from_json(payload)
+        validate_manifest(payload)
 
 
 def test_manifest_rejects_unknown_keys():
-    payload = _manifest().to_json()
+    payload = _manifest().model_dump(by_alias=True)
     payload["controller"] = {"gain": 1.0}
-    with pytest.raises(PolicyContractError, match="unknown keys"):
-        PolicyManifest.from_json(payload)
+    with pytest.raises(PolicyContractError, match="Extra inputs"):
+        validate_manifest(payload)
 
 
 def test_manifest_rejects_reordered_joints():
-    payload = _manifest().to_json()
+    payload = _manifest().model_dump(by_alias=True)
     payload["observation"]["joint_order"] = list(reversed(JOINT_ORDER))
     with pytest.raises(PolicyContractError, match="joint order"):
-        PolicyManifest.from_json(payload)
+        validate_manifest(payload)
 
 
 def test_manifest_rejects_foreign_frame_layout():
-    payload = _manifest().to_json()
+    payload = _manifest().model_dump(by_alias=True)
     payload["observation"]["frame_fields"] = [{"name": "q", "width": 576}]
     with pytest.raises(PolicyContractError, match="frame layout"):
-        PolicyManifest.from_json(payload)
+        validate_manifest(payload)
 
 
 def test_manifest_rejects_home_outside_limits():
+    payload = _manifest().model_dump(by_alias=True)
+    payload["action"]["lower"] = [-0.1] * 12
+    payload["action"]["upper"] = [0.1] * 12
     with pytest.raises(PolicyContractError, match="home pose"):
-        _manifest(action=ActionSpec(lower=(-0.1,) * 12, upper=(0.1,) * 12))
+        validate_manifest(payload)
 
 
 def test_manifest_rejects_inconsistent_observation_dimensions():
+    payload = _manifest().model_dump(by_alias=True)
+    payload["model"]["obs_dim"] = 96
     with pytest.raises(PolicyContractError, match="obs_dim"):
-        _manifest(model=ModelSpec(onnx_sha256="c" * 64, normalizer_sha256="d" * 64, obs_dim=96))
+        validate_manifest(payload)
 
 
 def test_artifact_hashes_are_verified(tmp_path):
@@ -142,5 +149,5 @@ def test_feedback_outside_training_limits_is_rejected():
 
 
 def test_manifest_json_matches_published_schema_name(tmp_path):
-    path = _manifest().dump(tmp_path / "manifest.json")
+    path = write_manifest(_manifest(), tmp_path / "manifest.json")
     assert json.loads(path.read_text())["schema"] == SCHEMA

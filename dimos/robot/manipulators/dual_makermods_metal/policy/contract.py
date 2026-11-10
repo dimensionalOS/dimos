@@ -29,7 +29,7 @@ from typing import Annotated, Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import AfterValidator, Field, ValidationError, model_validator
+from pydantic import AfterValidator, ConfigDict, Field, ValidationError, model_validator
 
 from dimos.protocol.service.spec import BaseConfig
 
@@ -103,7 +103,7 @@ class PolicyContractError(ValueError):
 
 
 class _ContractModel(BaseConfig):
-    model_config = {"extra": "forbid", "frozen": True, "arbitrary_types_allowed": True}
+    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
 
 def _finite(values: tuple[float, ...]) -> tuple[float, ...]:
@@ -116,6 +116,15 @@ Vec3 = Annotated[tuple[float, float, float], AfterValidator(_finite)]
 Vec12 = Annotated[tuple[float, ...], Field(min_length=12, max_length=12), AfterValidator(_finite)]
 
 
+def _current_schema(value: str) -> str:
+    if value != SCHEMA:
+        raise ValueError(f"unsupported manifest schema {value!r}, expected {SCHEMA!r}")
+    return value
+
+
+SchemaName = Annotated[str, AfterValidator(_current_schema)]
+
+
 def _message(exc: ValidationError) -> str:
     """Flatten a pydantic error into the one-line contract error style."""
     errors = exc.errors()
@@ -126,6 +135,22 @@ def _message(exc: ValidationError) -> str:
 class FrameField(_ContractModel):
     name: str
     width: int
+
+
+def _trained_joint_order(values: tuple[str, ...]) -> tuple[str, ...]:
+    if values != JOINT_ORDER:
+        raise ValueError("manifest joint order differs from the trained order")
+    return values
+
+
+def _trained_frame_layout(values: tuple[FrameField, ...]) -> tuple[FrameField, ...]:
+    if tuple((field.name, field.width) for field in values) != FRAME_FIELDS:
+        raise ValueError("manifest observation layout differs from the trained frame layout")
+    return values
+
+
+TrainedJointOrder = Annotated[tuple[str, ...], AfterValidator(_trained_joint_order)]
+TrainedFrameLayout = Annotated[tuple[FrameField, ...], AfterValidator(_trained_frame_layout)]
 
 
 class CheckpointSpec(_ContractModel):
@@ -145,28 +170,26 @@ class ModelSpec(_ContractModel):
 
 
 class ObservationSpec(_ContractModel):
-    history_frames: int = HISTORY_FRAMES
-    frame_dim: int = FRAME_DIM
+    history_frames: int = Field(default=HISTORY_FRAMES, ge=1)
+    frame_dim: int = Field(default=FRAME_DIM, ge=1)
     dq_scale: float = DQ_SCALE
-    joint_order: tuple[str, ...] = JOINT_ORDER
-    frame_fields: tuple[FrameField, ...] = tuple(
-        FrameField(name=n, width=w) for n, w in FRAME_FIELDS
-    )
+    joint_order: TrainedJointOrder = JOINT_ORDER
+    frame_fields: TrainedFrameLayout = tuple(FrameField(name=n, width=w) for n, w in FRAME_FIELDS)
 
 
 class ActionSpec(_ContractModel):
     home: Vec12 = HOME
     lower: Vec12 = TRAIN_LOWER
     upper: Vec12 = TRAIN_UPPER
-    action_scale: float = ACTION_SCALE
-    clamp_margin: float = CLAMP_MARGIN
-    low_pass_alpha: float = LOW_PASS_ALPHA
-    slew_limit: float = SLEW_LIMIT
+    action_scale: float = Field(default=ACTION_SCALE, gt=0.0)
+    clamp_margin: float = Field(default=CLAMP_MARGIN, ge=0.0)
+    low_pass_alpha: float = Field(default=LOW_PASS_ALPHA, gt=0.0, le=1.0)
+    slew_limit: float = Field(default=SLEW_LIMIT, gt=0.0)
     decode_order: tuple[str, ...] = DECODE_ORDER
 
 
 class TimingSpec(_ContractModel):
-    policy_hz: float = POLICY_HZ
+    policy_hz: float = Field(default=POLICY_HZ, gt=0.0)
     physics_dt: float = PHYSICS_DT
     control_substeps: int = CONTROL_SUBSTEPS
 
@@ -204,7 +227,7 @@ class PolicyManifest(_ContractModel):
     and validation need no hand-written bidirectional mapping.
     """
 
-    schema_: str = Field(default=SCHEMA, alias="schema")
+    schema_: SchemaName = Field(default=SCHEMA, alias="schema")
     name: str
     checkpoint: CheckpointSpec
     model: ModelSpec
@@ -215,24 +238,16 @@ class PolicyManifest(_ContractModel):
     station: StationGeometry = StationGeometry()
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    def __init__(self, **data: Any) -> None:
-        try:
-            super().__init__(**data)
-        except ValidationError as exc:
-            raise PolicyContractError(_message(exc)) from exc
-
     @model_validator(mode="after")
-    def _validate_trained_layout(self) -> PolicyManifest:
+    def _validate_dimensions(self) -> PolicyManifest:
         observation, action, model = self.observation, self.action, self.model
-        if observation.joint_order != JOINT_ORDER:
-            raise ValueError("manifest joint order differs from the trained order")
-        fields = tuple((field.name, field.width) for field in observation.frame_fields)
-        if fields != FRAME_FIELDS:
-            raise ValueError("manifest observation layout differs from the trained frame layout")
-        if model.action_dim != len(observation.joint_order):
-            raise ValueError(
-                f"action_dim {model.action_dim} != {len(observation.joint_order)} joint names"
-            )
+        joint_count = len(observation.joint_order)
+        if model.action_dim != joint_count:
+            raise ValueError(f"action_dim {model.action_dim} != {joint_count} joint names")
+        if sum(field.width for field in observation.frame_fields) != observation.frame_dim:
+            raise ValueError("observation frame fields do not sum to frame_dim")
+        if model.obs_dim != observation.history_frames * observation.frame_dim:
+            raise ValueError("obs_dim must equal history_frames * frame_dim")
         if any(lo >= hi for lo, hi in zip(action.lower, action.upper, strict=True)):
             raise ValueError("joint lower limit must be below the upper limit")
         if any(
@@ -240,56 +255,11 @@ class PolicyManifest(_ContractModel):
             for home, lo, hi in zip(action.home, action.lower, action.upper, strict=True)
         ):
             raise ValueError("home pose must lie inside the joint limits")
-        if observation.history_frames < 1 or observation.frame_dim < 1:
-            raise ValueError("history_frames and frame_dim must be positive")
-        if sum(width for _, width in fields) != observation.frame_dim:
-            raise ValueError("observation frame fields do not sum to frame_dim")
-        if model.obs_dim != observation.history_frames * observation.frame_dim:
-            raise ValueError("obs_dim must equal history_frames * frame_dim")
-        if not 0.0 < action.low_pass_alpha <= 1.0:
-            raise ValueError("low_pass_alpha must be in (0, 1]")
-        if action.slew_limit <= 0.0 or action.action_scale <= 0.0:
-            raise ValueError("slew_limit and action_scale must be positive")
-        if action.clamp_margin < 0.0:
-            raise ValueError("clamp_margin must not be negative")
-        if self.timing.policy_hz <= 0.0:
-            raise ValueError("policy_hz must be positive")
         return self
 
     @property
     def tick_period_s(self) -> float:
         return 1.0 / self.timing.policy_hz
-
-    def to_json(self) -> dict[str, Any]:
-        """The versioned manifest document."""
-        return self.model_dump(by_alias=True)
-
-    @classmethod
-    def from_json(cls, payload: Mapping[str, Any]) -> PolicyManifest:
-        if payload.get("schema") != SCHEMA:
-            raise PolicyContractError(
-                f"unsupported manifest schema {payload.get('schema')!r}, expected {SCHEMA!r}"
-            )
-        allowed = {field.alias or name for name, field in cls.model_fields.items()}
-        unknown = set(payload) - allowed
-        if unknown:
-            raise PolicyContractError(f"manifest has unknown keys: {sorted(unknown)}")
-        try:
-            return cls.model_validate(payload)
-        except ValidationError as exc:
-            raise PolicyContractError(_message(exc)) from exc
-
-    def dump(self, path: str | Path) -> Path:
-        out = Path(path)
-        out.write_text(json.dumps(self.to_json(), indent=2, sort_keys=False) + "\n")
-        return out
-
-    @classmethod
-    def load(cls, path: str | Path) -> PolicyManifest:
-        payload = json.loads(Path(path).read_text())
-        if not isinstance(payload, dict):
-            raise PolicyContractError("manifest root must be a JSON object")
-        return cls.from_json(payload)
 
     def verify_artifacts(self, model_dir: str | Path) -> tuple[Path, Path]:
         """Check the artifact hashes and return ``(onnx_path, normalizer_path)``."""
@@ -310,6 +280,29 @@ class PolicyManifest(_ContractModel):
                     f"{label} hash mismatch at {path}: {actual} != manifest {expected}"
                 )
         return onnx_path, normalizer_path
+
+
+def validate_manifest(payload: Mapping[str, Any]) -> PolicyManifest:
+    """Validate one manifest document, flattening errors into the contract style."""
+    try:
+        return PolicyManifest.model_validate(payload)
+    except ValidationError as exc:
+        raise PolicyContractError(_message(exc)) from exc
+
+
+def load_manifest(path: str | Path) -> PolicyManifest:
+    """Read and validate a manifest file; a malformed root fails closed."""
+    payload = json.loads(Path(path).read_text())
+    if not isinstance(payload, dict):
+        raise PolicyContractError("manifest root must be a JSON object")
+    return validate_manifest(payload)
+
+
+def write_manifest(manifest: PolicyManifest, path: str | Path) -> Path:
+    """Write the versioned manifest document in its canonical on-disk form."""
+    out = Path(path)
+    out.write_text(json.dumps(manifest.model_dump(by_alias=True), indent=2) + "\n")
+    return out
 
 
 def sha256_file(path: str | Path) -> str:

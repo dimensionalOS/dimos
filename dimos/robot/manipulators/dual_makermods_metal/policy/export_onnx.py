@@ -49,6 +49,7 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     ModelSpec,
     PolicyManifest,
     sha256_file,
+    write_manifest,
 )
 
 
@@ -213,7 +214,7 @@ def export_checkpoint(
         },
     )
     manifest_path = out_dir / f"{name}.manifest.json"
-    manifest.dump(manifest_path)
+    write_manifest(manifest, manifest_path)
 
     # Parity: reference torch actor vs exported ONNX on checkpoint histories and stress inputs.
     # Realistic inputs (recorded histories, unit/observer-scale noise) must match in

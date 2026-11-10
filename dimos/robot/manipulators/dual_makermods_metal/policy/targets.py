@@ -25,6 +25,7 @@ when a fresh engagement is allowed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 from numpy.typing import NDArray
@@ -89,7 +90,7 @@ class RigidSample:
         cls,
         position: tuple[float, float, float] | NDArray[np.float64],
         quaternion_xyzw: tuple[float, float, float, float],
-    ) -> RigidSample:
+    ) -> Self:
         matrix = quaternion_xyzw_to_matrix(quaternion_xyzw)
         xyz = np.asarray(position, dtype=np.float64).reshape(3)
         return cls((float(xyz[0]), float(xyz[1]), float(xyz[2])), tuple(map(tuple, matrix)))
@@ -102,7 +103,13 @@ class HandGoal(RigidSample):
 class ControllerPose(RigidSample):
     """One WebXR controller pose in the station frame at the current instant."""
 
-    from_pose = RigidSample.from_quaternion
+    @classmethod
+    def from_pose(
+        cls,
+        position: tuple[float, float, float] | NDArray[np.float64],
+        quaternion_xyzw: tuple[float, float, float, float],
+    ) -> Self:
+        return cls.from_quaternion(position, quaternion_xyzw)
 
 
 @dataclass(frozen=True)

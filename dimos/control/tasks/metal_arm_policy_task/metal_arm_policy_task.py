@@ -47,15 +47,12 @@ from dimos.control.task import (
     CoordinatorState,
     JointCommandOutput,
 )
-from dimos.control.tasks.policy_execution import (
-    PolicyTask,
-    PolicyTick,
-    PolicyTickScheduler,
-)
+from dimos.control.tasks.policy_execution import PolicyTask, PolicyTick
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     JOINT_ORDER,
     PolicyManifest,
+    load_manifest,
 )
 from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import (
     MetalArmPolicyRuntime,
@@ -187,8 +184,8 @@ class MetalArmPolicyTask(PolicyTask):
         super().__init__(
             name,
             config.joint_names,
-            scheduler=PolicyTickScheduler.at_hz(manifest.timing.policy_hz),
             priority=config.priority,
+            hz=manifest.timing.policy_hz,
             dry_run=config.dry_run,
         )
         # Monotonic clock used to stamp inputs on receipt. In deployment it is
@@ -256,7 +253,7 @@ class MetalArmPolicyTask(PolicyTask):
                 return False
             if self._goal is None and not self._config.teleop:
                 return False
-            self.request_session_locked(t_now if t_now is not None else self._clock())
+            self.request_session(t_now if t_now is not None else self._clock())
             return True
 
     def release(self, t_now: float | None = None) -> bool:
@@ -269,11 +266,6 @@ class MetalArmPolicyTask(PolicyTask):
     def disarm(self, t_now: float | None = None) -> bool:
         """Coordinator activation hook: same effect as :meth:`release`."""
         return self.release()
-
-    def set_dry_run(self, enabled: bool) -> None:
-        """Run the runtime but withhold commands, for pre-go inspection."""
-        with self._lock:
-            self._hold.set_dry_run(enabled)
 
     def set_estop(self, estopped: bool) -> None:
         """Latch or clear the emergency stop; clearing never resumes a session."""
@@ -307,7 +299,7 @@ class MetalArmPolicyTask(PolicyTask):
                 # feedback at the next tick and seed from the measured pose.
                 self._goal = saved_goal
                 self._goal_received_at = saved_at
-                self.request_session_locked(self._clock())
+                self.request_session(self._clock())
             return had_state
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
@@ -343,10 +335,8 @@ class MetalArmPolicyTask(PolicyTask):
         """Inert until :meth:`engage`; start never opens a session."""
 
     def stop(self) -> None:
-        with self._lock:
-            self._loop_active = False
-            self._fault = PolicyTaskFault.STOPPED
-            self.invalidate_session_locked()
+        self._fault = PolicyTaskFault.STOPPED
+        super().stop()
 
     # -------------------------------------------------------------- teleop entry
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
@@ -362,7 +352,7 @@ class MetalArmPolicyTask(PolicyTask):
                     self._invalidate_locked(PolicyTaskFault.RELEASED)
                 return True
             if not self.session_active and not self._session_requested:
-                self.request_session_locked(t_now)
+                self.request_session(t_now)
         return True
 
     def on_left_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
@@ -433,7 +423,7 @@ class MetalArmPolicyTask(PolicyTask):
             and now - self._requested_at > self._config.intent_timeout_s
         ):
             # An old engage request is not reauthorization; drop it explicitly.
-            self.clear_session_request_locked()
+            self.clear_session_request()
             self._fault = PolicyTaskFault.INTENT
             return None
         if self._goal is None and not self._config.teleop:
@@ -442,7 +432,7 @@ class MetalArmPolicyTask(PolicyTask):
             if self._goal_received_at is None:  # defensive: every goal is stamped
                 self._goal_received_at = self._clock()
             if now - self._goal_received_at > self._config.intent_timeout_s:
-                self.clear_session_request_locked()
+                self.clear_session_request()
                 self._fault = PolicyTaskFault.INTENT
                 return None
         feedback = self._read_feedback(state)
@@ -468,7 +458,7 @@ class MetalArmPolicyTask(PolicyTask):
         if goal is None:
             return None
 
-        epoch = self.begin_session_locked(now)
+        epoch = self.begin_session(now)
         self._fault = PolicyTaskFault.NONE
         q_home = np.asarray(self._runtime.manifest.action.home, dtype=np.float32)
         logger.info(
@@ -523,8 +513,8 @@ class MetalArmPolicyTask(PolicyTask):
             self._invalidate_locked(PolicyTaskFault.INTENT)
             return None
 
-        if not self._scheduler.poll(now):
-            return self._hold.hold()
+        if not self._cadence_due(now):
+            return self._held_command()
         return PolicyTick(self.session_epoch, now, payload=(q, dq, goal))
 
     def reset_policy(self, tick: PolicyTick) -> None:
@@ -549,16 +539,16 @@ class MetalArmPolicyTask(PolicyTask):
     def on_inference_error(self, tick: PolicyTick) -> None:
         del tick
         self._fault = PolicyTaskFault.INFERENCE
-        self.invalidate_session_locked()
+        self.end_session()
 
     def on_invalid_command(self) -> None:
         self._fault = PolicyTaskFault.INFERENCE
-        self.invalidate_session_locked()
+        self.end_session()
 
     def _invalidate_locked(self, reason: PolicyTaskFault) -> None:
         if reason is not PolicyTaskFault.NONE:
             self._fault = reason
-        self.invalidate_session_locked()
+        self.end_session()
 
     def on_session_ended(self) -> None:
         """Drop everything tied to the closed session; runs under the lock."""
@@ -584,7 +574,7 @@ def create_task(
     params = MetalArmPolicyTaskConfig(
         joint_names=tuple(cfg.joint_names), priority=cfg.priority, **cfg.params
     )
-    manifest = PolicyManifest.load(params.manifest_path)
+    manifest = load_manifest(params.manifest_path)
     runtime = MetalArmPolicyRuntime(manifest, params.model_dir)
 
     robot = cfg.joint_names[0].split("/", 1)[0] if cfg.joint_names else ""
