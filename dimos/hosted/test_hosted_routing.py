@@ -274,11 +274,6 @@ def test_hosts_scout_each_other_and_answer_probes(
 ) -> None:
     from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
 
-    # The group is a UDP port, so a UDP probe rather than the TCP ``_free_port``: zenoh binds
-    # the group with SO_REUSEADDR, which still fails with EADDRINUSE while a socket without it
-    # holds that port on 0.0.0.0, and every scouting zenoh session on the machine (the other
-    # workers' included) keeps one such socket, its unicast scout socket, on an ephemeral port
-    # no TCP probe can see.
     group = f"224.0.0.224:{unused_udp_port_factory()}"
     config = HostConfig(autodiscovery=True, scout_addr=group, scout_interface="lo")
     daemons = [
