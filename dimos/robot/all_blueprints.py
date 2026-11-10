@@ -17,6 +17,7 @@
 
 all_blueprints = {
     "a1z-planner-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic:a1z_planner_coordinator",
+    "a1z-teleop": "dimos.robot.manipulators.a1z.blueprints.teleop:a1z_teleop",
     "alfred-keyboard-teleop": "dimos.robot.diy.alfred.blueprints.alfred_keyboard_teleop:alfred_keyboard_teleop",
     "alfred-mls-nav": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav:alfred_mls_nav",
     "alfred-mls-nav-lidar": "dimos.robot.diy.alfred.blueprints.alfred_mls_nav_lidar:alfred_mls_nav_lidar",
@@ -221,6 +222,9 @@ all_blueprints = {
 
 
 all_modules = {
+    "a1-z-connection": "dimos.robot.manipulators.a1z.connection.A1ZConnection",
+    "a1-z-coordinator": "dimos.robot.manipulators.a1z.blueprints.basic.A1ZCoordinator",
+    "a1-z-twist-coordinator": "dimos.robot.manipulators.a1z.blueprints.teleop.A1ZTwistCoordinator",
     "agent": "dimos.agents.agent.Agent",
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
     "alfred-mount-tf": "dimos.robot.diy.alfred.mount_tf.AlfredMountTf",

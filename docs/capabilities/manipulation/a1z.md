@@ -111,6 +111,19 @@ dimos run keyboard-teleop-a1z --controlcoordinator.addresses '{"arm": "can0"}'
 
 On macOS, the adapter uses its userspace USB transport; any address selects it. Without an address the blueprint runs a mock arm. The map can live in a config file shared by every A1Z blueprint; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
 
+`a1z-teleop` (the Desktop Manipulation app), `a1z-planner-coordinator` and
+`coordinator-a1z` drive the arm through `A1ZConnection` instead, and always
+need the real arm. Name its CAN interface after the blueprint:
+
+```bash
+dimos run a1z-teleop --a1zconnection.can-port a1zcan
+```
+
+`A1ZConnection` starts the arm the same way. When commands stop for 0.1 s,
+or the coordinator's `set_estop(True)` stops them, the arm holds where it is.
+Set `--a1zconnection.home '[...]'` (six angles in rad) to have it move there
+after starting and before its motors turn off.
+
 ## Troubleshooting
 
 - **The interface is UP, but the arm does not respond.** Some Linux `gs_usb`

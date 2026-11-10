@@ -817,10 +817,17 @@ robots:
           description: Move a Galaxea A1Z arm with this computer's keyboard.
         a1z-planner-coordinator:
           title: A1Z motion planning
-          description: Motion planning and execution for a Galaxea A1Z arm.
+          description: Motion planning and execution for a real Galaxea A1Z arm, through A1ZConnection.
+          recommended_config: &a1z_connection_config
+          - {module: a1zconnection, field: can_port, label: CAN port, placeholder: a1zcan, required: true}
         coordinator-a1z:
           title: A1Z coordinator
-          description: An A1Z behind a ControlCoordinator (a building block).
+          description: A real A1Z behind a ControlCoordinator, through A1ZConnection (a building block).
+          recommended_config: *a1z_connection_config
+        a1z-teleop:
+          title: A1Z teleop
+          description: Move a real A1Z's end and its gripper from the Desktop Manipulation app, through A1ZConnection.
+          recommended_config: *a1z_connection_config
         coordinator-teleop-a1z:
           title: A1Z teleop coordinator
           description: The A1Z teleop coordinator (a building block).
