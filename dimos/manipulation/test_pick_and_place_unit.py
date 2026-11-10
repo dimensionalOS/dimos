@@ -631,6 +631,36 @@ def test_a_reachable_given_grasp_is_picked_without_generating_any(
     grasp_generator.propose_grasps.assert_not_called()
 
 
+def test_a_given_grasp_rotation_is_made_unit_length(module: PickAndPlaceModule) -> None:
+    given = _given(0.12)
+    given["orientation"] = [2.0 * q for q in given["orientation"]]
+
+    result = module.pick_object("cup-1", grasp=given)
+
+    assert result.message == "Pick complete"
+    manipulation: Any = module._manipulation
+    pregrasp = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
+    # The configured 10 cm above the top-down grasp at z = 0.2.
+    assert pregrasp.position.to_tuple() == pytest.approx((0.12, 0.0, 0.3))
+
+
+@pytest.mark.parametrize(
+    "orientation", [[0.0, 0.0, 0.0, 0.0], [float("nan"), 0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]
+)
+def test_a_given_grasp_without_a_rotation_is_refused_before_any_move(
+    module: PickAndPlaceModule, orientation: list[float]
+) -> None:
+    given = _given(0.12)
+    given["orientation"] = orientation
+
+    result = module.pick_object("cup-1", grasp=given)
+
+    assert result.message.startswith("The given grasp's orientation")
+    manipulation: Any = module._manipulation
+    manipulation.plan_to_poses.assert_not_called()
+    manipulation.set_gripper_position.assert_not_called()
+
+
 def test_the_source_names_the_generator_the_given_grasp_came_from(
     module: PickAndPlaceModule,
 ) -> None:

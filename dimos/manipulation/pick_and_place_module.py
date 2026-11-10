@@ -276,7 +276,17 @@ class PickAndPlaceModule(Module):
             candidates = self._grasp_generator.propose_grasps(pointcloud)
         else:
             source = str(grasp.get("generator", "operator"))
-            pose = Pose(Vector3(*grasp["position"]), Quaternion(*grasp["orientation"]))
+            orientation = np.asarray(grasp["orientation"], dtype=float)
+            norm = float(np.linalg.norm(orientation))
+            if orientation.shape != (4,) or not np.isfinite(norm) or norm == 0.0:
+                return SkillResult(
+                    f"The given grasp's orientation {grasp['orientation']} is not a rotation; "
+                    "expected a non-zero quaternion [x, y, z, w]. Did not start the pick.",
+                    metadata={"source": source},
+                )
+            # The pre-grasp offset is rotated by this quaternion, which must be
+            # unit length: one twice as long would put the pre-grasp 4x as far.
+            pose = Pose(Vector3(*grasp["position"]), Quaternion(*(orientation / norm)))
             candidates = GraspCandidateArray(
                 Header(self.config.planning_frame),
                 [GraspCandidate(pose, float(grasp.get("score", 0.0)))],
