@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Literal
@@ -176,9 +177,10 @@ def Xform "mid360"
 def _imu_offset() -> str:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
 
-    factory = PointLioConfig.model_fields["extrinsic_t"].default_factory
-    assert factory is not None, "extrinsic_t lost its default"
-    return ", ".join(repr(-value) for value in factory())
+    field = PointLioConfig.model_fields["extrinsic_t"]
+    assert field.default_factory is not None, "extrinsic_t lost its default"
+    extrinsic: Sequence[float] = field.get_default(call_default_factory=True)
+    return ", ".join(repr(-value) for value in extrinsic)
 
 
 def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
