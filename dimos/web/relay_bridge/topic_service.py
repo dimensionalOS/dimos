@@ -562,12 +562,20 @@ async def serve(config: TopicServiceConfig, stop: asyncio.Event) -> None:
                     logger.info("topic source connected", source=config.source)
                     try:
                         await asyncio.wait({task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
-                        if task.done():
-                            task.result()
                     finally:
                         task.cancel()
-                        with suppress(asyncio.CancelledError):
+                        try:
                             await task
+                        except asyncio.CancelledError:
+                            pass
+                        except ProtocolError as error:
+                            # One bad message on a live connection drops that
+                            # connection only. The next one starts clean.
+                            logger.warning(
+                                "topic relay sent a bad message; reconnecting",
+                                source=config.source,
+                                error=str(error),
+                            )
             except RelayRejectedError as error:
                 # A configuration/auth rejection needs an operator change, not
                 # a hot retry loop. Never include credentials in the log.

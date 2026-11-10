@@ -31,7 +31,7 @@ from dimos.protocol.service.zenoh_wire import make_zenoh_config
 from dimos.utils.asyncio_timeout import timeout
 from dimos.utils.deno import ensure_deno
 from dimos.web.relay_bridge import topic_service, topic_transform
-from dimos.web.relay_bridge.protocol import FrameHeader, encode_data_frame
+from dimos.web.relay_bridge.protocol import FrameHeader, ProtocolError, encode_data_frame
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.topic_metadata import METADATA_PREFIX, DescriptorSnapshot
 from dimos.web.relay_bridge.topic_protocol import (
@@ -325,6 +325,51 @@ async def test_standalone_service_retries_source_conflict_until_old_registration
             )
             ready = await next_message(viewer, TopicReady)
             assert ready.gen == current.gen
+        finally:
+            stop.set()
+            await asyncio.wait_for(task, 5)
+
+
+async def test_standalone_service_reconnects_after_a_bad_relay_message(
+    relay: RelayReadyInfo,
+    mocker,
+):
+    run = topic_service.TopicProvider.run
+    reconnected = asyncio.Event()
+    runs = 0
+
+    async def bad_message_once(provider):
+        nonlocal runs
+        runs += 1
+        if runs == 1:
+            raise ProtocolError("invalid topic publication provenance")
+        reconnected.set()
+        await run(provider)
+
+    mocker.patch.object(topic_service.TopicProvider, "run", bad_message_once)
+    config = TopicServiceConfig(
+        source="workspace",
+        relay_url=f"http://127.0.0.1:{relay.http_port}",
+        zenoh={"mode": "peer", "listen": ["tcp/127.0.0.1:0"], "multicast": False, "gossip": False},
+    )
+    stop = asyncio.Event()
+    async with await RelayClient.connect(relay.wt_url, "viewer") as viewer:
+        await viewer.hello(topics=True)
+        task = asyncio.create_task(topic_service.serve(config, stop))
+        try:
+            await asyncio.wait_for(reconnected.wait(), 10)
+            assert not task.done()
+            viewer.send_control(
+                TopicSub(
+                    id="recovered",
+                    source="workspace",
+                    keyExpr="after/bad-message",
+                    delivery="reliable",
+                    profile="raw",
+                    maxHz=1000,
+                )
+            )
+            await next_message(viewer, TopicReady)
         finally:
             stop.set()
             await asyncio.wait_for(task, 5)
