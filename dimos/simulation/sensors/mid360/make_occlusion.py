@@ -108,8 +108,8 @@ def main() -> None:
     model = mujoco.MjModel.from_xml_path(args.mjcf)
     data = mujoco.MjData(model)
     mujoco.mj_forward(model, data)
-    az_edges = np.arange(-180.0, 181.0)
-    el_edges = np.arange(args.el_from, args.el_to + 1.0)
+    az_edges = np.arange(-180.0, 181.0, dtype=np.float64)
+    el_edges = np.arange(args.el_from, args.el_to + 1.0, dtype=np.float64)
     grid = occlusion_grid(model, data, args.frame, az_edges=az_edges, el_edges=el_edges)
     write_occlusion(args.out, grid, az_edges, el_edges)
     print(
