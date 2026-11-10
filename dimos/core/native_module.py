@@ -56,6 +56,7 @@ from typing import IO, Any
 from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.blueprints import BlueprintAtom, DisabledModuleProxy, ModuleRef
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
@@ -332,7 +333,38 @@ class NativeModule(Module):
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos
+        rpc = self._rpc_launch()
+        if rpc:
+            blob["rpc"] = rpc
         return json.dumps(blob).encode() + b"\n"
+
+    def _rpc_launch(self) -> dict[str, Any] | None:
+        """The RPC side of the launch line. None when the process neither serves nor calls."""
+        served = sorted(
+            name for name, f in self.rpcs.items() if getattr(f, "__rpc_native__", False)
+        )
+        refs = BlueprintAtom.create(type(self), {}).module_refs
+        if not served and not refs:
+            return None
+        return {
+            "name": self.rpc_name,
+            "served": served,
+            "targets": {ref.name: self._ref_target(ref) for ref in refs},
+            "timeouts": dict(self.config.rpc_timeouts),
+            "default_timeout": self.config.default_rpc_timeout,
+        }
+
+    def _ref_target(self, ref: ModuleRef) -> str | None:
+        """The rpc name of the module wired into `ref`, or None for an optional ref without one."""
+        target = getattr(self, ref.name, None)
+        remote_name = getattr(target, "remote_name", None)
+        if isinstance(remote_name, str):
+            return remote_name
+        if ref.optional and (target is None or isinstance(target, DisabledModuleProxy)):
+            return None
+        raise RuntimeError(
+            f"[{self._module_label}] module ref {ref.name!r} has no target to hand the native process"
+        )
 
     @rpc
     def start(self) -> None:

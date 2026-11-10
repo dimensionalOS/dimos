@@ -179,10 +179,7 @@ class ModuleBase(Configurable, CompositeResource):
             # start() before serve_module_rpc(): Zenoh's subscribe needs an open
             # session (acquired in start()), whereas LCM tolerates either order.
             self.rpc.start()  # type: ignore[attr-defined]
-            self.rpc.serve_module_rpc(
-                self,
-                name=self.config.rpc_name or self.config.instance_name,
-            )
+            self.rpc.serve_module_rpc(self, name=self.rpc_name)
         except ValueError:
             ...
 
@@ -190,6 +187,11 @@ class ModuleBase(Configurable, CompositeResource):
     def name(self) -> str:
         """Name for this module to be used for blueprint configs."""
         return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
+
+    @property
+    def rpc_name(self) -> str:
+        """The prefix this module's RPCs are served under."""
+        return self.config.rpc_name or self.config.instance_name or type(self).__name__
 
     @property
     def frame_id(self) -> str:

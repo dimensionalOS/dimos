@@ -222,7 +222,7 @@ async fn await_connect(session: &Session, endpoints: &[String], mode: Mode, time
 
 impl ZenohTransport {
     /// Open the session the launch config describes.
-    pub(crate) async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
+    pub async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
         match SessionSettings::from_launch(launch)? {
             Some(settings) => Self::open(&settings).await,
             None => Self::new().await,
@@ -265,12 +265,16 @@ impl ZenohTransport {
         Ok(Self::wrap(session))
     }
 
-    fn wrap(session: Session) -> Self {
+    pub(crate) fn wrap(session: Session) -> Self {
         Self {
             session,
             qos: OnceLock::new(),
             publishers: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub(crate) fn session(&self) -> &Session {
+        &self.session
     }
 
     async fn declare_publisher(&self, channel: &str) -> io::Result<Publisher<'static>> {
@@ -327,7 +331,7 @@ impl Transport for ZenohTransport {
     }
 }
 
-fn to_io(e: ::zenoh::Error) -> io::Error {
+pub(crate) fn to_io(e: ::zenoh::Error) -> io::Error {
     io::Error::other(e)
 }
 

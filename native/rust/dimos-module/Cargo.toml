@@ -8,6 +8,7 @@ license = "Apache-2.0"
 [workspace]
 
 [dependencies]
+ciborium = "0.2"
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
@@ -15,10 +16,12 @@ nalgebra = "0.35.0"
 rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }
 serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
 # Without preserve_order a Value::Object is a BTreeMap, so parsing the stdin line
 # alphabetises every key before the config struct ever sees it.
 serde_json = { version = "1", features = ["preserve_order"] }
 tracing = "0.1"
+thiserror = "2"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 url = "2"
 validator = { version = "0.21", features = ["derive"] }
@@ -26,6 +29,7 @@ validator = { version = "0.21", features = ["derive"] }
 zenoh = { version = "=1.10.1", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
 
 [dev-dependencies]
+hex = "0.4"
 tracing-test = "0.2"
 
 [[example]]
