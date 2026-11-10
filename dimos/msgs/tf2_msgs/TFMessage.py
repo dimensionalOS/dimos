@@ -23,7 +23,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from rerun._baseclasses import Archetype
 
@@ -51,10 +51,14 @@ class TfFrameTree:
     """Store each frame under its parents. This lets us view the tree in the left panel."""
 
     def __init__(
-        self, axis_length: float = DEFAULT_AXIS_LENGTH, root: str = DEFAULT_TF_ROOT
+        self,
+        axis_length: float = DEFAULT_AXIS_LENGTH,
+        root: str = DEFAULT_TF_ROOT,
+        log: Callable[..., None] | None = None,
     ) -> None:
         self.axis_length = axis_length
         self.root = root
+        self._log = log
         self._parents: dict[str, str] = {}
         self._placed: dict[str, tuple[str, int]] = {}  # frame -> (path, depth)
 
@@ -83,17 +87,19 @@ class TfFrameTree:
     def _redraw(self) -> None:
         import rerun as rr
 
+        log = self._log or rr.log
+
         frames = {*self._parents, *self._parents.values()}
         placed = {frame: self._place(frame, frozenset()) for frame in frames}
 
         for frame, (old_path, _depth) in self._placed.items():
             new = placed.get(frame)
             if new is None or new[0] != old_path:
-                rr.log(old_path, rr.Arrows3D(origins=[], vectors=[]), static=True)
+                log(old_path, rr.Arrows3D(origins=[], vectors=[]), static=True)
 
         for frame, (path, depth) in placed.items():
             if self._placed.get(frame) != (path, depth):
-                rr.log(
+                log(
                     path,
                     rr.CoordinateFrame(f"tf#/{frame}"),
                     _triad(self.axis_length * DEPTH_SCALE**depth),

@@ -116,7 +116,7 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 
 ### Limit Memory
 
-Rerun keeps what the bridge logs in two places. Each has its own limit:
+Rerun's viewer and the bridge's replay history have separate limits:
 
 | Flag | Default | What it limits |
 |------|---------|----------------|
@@ -124,6 +124,19 @@ Rerun keeps what the bridge logs in two places. Each has its own limit:
 | `--rerunbridgemodule.server-memory-limit` | `1GiB` | The replay buffer in the bridge's worker. A viewer that connects late starts from what is in it. |
 
 Both take a size (`2GB`) or a share of RAM (`10%`).
+
+The bridge also keeps the latest static components, frame relationships, and camera
+calibration outside that history buffer. It refreshes stale values periodically so
+a late or reconnected viewer recovers them even after Rerun evicts their original
+messages. `--rerunbridgemodule.scene-refresh-interval` controls the refresh interval
+in seconds (default `5`). Recovery can take up to two intervals. This cache keeps
+one value per retained entity/component, replacing previous updates; refreshing
+it adds network traffic and entries to saved recordings.
+
+For one-shot topic values that remain valid, set `retained_topics=["topic_name"]`
+in the bridge configuration. `relocalize-mid360` retains `loaded_map` this way.
+Ordinary live images and point clouds are not periodically replayed. Logging
+directly with `rr.log()` bypasses the bridge's scene cache.
 
 ---
 

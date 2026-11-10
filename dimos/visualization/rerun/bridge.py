@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from dataclasses import field
 import functools
 from operator import attrgetter
@@ -56,6 +58,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import transport_topic
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import colormap_annotation
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import KEY_PREFIX, Topic as ZenohTopic, Zenoh
@@ -73,6 +76,7 @@ from dimos.visualization.rerun.constants import (
     RerunOpenOption,
 )
 from dimos.visualization.rerun.init import rerun_init, spawn_viewer
+from dimos.visualization.rerun.scene import Scene
 from dimos.visualization.rerun.spec import RerunWebSocketServerSpec
 
 if TYPE_CHECKING:
@@ -312,6 +316,10 @@ class Config(ModuleConfig):
     memory_limit: str = Field(default_factory=_default_memory_limit)
     # What the bridge keeps in its own process to replay to a viewer that connects late.
     server_memory_limit: str = "1GiB"
+    # Refresh stale scene components so late viewers recover evicted state.
+    scene_refresh_interval: float = Field(default=5.0, gt=0)
+    # Topic names without the dimos/ prefix whose latest values remain valid.
+    retained_topics: list[str] = field(default_factory=list)
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
     rerun_save: bool = False
@@ -360,6 +368,8 @@ class RerunBridgeModule(Module):
         self._camera_infos: dict[str, CameraInfo] = {}
         self._image_entities: set[str] = set()
         self._min_intervals: dict[str, float] = {}
+        self._scene = Scene()
+        self._scene_ready: asyncio.Event | None = None
         self._tf_lock = threading.Lock()
         self._tf_tree = self._new_tf_tree()
 
@@ -369,6 +379,7 @@ class RerunBridgeModule(Module):
         return TfFrameTree(
             axis_length=self.config.tf_axes,
             root=f"{self.config.entity_prefix}/tf",
+            log=self._scene.log,
         )
 
     @property
@@ -473,7 +484,7 @@ class RerunBridgeModule(Module):
         if self._tf_tree is not None and isinstance(msg, TFMessage):
             with self._tf_lock:
                 for path, archetype in msg.to_rerun(self._tf_tree):
-                    rr.log(path, archetype)
+                    self._scene.log(path, archetype, retain=True)
             return
 
         if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
@@ -485,18 +496,33 @@ class RerunBridgeModule(Module):
         if not rerun_data:
             return
 
+        retain = (
+            entity_path.removeprefix(f"{self.config.entity_prefix}/") in self.config.retained_topics
+        )
+
         # TFMessage for example returns list of (entity_path, archetype) tuples
         if is_rerun_multi(rerun_data):
             for entry in rerun_data:
-                rr.log(entry[0], entry[1], static=isinstance(entry, RerunEntry) and entry.static)
+                self._scene.log(
+                    entry[0],
+                    entry[1],
+                    static=isinstance(entry, RerunEntry) and entry.static,
+                    retain=retain or isinstance(entry[1], rr.Transform3D),
+                )
             # Pin the base entity to the message frame once, so child entities
             # follow it the way a single archetype does below.
             frame_id = getattr(msg, "frame_id", None)
             if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                self._scene.log(
+                    entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"), retain=True
+                )
                 self._frame_attached[entity_path] = frame_id
         else:
-            rr.log(entity_path, cast("Archetype", rerun_data))
+            self._scene.log(
+                entity_path,
+                cast("Archetype", rerun_data),
+                retain=retain or isinstance(rerun_data, rr.Transform3D),
+            )
             if isinstance(msg, Image):
                 self._image_entities.add(entity_path)
             # if source msg carries a frame_id, attach the entity to that TF frame
@@ -504,10 +530,16 @@ class RerunBridgeModule(Module):
             if not isinstance(rerun_data, rr.Transform3D):
                 frame_id = getattr(msg, "frame_id", None)
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
-                    rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
+                    self._scene.log(
+                        entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"), retain=True
+                    )
                     self._frame_attached[entity_path] = frame_id
                     if isinstance(msg, Image) and frame_id in self._camera_infos:
-                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+                        self._scene.log(
+                            entity_path,
+                            self._camera_infos[frame_id].to_rerun_pinhole(),
+                            retain=True,
+                        )
 
     def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
         """A CameraInfo is the pinhole of every image in its optical frame.
@@ -516,15 +548,13 @@ class RerunBridgeModule(Module):
         so the info is paired with images by frame_id rather than logged on
         its own topic; an image that arrives later picks it up on attach.
         """
-        import rerun as rr
-
         if not info.frame_id:
-            rr.log(entity_path, info.to_rerun_pinhole())
+            self._scene.log(entity_path, info.to_rerun_pinhole(), retain=True)
             return
         self._camera_infos[info.frame_id] = info
         for image_path, frame_id in self._frame_attached.items():
             if frame_id == info.frame_id and image_path in self._image_entities:
-                rr.log(image_path, info.to_rerun_pinhole())
+                self._scene.log(image_path, info.to_rerun_pinhole(), retain=True)
 
     @rpc
     def start(self) -> None:
@@ -555,6 +585,7 @@ class RerunBridgeModule(Module):
             },
         )
         assert server_uri is not None  # start_grpc=True guarantees a URI
+        self._scene.log("/", colormap_annotation("turbo"), static=True)
 
         parsed = urlparse(connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -610,6 +641,25 @@ class RerunBridgeModule(Module):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+        assert self._loop is not None and self._scene_ready is not None
+        self._loop.call_soon_threadsafe(self._scene_ready.set)
+
+    async def main(self) -> AsyncIterator[None]:
+        self._scene_ready = asyncio.Event()
+        refresh = asyncio.create_task(self._refresh_scene(self._scene_ready))
+        try:
+            yield
+        finally:
+            refresh.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh
+
+    async def _refresh_scene(self, ready: asyncio.Event) -> None:
+        await ready.wait()
+        interval = self.config.scene_refresh_interval
+        while True:
+            await asyncio.sleep(interval)
+            self._scene.refresh(interval)
 
     def _subscribe(self, pubsub: SubscribeAllCapable[Any, Any]) -> Callable[[], None]:
         """Subscribe to the named topics, or to everything when none are named.
@@ -688,7 +738,7 @@ class RerunBridgeModule(Module):
                     archetypes=[type(entry[1]).__name__ for entry in data],
                 )
                 for entry in data:
-                    rr.log(entry[0], entry[1], static=True)
+                    self._scene.log(entry[0], entry[1], static=True)
                 continue
 
             if isinstance(data, list):
@@ -698,14 +748,14 @@ class RerunBridgeModule(Module):
                     archetypes=[type(archetype).__name__ for archetype in data],
                 )
                 for archetype in data:
-                    rr.log(entity_path, archetype, static=True)
+                    self._scene.log(entity_path, archetype, static=True)
             else:
                 logger.info(
                     "Rerun static entity",
                     entity_path=entity_path,
                     archetypes=[type(data).__name__],
                 )
-                rr.log(entity_path, data, static=True)
+                self._scene.log(entity_path, data, static=True)
 
     @rpc
     def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
@@ -759,7 +809,7 @@ class RerunBridgeModule(Module):
         if not node_ids:
             return
 
-        rr.log(
+        self._scene.log(
             "blueprint",
             rr.GraphNodes(
                 node_ids=node_ids,
@@ -775,6 +825,7 @@ class RerunBridgeModule(Module):
 
     @rpc
     def stop(self) -> None:
+        self._scene.stop()
         self._override_cache.clear()
         self._frame_attached.clear()
         self._tf_tree = None
