@@ -45,7 +45,7 @@ def _register_usd_reader(scene: Path) -> None:
     if scene.suffix.lower() not in _USD_SUFFIXES:
         return
     try:
-        import mujoco._usd  # type: ignore[import-untyped]  # noqa: F401
+        import mujoco._usd  # noqa: F401
     except ImportError as error:
         raise ImportError(
             f"{scene} is a USD layer and this MuJoCo cannot read one: {error}"
