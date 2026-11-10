@@ -191,6 +191,7 @@ def export_checkpoint(
     onnx_sha = sha256_file(onnx_path)
 
     manifest = PolicyManifest(
+        schema=SCHEMA,
         name=name,
         checkpoint=CheckpointSpec(
             sha256=checkpoint_sha,

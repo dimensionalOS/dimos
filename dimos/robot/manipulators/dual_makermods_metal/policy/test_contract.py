@@ -17,6 +17,7 @@
 import json
 
 import numpy as np
+from pydantic import ValidationError
 import pytest
 
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
@@ -39,6 +40,7 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
 def _manifest(**overrides) -> PolicyManifest:
     return PolicyManifest(
         **{
+            "schema": SCHEMA,
             "name": "metal_arm_policy",
             "checkpoint": CheckpointSpec(
                 sha256="a" * 64,
@@ -151,3 +153,72 @@ def test_feedback_outside_training_limits_is_rejected():
 def test_manifest_json_matches_published_schema_name(tmp_path):
     path = write_manifest(_manifest(), tmp_path / "manifest.json")
     assert json.loads(path.read_text())["schema"] == SCHEMA
+
+
+@pytest.mark.parametrize("missing", ["omitted", "null"], ids=["omitted", "null"])
+def test_manifest_requires_schema_on_every_validation_surface(tmp_path, missing):
+    payload = _manifest().model_dump(by_alias=True)
+    if missing == "omitted":
+        payload.pop("schema")
+    else:
+        payload["schema"] = None
+    with pytest.raises(PolicyContractError, match="schema"):
+        validate_manifest(payload)
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(PolicyContractError, match="schema"):
+        load_manifest(path)
+    with pytest.raises(ValidationError, match="schema"):
+        PolicyManifest.model_validate(payload)
+
+
+def test_manifest_schema_round_trips_through_the_canonical_model():
+    manifest = _manifest()
+    payload = manifest.model_dump(by_alias=True)
+    assert payload["schema"] == SCHEMA
+    assert PolicyManifest.model_validate(payload) == manifest
+
+
+NON_FINITE_SCALARS = (
+    ("timing", "policy_hz"),
+    ("timing", "physics_dt"),
+    ("action", "slew_limit"),
+    ("action", "action_scale"),
+    ("action", "clamp_margin"),
+    ("action", "low_pass_alpha"),
+    ("observation", "dq_scale"),
+    ("normalizer", "eps"),
+)
+
+
+@pytest.mark.parametrize(("group", "key"), NON_FINITE_SCALARS)
+@pytest.mark.parametrize(
+    "value", [float("inf"), float("-inf"), float("nan")], ids=["inf", "neg_inf", "nan"]
+)
+def test_manifest_rejects_non_finite_scalars(group, key, value):
+    payload = _manifest().model_dump(by_alias=True)
+    payload[group][key] = value
+    with pytest.raises(PolicyContractError, match=f"{group}.{key}"):
+        validate_manifest(payload)
+
+
+def test_manifest_rejects_non_finite_vector_elements():
+    payload = _manifest().model_dump(by_alias=True)
+    payload["action"]["home"] = [float("inf"), *payload["action"]["home"][1:]]
+    with pytest.raises(PolicyContractError, match="action.home"):
+        validate_manifest(payload)
+    payload = _manifest().model_dump(by_alias=True)
+    payload["station"]["left_mount_xyz"] = [0.0, float("nan"), 0.0]
+    with pytest.raises(PolicyContractError, match="station.left_mount_xyz"):
+        validate_manifest(payload)
+
+
+def test_manifest_accepts_finite_scalar_overrides():
+    payload = _manifest().model_dump(by_alias=True)
+    payload["timing"]["policy_hz"] = 19.5
+    payload["action"]["slew_limit"] = 0.05
+    payload["observation"]["dq_scale"] = 4.0
+    manifest = validate_manifest(payload)
+    assert manifest.timing.policy_hz == 19.5
+    assert manifest.action.slew_limit == 0.05
+    assert manifest.observation.dq_scale == 4.0

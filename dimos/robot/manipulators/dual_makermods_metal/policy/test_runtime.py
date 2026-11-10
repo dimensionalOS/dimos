@@ -23,6 +23,7 @@ import pytest
 
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
+    SCHEMA,
     CheckpointSpec,
     ModelSpec,
     PolicyContractError,
@@ -34,6 +35,7 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.runtime import ActionD
 def _manifest(**overrides) -> PolicyManifest:
     return PolicyManifest(
         **{
+            "schema": SCHEMA,
             "name": "metal_arm_policy",
             "checkpoint": CheckpointSpec(
                 sha256="a" * 64,

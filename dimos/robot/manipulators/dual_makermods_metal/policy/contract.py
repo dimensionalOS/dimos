@@ -103,17 +103,15 @@ class PolicyContractError(ValueError):
 
 
 class _ContractModel(BaseConfig):
-    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
+    # ``allow_inf_nan=False`` makes NaN/±Inf fail closed on every float scalar
+    # and every float element of the layout tuples declared on these models.
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, arbitrary_types_allowed=True, allow_inf_nan=False
+    )
 
 
-def _finite(values: tuple[float, ...]) -> tuple[float, ...]:
-    if not all(np.isfinite(value) for value in values):
-        raise ValueError("contains a non-finite value")
-    return values
-
-
-Vec3 = Annotated[tuple[float, float, float], AfterValidator(_finite)]
-Vec12 = Annotated[tuple[float, ...], Field(min_length=12, max_length=12), AfterValidator(_finite)]
+Vec3 = tuple[float, float, float]
+Vec12 = Annotated[tuple[float, ...], Field(min_length=12, max_length=12)]
 
 
 def _current_schema(value: str) -> str:
@@ -227,7 +225,7 @@ class PolicyManifest(_ContractModel):
     and validation need no hand-written bidirectional mapping.
     """
 
-    schema_: SchemaName = Field(default=SCHEMA, alias="schema")
+    schema_: SchemaName = Field(alias="schema")
     name: str
     checkpoint: CheckpointSpec
     model: ModelSpec

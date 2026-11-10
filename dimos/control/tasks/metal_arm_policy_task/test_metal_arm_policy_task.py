@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     HOME,
     JOINT_ORDER,
+    SCHEMA,
     CheckpointSpec,
     ModelSpec,
     PolicyContractError,
@@ -55,6 +56,7 @@ DQ0 = np.full(12, 0.01, dtype=np.float32)
 
 def make_manifest() -> PolicyManifest:
     return PolicyManifest(
+        schema=SCHEMA,
         name="test-policy",
         checkpoint=CheckpointSpec(
             sha256="0" * 64, iteration=38000, source_sha256="1" * 64, recipe_variant="test"
