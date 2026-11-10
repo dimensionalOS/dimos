@@ -242,7 +242,7 @@ class JointTrajectoryTask(BaseControlTask):
 
     def on_joint_command(self, msg: JointState, t_now: float) -> bool:
         """Convert streamed joint positions into a velocity-bounded trajectory target."""
-        guarded = msg.frame_id == "dimos/guarded-joint"
+        guarded = msg.header.frame_id == "dimos/guarded-joint"
         if guarded and len(msg.position) == 0 and len(msg.name) == len(msg.velocity):
             if not msg.name or any(value != 0.0 for value in msg.velocity):
                 return False
