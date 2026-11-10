@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The coordinator side of leader teleop: a port for the leader and a task that outranks policy.
+"""The coordinator side of leader teleop: a port for the leader and the task that reads it.
 
-The leader's targets reach their own ``trajectory`` task instance through
-``stream_bind``, at a priority above the trajectory task a policy or the planner
-uses, so the leader wins every joint it claims while it publishes and hands the
-joints back when it stops, as a WebXR grip does.
+A coordinator has one trajectory task, ``joint_trajectory``; ``stream_bind``
+points it at the leader's port, so the leader's targets stream into the lane
+the planner and policies also use. Each guarded message is a jog that claims the
+joints it names and releases them shortly after the leader stops.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
@@ -32,9 +33,9 @@ from dimos.robot.manipulators.damiao.robot import DamiaoGripper
 from dimos.teleop.leader.calibration import LEADER_SIDES
 
 LEADER_JOINT_COMMAND = "leader_joint_command"
-LEADER_TASK_NAME = "leader"
-# Above the trajectory task's 10, the lane a policy or the planner streams on.
-LEADER_TASK_PRIORITY = 20
+# The coordinator allows one trajectory task and addresses it by this name.
+LEADER_TASK_NAME = JOINT_TRAJECTORY_TASK_NAME
+LEADER_TASK_PRIORITY = 10
 GRIPPER_TASK_PRIORITY = 20
 
 
@@ -51,7 +52,7 @@ def leader_task(
     priority: int = LEADER_TASK_PRIORITY,
     start_position_tolerance: float = 0.05,
 ) -> TaskConfig:
-    """The trajectory task the leader drives, bound to its own port."""
+    """The coordinator's trajectory task, reading the leader's port instead of joint_command."""
     params: dict[str, object] = {"start_position_tolerance": start_position_tolerance}
     if velocity_limits:
         params["velocity_limits"] = dict(velocity_limits)

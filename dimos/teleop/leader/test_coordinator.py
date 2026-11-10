@@ -41,11 +41,11 @@ def test_coordinator_reads_the_port_the_leader_module_publishes() -> None:
     assert (get_origin(writer), get_args(writer)) == (Out, (JointState,))
 
 
-def test_leader_task_outranks_the_trajectory_task_and_reads_its_own_port() -> None:
+def test_leader_task_is_the_trajectory_task_reading_the_leader_port() -> None:
     task = leader_task(JOINTS, velocity_limits={"arm/left_joint1": 3.0})
     assert task.type == "trajectory"
-    assert task.name != JOINT_TRAJECTORY_TASK_NAME
-    assert task.priority == LEADER_TASK_PRIORITY == 20
+    assert task.name == JOINT_TRAJECTORY_TASK_NAME
+    assert task.priority == LEADER_TASK_PRIORITY == 10
     assert task.joint_names == JOINTS
     assert task.stream_bind == {"joint_command": LEADER_JOINT_COMMAND}
     assert task.params == {
