@@ -98,7 +98,7 @@ def graft_usd(root_usd: str, subtrees: Mapping[str, str], root: Path | str | Non
                 f"cannot attach a subtree at {frame_id!r}: the root USD has no prim for that "
                 f"frame (it has {sorted(by_link)})"
             )
-        sub_layer = layer_from(pxr, subtree_usd, frame_id)
+        sub_layer = layer_from(pxr, subtree_usd, frame_id, root)
         sub_stage = pxr.Usd.Stage.Open(sub_layer)
         source = sub_stage.GetDefaultPrim()
         if not source:
