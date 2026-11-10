@@ -92,12 +92,15 @@ return. This replaces the old adapter path, where an estopped robot simply
 kept its last position command with no deadman. After clearing software E-stop,
 fresh operator velocity input is required; pre-stop intent is not replayed.
 
-**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`, opening
-in metres over the vendor's 0–100 mm range) is a command-only contract joint
-driven by its own feedback-gated gripper task — never held, never zero-filled,
-never sent anything while idle. A target whose feedback goes stale, malformed
-or faulted is interrupted: it is not re-sent until the task withdraws it or an
-explicit new command replaces it, and the readback is withheld meanwhile.
+**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`) is an
+ordinary position joint in metres over the vendor's 0–100 mm range. Each uses
+the unchanged gripper task and a separate input binding. Both measured jaw
+positions are required for initial coordinator readiness. The R1Pro connection
+owns feedback/fault checks, millimetre conversion and duplicate suppression;
+an initial hold at the measured opening does not issue a vendor target.
+Stale or faulted feedback blocks vendor writes. An interrupted target is not
+replayed merely because feedback returns; replace it with a different target.
+The generic task's readback remains its last measurement, not a freshness signal.
 
 **Stop is not a cancel.** `stop()`/`halt()` and the deadman only stop *us*
 from sending new targets. They are not a vendor cancel and not a physical

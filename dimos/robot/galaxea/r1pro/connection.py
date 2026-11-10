@@ -278,7 +278,6 @@ class R1ProConnectionConfig(ConnectionConfig):
         **dict.fromkeys([*R1PRO_UPPER_BODY_JOINTS, *R1PRO_GRIPPER_JOINTS], (Interface.POSITION,)),
         **dict.fromkeys(R1PRO_BASE_JOINTS, (Interface.VELOCITY,)),
     }
-    command_only_joints: frozenset[str] = frozenset(R1PRO_GRIPPER_JOINTS)
     odometry_timeout_s: float = Field(default=0.2, gt=0)
     publish_rate_hz: float = Field(default=100.0)
     tracking_speed: float = Field(default=0.5)
@@ -586,6 +585,11 @@ class R1ProConnection(ConnectionModule):
                         ch.last_intent_m = None
                         ch.blocked_intent_m = None
                         ch.last_sent_m = None
+                    continue
+                # Ordinary position sources initially hold their measurement.
+                # That is not a new vendor target and must not restart interpolation.
+                if ch.last_intent_m is None and value == ch.measured_m:
+                    ch.last_intent_m = ch.last_sent_m = value
                     continue
                 ch.last_intent_m = value
                 if not _gripper_valid(ch, self.config.gripper_feedback_timeout_s, now):

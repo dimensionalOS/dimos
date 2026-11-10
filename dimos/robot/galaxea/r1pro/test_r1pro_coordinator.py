@@ -66,14 +66,14 @@ GRIPPER_TASKS = [
         type="gripper",
         joint_names=["r1pro/left_gripper"],
         priority=10,
-        params={"require_feedback": True, "accept_broadcast": False},
+        stream_bind={"gripper_command": "left_gripper_command"},
     ),
     TaskConfig(
         name="r1pro_right_gripper",
         type="gripper",
         joint_names=["r1pro/right_gripper"],
         priority=10,
-        params={"require_feedback": True, "accept_broadcast": False},
+        stream_bind={"gripper_command": "right_gripper_command"},
     ),
 ]
 
@@ -103,10 +103,15 @@ def system(
         coordinator.set_transport(target, r.ports[source])  # type: ignore[arg-type]
     r.ports["gripper_command"] = LocalTransport()
     coordinator.set_transport("gripper_command", r.ports["gripper_command"])  # type: ignore[arg-type]
+    for side in ("left", "right"):
+        port = f"{side}_gripper_command"
+        r.ports[port] = LocalTransport()
+        coordinator.set_transport(port, r.ports[port])  # type: ignore[arg-type]
     coordinator.start()
     assert coordinator._tick_loop is not None
     tick_loop = coordinator._tick_loop
     r.start()
+    r.feed_grippers(left=20.0, right=40.0)
     feed_chassis_interval(r.fake, turn=math.pi / 2)
 
     def tick() -> None:
@@ -121,7 +126,7 @@ def system(
         coordinator.stop()
 
 
-def test_grippers_are_command_only_contract_joints_and_stay_out_of_planning() -> None:
+def test_grippers_are_position_joints_and_stay_out_of_arm_planning() -> None:
     from dimos.control.contract.limits import limits, movable_joints
     from dimos.robot.galaxea.r1pro.config import R1PRO_CONTROL_MODEL
     from dimos.robot.galaxea.r1pro.connection import R1ProConnectionConfig
@@ -159,9 +164,6 @@ def test_a_gripper_task_drives_only_its_own_jaw_through_the_whole_chain(
     wait_until(
         lambda: (tick(), bool(r.ports["position_command"].sent))[1], timeout=5.0, interval=0.01
     )
-    assert all(
-        "gripper" not in name for msg in r.ports["position_command"].sent for name in msg.name
-    )
     assert r.fake.control.sent_to("/motion_target/target_position_gripper_left") == []
     assert r.fake.control.sent_to("/motion_target/target_position_gripper_right") == []
     from dimos.msgs.std_msgs.Float32 import Float32
@@ -185,7 +187,7 @@ def test_a_gripper_task_drives_only_its_own_jaw_through_the_whole_chain(
     assert coordinator.task_invoke("r1pro_right_gripper", "get_normalized", {}) == [
         pytest.approx(0.4)
     ]
-    assert coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
+    r.ports["left_gripper_command"].publish(Float32(data=0.5))
     wait_until(
         lambda: (
             tick(),
@@ -197,72 +199,3 @@ def test_a_gripper_task_drives_only_its_own_jaw_through_the_whole_chain(
     sent = r.fake.control.sent_to("/motion_target/target_position_gripper_left")
     assert list(sent[-1].position) == [50.0]
     assert r.fake.control.sent_to("/motion_target/target_position_gripper_right") == []
-
-
-@pytest.mark.parametrize(
-    "system",
-    [
-        {
-            "tasks": GRIPPER_TASKS,
-            "reading_timeout_s": 0.1,
-            "connection": {"gripper_feedback_timeout_s": 0.1},
-        }
-    ],
-    indirect=True,
-)
-def test_a_jaw_whose_feedback_drops_loses_its_target_and_is_not_replayed(
-    system: tuple[Any, ...],
-    feedback_clock,
-) -> None:
-    from dimos.robot.galaxea.r1pro._connection_test_fakes import gripper_feedback
-
-    coordinator, r, twist, tick = system
-    wait_until(
-        lambda: (tick(), bool(r.ports["position_command"].sent))[1], timeout=5.0, interval=0.01
-    )
-    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
-    wait_until(
-        lambda: (
-            tick(),
-            coordinator.task_invoke("r1pro_left_gripper", "get_normalized", {})
-            == [pytest.approx(0.2)],
-        )[1],
-        timeout=5.0,
-        interval=0.01,
-    )
-    assert coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
-    wait_until(
-        lambda: (
-            tick(),
-            bool(r.fake.control.sent_to("/motion_target/target_position_gripper_left")),
-        )[1],
-        timeout=5.0,
-        interval=0.01,
-    )
-    sent = r.fake.control.sent_to("/motion_target/target_position_gripper_left")
-    assert len(sent) == 1
-    feedback_clock[0] += 0.2
-    tick()
-    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
-    wait_until(
-        lambda: (
-            tick(),
-            coordinator.task_invoke("r1pro_left_gripper", "get_normalized", {})
-            == [pytest.approx(0.2)],
-        )[1],
-        timeout=5.0,
-        interval=0.01,
-    )
-    assert len(r.fake.control.sent_to("/motion_target/target_position_gripper_left")) == 1
-    assert coordinator.task_invoke("r1pro_left_gripper", "set_normalized", {"values": [0.5]})
-    deadline = time.monotonic() + 5.0
-    while len(r.fake.control.sent_to("/motion_target/target_position_gripper_left")) < 2:
-        if time.monotonic() > deadline:
-            raise TimeoutError("the explicit new command was never sent")
-        r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(20.0))
-        tick()
-        time.sleep(0.01)
-    assert [
-        list(msg.position)
-        for msg in r.fake.control.sent_to("/motion_target/target_position_gripper_left")
-    ] == [[50.0], [50.0]]
