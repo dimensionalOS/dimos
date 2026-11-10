@@ -121,8 +121,9 @@ dimos run a1z-teleop --a1zconnection.can-port a1zcan
 
 `A1ZConnection` starts the arm the same way. When commands stop for 0.1 s,
 or the coordinator's `set_estop(True)` stops them, the arm holds where it is.
-Set `--a1zconnection.home '[...]'` (six angles in rad) to have it move there
-after starting and before its motors turn off.
+After starting, and before its motors turn off on stop, it moves to its home:
+all joints at 0 rad, folded at rest. Set `--a1zconnection.home '[...]'` (six
+angles in rad) for another pose.
 
 ## Troubleshooting
 

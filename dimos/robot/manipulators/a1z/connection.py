@@ -107,7 +107,8 @@ class A1ZConnectionConfig(ConnectionConfig):
             ``gripper``, the jaw opening in metres (0 closed, 0.1 open).
         gravity_comp_factor: How much of the arm's weight the SDK carries, 0 to 1.
         home: The joint angles the arm moves to after it starts and before it
-            stops, in rad, one per joint; ``None`` to leave it where it is.
+            stops, in rad, one per joint. All zeros, the default, is the arm
+            folded at rest. ``None`` leaves it where it is, so it drops on stop.
         jump_limit_s: How far a joint target may be from where the joint is,
             in seconds at the joint's top speed (its URDF velocity limit). A
             target further away is refused.
@@ -118,7 +119,7 @@ class A1ZConnectionConfig(ConnectionConfig):
     source: str = "arm"
     joint_commands: tuple[Interface, ...] = (Interface.POSITION,)
     gravity_comp_factor: float = Field(default=_DEVICE.gravity_comp_factor, ge=0.0, le=1.0)
-    home: tuple[float, ...] | None = None
+    home: tuple[float, ...] | None = (0.0,) * A1Z_DOF
     jump_limit_s: float = 0.1
 
     @model_validator(mode="after")

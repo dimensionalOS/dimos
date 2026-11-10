@@ -233,7 +233,7 @@ def rig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..
 def test_start_holds_the_arm_where_it_is_before_gravity_comes_in(rig: Callable[..., Rig]) -> None:
     arm = FakeArm()
     arm.state["pos"] = np.array([0.1, 0.5, -0.5, 0.0, 0.0, 0.0])
-    r = rig(arm)
+    r = rig(arm, home=None)
     # Gravity off, the loop started with no stiffness and half damping, every
     # motor heard, then held where it is at full stiffness with gravity still off.
     assert arm.calls[:3] == [
