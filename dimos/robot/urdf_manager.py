@@ -285,13 +285,30 @@ class UrdfManager(Module):
         await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
-        root, scene = await self._compose(chain)
-        where = root[ASSET_ROOT] or None
-        await asyncio.to_thread(self._check_scene_assets, scene, where)
-        published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
-        self._published_assets = assets
-        self._scene = published
-        return ["", published]
+        async with self._scene_build:
+            return ["", await self._composed_scene(chain)]
+
+    async def _composed_scene(self, chain: list[str]) -> str:
+        """The composed scene, built once however many modules ask for it.
+
+        Every simulated sensor and robot asks the scene manager for the same scene as it
+        starts, so a scene with three robots and their lidars is asked for about ten
+        times. Composing grafts every subtree and republishes every asset, which for a
+        room-sized scene is seconds of work each time -- long enough that the robots fall
+        over before their controllers see a joint state. Build it once and hand out the
+        same answer.
+
+        The caller holds ``_scene_build``: ``handle_render_file_request`` takes that lock
+        before it reaches here, and an ``asyncio.Lock`` is not reentrant.
+        """
+        if self._scene is None:
+            root, scene = await self._compose(chain)
+            where = root[ASSET_ROOT] or None
+            await asyncio.to_thread(self._check_scene_assets, scene, where)
+            published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
+            self._published_assets = assets
+            self._scene = published
+        return self._scene
 
     def _check_scene_assets(self, scene: str, root: str | None) -> None:
         unopenable = unopenable_assets(scene, root)
@@ -456,7 +473,7 @@ class UrdfManager(Module):
             async with self._scene_build:
                 usd = self._scene
                 if usd is None and self.config.mounts:
-                    usd = (await self.get_scene())[USD]
+                    usd = await self._composed_scene([])
                 if usd is None:
                     usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
