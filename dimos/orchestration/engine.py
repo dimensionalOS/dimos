@@ -142,6 +142,14 @@ class ClearTimer:
 Effect = Publish | StartCall | StartAction | CancelAction | ArmTimer | ClearTimer
 
 
+@dataclass(frozen=True)
+class Snapshot:
+    """The vars and active path, as saved after each event."""
+
+    vars: dict[str, JsonValue]
+    active: tuple[str, ...]
+
+
 class StateMachineError(Exception):
     """The state machine stopped because its definition misbehaved at runtime."""
 
@@ -181,18 +189,23 @@ class Engine:
         self._effects: list[Effect] = []
         self._error: str | None = None
 
-    @property
-    def active(self) -> tuple[str, ...]:
-        """The active states, from the top state down to the leaf."""
-        return tuple(self._active)
+    def snapshot(self) -> Snapshot:
+        """The current vars and the active path, from the top state down to the leaf."""
+        return Snapshot(copy.deepcopy(self._vars), tuple(self._active))
 
-    @property
-    def vars(self) -> dict[str, JsonValue]:
-        """A copy of the current vars."""
-        return copy.deepcopy(self._vars)
+    def restore(self, snapshot: Snapshot, now: float) -> list[Effect]:
+        """Restore saved vars, then enter the initial state as start does."""
+        for name, value in snapshot.vars.items():
+            if name in self._vars and type(value) is type(self._vars[name]):
+                self._vars[name] = copy.deepcopy(value)
+            else:
+                logger.warning("Ignoring saved var %s=%r, which no longer fits", name, value)
+        return self.start(now)
 
     def start(self, now: float) -> list[Effect]:
         """Enter the initial state and return the effects of doing so."""
+        if self._active:
+            raise RuntimeError("the state machine has already started")
         self._now = now
         self._enter(None, self._definition.state_machine.initial, {})
         self._settle({})
@@ -317,7 +330,7 @@ class Engine:
             if match is None:
                 return
             self._take(*match, payload)
-        self._error = f"more than {MAX_CHAIN} transitions in a row in {self.active}"
+        self._error = f"more than {MAX_CHAIN} transitions in a row in {tuple(self._active)}"
         raise StateMachineError(self._error)
 
     def _take(self, source: State, transition: Transition, payload: _Payload) -> None:
