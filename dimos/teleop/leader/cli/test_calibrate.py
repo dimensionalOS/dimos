@@ -85,8 +85,51 @@ def test_calibrate_side_writes_artifact_and_disconnects(tmp_path: Path) -> None:
     assert calibration.motors["joint_4"].flip is False
 
 
+def test_zero_capture_records_the_gripper_trigger_when_read() -> None:
+    calibration = _capture_zero_calibration("left", _raw_positions(2048) | {"gripper": 2916}, set())
+
+    assert calibration.motors["gripper"].id == 8
+    assert calibration.motors["gripper"].homing_offset == 2916
+    assert calibration.motors["gripper"].flip is False
+    assert "gripper" in _format_calibration_confirmation(calibration)
+
+
+def test_calibrate_side_skips_the_gripper_when_no_servo_answers(tmp_path: Path) -> None:
+    reader = _FakeRawReader(_raw_positions(2048))
+
+    _calibrate_side(
+        "right",
+        "/dev/fake-right",
+        tmp_path / "right",
+        1_000_000,
+        flips=set(),
+        reader_factory=lambda _port, _baudrate: reader,
+    )
+
+    assert "gripper" not in load_calibration(tmp_path / "right", "right").motors
+
+
+def test_calibrate_side_records_the_gripper_when_the_servo_answers(tmp_path: Path) -> None:
+    reader = _FakeRawReader(_raw_positions(2048) | {"gripper": 2916})
+
+    _calibrate_side(
+        "right",
+        "/dev/fake-right",
+        tmp_path / "right",
+        1_000_000,
+        flips=set(),
+        reader_factory=lambda _port, _baudrate: reader,
+    )
+
+    calibration = load_calibration(
+        tmp_path / "right", "right", (*DEFAULT_LEADER_MOTOR_NAMES, "gripper")
+    )
+    assert calibration.motors["gripper"].homing_offset == 2916
+    assert calibration.motors["joint_1"].homing_offset == 2048
+
+
 def test_zero_capture_rejects_extra_or_missing_joint() -> None:
-    with_extra = _raw_positions(2048) | {"gripper": 1}
+    with_extra = _raw_positions(2048) | {"wrist": 1}
     without_joint = _raw_positions(2048)
     del without_joint["joint_7"]
 
@@ -108,8 +151,11 @@ class _FakeRawReader:
     def disconnect(self) -> None:
         self.disconnected = True
 
-    def read_raw_positions(self, _motor_ids_by_name: object) -> dict[str, int]:
-        return self._snapshot
+    def read_raw_positions(self, motor_ids_by_name: dict[str, int]) -> dict[str, int]:
+        missing = set(motor_ids_by_name) - set(self._snapshot)
+        if missing:
+            raise RuntimeError(f"no reply from {sorted(missing)}")
+        return {name: self._snapshot[name] for name in motor_ids_by_name}
 
 
 def test_run_rejects_a_selected_side_without_its_port(tmp_path: Path) -> None:

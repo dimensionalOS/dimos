@@ -30,6 +30,7 @@ import typer
 
 from dimos.teleop.leader.calibration import (
     DEFAULT_LEADER_MOTOR_NAMES,
+    LEADER_GRIPPER_MOTOR_NAME,
     LeaderCalibration,
     LeaderMotorCalibration,
     LeaderSide,
@@ -47,6 +48,9 @@ from dimos.teleop.leader.feetech import (
 DEFAULT_MOTOR_IDS = {
     joint_name: index + 1 for index, joint_name in enumerate(DEFAULT_LEADER_MOTOR_NAMES)
 }
+# The trigger servo, when fitted, takes the next ID after the arm joints.
+GRIPPER_MOTOR_ID = {LEADER_GRIPPER_MOTOR_NAME: len(DEFAULT_LEADER_MOTOR_NAMES) + 1}
+MOTOR_IDS = DEFAULT_MOTOR_IDS | GRIPPER_MOTOR_ID
 # Which motors read backwards is a property of each printed arm; pass --left-flips / --right-flips.
 DEFAULT_FLIPS_BY_SIDE: dict[LeaderSide, frozenset[str]] = {
     "left": frozenset(),
@@ -144,8 +148,8 @@ def _calibrate_side(
     reader.connect()
     try:
         print(f"\nCalibrating {side} leader on {port}")
-        print("Place the leader in its natural zero pose; reading arm-joint motors now.")
-        raw_positions = reader.read_raw_positions(DEFAULT_MOTOR_IDS)
+        print("Place the leader in its natural zero pose, trigger released; reading motors now.")
+        raw_positions = _read_leader(reader)
         calibration = _capture_zero_calibration(
             side,
             raw_positions,
@@ -164,8 +168,9 @@ def _live_readout(side: LeaderSide, port: str, path: Path, baudrate: int) -> Non
     reader.connect()
     try:
         print(f"\nLive calibrated {side} leader readout from {port}; press Ctrl-C to stop.")
+        motor_ids = {name: motor.id for name, motor in calibration.motors.items()}
         while True:
-            raw_positions = reader.read_raw_positions(DEFAULT_MOTOR_IDS)
+            raw_positions = reader.read_raw_positions(motor_ids)
             print(
                 " ".join(
                     f"{name}={calibrated_motor_radians(raw, calibration.motors[name]):+.3f}rad"
@@ -191,25 +196,35 @@ def _capture_zero_calibration(
     return LeaderCalibration(
         side=side,
         motors={
-            joint_name: LeaderMotorCalibration(
-                id=DEFAULT_MOTOR_IDS[joint_name],
-                homing_offset=raw_positions[joint_name],
-                flip=joint_name in flips,
+            motor_name: LeaderMotorCalibration(
+                id=MOTOR_IDS[motor_name],
+                homing_offset=raw_positions[motor_name],
+                flip=motor_name in flips,
             )
-            for joint_name in DEFAULT_LEADER_MOTOR_NAMES
+            for motor_name in MOTOR_IDS
+            if motor_name in raw_positions
         },
     )
+
+
+def _read_leader(reader: Any) -> dict[str, int]:
+    """Raw arm-joint ticks, plus the gripper trigger when a servo answers at its ID."""
+    raw_positions = dict(reader.read_raw_positions(DEFAULT_MOTOR_IDS))
+    try:
+        raw_positions.update(reader.read_raw_positions(GRIPPER_MOTOR_ID))
+    except RuntimeError:
+        print("No gripper trigger servo answered; calibrating arm joints only.")
+    return raw_positions
 
 
 def _format_calibration_confirmation(calibration: LeaderCalibration) -> str:
     lines = [
         f"Captured {calibration.side} leader zero offsets:",
-        f"{'Joint':<10} {'ID':>2} {'Zero Raw':>8} {'Flip':>5}",
+        f"{'Motor':<10} {'ID':>2} {'Zero Raw':>8} {'Flip':>5}",
         "-" * 31,
     ]
-    for joint_name in DEFAULT_LEADER_MOTOR_NAMES:
-        motor = calibration.motors[joint_name]
-        lines.append(f"{joint_name:<10} {motor.id:>2} {motor.homing_offset:>8} {motor.flip!s:>5}")
+    for motor_name, motor in calibration.motors.items():
+        lines.append(f"{motor_name:<10} {motor.id:>2} {motor.homing_offset:>8} {motor.flip!s:>5}")
     return "\n".join(lines)
 
 
@@ -228,11 +243,12 @@ def _parse_flip_overrides(value: str | None, side: LeaderSide) -> set[str]:
 
 def _validate_raw_positions(raw_positions: dict[str, int]) -> None:
     missing = set(DEFAULT_LEADER_MOTOR_NAMES) - set(raw_positions)
-    extra = set(raw_positions) - set(DEFAULT_LEADER_MOTOR_NAMES)
+    extra = set(raw_positions) - set(MOTOR_IDS)
     if missing or extra:
         raise RuntimeError(
-            "raw readings must contain exactly the motors "
-            f"{list(DEFAULT_LEADER_MOTOR_NAMES)}; missing={sorted(missing)}, extra={sorted(extra)}"
+            f"raw readings must contain the arm motors {list(DEFAULT_LEADER_MOTOR_NAMES)} "
+            f"and optionally {LEADER_GRIPPER_MOTOR_NAME!r}; "
+            f"missing={sorted(missing)}, extra={sorted(extra)}"
         )
 
 
