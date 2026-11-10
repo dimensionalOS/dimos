@@ -148,6 +148,7 @@ class PremapModule(Module):
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
+    # frontends publish on here when they want render info
     render_file_request: In[String]
 
     _placed: bool = False
