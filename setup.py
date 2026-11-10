@@ -15,11 +15,13 @@
 import fnmatch
 import os
 from pathlib import Path
+import shutil
 import struct
 import sys
 
+from dimos_cdrgen.source_package import SourceDistribution, prepare
 from pybind11.setup_helpers import Pybind11Extension, build_ext
-from setuptools import find_packages, setup
+from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
 
 
@@ -91,6 +93,11 @@ class build_py(_build_py):
         ]
 
     def run(self):
+        # Reconcile cached build trees after a namespace move or message deletion.
+        for name in MESSAGE_ROOTS:
+            directory = Path(self.build_lib) / name.replace(".", "/")
+            if directory.is_dir():
+                shutil.rmtree(directory)
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
@@ -162,9 +169,18 @@ ext_modules = [
     ),
 ]
 
+# The shared generator reads the root project's version and message configuration.
+# Packages, package data and entry points come from pyproject.toml; this hook only
+# generates the Python messages from the committed definitions in
+# packages/dimos-messages/interfaces before packaging.
+MESSAGE_ROOTS = ("dimos_messages", "dimos_messages_schemas")
+prepare(Path(__file__).resolve().parent)
+
 setup(
-    packages=find_packages(),
-    package_dir={"": "."},
     ext_modules=ext_modules,
-    cmdclass={"build_ext": build_ext, "build_py": build_py},
+    cmdclass={
+        "sdist": SourceDistribution,
+        "build_ext": build_ext,
+        "build_py": build_py,
+    },
 )

@@ -52,3 +52,7 @@ prune .vscode
 
 global-exclude test_*.py
 global-exclude conftest.py
+
+# Built-in message inputs are committed; the sdist stays self-contained.
+include packages/dimos-messages/schema-sources.json
+recursive-include packages/dimos-messages/interfaces *.msg *LICENSE*

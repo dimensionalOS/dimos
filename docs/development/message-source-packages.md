@@ -1,58 +1,126 @@
 # CDR generation in dimOS
 
-> **WIP: CDR migration.** This page documents the generator integration in
-> [the first stack layer (#4247)](https://github.com/dimensionalOS/dimos/pull/4247),
-> not a complete CDR message/runtime workflow on `main`. The generator dependency,
-> dimOS adapters and verification commands below are implemented in this layer.
-> Built-in message packaging depends on
-> [the second layer (#4366)](https://github.com/dimensionalOS/dimos/pull/4366);
-> the runtime encoding switch and CDR recording/viewer flows belong to later layers.
-> Installing this layer alone does not switch the existing dimOS runtime to CDR.
+Built-in message definitions are committed under
+`packages/dimos-messages/interfaces` together with their upstream licenses and
+`schema-sources.json` provenance (repository, revision, archive hash and
+per-file hashes). `setup.py` generates Python messages from those files through
+`dimos-cdrgen==0.1.2`; builds never download definitions or prepare schema
+archives.
 
-dimOS uses the published `dimos-cdrgen==0.1.0` package directly. Its parser,
-generators, ownership checks, codecs and native build recipes live in the
-[independent library](https://github.com/TomCC7/dimos-cdrgen).
-See its [Python, C++ and Rust guides](https://tomcc7.github.io/dimos-cdrgen/)
-for message package configuration and supported schema features.
+The wheel contains the generated `dimos_messages` package, the
+`dimos_messages_schemas` resources (schemas, C++/Rust build inputs and
+metadata), and the upstream licenses. The main `dimos` distribution owns the
+built-in messages; there is no separate `dimos-generated` distribution.
+The [cdrgen guides](https://tomcc7.github.io/dimos-cdrgen/) describe its APIs
+and supported schemas. `dimos.message_codegen.native_build.write_cmake_toolchain`
+adds paths for the dimOS SDK.
 
-Install `dimos-cdrgen==0.1.0` in both the build and runtime dependencies of
-message packages. Import its APIs directly:
+## Run the built-in examples
 
-```python
-from dimos_cdrgen.registry import decode, encode
-from dimos_cdrgen.source_package import setup_arguments
+Run all commands below from the repository root. Install `uv` and a C++
+compiler first; the compiler is needed by dimOS's existing A* extension even for
+a source installation used only by Python. The examples use Python 3.12.
+
+### Install and run Python
+
+```sh skip
+uv venv .venv-msg-review --python 3.12
+DIMOS_ALLOW_MISSING_COCKPIT=1 uv pip install --python .venv-msg-review/bin/python .
+.venv-msg-review/bin/python -I examples/message-package/demo_installed_wheel.py
 ```
 
-There is no dimOS compatibility distribution. Existing consumers of
-`dimos_message_build` or generic `dimos.message_codegen` APIs must change their
-imports and dependency declarations to `dimos_cdrgen` and `dimos-cdrgen`.
+`DIMOS_ALLOW_MISSING_COCKPIT=1` is the existing option to install without prepared
+web UI bundles. Omit it when building a complete distribution with those assets.
+The example imports the installed package, prints the generated Python and
+schema/native-source directories, and checks image and custom-message CDR
+roundtrips. Expected output includes:
 
-dimOS retains two adapters:
+```text
+Installed package: <venv>/lib/python3.12/site-packages/dimos_messages
+Generated Python messages: <venv>/lib/python3.12/site-packages
+Packaged schemas and native sources: <venv>/lib/python3.12/site-packages/dimos_messages_schemas/package
+PASS: sensor_msgs/msg/Image pixels, encoding and source stamp
+PASS: dimos_msgs/msg/LineSegments3D geometry, weight and nested type identity
+PASS: packaged definitions and C++/Rust build inputs; no compiled message libraries
+```
 
-- `dimos.message_codegen.native_build.write_cmake_toolchain` adds SDK discovery
-  for installed `dimos/_native/cpp` and source-checkout `native/cpp` layouts.
-  Import other build functions directly from `dimos_cdrgen.native_build`.
-- `dimos/native/cdr_codec.hpp` exposes the library codec under `dimos::native`
-  for dimOS C++ consumers.
+The generated directories are installation outputs, not files to edit. Message
+inputs live under `packages/dimos-messages/interfaces` in the checkout.
 
-This first stack layer does not switch runtime transports or supply built-in
-message catalogs. Those remain separate PRs.
+### Run C++ and Rust
+
+Install CMake and Rust/Cargo, then reuse the same environment:
+
+```sh skip
+uv pip install --python .venv-msg-review/bin/python 'dimos-cdrgen[native]==0.1.2'
+.venv-msg-review/bin/python -I examples/message-package/demo_native.py
+```
+
+This one command compiles the ordinary CMake and Cargo consumers in
+`examples/message-package/native`. The example reads the generated Rust crate
+version from the packaged manifest and pins the temporary Cargo dependency to
+it, so the example does not hardcode a release number. Python writes an
+installed built-in Header, C++ appends `/cpp` to its frame ID, Rust appends
+`/rust`, and Python verifies `map/cpp/rust` with the timestamp unchanged.
+Expected final output:
+
+```text
+PASS: built-in Header Python -> C++ -> Rust -> Python
+```
+
+The script also prints the installed native-source directory. Temporary example
+files are cleaned up. Native support builds use `~/.cache/dimos/messages`;
+`DIMOS_MESSAGE_NATIVE_CACHE` overrides that location. Set `CARGO_TARGET_DIR` to
+retain Rust build artifacts. Cold builds download pinned dependencies;
+`DIMOS_OFFLINE=1` requires populated native and Cargo caches.
+
+### External message package
+
+`examples/external-messages` shows a package that defines one message and reuses
+the installed built-in `Header` by version dependency instead of redeclaring it:
+
+```sh skip
+python examples/external-messages/build_example.py
+```
+
+The checked-in `pyproject.toml.in` has no version literal. The script reads the
+installed DimOS version, renders a temporary `pyproject.toml`, and builds with
+`--no-build-isolation --no-deps`, so the build uses the local DimOS instead of
+downloading a different PyPI release.
+
+### What installation does
+
+Definitions → setuptools calls cdrgen → Python/schema/native-source
+artifacts in the dimOS wheel → installed consumers. Source installation
+generates artifacts from the committed definitions. Wheel installation only
+installs those artifacts. The sdist includes definitions needed to rebuild the
+wheel.
+
+Installation does not compile or test the C++/Rust message consumers. Running
+`demo_native.py` performs that verification explicitly. These examples use files,
+with no robot connection, transport or SDK pub/sub.
 
 ## Verify the integration
 
 Use a Python environment with the published generator and test tools:
 
-```sh
-uv pip install 'dimos-cdrgen[native]==0.1.0' numpy build pytest pytest-asyncio pytest-env
-python -m pytest --noconftest -o addopts='' \
-  -o 'markers=native_e2e: compiled native consumer acceptance' \
-  -q dimos/message_codegen/test_integration.py
+```sh skip
+uv pip install 'dimos-cdrgen==0.1.2' numpy build pytest pytest-asyncio pytest-env
+python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_integration.py
 ```
 
-The tests check SDK discovery, an installed message wheel built from a source
-distribution, Python type identity and the dimOS C++ header against literal CDR
-bytes. Native verification needs CMake and a C++17 compiler. It prepares pinned
-native dependencies in a temporary cache; use `DIMOS_NATIVE_TEST_CACHE` to reuse
-a writable cache, or `DIMOS_NATIVE_SOURCE_DIRS` with `DIMOS_OFFLINE=1` for
-pre-fetched source directories. Generic generator regression tests stay in the
-library repository.
+`dimos/message_codegen/test_bundled.py` is the artifact acceptance suite. It
+skips during ordinary unit-test runs; build the wheel and sdist first, then run:
+
+```sh skip
+DIMOS_BUNDLE_DIST=dist DIMOS_BUNDLE_WHEELHOUSE=wheelhouse DIMOS_BUNDLE_REQUIRED=1 \
+  python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_bundled.py
+```
+
+With `DIMOS_BUNDLE_REQUIRED=1`, missing wheel, sdist or wheelhouse inputs fail
+the run instead of skipping. The `message-artifacts` CI job runs exactly that
+command against the artifacts it built. The suite checks required message
+classes, schema closure, provider uniqueness, CDR roundtrips, and installed
+wheel/sdist/editable/git layouts, including external `Header` identity.
+
+Generic generator regression tests belong to the cdrgen repository.

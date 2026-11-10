@@ -2,6 +2,7 @@
 requires = [
     "setuptools>=77.0.3",
     "wheel",
+    "dimos-cdrgen[prepare]==0.1.2",
     "pybind11>=2.12",
     "tomli>=2.0; python_version < '3.11'",
 ]
@@ -19,9 +20,13 @@ build-backend = "setuptools.build_meta"
 # the sdist; keep its recursive-include extension list in sync with the globs
 # here.
 include-package-data = false
+license-files = [
+    "LICENSE*", "COPYING*", "NOTICE*", "AUTHORS*",
+    "packages/dimos-messages/interfaces/licenses/*",
+]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = [".", "build/message-source/python"]
 include = ["dimos*", "experimental.gateway*"]
 # Web frontends / vendored node_modules: not part of the Python runtime
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
@@ -34,6 +39,8 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+"dimos_messages" = ["py.typed", "*.pyi", "**/*.pyi"]
+"dimos_messages_schemas" = ["schemas.json", "schemas/**/*", "package/**/*"]
 # Recursive: matches the extension anywhere under dimos/. Add a line when code
 # starts loading a new data type. NOTE: ".txt" is intentionally scoped (a bare
 # "**/*.txt" would grab CMakeLists.txt from native build dirs).
@@ -99,6 +106,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "dimos-cdrgen==0.1.2",
     "matplotlib>=3.7.1", # Rerun initializes point-cloud colormaps for all streams.
     # Transport Protocols
     "dimos-lcm>=0.1.6",
@@ -422,7 +430,7 @@ project-deps = [
 ]
 
 tests = [
-    "dimos-cdrgen==0.1.0",
+    "dimos-cdrgen==0.1.2",
     "build>=1.2.2",
     # Test runner
     "pytest==8.3.5",
@@ -482,7 +490,7 @@ browser-tests = [
 
 # Lint / format / type-check tooling for the dedicated `lint` CI job.
 lint = [
-    "dimos-cdrgen==0.1.0",
+    "dimos-cdrgen==0.1.2",
     # Lint / format / type-check
     "ruff==0.14.3",
     "mypy==1.19.0",
@@ -873,3 +881,16 @@ ignore = [
     # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
     "web/shared/fixtures/manifests.json",
 ]
+
+[tool.dimos.messages]
+# Committed inputs; builds never download definitions. See sources.py for provenance.
+source = "packages/dimos-messages/interfaces"
+# Native message-package identity: Rust crate `dimos-generated-messages`,
+# C++ CMake package `dimos_generated`, and the registry manifest module name.
+module = "dimos_generated"
+# Python namespace of the generated messages (`from dimos_messages import ...`).
+python-module = "dimos_messages"
+resources = ["packages/dimos-messages/schema-sources.json"]
+
+[project.entry-points."dimos.messages"]
+dimos_messages = "dimos_messages_schemas.provider"
