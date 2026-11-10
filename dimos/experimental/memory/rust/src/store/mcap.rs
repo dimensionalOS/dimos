@@ -40,6 +40,8 @@ impl McapRecordingStore {
             .compression_threads(compression_threads.try_into().unwrap_or(u32::MAX));
         let mut writer = Writer::with_options(BufWriter::new(file), options)?;
         let mut channels = HashMap::new();
+        let schemas: BTreeMap<String, String> =
+            serde_json::from_str(dimos_generated_msgs::ROS2MSG_SCHEMAS)?;
         for stream in streams {
             let metadata = BTreeMap::from([
                 (
@@ -53,10 +55,22 @@ impl McapRecordingStore {
                     "publish_time".to_string(),
                 ),
             ]);
-            let schema_id = if let Some(schema) = &stream.json_schema {
+            let schema_id = if let Some(schema) = &stream.cdr_schema {
+                schema.validate()?;
+                writer.add_schema(&schema.name, "ros2msg", schema.data.as_bytes())?
+            } else if let Some(schema) = &stream.json_schema {
                 writer.add_schema(&stream.name, "jsonschema", &serde_json::to_vec(schema)?)?
             } else {
-                0
+                let message_type = if stream.codec == crate::Codec::Jpeg {
+                    "sensor_msgs/msg/CompressedImage"
+                } else {
+                    &stream.payload_type
+                };
+                if let Some(schema) = schemas.get(message_type) {
+                    writer.add_schema(message_type, "ros2msg", schema.as_bytes())?
+                } else {
+                    0
+                }
             };
             let channel =
                 writer.add_channel(schema_id, &stream.name, stream.codec.id(), &metadata)?;
@@ -147,10 +161,12 @@ mod tests {
         let stream = Arc::new(StreamConfig {
             port: "events".into(),
             name: "events".into(),
-            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            payload_type: "std_msgs/msg/String".into(),
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: true,
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
@@ -192,10 +208,12 @@ mod tests {
         let stream = Arc::new(StreamConfig {
             port: "events".into(),
             name: "events".into(),
-            payload_type: "dimos.msgs.std_msgs.String.String".into(),
+            payload_type: "std_msgs/msg/String".into(),
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: true,
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)

@@ -73,6 +73,18 @@
         "type": "github"
       }
     },
+    "dimos-source": {
+      "flake": false,
+      "locked": {
+        "path": "../../../..",
+        "type": "path"
+      },
+      "original": {
+        "path": "../../../..",
+        "type": "path"
+      },
+      "parent": []
+    },
     "flake-compat": {
       "locked": {
         "lastModified": 1733328505,
@@ -291,6 +303,7 @@
     "root": {
       "inputs": {
         "crate2nix": "crate2nix",
+        "dimos-source": "dimos-source",
         "flake-utils": "flake-utils",
         "nix-filter": "nix-filter",
         "nixpkgs": "nixpkgs_2"
