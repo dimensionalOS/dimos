@@ -230,7 +230,7 @@ def main(
 ) -> None:
     """Replay a recording through the relocalizer and compare its fix with the robot's."""
     db_path = resolve_named_path(recording, ".db")
-    premap_cloud = load_premap(premap, "map_cloud")
+    premap_cloud = load_premap(premap)
     _init_recording(db_path.stem, out)
     print(f"relocalizing {db_path.name} against {premap} ({len(premap_cloud)} points, {preset})")
     store = SqliteStore(path=str(db_path))

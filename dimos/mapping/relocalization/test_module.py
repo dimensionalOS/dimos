@@ -98,7 +98,7 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
 
     path = tmp_path / "somewhere.db"
     with SqliteStore(path=str(path)) as store:
-        store.stream("map_cloud", PointCloud2).append(
+        store.stream("map_v1_cloud", PointCloud2).append(
             PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0), ts=0.0
         )
     m = module()
@@ -107,12 +107,13 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     m.loaded_map = SimpleNamespace(publish=published.append)
     m.register_disposable = disposables.append
 
+    m._resolve_map(str(path))
     m._load_premap(str(path))
     assert m.premap is not None and len(m.premap) == 5
-    assert m.premap.frame_id == "map"
+    assert m.premap.frame_id == "map/v1"
     assert len(disposables) == 1  # the gated publish
     assert published == []  # ... which stays silent until a fix lands
-    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map"))
+    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map/v1"))
     assert published == [m.premap]  # republish_loaded_map=0: once, on that fix
     disposables[0].dispose()
 
@@ -204,7 +205,7 @@ def test_a_map_file_that_is_not_a_recording_is_refused():
     from dimos.mapping.relocalization.module import load_premap
 
     with pytest.raises(ValueError, match="recording"):
-        load_premap("office.pc2.lcm", "map_cloud")
+        load_premap("office.pc2.lcm")
 
 
 def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
@@ -212,12 +213,12 @@ def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
     from dimos.mapping.relocalization.module import load_premap
 
     path = tmp_path / "premap.mcap"
-    cloud = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map", timestamp=1.0)
+    cloud = PointCloud2.from_numpy(np.eye(3, dtype=np.float32), frame_id="map/v1", timestamp=1.0)
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
         writer.start()
         payload_type = {"dimos.payload_type": "dimos.msgs.sensor_msgs.PointCloud2.PointCloud2"}
-        channel = writer.register_channel("/map_cloud", "lcm", 0, payload_type)
+        channel = writer.register_channel("/map/v1/cloud", "lcm", 0, payload_type)
         writer.add_message(channel, 1_000_000_000, cloud.lcm_encode(), 1_000_000_000)
         # Two camera topics that fold to one stream name
         for topic in ("rt/camera_info", "camera_info"):
@@ -225,6 +226,6 @@ def test_a_premap_mcap_decodes_its_cloud_past_unrelated_name_clashes(tmp_path):
             writer.add_message(clash, 1_000_000_000, b"\0", 1_000_000_000)
         writer.finish()
 
-    loaded = load_premap(str(path), "map_cloud")
+    loaded = load_premap(str(path))
     assert isinstance(loaded, PointCloud2)
     assert np.allclose(loaded.as_numpy()[0], np.eye(3))

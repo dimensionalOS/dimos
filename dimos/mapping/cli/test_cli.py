@@ -236,7 +236,7 @@ def test_view_map_cloud(tmp_path: Path) -> None:
         np.random.default_rng(0).random((256, 3)), frame_id="world", timestamp=0.0
     )
     with SqliteStore(path=str(recording)) as store:
-        store.stream("map_cloud", PointCloud2).append(cloud, ts=0.0)
+        store.stream("map_v1_cloud", PointCloud2).append(cloud, ts=0.0)
 
     out = tmp_path / "view.rrd"
     res = _run("view", str(recording), "--out", str(out))

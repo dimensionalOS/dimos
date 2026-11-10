@@ -38,8 +38,8 @@ one propagation delay, then hears the list it caused and agrees. Going to a loca
 viewer's job: it sends the pose on the planner's ``goal`` in ``map_frame``, which the planner
 re-expresses through tf every replan so the goal follows a later fix.
 
-Locations are seeded from the last ``locations_stream`` snapshot of the ``map_file`` recording --
-the premap is the only place they live. A recording of ``named_locations`` keeps them for the next
+Locations are seeded from the last ``map/<name>/named_locations`` snapshot of the ``map_file``
+recording -- the map is the only place they live. A recording of ``named_locations`` keeps them for the next
 run, so **an edit made with no recording running is for this session only**. With no map and
 ``new_map`` set, this run's world frame is the map: the module submits an identity fix itself.
 """
@@ -80,9 +80,6 @@ logger = setup_logger()
 
 RECORDING_SUFFIXES = (".db", ".mcap")
 
-# What a recording written before maps were named calls its one map
-LEGACY_MAP_STREAM = "map_cloud"
-
 
 def stream_key(name: str) -> str:
     """*name* as both stores spell it: no leading ``/``, and ``/`` folded to the ``_`` McapStore uses.
@@ -117,39 +114,39 @@ def map_names(streams: list[str]) -> dict[str, str]:
     return found
 
 
-def resolve_map(
-    streams: list[str], wanted: str | None, locations_stream: str
-) -> tuple[str, str | None, str]:
-    """The cloud stream to load, the map's frame (None when the stream does not say), its locations.
+def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str, str]:
+    """The cloud stream to load, the map's frame, and the stream its locations are on.
 
-    A recording can hold several maps, each written under its own name as ``map/<name>/cloud``
-    beside ``map/<name>/named_locations`` (an .mcap; a ``.db`` spells the same streams
+    A recording holds its maps under their names, as ``map/<name>/cloud`` beside
+    ``map/<name>/named_locations`` (an .mcap; a ``.db`` spells the same streams
     ``map_<name>_cloud``, which is what both come back as -- see :func:`stream_key`). *wanted*
     picks one by stream name; without it a lone map is taken as the one meant, and several is an
-    error since neither is. A recording from before maps were named has one cloud under a flat
-    name, and no name to take a frame from.
+    error since neither is.
     """
     named = map_names(streams)
-    if wanted is None:
-        if len(named) > 1:
-            raise ValueError(
-                f"{len(named)} maps in the recording ({', '.join(sorted(named))}): "
-                "pass map_stream to say which"
-            )
-        name, stream = next(iter(named.items())) if named else (None, LEGACY_MAP_STREAM)
-    else:
-        stream = wanted
+    if wanted is not None:
         name = next((n for n, s in named.items() if stream_key(s) == stream_key(wanted)), None)
-    if name is None:
-        return stream, None, locations_stream
-    # The map's frame is the path its streams hang off, so `map/v1/cloud` is the map at `map/v1`
+        if name is None:
+            raise ValueError(
+                f"{wanted!r} is not a map in this recording, which holds {sorted(named)}"
+            )
+    elif len(named) == 1:
+        name = next(iter(named))
+    elif not named:
+        raise ValueError(
+            f"no map in the recording: nothing in {sorted(streams)} is a map/<name>/cloud"
+        )
+    else:
+        raise ValueError(
+            f"{len(named)} maps in the recording ({', '.join(sorted(named))}): "
+            "pass map_stream to say which"
+        )
     frame = f"map/{name}"
-    locations = f"{frame}/named_locations"
-    return stream, frame, (locations if find_stream(streams, locations) else locations_stream)
+    return named[name], frame, f"{frame}/named_locations"
 
 
-def load_premap(map_file: str, stream: str) -> PointCloud2:
-    """The last *stream* cloud of a ``.db``/``.mcap`` recording."""
+def load_premap(map_file: str, stream: str | None = None) -> PointCloud2:
+    """The last cloud of a ``.db``/``.mcap`` recording's map, or of *stream* when one is named."""
     if Path(map_file).suffix not in RECORDING_SUFFIXES:
         raise ValueError(
             f"map_file {map_file!r} must be a {' or '.join(RECORDING_SUFFIXES)} recording"
@@ -158,9 +155,12 @@ def load_premap(map_file: str, stream: str) -> PointCloud2:
 
     path = resolve_named_path(map_file, Path(map_file).suffix)
     with open_store(path, decode_metadata=True) as store:
-        name = find_stream(store.list_streams(), stream)
+        streams = store.list_streams()
+        if stream is None:
+            stream, _, _ = resolve_map(streams, None)
+        name = find_stream(streams, stream)
         if name is None:
-            raise ValueError(f"{path} has no {stream!r} stream, have {store.list_streams()}")
+            raise ValueError(f"{path} has no {stream!r} stream, have {streams}")
         cloud: PointCloud2 = store.stream(name).last().data
     return cloud
 
@@ -202,8 +202,6 @@ class Config(ModuleConfig):
     relocalize_once: bool = True
     # No map_file: this run's world frame is the map (submit an identity fix)
     new_map: bool = False
-    # Stream (recorded topic) the named-location snapshots live on
-    locations_stream: str = "named_locations"
 
 
 class PremapModule(Module):
@@ -228,7 +226,7 @@ class PremapModule(Module):
         # Resolved from the map file at start(): its cloud stream, the map's name, its locations
         self._map_stream: str | None = None
         self._map_frame: str | None = None
-        self._locations_stream = self.config.locations_stream
+        self._locations_stream: str | None = None
 
     @rpc
     def start(self) -> None:
@@ -267,7 +265,7 @@ class PremapModule(Module):
         with open_store(path, decode_metadata=True) as store:
             streams = store.list_streams()
         self._map_stream, self._map_frame, self._locations_stream = resolve_map(
-            streams, self.config.map_stream, self.config.locations_stream
+            streams, self.config.map_stream
         )
         logger.info(
             "map chosen",
@@ -277,7 +275,8 @@ class PremapModule(Module):
         )
 
     def _load_premap(self, map_file: str) -> None:
-        premap = load_premap(map_file, self._map_stream or LEGACY_MAP_STREAM)
+        assert self._map_stream is not None, "_resolve_map runs before this"
+        premap = load_premap(map_file, self._map_stream)
 
         premap.frame_id = self.map_frame
         self.premap = premap
@@ -330,6 +329,7 @@ class PremapModule(Module):
             source = str(
                 resolve_named_path(self.config.map_file, Path(self.config.map_file).suffix)
             )
+            assert self._locations_stream is not None, "_resolve_map runs before this"
             self._locations = load_locations(source, self._locations_stream)
             # A premap's locations are in its coordinates whatever frame its writer named
             for pose in self._locations.values():

@@ -23,7 +23,9 @@ import typer
 
 def main(
     path: Path = typer.Argument(..., help="Recording (.db/.mcap) whose last map cloud to view"),
-    stream: str = typer.Option("map_cloud", "--stream", help="Stream holding the map cloud"),
+    stream: str | None = typer.Option(
+        None, "--stream", help="Stream holding the map cloud; by default the recording's own map"
+    ),
     voxel: float = typer.Option(0.05, "--voxel", help="Rendered point size (m)"),
     bottom_cutoff: float | None = typer.Option(
         None,

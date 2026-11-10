@@ -64,6 +64,8 @@ def make(monkeypatch: pytest.MonkeyPatch):
 
 def begin(module: PremapModule) -> None:
     """What start() does for named locations once its ports are bound."""
+    if module.config.map_file:
+        module._resolve_map(module.config.map_file)
     module.open_locations()
     module.named_locations.publish(module.locations_snapshot())
     if module.config.new_map:
@@ -205,36 +207,43 @@ def test_a_new_map_is_the_world_frame(make):
 
 
 def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
+    import numpy as np
+
     from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
     run1 = str(tmp_path / "run1.db")
     first, published_by_first = make()
     begin(first)
     publish(first, {"dock": at(1, 2, "map", yaw=0.5), "desk": at(3, 4, "map")})
     publish(first, {"dock": at(1, 2, "map", yaw=0.5)})
-    # what a recording of named_locations holds
+    # what a recording of the map's named_locations holds
     with SqliteStore(path=run1) as store:
-        lists = store.stream("named_locations", InteractiveMarkerUpdate)
+        store.stream("map_v1_cloud", PointCloud2).append(
+            PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=0.0), ts=0.0
+        )
+        lists = store.stream("map_v1_named_locations", InteractiveMarkerUpdate)
         for ts, snapshot in enumerate(published_by_first):
             lists.append(snapshot, ts=float(ts))
 
-    assert list(load_locations(run1, "named_locations")) == ["dock"]
+    assert list(load_locations(run1, "map_v1_named_locations")) == ["dock"]
 
     second, published = make(map_file=run1)
     begin(second)
     # start() publishes the seeded list, so a client that connected first hears it unasked
     assert positions(published[0]) == {"dock": (1, 2)}
-    assert all(p.header.frame_id == "map" for p in published[0].poses)
+    assert all(p.header.frame_id == "map/v1" for p in published[0].poses)
     loaded = published[0].poses[0]
-    assert loaded.header.frame_id == "map"
+    assert loaded.header.frame_id == "map/v1"
     assert (
         round(Quaternion(*[getattr(loaded.pose.orientation, a) for a in "xyzw"]).to_euler().z, 6)
         == 0.5
     )
 
+    # the map names its own frame, so a configured map_frame does not relabel a loaded one
     relabelled, published = make(map_file=run1, map_frame="premap")
     begin(relabelled)
-    assert published[0].poses[0].header.frame_id == "premap"
+    assert published[0].poses[0].header.frame_id == "map/v1"
     assert positions(published[0]) == {"dock": (1, 2)}
 
 
@@ -305,39 +314,31 @@ def test_which_map_to_load():
     """resolve_map: a lone named map, a picked one, several, and a recording from before names."""
     one = ["/tf", "map/v1/cloud", "map/v1/named_locations"]
     assert map_names(one) == {"v1": "map/v1/cloud"}
-    assert resolve_map(one, None, "named_locations") == (
+    assert resolve_map(one, None) == ("map/v1/cloud", "map/v1", "map/v1/named_locations")
+    # a map with no locations of its own: the stream is still its own, there is just nothing on it
+    assert resolve_map(["map/v1/cloud"], None) == (
         "map/v1/cloud",
         "map/v1",
         "map/v1/named_locations",
     )
-    # a named map with no locations of its own falls back to the flat stream
-    assert resolve_map(["map/v1/cloud"], None, "named_locations") == (
-        "map/v1/cloud",
-        "map/v1",
-        "named_locations",
-    )
-    # nothing named: the one flat map, and no name to take a frame from
-    assert resolve_map(["map_cloud", "/tf"], None, "named_locations") == (
-        "map_cloud",
-        None,
-        "named_locations",
-    )
+    # a recording with no named map has no map at all: say so rather than guess at a flat stream
+    with pytest.raises(ValueError, match="no map in the recording"):
+        resolve_map(["map_cloud", "/tf"], None)
     # several maps: neither is "the" map, so say so instead of guessing
     two = ["map/v1/cloud", "map/v2/cloud"]
     assert sorted(map_names(two)) == ["v1", "v2"]
     with pytest.raises(ValueError, match="2 maps in the recording"):
-        resolve_map(two, None, "named_locations")
-    # ... unless one is asked for by name, which also still names the frame
-    assert resolve_map(two, "map/v2/cloud", "named_locations") == (
-        "map/v2/cloud",
-        "map/v2",
-        "named_locations",
-    )
+        resolve_map(two, None)
+    # ... unless one is asked for, which also names the frame
+    assert resolve_map(two, "map/v2/cloud") == ("map/v2/cloud", "map/v2", "map/v2/named_locations")
+    # asked for something that is not one of its maps
+    with pytest.raises(ValueError, match="is not a map in this recording"):
+        resolve_map(two, "map_cloud")
     # an .mcap topic keeps its leading slash
-    assert resolve_map(["/map/v3/cloud"], None, "named_locations") == (
+    assert resolve_map(["/map/v3/cloud"], None) == (
         "/map/v3/cloud",
         "map/v3",
-        "named_locations",
+        "map/v3/named_locations",
     )
 
 
@@ -398,7 +399,7 @@ def test_locations_are_kept_in_the_map_frame_and_follow_every_fix(make):
 
 
 def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
-    """map_file a recording: the premap is its map_cloud, the locations its last snapshot."""
+    """map_file a .db: the premap is the map's last cloud, the locations its last snapshot."""
     import numpy as np
 
     from dimos.memory.store.sqlite import SqliteStore
@@ -406,19 +407,21 @@ def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
 
     recording = str(tmp_path / "walk.db")
     with SqliteStore(path=recording) as store:
-        store.stream("map_cloud", PointCloud2).append(
+        clouds = store.stream("map_v1_cloud", PointCloud2)
+        clouds.append(
             PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=1.0), ts=1.0
         )
-        store.stream("map_cloud", PointCloud2).append(
+        clouds.append(
             PointCloud2.from_numpy(np.ones((7, 3), dtype=np.float32), timestamp=2.0), ts=2.0
         )
-        store.stream("named_locations", InteractiveMarkerUpdate).append(
-            InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map"))]), ts=2.0
+        store.stream("map_v1_named_locations", InteractiveMarkerUpdate).append(
+            InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map/v1"))]), ts=2.0
         )
     module, _ = make(map_file=recording)
     module.register_disposable = lambda d: d
+    module._resolve_map(recording)
     module.open_locations()
     module._load_premap(recording)
     assert module.premap is not None and len(module.premap) == 7
-    assert module.premap.frame_id == "map"
+    assert module.premap.frame_id == "map/v1"
     assert list(module._locations) == ["dock"]

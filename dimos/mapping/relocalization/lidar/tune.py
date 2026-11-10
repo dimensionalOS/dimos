@@ -209,7 +209,7 @@ def fixtures(name: str) -> tuple[PointCloud2, Any]:
     from dimos.memory.store.sqlite import SqliteStore
 
     ds = DATASETS[name]
-    premap = load_premap(ds.premap, "map_cloud")
+    premap = load_premap(ds.premap)
     store = SqliteStore(path=str(get_data(ds.recording)), must_exist=True)
     store.start()
     return premap, store
