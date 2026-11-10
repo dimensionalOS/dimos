@@ -181,6 +181,7 @@ class MetalArmPolicyTask(PolicyTask):
             raise ValueError("policy manifest has a non-positive policy_hz")
         self._config = config
         self._runtime = runtime
+        self._kinematics = kinematics
         self._feedback_fresh = feedback_fresh or _always_fresh
         self._robot = config.joint_names[0].split("/", 1)[0]
         super().__init__(
