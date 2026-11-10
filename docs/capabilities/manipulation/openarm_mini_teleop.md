@@ -283,11 +283,13 @@ link drops, the follower holds its last target.
 recorder, as `openyam-quest-collection` does for Quest. It records the measured
 follower joints (`coordinator_joint_state`, the connection's 14 arm joints and
 2 finger joints under the `arm/` prefix), the coordinator's attempted position
-commands (`coordinator_joint_command`, the same 16 joints: arm targets from the
-leaders, jaw openings from their triggers) and three 640x480 cameras: `front`
-(any UVC node, the D455's color node on Alfred) and the two wrists. Both
-leaders need a calibrated trigger, or the action stream lacks the jaw joints
-and preparation fails. `--simulation` swaps the connection for a mock.
+commands (`arm_position_command`, the coordinator's port into the connection,
+since it publishes no `coordinator_joint_command` for connection robots; the
+same 16 joints: arm targets from the leaders, jaw openings from their triggers)
+and three 640x480 cameras: `front` (any UVC node, the D455's color node on
+Alfred) and the two wrists. Both leaders need a calibrated trigger, or the
+action stream lacks the jaw joints and preparation fails. `--simulation` swaps
+the connection for a mock.
 
 ```bash
 dimos run openarm-mini-collection --daemon \

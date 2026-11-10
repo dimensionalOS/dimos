@@ -72,7 +72,7 @@ def test_state_and_action_cover_every_joint_from_the_coordinator_streams() -> No
     assert state.names == [f"arm/{joint}" for joint in OpenArmConnection.robot.joint_names]
     assert state.names[-2:] == ["arm/openarm_left_finger_joint1", "arm/openarm_right_finger_joint1"]
     (action,) = schema.action.values()
-    assert action.stream == "coordinator_joint_command"
+    assert action.stream == "arm_position_command"
     assert action.source_kind == "joint_position_updates"
     assert action.names == state.names
     assert schema.observation["observation.images.front"].stream == "front_image"
@@ -80,7 +80,7 @@ def test_state_and_action_cover_every_joint_from_the_coordinator_streams() -> No
     assert schema.observation["observation.images.right_wrist"].stream == "right_wrist_image"
     assert recorder.kwargs["input_types"].keys() == {
         "coordinator_joint_state",
-        "coordinator_joint_command",
+        "arm_position_command",
         "front_image",
         "left_wrist_image",
         "right_wrist_image",
