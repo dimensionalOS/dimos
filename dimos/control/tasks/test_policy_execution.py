@@ -175,6 +175,14 @@ def test_command_hold_reemits_and_respects_dry_run() -> None:
     hold.clear()
     assert hold.positions is None
     assert hold.hold() is None
+    hold.set_dry_run(False)
+    emitted = hold.emit([0.5, 0.6])
+    assert emitted is not None
+    np.testing.assert_allclose(emitted.positions or [], [0.5, 0.6])
+
+    hold.clear()
+    assert hold.positions is None
+    assert hold.hold() is None
 
 
 def test_session_guard_tracks_the_active_generation() -> None:
