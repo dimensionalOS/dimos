@@ -15,49 +15,41 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-import importlib
-import pkgutil
 import re
 import time
+from types import SimpleNamespace
 
+from dimos_cdrgen.registry import message_types
 import typer
 
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport, transport_topic
+from dimos.porcelain.remote_module_source import RemoteModuleSource
+from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase, Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
-
-_modules_to_try = [
-    "dimos.msgs.geometry_msgs",
-    "dimos.msgs.nav_msgs",
-    "dimos.msgs.sensor_msgs",
-    "dimos.msgs.std_msgs",
-    "dimos.msgs.vision_msgs",
-    "dimos.msgs.tf2_msgs",
-]
+from dimos.protocol.pubsub.message_types import resolve_message_type
 
 
 def _resolve_type(type_name: str) -> type:
-    for module_name in _modules_to_try:
-        try:
-            module = importlib.import_module(f"{module_name}.{type_name}")
-        except ImportError:
-            continue
-        if hasattr(module, type_name):
-            return getattr(module, type_name)  # type: ignore[no-any-return]
-
-    raise ValueError(f"Could not find type '{type_name}' in any known message modules")
+    resolved = resolve_message_type(type_name)
+    if resolved is not None:
+        return resolved
+    matches = [
+        kind for name, kind in message_types().items() if name.rsplit("/", 1)[-1] == type_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Ambiguous message type '{type_name}'; use package/msg/Type")
+    raise ValueError(f"Could not find registered message type '{type_name}'")
 
 
 def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
-    from dimos.msgs.helpers import resolve_msg_type
-
-    _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
-    cls = resolve_msg_type(msg_name)
-    if cls is None:
-        raise ValueError(f"Could not resolve message type from channel: {channel}")
-    return cls.lcm_decode(data)
+    _, msg_name = channel.split("#", 1)
+    cls = _resolve_type(msg_name.removesuffix(".cdr.v1"))
+    return describe_message(cls).codec.decode(data)
 
 
 def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: None) -> None:
@@ -71,13 +63,46 @@ def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: No
         typer.echo("\nStopped.")
 
 
+def _topic_echo_from_graph(topic: str) -> bool:
+    try:
+        source = RemoteModuleSource(timeout=0.5)
+    except RuntimeError:
+        return False
+    try:
+        channels = {topic, transport_topic(topic)}
+        matches = [
+            descriptor
+            for descriptor in source.list_stream_descriptors()
+            if descriptor.channel in channels
+        ]
+        if not matches:
+            return False
+        if len({descriptor.type_name for descriptor in matches}) != 1:
+            raise ValueError(f"Topic '{topic}' has multiple declared types; use --type")
+        descriptor = matches[0]
+        stream = source.get_module(descriptor.module).get_stream(descriptor.name)
+        unsubscribe = stream.subscribe(lambda message: print(message))
+        try:
+            _listen_forever(
+                f"Listening on {topic} using the running graph's declared type... (Ctrl+C to stop)"
+            )
+        finally:
+            unsubscribe()
+        return True
+    finally:
+        source.close()
+
+
 def topic_echo(topic: str, type_name: str | None) -> None:
-    # Explicit mode (legacy): backend chosen by make_transport from global_config.
+    # Explicit typed mode: backend chosen by make_transport from global_config.
     if type_name is not None:
         msg_type = _resolve_type(type_name)
         transport: PubSubTransport[object] = make_transport(topic, msg_type)
         transport.subscribe(lambda msg: print(msg))
         _listen_forever(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
+        return
+
+    if _topic_echo_from_graph(topic):
         return
 
     # Inferred typed mode: decode each message from the type embedded in its
@@ -107,8 +132,8 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
     bus.l.subscribe(typed_pattern, on_msg)
 
     _listen_forever(
-        f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg')... "
-        "(Ctrl+C to stop)",
+        f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg.cdr.v1')... "
+        "Raw CDR topics without a running graph require --type. (Ctrl+C to stop)",
         bus.stop,
     )
 
@@ -126,29 +151,23 @@ def _topic_echo_inferred_zenoh(topic: str) -> None:
 
     _listen_forever(
         f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "
-        "(Ctrl+C to stop)",
+        "Raw CDR topics without a running graph require --type. (Ctrl+C to stop)",
         bus.stop,
     )
 
 
 def _build_eval_context() -> dict[str, object]:
-    # The msgs packages are namespace packages (no __init__.py), so walk their
-    # submodules; each message file defines a class of the same name.
-    eval_context: dict[str, object] = {}
-    for package_name in _modules_to_try:
-        package = importlib.import_module(package_name)
-        for module_info in pkgutil.iter_modules(package.__path__):
-            name = module_info.name
-            if name.startswith("test_"):
-                continue
-            try:
-                submodule = importlib.import_module(f"{package_name}.{name}")
-            except ImportError:
-                continue
-            obj = getattr(submodule, name, None)
-            if obj is not None:
-                eval_context[name] = obj
-    return eval_context
+    registered = message_types()
+    context: dict[str, object] = {}
+    names: dict[str, list[type]] = {}
+    packages: dict[str, SimpleNamespace] = {}
+    for canonical, kind in registered.items():
+        package, _, name = canonical.split("/")
+        names.setdefault(name, []).append(kind)
+        setattr(packages.setdefault(package, SimpleNamespace()), name, kind)
+    context.update(packages)
+    context.update({name: kinds[0] for name, kinds in names.items() if len(kinds) == 1})
+    return context
 
 
 def topic_send(topic: str, message_expr: str) -> None:

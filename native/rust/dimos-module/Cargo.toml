@@ -1,6 +1,6 @@
 [package]
 name = "dimos-module"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Rust native module SDK for dimos NativeModule framework"
 license = "Apache-2.0"
@@ -8,9 +8,11 @@ license = "Apache-2.0"
 [workspace]
 
 [dependencies]
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-generated-messages = { path = "../../../build/message-source/rust" }
+transforms = { version = "=2.2.0", git = "https://github.com/TomCC7/transforms", rev = "5ae9563de0c02638c04e393aadfad28444a4398e" }
+cdr = { version = "=0.2.4", git = "https://github.com/TomCC7/cdr-rs", rev = "38a4368255d408faf374726653b39d4a4e9735cb" }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "04d78e8622500244123ba9cefa4c51b4cb454549" }
 dimos-module-macros = { version = "=0.1.0", path = "../dimos-module-macros" }
-lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 nalgebra = "0.35.0"
 rayon = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal", "io-std", "io-util"] }
