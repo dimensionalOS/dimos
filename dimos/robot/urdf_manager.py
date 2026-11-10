@@ -192,6 +192,8 @@ class UrdfManager(Module):
         self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
+        self._stop_static_tf = Event()
+        self._static_tf_thread: Thread | None = None
         self._description = _as_usd(self.config.model or _world_model())
         self._file_paths = self._description.referenced_files()
         self._joints = {joint.name: joint for joint in self._description.joints}
@@ -211,8 +213,6 @@ class UrdfManager(Module):
         except Exception:
             self.dispose()
             raise
-        self._stop_static_tf = Event()
-        self._static_tf_thread: Thread | None = None
         self._ready.set()
 
     def _own_frame_names(self) -> set[str]:
@@ -263,10 +263,6 @@ class UrdfManager(Module):
         thread, self._static_tf_thread = self._static_tf_thread, None
         if thread is not None:
             thread.join(timeout=2.0)
-        super().stop()
-
-    @rpc
-    def stop(self) -> None:
         for client in self._subtree_clients.values():
             client.stop_rpc_client()
         self._subtree_clients.clear()
