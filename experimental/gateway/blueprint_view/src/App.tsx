@@ -27,13 +27,7 @@ import {
 } from "dimos-react/graph";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorText, getJson, send } from "./api.ts";
-import {
-  BUSY_LAUNCH_POLL_MS,
-  FONT_WAIT_MS,
-  LAUNCH_POLL_WITHOUT_EVENTS_MS,
-  RATES_POLL_MS,
-  STATS_POLL_MS,
-} from "./constants.ts";
+import { oneInFlight, useEvery, useViewConfig } from "./live.ts";
 import { CodePane, type Where } from "./code.tsx";
 import { ConfigModal, type Saved } from "./config.tsx";
 import { LaunchOutputModal, LogsModal } from "./logs.tsx";
@@ -117,6 +111,9 @@ export function App() {
   const visible = useDesktopVisible();
   const zenoh = useZenoh();
   const eventsArrive = useConnectionState() === "connected";
+  const config = useViewConfig();
+  // what an event would tell is asked for on a timer only while no event can arrive
+  const withoutEventsS = eventsArrive ? null : config?.pollWithoutEventsS;
   const graph = useRef<BlueprintGraphHandle>(null);
   const [graphArea, setGraphArea] = useState<HTMLElement | null>(null);
   useNoPagePinch(graphArea);
@@ -141,12 +138,10 @@ export function App() {
       const detail = await getJson<Blueprint>(`catalog/blueprints/${encodeURIComponent(NAME)}`);
       setSource(detail.file ? { file: detail.file, line: detail.line ?? 1 } : null);
       setCheckout({ path: detail.checkout ?? null, error: detail.checkoutError ?? null });
-      await Promise.race([
-        document.fonts.ready,
-        new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS)),
-      ]);
       setModules(byRarity(detail.modules, await usage));
       setError(null);
+      // laid out at once, and again once the fonts its labels are measured in have loaded
+      document.fonts.ready.then(() => setModules((shown) => shown && [...shown]));
     } catch (caught) {
       setError(errorText(caught));
     }
@@ -170,7 +165,7 @@ export function App() {
     shownRunId.current = liveRunId;
   }, [liveRunId, loadBlueprint]);
 
-  const pollRuns = useCallback(async () => {
+  const readRuns = useCallback(async () => {
     try {
       const answer = await getJson<Active>("active");
       const mine = answer.launch?.blueprint === NAME ? answer.launch : null;
@@ -188,14 +183,16 @@ export function App() {
   }, []);
   const relaunchedPidRef = useRef<number | null>(null);
   relaunchedPidRef.current = relaunchedPid;
+  const pollRuns = useMemo(() => oneInFlight(readRuns), [readRuns]);
 
   useEffect(() => {
     if (VIEW === "logs") {
-      pollRuns().then(() => setDialog("logs"));
+      readRuns().then(() => setDialog("logs"));
     }
-  }, [pollRuns]);
+  }, [readRuns]);
 
-  // GET active once on showing, then on each launch event and after a reconnect (events sent while down are gone)
+  // GET active once on showing, then on each launch event, each line a starting launch prints, and after a
+  // reconnect (events sent while down are gone)
   useEffect(() => {
     if (!visible) {
       return;
@@ -205,32 +202,19 @@ export function App() {
       return;
     }
     const offLaunch = zenoh.subscribeDimos("launch", () => pollRuns());
+    const offOutput = zenoh.subscribeDimos("log", (event) => event?.run === "launch" && pollRuns());
     const offReconnect = zenoh.onReconnect(() => pollRuns());
     return () => {
       offLaunch();
+      offOutput();
       offReconnect();
     };
   }, [pollRuns, visible, zenoh]);
+  useEvery(pollRuns, visible ? withoutEventsS : null);
 
-  // polls only for what no event tells: a busy launch's steps, or anything while zenoh is down
-  const launchPollMs = busy
-    ? BUSY_LAUNCH_POLL_MS
-    : eventsArrive
-    ? null
-    : LAUNCH_POLL_WITHOUT_EVENTS_MS;
-  useEffect(() => {
-    if (!visible || launchPollMs === null) {
-      return;
-    }
-    const timer = setInterval(pollRuns, launchPollMs);
-    return () => clearInterval(timer);
-  }, [pollRuns, visible, launchPollMs]);
-
-  useEffect(() => {
-    if (!visible) {
-      return;
-    }
-    const poll = async () => {
+  // Desktop's topic rates have no event: asked for every blueprint-view.rates-poll-s
+  const pollRates = useMemo(() =>
+    oneInFlight(async () => {
       try {
         const answer = await getJson<RatesAnswer>("../desktop/topics/rates");
         setRatesError(answer.up === false ? answer.error ?? null : null);
@@ -240,19 +224,18 @@ export function App() {
       } catch (caught) {
         setRatesError(errorText(caught));
       }
-    };
-    poll();
-    const timer = setInterval(poll, RATES_POLL_MS);
-    return () => clearInterval(timer);
-  }, [visible]);
-
-  // dtop's numbers for the processes table, while something runs (the gateway hears them only while asked)
+    }), []);
   useEffect(() => {
-    if (!visible || !running) {
-      setStats(null);
-      return;
+    if (visible) {
+      pollRates();
     }
-    const poll = async () => {
+  }, [visible, pollRates]);
+  useEvery(pollRates, visible ? config?.ratesPollS : null);
+
+  // dtop's numbers for the processes table, while something runs (the gateway hears them only while asked), read
+  // again on each stats event: one per dtop sample
+  const pollStats = useMemo(() =>
+    oneInFlight(async () => {
       try {
         const answer = await getJson<StatsAnswer>("active/stats");
         setStats(answer);
@@ -262,11 +245,24 @@ export function App() {
       } catch (caught) {
         setStatsError(errorText(caught));
       }
+    }), []);
+  useEffect(() => {
+    if (!visible || !running) {
+      setStats(null);
+      return;
+    }
+    pollStats();
+    if (!zenoh) {
+      return;
+    }
+    const offStats = zenoh.subscribeDimos("stats", () => pollStats());
+    const offReconnect = zenoh.onReconnect(() => pollStats());
+    return () => {
+      offStats();
+      offReconnect();
     };
-    poll();
-    const timer = setInterval(poll, STATS_POLL_MS);
-    return () => clearInterval(timer);
-  }, [visible, running]);
+  }, [visible, running, pollStats, zenoh]);
+  useEvery(pollStats, visible && running ? withoutEventsS : null);
 
   // Hz per topic (without its leading slash), and the live topics no module here is wired to
   const rates = useMemo(() => {
@@ -557,6 +553,7 @@ export function App() {
             runId={logsRun}
             title={NAME}
             paused={!visible}
+            config={config}
             onClose={() => setDialog(null)}
           />
         )

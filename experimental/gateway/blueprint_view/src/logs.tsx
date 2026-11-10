@@ -9,20 +9,21 @@ import {
   StructuredLog,
   Text,
   Traceback,
+  useConnectionState,
   useDesktopEditor,
+  useZenoh,
 } from "dimos-react";
 import { useEffect, useRef, useState } from "react";
 import { errorText, getJson } from "./api.ts";
-import { LOG_POLL_MS, LOG_SEARCH_DEBOUNCE_MS } from "./constants.ts";
+import { oneInFlight, useEvery, type ViewConfig } from "./live.ts";
 import { projectPath } from "./model.ts";
 
-const MAX_RECORDS = 5000;
-
 export function LogsModal(
-  { runId, title, paused, onClose }: {
+  { runId, title, paused, config, onClose }: {
     runId: string;
     title: string;
     paused: boolean;
+    config: ViewConfig | null;
     onClose: () => void;
   },
 ) {
@@ -38,13 +39,19 @@ export function LogsModal(
     setRecords([]);
     setNote("loading…");
   }, [runId, level, query]);
+  const zenoh = useZenoh();
+  const eventsArrive = useConnectionState() === "connected";
+  const maxRecords = useRef(Infinity);
+  maxRecords.current = config?.logMaxRecords ?? Infinity;
+  const [read, setRead] = useState<(() => void) | null>(null);
+  // the next lines are asked for on each log event for this run; a new level or search cancels the request still
+  // out for the old one, so the newest always wins
   useEffect(() => {
     if (paused) {
       return;
     }
-    let timer: ReturnType<typeof setTimeout>;
-    let live = true;
-    const poll = async () => {
+    const abort = new AbortController();
+    const readNext = oneInFlight(async () => {
       const params = new URLSearchParams({ after: String(offset.current), level });
       if (query) {
         params.set("q", query);
@@ -52,29 +59,33 @@ export function LogsModal(
       try {
         const page = await getJson<{ offset: number; records: LogRecord[] }>(
           `history/${encodeURIComponent(runId)}/logs?${params}`,
+          { signal: abort.signal },
         );
-        if (!live) {
+        if (abort.signal.aborted) {
           return;
         }
         offset.current = page.offset;
         const fresh = page.records;
-        setRecords((old) => fresh.length ? [...old, ...fresh].slice(-MAX_RECORDS) : old);
+        setRecords((old) => fresh.length ? [...old, ...fresh].slice(-maxRecords.current) : old);
         setNote((old) => fresh.length || old === null ? null : "No log lines yet.");
       } catch (caught) {
-        if (live) {
+        if (!abort.signal.aborted) {
           setNote(errorText(caught));
         }
       }
-      if (live) {
-        timer = setTimeout(poll, LOG_POLL_MS);
-      }
-    };
-    timer = setTimeout(poll, query ? LOG_SEARCH_DEBOUNCE_MS : 0);
+    });
+    readNext();
+    setRead(() => readNext);
+    const offLog = zenoh?.subscribeDimos("log", (event) => event?.run === runId && readNext());
+    const offReconnect = zenoh?.onReconnect(readNext);
     return () => {
-      live = false;
-      clearTimeout(timer);
+      abort.abort();
+      offLog?.();
+      offReconnect?.();
+      setRead(null);
     };
-  }, [runId, level, query, paused]);
+  }, [runId, level, query, paused, zenoh]);
+  useEvery(read ?? (() => {}), read && !eventsArrive ? config?.pollWithoutEventsS : null);
   return (
     <Modal
       open
