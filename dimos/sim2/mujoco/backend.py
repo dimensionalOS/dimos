@@ -336,15 +336,30 @@ class MujocoBackend:
         self._announced = True
 
     def _joints_of(self, name: str, body: int) -> tuple[list[int], list[str]]:
+        """The single-dof joints in this body's subtree.
+
+        Its subtree and not its kinematic tree: in a composed scene the robot hangs off a frame
+        of the scene's, and that frame is the root of the tree, so a robot whose entity is its
+        own root body would own no joints at all -- nothing would report a joint state and no
+        policy could ever arm.
+        """
         model = self.model
         joints = [
             j
             for j in range(model.njnt)
-            if model.body_rootid[model.jnt_bodyid[j]] == body
+            if self._descends(int(model.jnt_bodyid[j]), body)
             and int(model.jnt_type[j]) in _SINGLE_DOF
         ]
         prefix = f"{name}/" if name in self._robots else ""
         return joints, [model.joint(j).name.removeprefix(prefix) for j in joints]
+
+    def _descends(self, body: int, ancestor: int) -> bool:
+        parents = self.model.body_parentid
+        while body > 0:
+            if body == ancestor:
+                return True
+            body = int(parents[body])
+        return body == ancestor
 
 
 def _close(a: np.ndarray, b: np.ndarray) -> bool:
