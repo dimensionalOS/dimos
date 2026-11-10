@@ -20,7 +20,7 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         name = "dimos-trajectory-follower";
-        here = "navigation/trajectory_follower/fancy/rust";
+        here = "navigation/trajectory_follower/rust";
 
         own = nix-filter.lib { root = ./.; exclude = [ "target" "build" "result" "__pycache__" ]; };
         # The two crates at their repo-relative places, so the path dependency resolves.

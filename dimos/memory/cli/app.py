@@ -38,4 +38,8 @@ def rerun(
     from dimos.memory.cli.dataset import open_dataset
     from dimos.memory.cli.render import render_store
 
-    render_store(open_dataset(path), out=out, seconds=seconds, no_gui=no_gui, root=root)
+    try:
+        store = open_dataset(path)
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(str(exc), param_hint="PATH") from exc
+    render_store(store, out=out, seconds=seconds, no_gui=no_gui, root=root)

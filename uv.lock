@@ -2007,6 +2007,7 @@ all = [
     { name = "unitree-webrtc-connect" },
     { name = "usd-core" },
     { name = "uvicorn" },
+    { name = "uvloop" },
     { name = "viser", extra = ["urdf"] },
     { name = "warp-lang" },
     { name = "watchfiles" },
@@ -2059,6 +2060,7 @@ base = [
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
     { name = "uvicorn" },
+    { name = "uvloop" },
     { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
@@ -2149,6 +2151,7 @@ manipulation = [
     { name = "ultralytics" },
     { name = "usd-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
     { name = "uvicorn" },
+    { name = "uvloop" },
     { name = "viser", extra = ["urdf"] },
     { name = "watchfiles" },
     { name = "xacro" },
@@ -2255,6 +2258,7 @@ unitree = [
     { name = "ultralytics" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "uvloop" },
     { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
@@ -2303,6 +2307,7 @@ unitree-dds = [
     { name = "unitree-sdk2py-dimos" },
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
+    { name = "uvloop" },
     { name = "watchfiles" },
     { name = "yourdfpy", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
@@ -2322,6 +2327,7 @@ web = [
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "uvicorn" },
+    { name = "uvloop" },
     { name = "watchfiles" },
 ]
 webrtc = [
@@ -2677,6 +2683,7 @@ requires-dist = [
     { name = "usd-core", marker = "(platform_machine != 'aarch64' and extra == 'sim') or (sys_platform != 'linux' and extra == 'sim')", specifier = ">=23.11" },
     { name = "usd-core", marker = "extra == 'scene'", specifier = ">=23.11" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
+    { name = "uvloop", marker = "extra == 'web'", specifier = ">=0.21" },
     { name = "viser", extras = ["urdf"], marker = "extra == 'planning'", specifier = ">=1.0.29" },
     { name = "warp-lang", marker = "extra == 'cuda'", specifier = ">=1.13" },
     { name = "watchfiles", marker = "extra == 'web'", specifier = ">=1.0" },
