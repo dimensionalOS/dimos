@@ -20,7 +20,7 @@ on ``ee_twist_command``, on/off streams for the hold and the e-stop, a point
 cloud of the scene on ``scene_pointcloud`` and the arm's URDF, so a Desktop page
 can show the arm and the scene, stop or hold it, and drive it by hand after
 taking over. An agent can ask either grasp generator, GraspGenX or the
-heuristic one, for grasps with propose_grasps_for; a pick given no grasp
+heuristic one, for grasps with propose_grasps; a pick given no grasp
 generates its own with GraspGenX.
 
 ``hybrid_teleop_sim_collect`` is hybrid-teleop-sim plus a collection session

@@ -27,6 +27,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -143,6 +144,8 @@ class PickAndPlaceModule(Module):
         self._holding_object = False
         # The grasp contact check, by planning group, built on first use.
         self._contact_checkers: dict[PlanningGroupID, GraspContactChecker] = {}
+        # The running grasp generators, by module name.
+        self._grasp_generators: dict[str, RPCClient] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -176,6 +179,54 @@ class PickAndPlaceModule(Module):
     def get_object(self, object_id: str) -> dict[str, Any] | None:
         return self._objects.get(object_id)
 
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        """Keep the stack's grasp generators: the modules that answer propose_grasps_for."""
+        self._grasp_generators = {
+            module.remote_name: module for module in modules if "propose_grasps_for" in module.rpcs
+        }
+
+    @skill
+    def propose_grasps(
+        self,
+        object_id: str,
+        generator: str,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Ask one grasp generator for grasps on a scanned object, coming in from about one direction.
+
+        Choose the generator for the object. GraspGenXModule is a learned model:
+        grasps on any shape from many directions, such as mugs, tools and side
+        grasps, in about a second on a GPU. HeuristicGraspModule makes one
+        straight-down grasp, instantly, for boxes, cans and other upright
+        objects. A name that is not running gets an error naming the ones that
+        are. The grasps are not checked for reach or collisions. Pass one entry
+        of ``grasps`` to pick_object as ``grasp``.
+
+        Args:
+            object_id: ID from the latest scan_objects call.
+            generator: Name of the grasp generator to ask, such as GraspGenXModule.
+            approach: Unit vector [x, y, z] in the arm's base frame: the direction
+                the gripper moves in, from the operator's hand into the object.
+                [0, 0, -1] is straight down. None accepts any direction.
+            max_angle_deg: Half-angle of the cone around approach, degrees.
+            limit: How many grasps to return, best first.
+
+        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
+        made, which says how far off approach is when ``grasps`` is empty.
+        """
+        chosen = self._grasp_generators.get(generator)
+        if chosen is None:
+            running = ", ".join(sorted(self._grasp_generators)) or "none"
+            raise ValueError(f"No grasp generator named {generator}; running: {running}")
+        answer: dict[str, Any] = chosen.propose_grasps_for(
+            object_id=object_id, approach=approach, max_angle_deg=max_angle_deg, limit=limit
+        )
+        return answer
+
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
         self,
@@ -185,10 +236,9 @@ class PickAndPlaceModule(Module):
     ) -> SkillResult:
         """Pick one object from the latest scan.
 
-        To choose the grasp, get one from a grasp generator's propose_grasps_for
-        and pass it as ``grasp``: the pick tries that grasp, exactly where it is,
-        and no other. Without ``grasp``, ranked grasps are generated and tried in
-        order.
+        To choose the grasp, get one from propose_grasps and pass it as
+        ``grasp``: the pick tries that grasp, exactly where it is, and no other.
+        Without ``grasp``, ranked grasps are generated and tried in order.
 
         ``source`` in the result says where the grasps came from: the given
         grasp's ``generator`` ("operator" when it has none), or "provider" for
@@ -200,7 +250,7 @@ class PickAndPlaceModule(Module):
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
-            grasp: One entry of propose_grasps_for's ``grasps``; only ``position``
+            grasp: One entry of propose_grasps's ``grasps``; only ``position``
                 and ``orientation`` are needed.
         """
         if self._holding_object:

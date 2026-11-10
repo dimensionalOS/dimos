@@ -669,3 +669,36 @@ def test_a_given_grasp_that_does_not_hold_says_where_it_came_from(
 
     assert result.message.startswith("Closed the gripper on object cup-1.")
     assert (result.metadata["source"], result.metadata["rank"]) == ("GraspGenXModule", 1)
+
+
+def _generator_client(name: str) -> MagicMock:
+    """A running grasp generator as on_system_modules hands it over."""
+    client = MagicMock(remote_name=name, rpcs=frozenset({"propose_grasps_for"}))
+    client.propose_grasps_for.return_value = {"generator": name, "grasps": []}
+    return client
+
+
+def test_propose_grasps_asks_the_generator_the_agent_names(module: PickAndPlaceModule) -> None:
+    graspgenx = _generator_client("GraspGenXModule")
+    heuristic = _generator_client("HeuristicGraspModule")
+    planner = MagicMock(remote_name="ManipulationModule", rpcs=frozenset({"plan_to_pose"}))
+    module.on_system_modules([graspgenx, heuristic, planner])
+
+    answer = module.propose_grasps("cup-1", "HeuristicGraspModule", approach=[0.0, 0.0, -1.0])
+
+    assert answer == {"generator": "HeuristicGraspModule", "grasps": []}
+    heuristic.propose_grasps_for.assert_called_once_with(
+        object_id="cup-1", approach=[0.0, 0.0, -1.0], max_angle_deg=30.0, limit=3
+    )
+    graspgenx.propose_grasps_for.assert_not_called()
+
+
+def test_propose_grasps_names_the_running_generators_when_asked_for_another(
+    module: PickAndPlaceModule,
+) -> None:
+    module.on_system_modules([_generator_client("HeuristicGraspModule")])
+
+    with pytest.raises(
+        ValueError, match="No grasp generator named GraspGenXModule; running: HeuristicGraspModule"
+    ):
+        module.propose_grasps("cup-1", "GraspGenXModule")

@@ -45,7 +45,8 @@ class GraspGeneratorModule(Module, GraspGenSpec):
     """A grasp generator that also proposes grasps for a scanned object, by its id.
 
     Subclasses implement ``propose_grasps`` and expose ``propose_grasps_for`` as
-    a skill that calls ``_propose_for``.
+    an RPC that calls ``_propose_for``. An agent reaches every module with
+    ``propose_grasps_for`` through PickAndPlaceModule's propose_grasps skill.
     """
 
     # Looks up a scanned object's points; a stack without a scene has none.

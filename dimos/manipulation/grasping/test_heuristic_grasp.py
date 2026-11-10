@@ -157,9 +157,7 @@ def test_heuristic_grasp_aims_the_finger_pads(height: float, tip_z: float) -> No
     module.stop()
 
 
-def test_propose_grasps_for_is_a_skill_an_agent_can_read() -> None:
-    method = HeuristicGraspModule.propose_grasps_for
-
-    assert getattr(method, "__skill__", False)
+def test_propose_grasps_for_is_an_rpc_not_an_agent_tool() -> None:
+    # Every generator has this name; the agent reaches them through propose_grasps.
     assert "propose_grasps_for" in HeuristicGraspModule.rpcs
-    assert method.__doc__ and "no GPU" in method.__doc__
+    assert not getattr(HeuristicGraspModule.propose_grasps_for, "__skill__", False)

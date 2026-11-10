@@ -22,7 +22,6 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.grasping.grasp_generator_module import GraspGeneratorModule
@@ -82,7 +81,7 @@ class HeuristicGraspModule(GraspGeneratorModule):
             [GraspCandidate(pose, score=1.0)],
         )
 
-    @skill
+    @rpc
     def propose_grasps_for(
         self,
         object_id: str,

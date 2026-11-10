@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.manipulation.grasping.grasp_gen_x.module import (
     GraspGenXConfig,
@@ -117,7 +116,7 @@ class GraspGenXRuntimeModule(GraspGenXModule):
             candidates,
         )
 
-    @skill
+    @rpc
     def propose_grasps_for(
         self,
         object_id: str,

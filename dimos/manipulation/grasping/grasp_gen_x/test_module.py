@@ -153,10 +153,7 @@ def test_host_collection_excludes_the_nested_runtime_suite() -> None:
     assert "test_runtime.py" not in result.stdout
 
 
-def test_propose_grasps_for_is_a_skill_the_runtime_answers() -> None:
-    method = GraspGenXModule.propose_grasps_for
-
-    assert getattr(method, "__skill__", False)
+def test_propose_grasps_for_is_an_rpc_the_runtime_answers() -> None:
     # Contract RPCs run in the isolated process, where the model is.
     assert "propose_grasps_for" in contract_rpc_names(GraspGenXModule)
-    assert method.__doc__ and "GPU" in method.__doc__
+    assert not getattr(GraspGenXModule.propose_grasps_for, "__skill__", False)

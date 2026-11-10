@@ -21,7 +21,6 @@ from typing import Annotated, Any, Literal, TypeAlias
 import numpy as np
 from pydantic import Field, FiniteFloat, field_validator
 
-from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
@@ -105,7 +104,7 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
         """Return ranked TCP poses for an object point cloud in its input frame."""
         raise NotImplementedError
 
-    @skill
+    @rpc
     def propose_grasps_for(
         self,
         object_id: str,
