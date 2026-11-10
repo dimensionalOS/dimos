@@ -323,7 +323,12 @@ def _fault_preempt(task: MetalArmPolicyTask) -> None:
 
 
 def _fault_feedback(task: MetalArmPolicyTask) -> None:
-    assert task.compute(make_state(1.05, missing={"arm/right_joint6"})) is None
+    runtime = task._runtime
+    assert isinstance(runtime, FakeRuntime)
+    calls_before = runtime.act_calls
+    # Between 20 Hz deadlines: freshness still invalidates and runs no inference.
+    assert task.compute(make_state(1.02, missing={"arm/right_joint6"})) is None
+    assert runtime.act_calls == calls_before
 
 
 def _fault_inference(task: MetalArmPolicyTask) -> None:
@@ -377,9 +382,9 @@ def test_every_fault_closes_the_session_and_never_replays(
     if recovery == "clear-estop":
         assert not task.set_goal_pose24(goal24(), t_now=1.06)  # e-stop latches intent
         task.set_estop(False)
-        assert not task.engage()  # clearing never resumes
-    # A fresh goal plus a new engage is the only way back.
-    assert task.set_goal_pose24(goal24(), t_now=1.06)
+    # A fresh same-value goal plus an explicit engage is the only way back.
+    assert not task.engage()  # the goal went with the session
+    assert task.set_goal_pose24(goal24(), t_now=1.06)  # same value, fresh receipt
     assert task.compute(make_state(1.07)) is None
     assert task.engage()
     assert task.compute(make_state(1.08)) is not None
@@ -645,3 +650,50 @@ def test_cancellation_is_responsive_and_reengage_seeds_from_measured_q():
     np.testing.assert_allclose(
         np.asarray(output.positions, dtype=np.float32), Q0 + np.float32(0.01), atol=1e-6
     )
+
+
+@pytest.mark.parametrize(
+    "clear_while_blocked",
+    [True, False],
+    ids=["clear-before-completion", "completed-before-clear"],
+)
+def test_estop_clear_ordering_around_an_inflight_compute(clear_while_blocked: bool) -> None:
+    """Clearing e-stop before or after the blocked result returns never replays it."""
+    task = make_task()
+    assert task.set_goal_pose24(goal24(), t_now=0.95)
+    assert task.engage(t_now=0.95)
+    entered, finish = _blocked(task)
+    outputs: list[JointCommandOutput | None] = []
+    worker = _thread(lambda: outputs.append(task.compute(make_state(1.0))))
+    assert entered.wait(2)
+
+    task.set_estop(True)  # completes while act() is still blocked
+    assert not task.session_active
+    assert task.state_snapshot()["fault"] == PolicyTaskFault.ESTOP.value
+    runtime = task._runtime
+    assert isinstance(runtime, FakeRuntime)
+    calls = runtime.total_act_calls
+    epoch = task.session_epoch
+
+    if clear_while_blocked:
+        # The clear itself must not wait for the in-flight inference.
+        task.set_estop(False)
+        assert worker.is_alive()
+    finish.set()
+    worker.join(2)
+    assert outputs == [None]
+    assert runtime.total_act_calls == calls
+    if not clear_while_blocked:
+        task.set_estop(False)
+
+    # Clearing neither advances the generation nor replays the dropped command.
+    assert task.session_epoch == epoch
+    assert task.compute(make_state(1.03)) is None
+    assert runtime.total_act_calls == calls
+    assert not task.engage()  # the goal went with the session
+    assert task.set_goal_pose24(goal24(), t_now=1.03)  # same value, fresh receipt
+    assert task.engage()
+    output = task.compute(make_state(1.04))
+    assert output is not None and _session(task) == "active"
+    np.testing.assert_allclose(runtime.reset_poses[-1], Q0, atol=1e-6)
+    assert runtime.total_act_calls == calls + 1
