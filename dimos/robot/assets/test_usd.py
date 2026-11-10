@@ -332,6 +332,27 @@ def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
     assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
 
 
+def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: Any) -> None:
+    import xml.etree.ElementTree as ElementTree
+
+    from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+
+    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))})
+
+    urdf = ElementTree.fromstring(usd_to_urdf(scene))
+    links = {link.get("name") for link in urdf.findall("link")}
+    parent_of = {
+        joint.find("child").get("link"): joint.find("parent").get("link")
+        for joint in urdf.findall("joint")
+    }
+
+    assert "toy" in links, "the scene root is a link even though it is not a rigid body"
+    assert parent_of["spot"] == "toy", "a body0-less weld hangs off the scene root"
+    assert "spot" not in {name for name in links if name not in parent_of}, (
+        "the frame is no longer a root of its own disconnected tree"
+    )
+
+
 def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(toy: Any) -> None:
     from pxr import UsdPhysics
 
