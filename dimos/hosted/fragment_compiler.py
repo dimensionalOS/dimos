@@ -58,6 +58,7 @@ def compile_fragments(
         raise ValueError("run_id must not be empty")
     if not revision:
         raise ValueError("revision must not be empty")
+    blueprint = blueprint.solidify()
     verify_no_name_conflicts(blueprint)
 
     atoms = tuple(blueprint.active_blueprints)

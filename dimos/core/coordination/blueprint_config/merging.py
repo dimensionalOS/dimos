@@ -68,10 +68,13 @@ def merge_root_source(
             deep_merge(global_values, normalized)
         elif root == "transports":
             deep_merge(transport_values, normalized)
+        elif root == "choices":
+            # Applied by Blueprint.solidify() before parsing.
+            continue
         elif root in module_roots:
             deep_merge(module_values[module_roots[root]], normalized)
         else:
-            choices = [*module_roots, "g", "transports"]
+            choices = [*module_roots, "g", "transports", "choices"]
             suggestion = difflib.get_close_matches(root, choices, n=1)
             hint = f" Did you mean {suggestion[0]!r}?" if suggestion else ""
             raise BlueprintConfigError(

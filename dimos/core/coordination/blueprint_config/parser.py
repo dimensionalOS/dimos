@@ -107,7 +107,8 @@ class BlueprintConfigParser:
     """Resolve all configuration sources for a blueprint."""
 
     def __init__(self, blueprint: Blueprint) -> None:
-        self.blueprint = blueprint
+        # Cached, so building the same unsolidified blueprint gets this exact object back.
+        self.blueprint = blueprint.solidify()
         self._schema: ParserSchema | None = None
 
     @classmethod

@@ -439,6 +439,7 @@ class ModuleCoordinator(Resource):
         fields.
         """
         logger.info("Building the blueprint")
+        blueprint = blueprint.solidify()
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config
         )
@@ -531,6 +532,7 @@ class ModuleCoordinator(Resource):
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
     ) -> None:
+        blueprint = blueprint.solidify()
         global_values, module_kwargs, transport_overrides = _resolve_blueprint_config(
             blueprint, parsed_config, sparse_globals=True
         )
@@ -919,6 +921,18 @@ def _resolve_blueprint_config(
         {atom.name: parsed_config.module_kwargs(atom.name) for atom in blueprint.active_blueprints},
         cast("dict[str, dict[str, Any]]", parsed_config.transport_overrides()),
     )
+
+
+def verify_every_choice(blueprint: Blueprint) -> None:
+    """Stream- and rpc-check every combination of *blueprint*'s choices, not just the picked one."""
+    for combination in blueprint.choice_combinations():
+        candidate = blueprint.collapse(combination)
+        try:
+            verify_no_name_conflicts(candidate)
+            resolve_module_refs(candidate)
+        except Exception as error:
+            picks = ", ".join(f"{name}={option}" for name, option in combination.items())
+            raise ValueError(f"Blueprint is invalid with choices {picks}:\n{error}") from error
 
 
 def verify_no_name_conflicts(blueprint: Blueprint) -> None:

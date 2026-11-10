@@ -142,6 +142,38 @@ blueprint = autoconnect(
 
 This is so you can "inherit" from one blueprint but override something you need to change.
 
+### Choosing between modules
+
+A `ChoiceAtom` is a named slot that one of several sub-blueprints fills:
+
+```python skip
+from dimos.core.coordination.blueprints import ChoiceAtom
+
+mapping = autoconnect(
+    VisModule.blueprint(),
+    ChoiceAtom(
+        name="PointClearing",
+        default="raycasting",
+        choices=dict(
+            raycasting=RaytracerModule.blueprint(),
+            column_carving=VoxelMapper.blueprint(),
+        ),
+    ),
+)
+```
+
+A blueprint with an unpicked choice anywhere in it has `mapping.solidified == False`.
+`mapping.solidify()` returns a plain blueprint with each choice replaced by its picked
+branch. The picks come from `mapping.choose(PointClearing="column_carving")`, or
+`solidify(PointClearing=...)`, or else each choice's default. Building a blueprint
+solidifies it for you. Every combination of choices gets the stream-type and module-ref
+checks, so a broken branch fails even when nobody picked it. To pick from the CLI or the config file:
+
+```bash
+dimos run mapping --choose PointClearing=column_carving
+# or in the config file: {"choices": {"PointClearing": "column_carving"}}
+```
+
 ## How transports are linked
 
 Imagine you have this code:

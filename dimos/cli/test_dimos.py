@@ -27,6 +27,7 @@ import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
 from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
+from dimos.core.coordination.blueprints import ChoiceAtom, autoconnect
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
 import dimos.core.daemon as core_daemon
@@ -282,6 +283,14 @@ def stubbed_run(
     blueprints = {
         "alpha": RunModuleA.blueprint(),
         "beta": RunModuleB.blueprint(),
+        "choosy": autoconnect(
+            RunModuleA.blueprint(),
+            ChoiceAtom(
+                name="Planner",
+                default="none",
+                choices=dict(none=autoconnect(), b=RunModuleB.blueprint()),
+            ),
+        ),
     }
     modules = {
         "runmodulea": RunModuleA.blueprint(),
@@ -333,6 +342,49 @@ def test_daemon_reuses_identity_only_for_exec_handoff(
 
     assert result.exit_code == 0, result.output
     assert f"Run ID:    {expected_run_id}" in result.output
+
+
+def test_run_solidifies_with_the_default_choice(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(main, ["run", "choosy"])
+
+    assert result.exit_code == 0, result.output
+    assert stubbed_run["blueprint"].solidified
+    assert [atom.module for atom in stubbed_run["blueprint"].active_blueprints] == [RunModuleA]
+
+
+def test_run_choose_picks_a_branch_and_configures_its_modules(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main, ["run", "choosy", "--choose", "Planner=b", "--runmoduleb.map-file", "m"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert {atom.module for atom in stubbed_run["blueprint"].active_blueprints} == {
+        RunModuleA,
+        RunModuleB,
+    }
+    assert stubbed_run["parsed_config"].module_kwargs(RunModuleB.name)["map_file"] == "m"
+
+
+def test_run_reads_choices_from_the_config_file(
+    stubbed_run: dict[str, Any], tmp_path: Path
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text('{"choices": {"Planner": "b"}}')
+
+    result = CliRunner().invoke(main, ["run", "choosy", "--config", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert RunModuleB in {atom.module for atom in stubbed_run["blueprint"].active_blueprints}
+
+
+def test_run_rejects_an_unknown_choice(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(main, ["run", "choosy", "--choose", "Planner=c"])
+
+    assert result.exit_code == 2
+    assert "no option 'c'" in result.output
+    assert "blueprint" not in stubbed_run
 
 
 def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any]) -> None:
