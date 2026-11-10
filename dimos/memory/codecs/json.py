@@ -24,13 +24,24 @@ def _invalid_constant(value: str) -> None:
 
 
 class JsonCodec:
+    """JSON documents as ``std_msgs/String``.
+
+    ``payload_type`` is the canonical generated ``String`` for new recordings.
+    A reader may pass the historical ``dimos.msgs`` class instead so artifacts
+    recorded by the legacy writer decode to the type they were written with --
+    the JSON document (the recorded value) is identical either way.
+    """
+
     payload_type = String
+
+    def __init__(self, payload_type: type | None = None) -> None:
+        self.payload_type = payload_type or String
 
     def encode(self, value: String) -> bytes:
         json.loads(value.data, parse_constant=_invalid_constant)
         return value.data.encode("utf-8")
 
     def decode(self, data: bytes) -> String:
-        value = String(data.decode("utf-8"))
+        value = self.payload_type(data.decode("utf-8"))
         json.loads(value.data, parse_constant=_invalid_constant)
-        return value
+        return value  # type: ignore[no-any-return]
