@@ -111,9 +111,9 @@ dimos run keyboard-teleop-a1z --controlcoordinator.addresses '{"arm": "can0"}'
 
 On macOS, the adapter uses its userspace USB transport; any address selects it. Without an address the blueprint runs a mock arm. The map can live in a config file shared by every A1Z blueprint; see [Hardware configuration](/docs/usage/configuration.md#hardware-configuration).
 
-`a1z-teleop` (the Desktop Manipulation app), `a1z-planner-coordinator` and
-`coordinator-a1z` drive the arm through `A1ZConnection` instead, and always
-need the real arm. Name its CAN interface after the blueprint:
+`a1z-teleop` (the Desktop Manipulation app), `a1z-keyboard-teleop` (a pygame
+window), `a1z-planner-coordinator` and `coordinator-a1z` drive the arm through
+`A1ZConnection` instead, and always need the real arm. Name its CAN interface after the blueprint:
 
 ```bash
 dimos run a1z-teleop --a1zconnection.can-port a1zcan

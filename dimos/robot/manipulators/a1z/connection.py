@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import contextlib
 import math
 from pathlib import Path
 import platform
@@ -137,11 +138,11 @@ class A1ZConnection(ConnectionModule):
     Joint targets come in on ``position_command`` in rad; the gripper is the
     joint ``gripper``, its jaw opening in m. ``joint_state`` goes out about 100
     times a second, the gripper in a message of its own. At start the arm holds
-    where it is, takes up its weight, then moves to ``config.home`` if set.
-    When commands stop it holds where it is. Once the SDK stops the arm (a
-    motor fault, its soft e-stop) it takes no command until ``clear_errors()``.
-    Stopping moves it home, if set, and turns its motors off: the A1Z has no
-    brakes, so it falls unless it rests on something or is held.
+    where it is, takes up its weight, then moves to ``config.home`` (folded at
+    rest by default). When commands stop it holds where it is. Once the SDK
+    stops the arm (a motor fault, its soft e-stop) it takes no command until
+    ``clear_errors()``. Stopping moves it home, then turns its motors off: the
+    A1Z has no brakes.
     """
 
     config: A1ZConnectionConfig
@@ -471,10 +472,8 @@ class A1ZConnection(ConnectionModule):
             motors.append(robot.gripper._motor)
         for _ in range(2):
             for motor in motors:
-                try:
+                with contextlib.suppress(Exception):
                     motor.disable()
-                except Exception:
-                    pass
 
     def _all_motors_reported(self) -> bool:
         """Every arm motor has sent a reading since the SDK opened the bus."""
