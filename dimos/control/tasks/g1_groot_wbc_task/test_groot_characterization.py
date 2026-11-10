@@ -14,17 +14,21 @@
 
 """Characterization of the G1 GR00T WBC task across the execution refactor.
 
-The numbers in ``test_data/groot_wbc_characterization.json`` were recorded from
+The numbers in ``test_data/groot_wbc_characterization.jsonl`` were recorded from
 the task on ``main`` before it was migrated onto the shared policy execution
 helpers. The scenario is deterministic (stubbed actor, scripted coordinator
 state), so the refactored task must reproduce it exactly: this is the evidence
 that sharing execution mechanics did not change the trained controller's
 observation, action, decimation or arming semantics.
+
+Per-tick lifecycle behavior (partial state, dry run, reset, ramp, model
+selection) is owned by ``test_g1_groot_wbc_task.py`` and
+``test_policy_execution.py``; this file keeps only the before/after numeric
+equivalence plus the guard that the recording still covers those paths.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import json
 from pathlib import Path
 from typing import Any
@@ -73,11 +77,6 @@ class _ScriptedSession:
 
 
 @pytest.fixture
-def joints_29() -> list[str]:
-    return make_humanoid_joints("g1")
-
-
-@pytest.fixture
 def patched_ort(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ort, "InferenceSession", _ScriptedSession)
     monkeypatch.setattr(ort, "get_available_providers", lambda: ["CPUExecutionProvider"])
@@ -109,7 +108,7 @@ def _state_at(t_now: float, joint_names: list[str], missing: str | None = None) 
     )
 
 
-def run_scenario() -> list[dict[str, Any]]:
+def _run_scenario() -> list[dict[str, Any]]:
     """Run the fixed scenario and return every tick's observable result."""
     joints = make_humanoid_joints("g1")
     adapter = MagicMock()
@@ -151,27 +150,27 @@ def run_scenario() -> list[dict[str, Any]]:
             }
         )
 
+    def steps(start: float, count: int, stride: float = 0.05) -> None:
+        for index in range(count):
+            step(start + stride * index)
+
     try:
         task.start()
-        step(0.0)
-        step(0.1, missing=joints[3])
+        step(0.0)  # unarmed: hold the measured 15 joints, no inference
+        step(0.1, missing=joints[3])  # partial state: still no inference
         assert task.arm(ramp_seconds=1.0)
-        step(0.2)
-        step(0.7)
-        step(1.2)
+        step(0.2)  # ramp start
+        step(0.7)  # ramp midpoint
+        step(1.2)  # ramp end: policy runs on the balance model
         task.set_velocity_command(0.4, -0.2, 0.1, t_now=1.2)
-        for index in range(20):
-            step(1.25 + 0.05 * index)
-        for index in range(20):
-            step(2.3 + 0.05 * index)
+        steps(1.25, 20)  # walk command live: walk model, 20 Hz decimation
+        steps(2.3, 20)  # command stale: back to balance
         task.set_dry_run(True)
-        for index in range(12):
-            step(3.4 + 0.05 * index)
+        steps(3.4, 12)  # dry run computes but emits nothing
         task.set_dry_run(False)
-        for index in range(12):
-            step(4.1 + 0.05 * index)
+        steps(4.1, 12)
         assert task.reset_runtime_state(reactivate=True)
-        step(5.0)
+        step(5.0)  # reactive reset waits for the next measured state
         step(5.05)
         task.stop()
         step(5.1)
@@ -181,22 +180,12 @@ def run_scenario() -> list[dict[str, Any]]:
     return records
 
 
-@pytest.fixture
-def scenario(patched_ort: None) -> Iterator[list[dict[str, Any]]]:
-    yield run_scenario()
-
-
-def test_refactor_preserves_recorded_groot_behavior(scenario: list[dict[str, Any]]) -> None:
+def test_refactor_preserves_recorded_groot_behavior(patched_ort: None) -> None:
+    scenario = _run_scenario()
     expected = [json.loads(line) for line in _DATA.read_text().splitlines() if line.strip()]
-    assert len(scenario) == len(expected)
-    for recorded, reference in zip(scenario, expected, strict=True):
-        assert recorded == reference
+    assert scenario == expected
 
-
-def test_characterization_covers_inference_and_modes(
-    scenario: list[dict[str, Any]],
-) -> None:
-    """Guard that the recorded scenario really exercised the interesting paths."""
+    # Guard that the recording still covers the paths this differential claims.
     positions = [record["positions"] for record in scenario]
     assert sum(value is not None for value in positions) > 20
     assert sum(value is None for value in positions) > 10

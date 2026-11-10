@@ -62,36 +62,27 @@ def stub_ort(monkeypatch: pytest.MonkeyPatch) -> list[_StubSession]:
     return sessions
 
 
-def test_onnx_actor_loads_first_input_and_flattens_output(stub_ort: list[_StubSession]) -> None:
-    actor = OnnxActor("/models/actor.onnx", providers=["CPUExecutionProvider"])
+def test_onnx_actor_loads_names_providers_and_flattens_output(
+    stub_ort: list[_StubSession],
+) -> None:
+    actor = OnnxActor("/models/actor.onnx")
 
-    result = actor.run(np.zeros((1, 8), dtype=np.float32))
-
-    assert actor.input_name == "obs"
-    assert actor.output_name is None
-    assert actor.providers == ["CPUExecutionProvider"]
-    np.testing.assert_array_equal(result, np.full(4, 0.25, dtype=np.float32))
+    assert stub_ort[0].providers == ["CPUExecutionProvider"]
+    np.testing.assert_array_equal(
+        actor.run(np.zeros((1, 8), dtype=np.float32)), np.full(4, 0.25, dtype=np.float32)
+    )
+    assert (actor.input_name, actor.output_name) == ("obs", None)
     assert stub_ort[0].path == "/models/actor.onnx"
     np.testing.assert_array_equal(stub_ort[0].feeds[0], np.zeros((1, 8), dtype=np.float32))
 
-
-def test_onnx_actor_forwards_explicit_io_names(stub_ort: list[_StubSession]) -> None:
-    actor = OnnxActor(
+    explicit = OnnxActor(
         "/models/actor.onnx",
         providers=["CPUExecutionProvider"],
         input_name="observation",
         output_name="action",
     )
-
-    assert actor.input_name == "observation"
-    assert actor.output_name == "action"
-
-
-def test_onnx_actor_defaults_to_cpu_without_cuda_preference(stub_ort: list[_StubSession]) -> None:
-    actor = OnnxActor("/models/actor.onnx")
-
-    assert stub_ort[0].providers == ["CPUExecutionProvider"]
-    assert actor.providers == ["CPUExecutionProvider"]
+    assert (explicit.input_name, explicit.output_name) == ("observation", "action")
+    assert explicit.providers == ["CPUExecutionProvider"]
 
 
 class _CadenceTask(PolicyTask):
@@ -101,16 +92,21 @@ class _CadenceTask(PolicyTask):
         super().__init__("cadence", ["a/1"], priority=1, every_n_ticks=every_n_ticks, hz=hz)
 
 
-def test_decimation_scheduler_runs_every_nth_poll_from_reset() -> None:
+def test_decimation_scheduler_counts_polls_from_reset() -> None:
     task = _CadenceTask(every_n_ticks=3)
-
-    assert [task._cadence_due(0.0) for _ in range(6)] == [False, False, True, False, False, True]
+    assert [task._cadence_due(0.0) for _ in range(6)] == [False, False, True] * 2
 
     task._reset_cadence()
     assert [task._cadence_due(0.0) for _ in range(3)] == [False, False, True]
 
+    # The rate-deadline tolerance is irrelevant to decimation.
+    decimated = _CadenceTask(every_n_ticks=5)
+    assert [decimated._cadence_due(index * 0.01) for index in range(11)] == [
+        index % 5 == 4 for index in range(11)
+    ]
 
-def test_rate_scheduler_runs_immediately_and_advances_only_when_marked() -> None:
+
+def test_rate_scheduler_runs_when_due_and_never_bursts() -> None:
     task = _CadenceTask(hz=20.0)
     task._reset_cadence(100.0)
 
@@ -128,64 +124,49 @@ def test_rate_scheduler_runs_immediately_and_advances_only_when_marked() -> None
     assert not task._cadence_due(100.22)
     assert task._cadence_due(100.26)
 
+    # A one-second stall schedules from now, never once per missed period.
+    stalled = _CadenceTask(hz=10.0)
+    stalled._reset_cadence(0.0)
+    assert stalled._cadence_due(0.0)
+    stalled._mark_cadence(0.0)
+    assert stalled._cadence_due(1.0)
+    stalled._mark_cadence(1.0)
+    assert not stalled._cadence_due(1.05)
+    assert stalled._cadence_due(1.1)
 
-def test_rate_scheduler_never_bursts_after_a_stall() -> None:
-    task = _CadenceTask(hz=10.0)
-    task._reset_cadence(0.0)
-    assert task._cadence_due(0.0)
-    task._mark_cadence(0.0)
 
-    # The robot stalled for a second; the next inference is scheduled from now,
-    # not replayed once per missed period.
-    assert task._cadence_due(1.0)
-    task._mark_cadence(1.0)
-    assert not task._cadence_due(1.05)
-    assert task._cadence_due(1.1)
+def _legacy_fires(times: list[float], period_s: float) -> list[float]:
+    """The pre-refactor Metal deadline state machine, kept here as the oracle."""
+    next_tick: float | None = 0.0
+    fired: list[float] = []
+    for now in times:
+        if next_tick is not None and now + 1e-9 < next_tick:
+            continue
+        fired.append(now)
+        scheduled = (next_tick if next_tick is not None else now) + period_s
+        next_tick = now + period_s if scheduled <= now else scheduled
+    return fired
 
 
 def test_rate_scheduler_matches_the_legacy_20hz_indices_at_100hz() -> None:
     """Differential: 100 Hz coordinator ticks must infer on ticks 0,5,...,100."""
-
-    def legacy_indices(times: list[float], period_s: float) -> list[int]:
-        # The Metal task's pre-refactor state machine, kept here as the oracle.
-        next_tick: float | None = 0.0
-        indices: list[int] = []
-        for index, now in enumerate(times):
-            if next_tick is not None and now + 1e-9 < next_tick:
-                continue
-            indices.append(index)
-            scheduled = (next_tick if next_tick is not None else now) + period_s
-            next_tick = now + period_s if scheduled <= now else scheduled
-        return indices
-
     times = [index * 0.01 for index in range(101)]
     task = _CadenceTask(hz=20.0)
     task._reset_cadence(times[0])
-    actual: list[int] = []
-    for index, now in enumerate(times):
+    actual: list[float] = []
+    for now in times:
         if task._cadence_due(now):
-            actual.append(index)
+            actual.append(now)
             task._mark_cadence(now)
 
-    assert legacy_indices(times, 0.05) == list(range(0, 101, 5))
-    assert actual == legacy_indices(times, 0.05)
+    expected = [times[index] for index in range(0, 101, 5)]
+    assert _legacy_fires(times, 0.05) == expected
+    assert actual == expected
 
 
 @pytest.mark.parametrize("interval", [0.01, 0.02, 0.035])
 def test_rate_scheduler_matches_the_legacy_oracle_for_late_ticks(interval: float) -> None:
     """Late and jittered ticks schedule from the tick that actually ran."""
-
-    def legacy(times: list[float], period_s: float) -> list[float]:
-        next_tick: float | None = 0.0
-        fired: list[float] = []
-        for now in times:
-            if next_tick is not None and now + 1e-9 < next_tick:
-                continue
-            fired.append(now)
-            scheduled = (next_tick if next_tick is not None else now) + period_s
-            next_tick = now + period_s if scheduled <= now else scheduled
-        return fired
-
     # A stall (1.0 s), a tick a hair early (0.1500000005), and normal ticks.
     times = [
         0.0,
@@ -200,19 +181,12 @@ def test_rate_scheduler_matches_the_legacy_oracle_for_late_ticks(interval: float
     ]
     task = _CadenceTask(hz=20.0)
     task._reset_cadence(times[0])
-    actual = []
+    actual: list[float] = []
     for now in times:
         if task._cadence_due(now):
             actual.append(now)
             task._mark_cadence(now)
-    assert actual == legacy(times, 0.05)
-
-
-def test_decimation_scheduler_is_unaffected_by_the_rate_tolerance() -> None:
-    task = _CadenceTask(every_n_ticks=5)
-    assert [task._cadence_due(index * 0.01) for index in range(11)] == [
-        index % 5 == 4 for index in range(11)
-    ]
+    assert actual == _legacy_fires(times, 0.05)
 
 
 def test_scheduler_rejects_ambiguous_or_invalid_cadence() -> None:
@@ -224,22 +198,6 @@ def test_scheduler_rejects_ambiguous_or_invalid_cadence() -> None:
         _CadenceTask(every_n_ticks=0)
     with pytest.raises(ValueError):
         _CadenceTask(hz=0.0)
-
-
-def test_session_epoch_advances_across_sessions_and_stops_on_inactive_close() -> None:
-    task = _StubPolicyTask()
-    task.start()
-    task.request_session(0.0)
-    assert task.compute(_state(0.0)) is not None
-    first = task.session_epoch
-
-    task.end_session()
-    task.end_session()  # closing an inactive session keeps the generation
-    assert task.session_epoch == first + 1
-
-    task.request_session(1.0)
-    assert task.compute(_state(1.0)) is not None
-    assert task.session_epoch == first + 2
 
 
 class _StubPolicyTask(PolicyTask):
@@ -293,6 +251,22 @@ class _StubPolicyTask(PolicyTask):
 
 def _state(t_now: float) -> CoordinatorState:
     return CoordinatorState(joints=MagicMock(), t_now=t_now, dt=0.01)
+
+
+def test_session_epoch_advances_across_sessions_and_stops_on_inactive_close() -> None:
+    task = _StubPolicyTask()
+    task.start()
+    task.request_session(0.0)
+    assert task.compute(_state(0.0)) is not None
+    first = task.session_epoch
+
+    task.end_session()
+    task.end_session()  # closing an inactive session keeps the generation
+    assert task.session_epoch == first + 1
+
+    task.request_session(1.0)
+    assert task.compute(_state(1.0)) is not None
+    assert task.session_epoch == first + 2
 
 
 def test_policy_task_owns_claim_cadence_hold_and_dry_run() -> None:
