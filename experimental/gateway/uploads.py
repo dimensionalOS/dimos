@@ -418,7 +418,8 @@ class Uploads:
             return await asyncio.wait_for(
                 asyncio.shield(self.account_call), constants.ACCOUNT_TIMEOUT_S
             )
-        except TimeoutError:
+        # python 3.10's wait_for raises asyncio.TimeoutError, not the builtin
+        except (asyncio.TimeoutError, TimeoutError):
             logger.warning(
                 "reading the cloud login didn't answer in time",
                 timeout_s=constants.ACCOUNT_TIMEOUT_S,
