@@ -42,9 +42,9 @@ from dimos.message_utils import (
     time as message_time,
 )
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.nav_msgs.msg import OccupancyGrid
-from dimos.messages.std_msgs.msg import Bool, Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

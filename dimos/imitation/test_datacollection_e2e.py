@@ -52,8 +52,8 @@ from dimos.imitation.dataprep.schema import (
 )
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.message_utils import image, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, String
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
 from dimos.utils.testing.waiting import wait_until
 

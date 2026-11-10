@@ -37,9 +37,9 @@ from dimos.manipulation.planning.trajectory_generator.parametrizer import (
 from dimos.manipulation.planning.world.roboplan_model import RoboPlanGroup, RoboPlanModel
 from dimos.manipulation.planning.world.roboplan_world import RoboPlanWorld
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 @dataclass(frozen=True)

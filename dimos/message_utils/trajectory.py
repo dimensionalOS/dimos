@@ -19,7 +19,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 from dimos.message_utils.time import to_seconds
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 
 
 class TrajectoryState(IntEnum):

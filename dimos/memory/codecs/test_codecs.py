@@ -23,9 +23,9 @@ import pytest
 from dimos.memory.codecs.base import codec_for, codec_from_id, codec_id
 from dimos.memory.codecs.pickle import PickleCodec
 from dimos.message_utils import image
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.std_msgs.msg import Header
 
 
 @pytest.mark.parametrize(
@@ -54,7 +54,7 @@ def test_arbitrary_python_storage_remains_pickle(value):
 
 
 def test_compressed_cdr_storage_chain_preserves_value():
-    codec = codec_from_id("lz4+cdr", "dimos.messages.sensor_msgs.msg.Image")
+    codec = codec_from_id("lz4+cdr", "dimos_messages.sensor_msgs.msg.Image")
     source = image.from_array(np.zeros((4, 6, 3), dtype=np.uint8), encoding="rgb8")
     decoded = codec.decode(codec.encode(source))
     np.testing.assert_array_equal(image.view(decoded), image.view(source))

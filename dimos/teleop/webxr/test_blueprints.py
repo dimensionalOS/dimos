@@ -23,8 +23,8 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _coerce_transport_to_backend
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.robot.manipulators.common.blueprints import TeleopBinding
 from dimos.teleop.webxr.blueprints import (
     demo_pico_body_tracking,

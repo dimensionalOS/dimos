@@ -33,8 +33,8 @@ import numpy as np
 from packaging.version import Version
 
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 

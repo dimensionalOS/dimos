@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.message_utils import image as image_utils, pointcloud as pointcloud_utils
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream

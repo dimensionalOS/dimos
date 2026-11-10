@@ -24,8 +24,8 @@ from dimos.memory.stream import Stream
 from dimos.memory.transform import QualityWindow, peaks
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.message_utils import image as image_utils
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.embedding.base import EmbeddingModel
 
 

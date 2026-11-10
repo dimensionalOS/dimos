@@ -28,8 +28,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
 @pytest.mark.parametrize("single_point", [False, True])

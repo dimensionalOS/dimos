@@ -30,9 +30,9 @@ from dimos.control.task import BaseControlTask, CoordinatorState, ResourceClaim
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 
 JOINTS = make_joints("arm", 2)

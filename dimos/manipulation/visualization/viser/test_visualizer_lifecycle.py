@@ -23,10 +23,10 @@ import pytest
 import trimesh
 
 from dimos.message_utils import time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
@@ -47,8 +47,8 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 from dimos.manipulation.visualization.viser.runtime import ViserRuntime
 from dimos.manipulation.visualization.viser.scene import RobotDisplayMode, ViserManipulationScene
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 

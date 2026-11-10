@@ -23,7 +23,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2 as CdrCloud
+from dimos_messages.sensor_msgs.msg import PointCloud2 as CdrCloud
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger

@@ -36,8 +36,8 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.stream import Stream
 from dimos.memory.type.recording import OnExisting
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Point, Pose
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 

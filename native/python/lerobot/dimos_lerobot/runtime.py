@@ -46,9 +46,9 @@ from dimos.imitation.policy.lerobot.module import (
     RolloutStatus,
 )
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header, UInt32
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, UInt32
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 

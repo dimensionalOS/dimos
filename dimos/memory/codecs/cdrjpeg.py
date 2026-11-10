@@ -5,7 +5,7 @@ import numpy as np
 from turbojpeg import TJPF_RGB, TurboJPEG
 
 from dimos.message_utils import image
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 
 
 class CdrjpegCodec:

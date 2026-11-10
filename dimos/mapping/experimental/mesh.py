@@ -33,9 +33,9 @@ from dimos.message_utils import (
     pointcloud,
     time as message_time,
 )
-from dimos.messages.dimos_msgs.msg import PointCloudRegion, TriangleMesh
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.dimos_msgs.msg import PointCloudRegion, TriangleMesh
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.visualization.rerun.mesh import MESH_ENTITY as MESH_ENTITY, MeshColours as MeshColours
 
 if TYPE_CHECKING:

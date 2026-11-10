@@ -21,7 +21,7 @@ import pytest
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.message_utils import geometry
-from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos_messages.sensor_msgs.msg import CameraInfo
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 

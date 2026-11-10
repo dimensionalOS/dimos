@@ -17,7 +17,7 @@ from scipy import ndimage
 
 from dimos.mapping.occupancy.operations import _grid_values, _with_grid
 from dimos.message_utils.occupancy import CostValues
-from dimos.messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 
 
 def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGrid:

@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
@@ -39,8 +39,8 @@ from dimos.manipulation.visualization.viser.animation import (
     scaled_frame_delays,
 )
 from dimos.manipulation.visualization.viser.visualizer import ViserManipulationVisualizer
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.assets.model import RobotModel
 
 

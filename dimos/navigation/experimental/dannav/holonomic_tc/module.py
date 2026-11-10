@@ -31,9 +31,9 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Bool
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist, Vector3
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Bool
 from dimos.navigation.base import NavigationState
 from dimos.navigation.experimental.dannav.holonomic_tc.holonomic_path_controller import (
     HolonomicPathController,

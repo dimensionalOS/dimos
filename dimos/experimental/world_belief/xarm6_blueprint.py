@@ -30,7 +30,7 @@ from dimos.experimental.world_belief.worldbelief_recorder import (
 )
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Quaternion,
     Transform,
     Vector3,

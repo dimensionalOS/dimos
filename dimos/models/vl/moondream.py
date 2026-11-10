@@ -22,7 +22,7 @@ import torch
 from transformers import AutoModelForCausalLM
 
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox

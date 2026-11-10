@@ -18,14 +18,14 @@ from functools import partial
 import numpy as np
 
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import (
+from dimos_messages.dimos_msgs.msg import (
     LineSegment3D,
     LineSegments3D,
     LineSegments3DRegion,
     PointCloudRegion,
 )
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.std_msgs.msg import Header
 
 
 def _region(points):

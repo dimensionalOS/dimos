@@ -85,7 +85,7 @@ def decode_lcm(data: bytes, message_type: type) -> Any:
     if name == "dimos_msgs/msg/LineSegments3D":
         from dimos_lcm.nav_msgs import Path
 
-        from dimos.messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
+        from dimos_messages.dimos_msgs.msg import LineSegment3D, LineSegments3D
 
         stream = io.BytesIO(data)
         old = Path.lcm_decode(stream)

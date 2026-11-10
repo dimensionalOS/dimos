@@ -23,8 +23,8 @@ import numpy as np
 
 from dimos.mapping.relocalization.go2.relocalize import Target, prepare, relocalize, wall_fitness
 from dimos.message_utils import geometry, pointcloud
-from dimos.messages.geometry_msgs.msg import TransformStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -27,8 +27,8 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out, RemoteOut
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.testing.waiting import wait_until

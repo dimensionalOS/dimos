@@ -37,7 +37,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTaskConfig,
 )
 from dimos.hardware.whole_body.spec import IMUState
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
 
 
 class _StubSession:

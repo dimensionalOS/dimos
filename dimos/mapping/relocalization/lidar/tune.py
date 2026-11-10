@@ -44,8 +44,8 @@ from dimos.mapping.relocalization.lidar.relocalize import (
 )
 from dimos.mapping.relocalization.lidar.replay import main as replay_main
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.data import get_data
 from dimos.visualization.rerun.cdr import cloud_archetype
 

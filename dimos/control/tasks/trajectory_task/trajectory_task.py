@@ -43,10 +43,10 @@ from dimos.control.task import (
 )
 from dimos.message_utils import time as message_time, trajectory as trajectory_utils
 from dimos.message_utils.trajectory import TrajectoryState
-from dimos.messages.dimos_msgs.msg import TrajectoryStatus
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from dimos_messages.dimos_msgs.msg import TrajectoryStatus
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 

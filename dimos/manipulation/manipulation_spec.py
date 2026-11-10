@@ -24,9 +24,9 @@ from typing import Protocol
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.message_utils import trajectory as trajectory_utils
-from dimos.messages.dimos_msgs.msg import GraspCandidateArray, TrajectoryStatus
-from dimos.messages.geometry_msgs.msg import PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
+from dimos_messages.dimos_msgs.msg import GraspCandidateArray, TrajectoryStatus
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.spec.utils import Spec
 
 

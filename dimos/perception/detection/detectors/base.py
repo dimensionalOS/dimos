@@ -14,7 +14,7 @@
 
 from abc import ABC, abstractmethod
 
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 

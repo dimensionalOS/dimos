@@ -23,8 +23,8 @@ from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.messages.geometry_msgs.msg import PoseStamped, Vector3
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.geometry_msgs.msg import PoseStamped, Vector3
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec

@@ -18,9 +18,9 @@ import numpy as np
 import pytest
 
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 
 pytest.importorskip("gtsam")
 

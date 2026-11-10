@@ -33,8 +33,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped, Vector3
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

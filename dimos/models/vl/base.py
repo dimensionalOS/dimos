@@ -23,7 +23,7 @@ import cv2
 
 from dimos.core.resource import Resource
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint

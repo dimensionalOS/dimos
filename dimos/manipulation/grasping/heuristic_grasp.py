@@ -26,9 +26,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
-from dimos.messages.geometry_msgs.msg import Point, Pose
-from dimos.messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.dimos_msgs.msg import GraspCandidate, GraspCandidateArray
+from dimos_messages.geometry_msgs.msg import Point, Pose
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 # Least gap (metres) kept between the fingertips and what the object stands on,
 # and between the palm and the object's top.

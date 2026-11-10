@@ -27,7 +27,7 @@ from dimos.control.tasks.gripper_task.gripper_task import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.spec import JointLimits
-from dimos.messages.std_msgs.msg import Float32
+from dimos_messages.std_msgs.msg import Float32
 
 
 def _task() -> GripperControlTask:

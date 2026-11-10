@@ -15,7 +15,7 @@
 from threading import RLock
 
 from dimos.message_utils import geometry
-from dimos.messages.geometry_msgs.msg import Point
+from dimos_messages.geometry_msgs.msg import Point
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

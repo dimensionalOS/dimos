@@ -23,12 +23,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.message_utils import image, occupancy, pointcloud
-from dimos.messages.dimos_msgs.msg import EntityMarkers, LineSegments3D
-from dimos.messages.geometry_msgs.msg import PointStamped, PoseStamped
-from dimos.messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
-from dimos.messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
-from dimos.messages.vision_msgs.msg import Detection3DArray
+from dimos_messages.dimos_msgs.msg import EntityMarkers, LineSegments3D
+from dimos_messages.geometry_msgs.msg import PointStamped, PoseStamped
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Odometry, Path
+from dimos_messages.sensor_msgs.msg import CameraInfo, CompressedImage, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
+from dimos_messages.vision_msgs.msg import Detection3DArray
 from dimos.visualization.rerun.colors import occupancy_lut
 
 if TYPE_CHECKING:

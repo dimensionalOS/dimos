@@ -21,7 +21,7 @@ import pytest
 import reactivex as rx
 
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Header
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import (
     RawLidarMsg,

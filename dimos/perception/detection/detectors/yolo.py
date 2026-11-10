@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import resolve_named_path

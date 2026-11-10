@@ -31,9 +31,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.message_utils import image as image_utils
-from dimos.messages.geometry_msgs.msg import Twist, Vector3
-from dimos.messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.models.qwen.bbox import BBox
 from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create

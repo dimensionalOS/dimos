@@ -16,7 +16,7 @@
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 
 
 class ObserveSkill(Module):

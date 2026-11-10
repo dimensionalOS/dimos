@@ -35,7 +35,7 @@ from typing import Any
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.messages.sensor_msgs.msg import CameraInfo
+from dimos_messages.sensor_msgs.msg import CameraInfo
 from dimos.perception.localize.module import PerceptionLocalize
 from dimos.visualization.rerun.cdr import camera_pinhole
 from dimos.visualization.vis_module import vis_module

@@ -21,9 +21,9 @@ import pytest
 
 from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.message_utils import occupancy as occupancy_utils, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.replanning_a_star.min_cost_astar import _USE_CPP, min_cost_astar
 
 

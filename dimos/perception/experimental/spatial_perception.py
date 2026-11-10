@@ -31,9 +31,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.message_utils import geometry, image as image_utils
-from dimos.messages.geometry_msgs.msg import Point
-from dimos.messages.sensor_msgs.msg import Image
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.geometry_msgs.msg import Point
+from dimos_messages.sensor_msgs.msg import Image
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.perception.experimental.image_embedding import ImageEmbeddingProvider
 from dimos.perception.experimental.spatial_vector_db import SpatialVectorDB
 from dimos.perception.experimental.visual_memory import VisualMemory

@@ -49,10 +49,10 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import Pose, PoseStamped
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Pose, PoseStamped
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.service.spec import BaseConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.logging_config import setup_logger

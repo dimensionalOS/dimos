@@ -39,10 +39,10 @@ from dimos.manipulation.planning.spec.models import (
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec
 from dimos.manipulation.planning.utils import mesh_utils
 from dimos.message_utils import geometry, pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import Header
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion, Vector3
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 from dimos.perception.experimental.object import Object
 from dimos.robot.assets.model import RobotModel
 

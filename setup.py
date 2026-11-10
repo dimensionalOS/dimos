@@ -19,14 +19,10 @@ import shutil
 import struct
 import sys
 
-from dimos_cdrgen.source_package import SourceDistribution, setup_arguments
+from dimos_cdrgen.source_package import SourceDistribution, prepare
 from pybind11.setup_helpers import Pybind11Extension, build_ext
-from setuptools import find_packages, setup
+from setuptools import setup
 from setuptools.command.build_py import build_py as _build_py
-
-# PEP 517 executes setup.py without putting the checkout on sys.path.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from dimos.message_codegen.build import prepare_builtin_sources
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -98,7 +94,7 @@ class build_py(_build_py):
 
     def run(self):
         # Reconcile cached build trees after a namespace move or message deletion.
-        for name in ("dimos_generated", "dimos_generated_schemas", *message_roots):
+        for name in MESSAGE_ROOTS:
             directory = Path(self.build_lib) / name.replace(".", "/")
             if directory.is_dir():
                 shutil.rmtree(directory)
@@ -174,22 +170,15 @@ ext_modules = [
 ]
 
 # The shared generator reads the root project's version and message configuration.
-# Source builds verify/prepare pinned inputs; sdists carry them for offline reuse.
-prepare_builtin_sources(offline=os.environ.get("DIMOS_OFFLINE") == "1")
-message_settings = setup_arguments(Path(__file__).resolve().parent)
-message_source = message_settings["package_dir"][""]
-message_roots = tuple(message_settings["package_data"])
+# Packages, package data and entry points come from pyproject.toml; this hook only
+# generates the Python messages from the committed definitions in
+# packages/dimos-messages/interfaces before packaging.
+MESSAGE_ROOTS = ("dimos_messages", "dimos_messages_schemas")
+prepare(Path(__file__).resolve().parent)
 
 setup(
-    packages=find_packages() + message_settings["packages"],
-    package_dir={
-        "": ".",
-        "dimos": "dimos",
-        **{name: f"{message_source}/{name.replace('.', '/')}" for name in message_roots},
-    },
     ext_modules=ext_modules,
     cmdclass={
-        **message_settings["cmdclass"],
         "sdist": SourceDistribution,
         "build_ext": build_ext,
         "build_py": build_py,

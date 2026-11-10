@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.messages.vision_msgs.msg import Detection3D
+from dimos_messages.vision_msgs.msg import Detection3D
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
 
 

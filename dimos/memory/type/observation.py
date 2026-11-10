@@ -20,8 +20,8 @@ import threading
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 if sys.version_info >= (3, 11):
     from typing import Self

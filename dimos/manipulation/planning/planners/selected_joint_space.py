@@ -27,8 +27,8 @@ from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import JointPath
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 
 @dataclass(frozen=True)

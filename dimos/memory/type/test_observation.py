@@ -20,7 +20,7 @@ import pytest
 
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import time as message_time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -32,8 +32,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistWithCovariance,
     Vector3,
 )
-from dimos.messages.nav_msgs.msg import Odometry
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.std_msgs.msg import Header
 
 
 def canonical_pose_values():

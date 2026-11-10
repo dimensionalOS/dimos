@@ -15,8 +15,8 @@
 import numpy as np
 
 from dimos.message_utils import image as image_utils
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.std_msgs.msg import Header
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint

@@ -27,8 +27,8 @@ from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 
 
 def make_loop(callback):

@@ -30,9 +30,9 @@ from dimos.core.stream import In
 from dimos.experimental.memory.cdr_schema import recording_schema
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
-from dimos.messages.sensor_msgs.msg import CompressedImage, Image
-from dimos.messages.std_msgs.msg import String
-from dimos.messages.tf2_msgs.msg import TFMessage
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.std_msgs.msg import String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.utils.data import backup_file
 from dimos.utils.logging_config import setup_logger
 

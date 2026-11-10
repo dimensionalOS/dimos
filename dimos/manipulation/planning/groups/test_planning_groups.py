@@ -37,8 +37,8 @@ from dimos.manipulation.planning.groups.utils import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.message_utils import time as message_time
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.assets.model import JointDescription, RobotModel
 
 

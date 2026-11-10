@@ -29,9 +29,9 @@ from dimos.message_utils import (
     pointcloud as pointcloud_utils,
 )
 from dimos.message_utils.time import time_from_seconds, to_seconds
-from dimos.messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
-from dimos.messages.sensor_msgs.msg import Image, PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.models.vl.base import VlModel
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D

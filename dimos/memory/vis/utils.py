@@ -22,7 +22,7 @@ import numpy as np
 
 from dimos.memory.type.observation import EmbeddedObservation, Observation
 from dimos.message_utils import image as image_utils
-from dimos.messages.sensor_msgs.msg import Image
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 

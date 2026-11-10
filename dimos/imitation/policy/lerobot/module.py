@@ -31,9 +31,9 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.messages.sensor_msgs.msg import Image, JointState
-from dimos.messages.std_msgs.msg import UInt32
-from dimos.messages.trajectory_msgs.msg import JointTrajectory
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import UInt32
+from dimos_messages.trajectory_msgs.msg import JointTrajectory
 from dimos.spec.utils import Spec
 from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 

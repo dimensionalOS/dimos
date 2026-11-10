@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

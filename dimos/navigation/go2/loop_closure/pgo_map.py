@@ -34,9 +34,9 @@ import numpy as np
 
 from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.message_utils import pointcloud, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos.messages.sensor_msgs.msg import PointCloud2
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo import (
     FRAME_BODY,
     PGOConfig,

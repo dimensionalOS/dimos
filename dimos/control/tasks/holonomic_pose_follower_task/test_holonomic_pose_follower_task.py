@@ -44,9 +44,9 @@ from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_ta
     create_task,
 )
 from dimos.message_utils import geometry, time as message_time
-from dimos.messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
-from dimos.messages.nav_msgs.msg import Path
-from dimos.messages.std_msgs.msg import Float32, Header
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Twist, Vector3
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Float32, Header
 from dimos.utils.trigonometry import angle_diff
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]

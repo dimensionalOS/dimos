@@ -55,8 +55,8 @@ from dimos.core.stream import In
 from dimos.core.transport_factory import make_transport
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.message_utils import time as message_time
-from dimos.messages.builtin_interfaces.msg import Time
-from dimos.messages.geometry_msgs.msg import (
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import (
     Point,
     Pose,
     PoseStamped,
@@ -65,8 +65,8 @@ from dimos.messages.geometry_msgs.msg import (
     TwistStamped,
     Vector3,
 )
-from dimos.messages.sensor_msgs.msg import JointState
-from dimos.messages.std_msgs.msg import Header
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.webxr.controller_types import Buttons
