@@ -98,6 +98,10 @@ def find_stream(streams: list[str], wanted: str) -> str | None:
 
 MAP_CLOUD_RE = re.compile(r"^map_(?P<name>.+)_cloud$")
 
+# Where an overridden cloud stream's locations come from: it is not a named map, so it has none
+# of its own, and the recording's own list is the only thing left to seed them from.
+OVERRIDE_LOCATIONS = "named_locations"
+
 
 def map_cloud_stream(name: str, slashed: bool = True) -> str:
     """The stream a map called *name* keeps its cloud on, in either spelling."""
@@ -114,22 +118,28 @@ def map_names(streams: list[str]) -> dict[str, str]:
     return found
 
 
-def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str, str]:
-    """The cloud stream to load, the map's frame, and the stream its locations are on.
+def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str | None, str]:
+    """The cloud stream to load, the map's frame (None when nothing names one), its locations.
 
     A recording holds its maps under their names, as ``map/<name>/cloud`` beside
     ``map/<name>/named_locations`` (an .mcap; a ``.db`` spells the same streams
-    ``map_<name>_cloud``, which is what both come back as -- see :func:`stream_key`). *wanted*
-    picks one by stream name; without it a lone map is taken as the one meant, and several is an
-    error since neither is.
+    ``map_<name>_cloud``, which is what both come back as -- see :func:`stream_key`). With no
+    *wanted*, a lone map is taken as the one meant, several is an error since neither is, and
+    none is an error too rather than a guess at some other cloud in the recording.
+
+    *wanted* overrides all of that: it is the stream to load, whether or not it is a named map.
+    One of the recording's maps still brings its name and its own locations; any other stream has
+    neither, so the frame is left to ``map_frame`` and the locations to the recording's own list.
     """
     named = map_names(streams)
     if wanted is not None:
         name = next((n for n, s in named.items() if stream_key(s) == stream_key(wanted)), None)
         if name is None:
-            raise ValueError(
-                f"{wanted!r} is not a map in this recording, which holds {sorted(named)}"
-            )
+            if find_stream(streams, wanted) is None:
+                raise ValueError(
+                    f"the recording has no {wanted!r} stream, it holds {sorted(streams)}"
+                )
+            return wanted, None, OVERRIDE_LOCATIONS
     elif len(named) == 1:
         name = next(iter(named))
     elif not named:
@@ -188,7 +198,7 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 class Config(ModuleConfig):
     # Premap: a `.db`/`.mcap` recording whose last `map_stream` cloud is the map; None never fixes
     map_file: str | None = None
-    # Stream holding the map cloud; None takes the recording's only `map/<name>/cloud`
+    # Stream holding the map cloud, overriding the recording's own `map/<name>/cloud`
     map_stream: str | None = None
     # Live fixed frame
     world_frame: str = "world"

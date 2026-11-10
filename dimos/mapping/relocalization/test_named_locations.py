@@ -331,9 +331,15 @@ def test_which_map_to_load():
         resolve_map(two, None)
     # ... unless one is asked for, which also names the frame
     assert resolve_map(two, "map/v2/cloud") == ("map/v2/cloud", "map/v2", "map/v2/named_locations")
-    # asked for something that is not one of its maps
-    with pytest.raises(ValueError, match="is not a map in this recording"):
-        resolve_map(two, "map_cloud")
+    # asked for a stream that is not one of its maps: that is the override, so it is taken as is
+    assert resolve_map(["global_map", "named_locations"], "global_map") == (
+        "global_map",
+        None,
+        "named_locations",
+    )
+    # ... but a stream the recording does not have at all is a mistake
+    with pytest.raises(ValueError, match="has no 'nope' stream"):
+        resolve_map(two, "nope")
     # an .mcap topic keeps its leading slash
     assert resolve_map(["/map/v3/cloud"], None) == (
         "/map/v3/cloud",
