@@ -43,7 +43,9 @@ def test_cdr_channel_embeds_schema_and_preserves_owned_encoder() -> None:
     assert "MSG: std_msgs/Header" in wire["params"]["cdr"]["definition"]
     assert "MSG: builtin_interfaces/Time" in wire["params"]["cdr"]["definition"]
     assert dict(channel.params) == {"note": "x"}
-    spec = pickle.loads(pickle.dumps(blueprint)).blueprints[0].kwargs["channels"][0]
+    # The compiled channel spec survives the worker boundary; pickling a whole
+    # Blueprint is a separate core concern (its mappingproxy fields do not pickle).
+    spec = pickle.loads(pickle.dumps(atom.kwargs["channels"][0]))
     msg = build_messages()[0][1]
     assert spec.encoder is encode_cdr_v1
     assert spec.encoder(msg, spec.params) == encode(msg)

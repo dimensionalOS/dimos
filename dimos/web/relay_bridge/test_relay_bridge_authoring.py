@@ -319,7 +319,10 @@ def test_resend_flag_replays_cache_on_generated_port(monkeypatch) -> None:
         stop_module(module)
 
 
-def test_lcm_channel_ships_lcm_encode_bytes(monkeypatch) -> None:
+def test_default_generated_channel_ships_canonical_cdr_bytes(monkeypatch) -> None:
+    # PoseStamped here is the installed generated class, so `default_encoding`
+    # resolves to `<package>/msg/PoseStamped.cdr.v1` and the wire bytes are the
+    # canonical XCDR1 payload from dimos_cdrgen, not a CBOR helper encoding.
     blueprint = cockpit(channels=[Channel("pose", PoseStamped, max_hz=1000.0)])
     module, clients = start_authored(monkeypatch, blueprint, wire=("pose",))
     try:
@@ -338,7 +341,7 @@ def test_lcm_channel_ships_lcm_encode_bytes(monkeypatch) -> None:
         )
         pose.publish(msg)
         assert wait_until(lambda: clients[0].frames)
-        assert clients[0].frames[0] == ("pose", encode(msg), "reliable", None)
+        assert clients[0].frames[0] == ("pose", encode_cdr(msg), "reliable", None)
         # A sample of another type carries another fingerprint: dropped and
         # logged, never sent to a browser that compiled the PoseStamped schema.
         pose.publish(message_values.pose(1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0))

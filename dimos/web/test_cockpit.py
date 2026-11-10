@@ -657,7 +657,12 @@ def test_map3d_navigation_shares_the_map2d_channels(with_map2d: bool) -> None:
     spec = next(spec for spec in atom.kwargs["channels"] if spec.ch == "clicked_point")
     assert spec.decoder is not None
     point = spec.decoder({"x": 1.25, "y": -2.5})
-    assert (point.x, point.y, point.z, point.frame_id) == (1.25, -2.5, 0.0, "world")
+    assert (point.point.x, point.point.y, point.point.z, point.header.frame_id) == (
+        1.25,
+        -2.5,
+        0.0,
+        "world",
+    )
     (path_channel,) = [channel for channel in manifest["channels"] if channel["ch"] == "path"]
     assert (path_channel["dir"], path_channel["encoding"], path_channel["delivery"]) == (
         "rx",
