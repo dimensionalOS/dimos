@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-import re
+import string
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -29,8 +29,7 @@ from experimental.gateway.state import ApiError, GatewayState
 router = APIRouter()
 
 ASSETS = Path(__file__).parents[1] / "assets"
-# vite's hashed bundle names, e.g. index-rD2X8j_J.js
-VIEW_FILE = re.compile(r"[A-Za-z0-9_-]+\.(js|css)")
+RUN_ID_CHARS = frozenset(string.ascii_letters + string.digits + "_.-")
 
 
 @router.get("/blueprint_view", response_class=HTMLResponse)
@@ -39,7 +38,7 @@ async def blueprint_view(
 ) -> str:
     if view not in (None, "logs"):
         raise ApiError(400, f"view {view} isn't logs")
-    if run is not None and not re.fullmatch("[A-Za-z0-9_.-]+", run):
+    if run is not None and not (run and set(run) <= RUN_ID_CHARS):
         raise ApiError(400, f"not a run id: {run}")
     await check_blueprint(state, name)
     dist = await web_view.built_dist()
@@ -53,8 +52,10 @@ async def blueprint_view(
 
 @router.get("/blueprint_view/{file}")
 async def blueprint_view_file(file: str) -> Response:
-    path = web_view.app_dir() / "dist" / "blueprint_view" / file
-    if not VIEW_FILE.fullmatch(file) or not path.is_file():
+    dist = (web_view.app_dir() / "dist" / "blueprint_view").resolve()
+    path = (dist / file).resolve()
+    # only vite's bundle files, e.g. index-rD2X8j_J.js, directly in dist
+    if path.parent != dist or path.suffix not in (".js", ".css") or not path.is_file():
         raise ApiError(404, f"no such file: {file}")
     media = "text/css" if file.endswith(".css") else "text/javascript"
     return Response(
