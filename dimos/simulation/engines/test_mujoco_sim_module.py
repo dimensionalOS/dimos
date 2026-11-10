@@ -425,6 +425,24 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         module.stop()
 
 
+def test_publish_loop_reads_again_at_once_after_a_publish_slower_than_a_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 20 fps is a frame every 50 ms; each publish here takes 60 ms.
+    sleeps: list[float] = []
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    module = MujocoSimModule()
+    try:
+        module.config = MujocoSimModuleConfig(fps=20)
+        module.color_image.subscribe(lambda _: threading.Event().wait(0.06))
+
+        _run_publish_loop(module, [0.05, 0.10, 0.15, 0.20])
+
+        assert sleeps == []
+    finally:
+        module.stop()
+
+
 def test_camera_renders_at_its_fps_when_sim_steps_do_not_divide_the_interval(
     tmp_path: Path,
 ) -> None:
