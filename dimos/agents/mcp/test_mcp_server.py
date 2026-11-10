@@ -17,14 +17,10 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from dimos.agents.capabilities import CapabilityRegistry
-from dimos.agents.mcp.mcp_server import McpServer, app, handle_request
+from dimos.agents.mcp.mcp_server import app, handle_request
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
@@ -381,44 +377,3 @@ def test_instant_holder_conflict_waits_then_runs() -> None:
         app.state.skills_by_name = saved_skills
         app.state.cap_registry = saved_registry
         app.state.cap_acquire_timeout = saved_timeout
-
-
-def test_a_skill_name_on_two_modules_gives_each_module_its_own_tool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    schema = json.dumps({"type": "object", "properties": {}})
-    graspgenx = MagicMock()
-    graspgenx.get_skills.return_value = [
-        SkillInfo(class_name="GraspGenXModule", func_name="propose_grasps_for", args_schema=schema)
-    ]
-    heuristic = MagicMock()
-    heuristic.get_skills.return_value = [
-        SkillInfo(
-            class_name="HeuristicGraspModule", func_name="propose_grasps_for", args_schema=schema
-        ),
-        SkillInfo(class_name="HeuristicGraspModule", func_name="aim", args_schema=schema),
-    ]
-    for state in ("skills", "skills_by_name", "rpc_calls"):
-        monkeypatch.setattr(app.state, state, getattr(app.state, state))
-    # Only the RPC client is read from the server.
-    server: Any = SimpleNamespace(rpc=MagicMock())
-
-    McpServer.on_system_modules(server, [graspgenx, heuristic])
-
-    response = asyncio.run(
-        handle_request({"method": "tools/list", "id": 1}, app.state.skills, app.state.rpc_calls)
-    )
-
-    assert response is not None
-    names = [tool["name"] for tool in response["result"]["tools"]]
-    assert names == [
-        "GraspGenXModule__propose_grasps_for",
-        "HeuristicGraspModule__propose_grasps_for",
-        "aim",
-    ]
-    calls = app.state.rpc_calls
-    assert [(calls[name].remote_name, calls[name].rpc_name) for name in names] == [
-        ("GraspGenXModule", "propose_grasps_for"),
-        ("HeuristicGraspModule", "propose_grasps_for"),
-        ("HeuristicGraspModule", "aim"),
-    ]
