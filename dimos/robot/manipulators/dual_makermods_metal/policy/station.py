@@ -128,9 +128,6 @@ class MetalStationKinematics:
                 np.asarray(placement.translation, dtype=np.float64) + rotation @ self._tcp_offset
             )
             out[index * 3 : index * 3 + 3] = position
-        for index, frame_id in enumerate(self._frame_ids):
-            placement = self._data.oMf[frame_id]  # type: ignore[attr-defined]
-            rotation = np.asarray(placement.rotation, dtype=np.float64)
             start = 6 + index * 9
             out[start : start + 9] = rotation.reshape(-1)
         return out

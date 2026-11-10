@@ -44,6 +44,7 @@ from dimos.robot.manipulators.dual_makermods_metal.policy.contract import (
     check_observation,
     load_normalizer,
 )
+from dimos.robot.manipulators.dual_makermods_metal.policy.station import MetalStationKinematics
 
 
 class ActionDecoder:
@@ -137,10 +138,6 @@ class MetalArmPolicyRuntime:
             output_name=manifest.model.output,
         )
         if kinematics is None:
-            from dimos.robot.manipulators.dual_makermods_metal.policy.station import (
-                MetalStationKinematics,
-            )
-
             kinematics = MetalStationKinematics(manifest.station)
         self._kinematics = kinematics
         self._frames: list[NDArray[np.float32]] = []

@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WebXR deadman, freshness and relative-to-absolute goal mapping for Metal.
-
-The task owns session authority; this layer owns operator input and the goal it
-implies.  A goal is only produced while both grips are held and every source is
-fresh, so a live controller never reauthorizes a stale one and a released
-deadman leaves no reconstructable goal behind.
-"""
+"""WebXR deadman, freshness and goal mapping for Metal (session authority stays in the task)."""
 
 from __future__ import annotations
 
@@ -40,8 +34,6 @@ if TYPE_CHECKING:
 
 
 class StationKinematics(Protocol):
-    """Station-frame FK used to anchor teleoperation goals."""
-
     def pose24(self, q: NDArray[np.float32] | NDArray[np.float64]) -> NDArray[np.float64]: ...
 
 
@@ -55,8 +47,6 @@ def controller_pose(pose: Pose | PoseStamped) -> ControllerPose:
 
 
 class MetalTeleop:
-    """Operator input plus relative WebXR goal mapping for the Metal task."""
-
     def __init__(
         self, kinematics: StationKinematics, mapper: WebXRGoalMapper | None = None
     ) -> None:

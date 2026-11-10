@@ -12,17 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Opt-in dual-Metal PPO policy station over an ideal, no-CAN connection.
+"""Opt-in dual-Metal PPO station over an ideal, no-CAN connection.
 
-This is the deployment composition for the accepted learned controller. It
-never constructs :class:`DualMetalConnection`, so the fake launch path cannot
-open a CAN bus even if a hardware address is configured elsewhere. The two
-jaws keep their own gripper tasks; the policy claims the 12 arm joints only.
-
-The learned artifacts are not committed. Point the blueprint at a directory
-containing ``metal_arm_policy.manifest.json``, the exported ``.onnx`` and its
-``.normalizer.npz`` through ``--model-dir`` / ``--manifest-path`` or
-``DIMOS_METAL_POLICY_MODEL_DIR`` / ``DIMOS_METAL_POLICY_MANIFEST``.
+Never constructs :class:`DualMetalConnection`; the two jaws keep their own
+gripper tasks and the policy claims the 12 arm joints. Artifacts are not
+committed: pass ``--model-dir`` / ``--manifest-path`` or the two
+``DIMOS_METAL_POLICY_*`` environment variables.
 """
 
 from __future__ import annotations

@@ -14,11 +14,9 @@
 
 """Deployment contract for the trained dual Metal bimanual PPO policy.
 
-Everything the runtime is allowed to assume about the trained controller lives
-here and in a versioned JSON manifest that pins the exact checkpoint lineage,
-observation layout, action decode order and station geometry. The manifest is a
-validated configuration model: unknown keys, wrong widths, non-finite values and
-mismatched trained layouts fail closed before the runtime starts.
+The versioned JSON manifest is a validated configuration model that pins the
+checkpoint lineage, observation layout, decode order and station geometry;
+unknown keys, wrong widths, non-finite values and layout mismatches fail closed.
 """
 
 from __future__ import annotations
@@ -126,15 +124,11 @@ def _message(exc: ValidationError) -> str:
 
 
 class FrameField(_ContractModel):
-    """One named, fixed-width slot of the 96-value observation frame."""
-
     name: str
     width: int
 
 
 class CheckpointSpec(_ContractModel):
-    """Lineage of the trained checkpoint the exported graph came from."""
-
     sha256: str
     iteration: int
     source_sha256: str
@@ -142,8 +136,6 @@ class CheckpointSpec(_ContractModel):
 
 
 class ModelSpec(_ContractModel):
-    """Exported ONNX graph and its learned normalizer."""
-
     onnx_sha256: str
     normalizer_sha256: str
     input: str = "obs"
@@ -153,8 +145,6 @@ class ModelSpec(_ContractModel):
 
 
 class ObservationSpec(_ContractModel):
-    """Observation history and the exact trained frame layout."""
-
     history_frames: int = HISTORY_FRAMES
     frame_dim: int = FRAME_DIM
     dq_scale: float = DQ_SCALE
@@ -165,8 +155,6 @@ class ObservationSpec(_ContractModel):
 
 
 class ActionSpec(_ContractModel):
-    """Action-to-command decode contract, in execution order."""
-
     home: Vec12 = HOME
     lower: Vec12 = TRAIN_LOWER
     upper: Vec12 = TRAIN_UPPER
@@ -178,16 +166,12 @@ class ActionSpec(_ContractModel):
 
 
 class TimingSpec(_ContractModel):
-    """Policy rate and the training plant's stepping."""
-
     policy_hz: float = POLICY_HZ
     physics_dt: float = PHYSICS_DT
     control_substeps: int = CONTROL_SUBSTEPS
 
 
 class NormalizerSpec(_ContractModel):
-    """rsl_rl empirical normalizer epsilon."""
-
     eps: float = NORMALIZER_EPS
 
 
