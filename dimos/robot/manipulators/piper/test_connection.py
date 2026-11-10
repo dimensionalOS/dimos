@@ -394,6 +394,36 @@ def test_stopping_sends_the_arm_home_then_puts_it_in_its_emergency_stop(
     assert not r.module.status().connected
 
 
+def test_a_failed_start_puts_the_arm_in_its_emergency_stop(
+    rig: Callable[..., Rig], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def stuck(self: PiperConnection, home: list[float], timeout_s: float = 0.0) -> None:
+        raise PiperError("the arm did not reach home")
+
+    monkeypatch.setattr(PiperConnection, "_go_home", stuck)
+    sdk = FakePiper()
+    with pytest.raises(PiperError):
+        rig(sdk)
+    assert sdk.calls[-2:] == [("MotionCtrl_1", (0x01, 0, 0), {}), ("DisconnectPort", (), {})]
+
+
+def test_a_home_outside_the_limits_is_refused_before_the_arm_is_touched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sdk = FakePiper()
+    monkeypatch.setattr(connection, "_open_sdk", lambda port: sdk)
+    module = PiperConnection(
+        can_port=PORT, home=(10.0, 0.0, 0.0, 0.0, 0.0, 0.0), model=piper_like_model(tmp_path)
+    )
+    Rig(module, sdk)
+    try:
+        with pytest.raises(ValueError, match="joint1"):
+            module.start()
+        assert sdk.calls == []
+    finally:
+        module.stop()
+
+
 def test_an_arm_with_a_fault_is_not_sent_home_when_stopping(rig: Callable[..., Rig]) -> None:
     r = rig()
     r.sdk.ctrl_mode = TEACHING

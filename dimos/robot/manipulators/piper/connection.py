@@ -242,6 +242,8 @@ class PiperConnection(ConnectionModule):
             for joint in movable_joints(model)
         }
         self._reach = [self.config.jump_limit_s * top_speeds[joint] for joint in self._joints]
+        if self.config.home is not None:
+            self._check_home(self.config.home)
         port = self.config.can_port
         try:
             sdk = _open_sdk(port)
@@ -266,6 +268,13 @@ class PiperConnection(ConnectionModule):
             self._measured_at = time.monotonic()
         except Exception:
             self._sdk = None
+            try:
+                # Going home may have sent the arm a target: stop it before letting go of CAN.
+                sdk.MotionCtrl_1(_EMERGENCY_STOP, 0, 0)
+            except Exception as error:
+                logger.warning(
+                    f"PiperConnection: no emergency stop after the failed start: {error}"
+                )
             sdk.DisconnectPort()
             raise
 
@@ -361,6 +370,17 @@ class PiperConnection(ConnectionModule):
         if self.config.home is None or self._fault is not None or not self._taking_commands():
             return
         self._go_home(list(self.config.home), _PARK_TIMEOUT_S)
+
+    def _check_home(self, home: tuple[float, ...]) -> None:
+        """Refuse a home (rad) outside the model's joint limits, before the arm is touched."""
+        for joint, angle in zip(self._joints, home, strict=True):
+            limit = self.limits[f"{joint}/{Interface.POSITION}"]
+            low = -math.inf if limit.lo is None else limit.lo
+            high = math.inf if limit.hi is None else limit.hi
+            if not low <= angle <= high:
+                raise ValueError(
+                    f"home puts {joint} at {angle} rad, outside its limits {limit.lo} to {limit.hi}"
+                )
 
     def _go_home(self, home: list[float], timeout_s: float = _HOME_TIMEOUT_S) -> None:
         """Move the arm to ``home`` (rad) slowly, and wait until it is there.
