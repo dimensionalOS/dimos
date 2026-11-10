@@ -31,7 +31,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids, rotation_matrix
 from dimos.sim2.mujoco.world import SensorMount
-from dimos.sim2.sim import SceneConfig, scene_from
+from dimos.sim2.sim import SceneConfig, scene_from, until_it_stops
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
 from dimos.simulation.sensors.lidar import OcclusionMap, SimLidar
@@ -72,8 +72,10 @@ class LivoxSim(Module):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        self._scanning = asyncio.create_task(self._scan())
-        self._reading = asyncio.create_task(self._read_imu())
+        self._scanning = asyncio.create_task(until_it_stops(f"{self.frame_id} lidar", self._scan()))
+        self._reading = asyncio.create_task(
+            until_it_stops(f"{self.frame_id} lidar imu", self._read_imu())
+        )
         yield
         self._scanning.cancel()
         self._reading.cancel()

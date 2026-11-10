@@ -13,7 +13,8 @@
 # limitations under the License.
 
 
-from collections.abc import Iterable, Mapping
+import asyncio
+from collections.abc import Coroutine, Iterable, Mapping
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -126,6 +127,23 @@ def scene_from(
         lambda name: getattr(client, ASSET_RPC)(name),
     )
     return UsdModel.from_file(layer)
+
+
+async def until_it_stops(what: str, loop: Coroutine[Any, Any, None]) -> None:
+    """Run a sensor's loop, and say so if it ever stops.
+
+    Every sensor in here runs its loop as a bare `asyncio` task, so whatever the loop raises is
+    kept in the task object and nothing reads it: the sensor simply stops publishing. A lidar
+    whose raycaster could not be built and a lidar whose rate is zero look exactly alike from
+    the outside -- an empty topic -- and the difference is a long way to find without this.
+    """
+    try:
+        await loop
+    except asyncio.CancelledError:
+        raise
+    except BaseException as error:
+        logger.exception(f"sim2: {what} stopped: {error!r}")
+        raise
 
 
 # What `driving()` needs of a module that owns control tasks.
