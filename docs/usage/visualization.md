@@ -116,11 +116,11 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 
 ### Limit Memory
 
-Rerun's viewer and the bridge's replay history have separate limits:
+Rerun's native viewer and the bridge's replay history have separate limits:
 
 | Flag | Default | What it limits |
 |------|---------|----------------|
-| `--rerunbridgemodule.memory-limit` | A quarter of RAM, at most 4 GiB | The viewer. Past the limit it drops its oldest data, so the timeline gets shorter. |
+| `--rerunbridgemodule.memory-limit` | A quarter of RAM, at most 4 GiB | The native viewer only. Past the limit it drops its oldest data, so the timeline gets shorter. This setting does not apply to browser viewers. |
 | `--rerunbridgemodule.server-memory-limit` | `1GiB` | The replay buffer in the bridge's worker. A viewer that connects late starts from what is in it. |
 
 Both take a size (`2GB`) or a share of RAM (`10%`).
