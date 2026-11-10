@@ -28,7 +28,7 @@ in pkgs.stdenv.mkDerivation {
   buildPhase = ''
     export PYTHONPATH="${generation.generator}:$PYTHONPATH"
     export DIMOS_NATIVE_SOURCES='${builtins.toJSON (pkgs.lib.mapAttrs (_: value: toString value) sources)}'
-    export DIMOS_GENERATED_PACKAGE="${generation.source}/python/dimos/messages_schemas/package"
+    export DIMOS_GENERATED_PACKAGE="${generation.source}/python/dimos_messages_schemas/package"
     export DIMOS_NATIVE_OUTPUT="$out"
     mkdir -p "$out"
     python3 - <<'PYTHON'
