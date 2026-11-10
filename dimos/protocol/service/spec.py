@@ -19,10 +19,17 @@ from pydantic import BaseModel
 from typing_extensions import Self
 
 from dimos.core.global_config import TransportBackend
+from dimos.message_utils.message_types import canonicalize_generated_message_types
 
 
 class BaseConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True, "extra": "forbid"}
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        # Pydantic builds a subclass's schema right after this hook, resolving
+        # nested generated-message annotations through ``rosbags.usertypes``.
+        canonicalize_generated_message_types()
+        super().__init_subclass__(**kwargs)
 
 
 class SessionConfig(BaseConfig):
