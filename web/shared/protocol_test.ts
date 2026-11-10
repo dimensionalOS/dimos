@@ -29,6 +29,13 @@ import { MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 import controlFixture from "./fixtures/control_frames.json" with { type: "json" };
 import datagramFixture from "./fixtures/datagrams.json" with { type: "json" };
 import dataFixture from "./fixtures/data_frames.json" with { type: "json" };
+import invalidTopics from "./fixtures/topics_invalid.json" with { type: "json" };
+
+Deno.test("topic messages reject the shared invalid wire vectors", () => {
+  for (const vector of invalidTopics.vectors) {
+    assertEquals(msgFromUnknown(vector.message), null, vector.name);
+  }
+});
 
 function fromB64(s: string): Uint8Array {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -125,9 +132,10 @@ Deno.test("data frames match golden vectors byte-exactly", () => {
 
 Deno.test("data frame decode round-trips the golden vectors", () => {
   for (const v of dataFixture.vectors) {
-    const { header, payload } = decodeDataFrame(fromB64(v.frame_b64));
+    const { header, payload, byteLength } = decodeDataFrame(fromB64(v.frame_b64));
     assertEquals(header, v.header as FrameHeader, v.name);
     assertEquals(payload, fromB64(v.payload_b64), v.name);
+    assertEquals(byteLength, fromB64(v.frame_b64).byteLength, v.name);
   }
 });
 

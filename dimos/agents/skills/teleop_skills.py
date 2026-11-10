@@ -24,7 +24,6 @@ from dimos.control.tasks.operator_hold_task.operator_hold_task import (
     HoldRoute,
     OperatorHoldStatus,
 )
-from dimos.core.core import rpc
 from dimos.core.module import Module
 
 
@@ -36,14 +35,6 @@ class TeleopSkills(Module):
     """
 
     _coordinator: OperatorHoldSpec
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
 
     @skill
     def request_operator(self, reason: str) -> SkillResult:
@@ -68,6 +59,3 @@ class TeleopSkills(Module):
             "Operator hold is on: the robot is stopped until a person releases it. "
             f"The operator sees: {status.reason}"
         )
-
-
-teleop_skills = TeleopSkills.blueprint

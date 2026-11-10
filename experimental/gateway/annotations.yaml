@@ -288,6 +288,12 @@ robots:
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
+        unitree-g1-replay-mesh:
+          title: G1 RGB-D mesh replay
+          description: 'Replays a G1 recording and reconstructs a colored 3D triangle mesh from its RealSense RGB-D stream: no robot needed.'
+          recommended_config:
+          - <<: *recording
+            streams: [[color_image], [realsense_depth_image], [realsense_camera_info], [tf]]
         unitree-g1-teleop:
           title: G1 VR teleop + recording
           description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
@@ -378,14 +384,21 @@ robots:
       manufacturer: DeepRobotics
       dirs: [dimos/robot/deeprobotics/m20]
       blueprints:
-        deeprobotics-m20-kronknav-control:
-          title: M20 3D navigation
+        m20:
+          title: 'M20: navigation'
           description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
+        m20-sim-nav:
+          title: 'M20 in simulation (navigation)'
+          description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        m20-sim-nav-episode:
+          title: 'M20 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated M20 navigation stack. Run by dimos nav-bench.'
+          hidden: true
     alfred:
       name: Alfred
       description: A DIY mobile base with a Mid-360 and a RealSense mast.
@@ -626,11 +639,14 @@ robots:
       dirs: [dimos/robot/manipulators/makermods_metal]
       defaults:
         recommended_config:
-        - {module: ControlCoordinator, field: can_port, label: CAN port or USB serial}
+        - {module: metalconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        makermods-metal-connection-control:
+          title: Metal connection control
+          description: Direct CAN connection and joint trajectory control for a Metal arm; requires a CAN selector; use simulation for a mock connection.
         coordinator-makermods-metal:
           title: Metal coordinator
-          description: A Metal arm behind a ControlCoordinator.
+          description: Metal trajectory and gripper control through its connection module.
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
@@ -642,8 +658,8 @@ robots:
       dirs: [dimos/robot/manipulators/dual_makermods_metal]
       defaults:
         recommended_config:
-        - {module: ControlCoordinator, field: left_can_port, label: Left CAN port or USB serial}
-        - {module: ControlCoordinator, field: right_can_port, label: Right CAN port or USB serial}
+        - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
+        - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
       blueprints:
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
@@ -655,11 +671,23 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/openyam]
       defaults:
-        recommended_config: *can_arm_config
+        recommended_config:
+        - *robot_or_simulator
+        - {module: openyamconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openyam-connection-control:
+          title: OpenYAM connection control
+          description: Direct CAN connection and joint trajectory control for an OpenYAM arm; requires a CAN selector; use simulation for a mock connection.
         openyam-teach-collection:
           title: OpenYAM hand-guided recording
           description: Guide an OpenYAM arm by hand and record demonstrations.
+          recommended_config:
+          - *robot_or_simulator
+          - module: openyamteachconnection
+            field: can_port
+            label: CAN port or USB serial
+            placeholder: can0
+            when: {simulation: ''}
         openyam-lerobot-rollout:
           title: OpenYAM policy rollout
           description: Run a trained LeRobot policy on an OpenYAM arm.
@@ -706,7 +734,15 @@ robots:
       type: arm
       manufacturer: null
       dirs: [dimos/robot/manipulators/openarm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
+        - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openarm-connection-control:
+          title: OpenArm connection control
+          description: Direct CAN connections and joint trajectory control for OpenArm; requires both CAN selectors; use simulation for a mock connection.
         openarm-planner-coordinator:
           title: OpenArm motion planning
           description: Motion planning and execution for the bimanual OpenArm.
@@ -715,7 +751,7 @@ robots:
           description: The OpenArm behind a ControlCoordinator (a building block).
         teleop-webxr-openarm:
           title: OpenArm VR teleop
-          description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+          description: Both VR controllers drive the bimanual OpenArm; requires both CAN selectors, or simulation for a mock connection.
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -725,7 +761,7 @@ robots:
       defaults:
         recommended_config:
         - *robot_or_simulator
-        - module: controlcoordinator
+        - module: b601dmconnection
           field: can_port
           label: CAN port
           placeholder: /dev/ttyACM0
