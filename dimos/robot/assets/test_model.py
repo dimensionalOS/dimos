@@ -868,7 +868,14 @@ def test_a_usd_model_from_a_file_is_read_lazily(tmp_path: Path) -> None:
     scene.write_text(_SCENE_USDA)
 
     assert model.usd == _SCENE_USDA
-    assert model.root_link == "room"
+
+
+def test_a_usd_model_from_a_file_names_its_root_link(tmp_path: Path) -> None:
+    pytest.importorskip("pxr")
+    scene = tmp_path / "room.usda"
+    scene.write_text(_SCENE_USDA)
+
+    assert robot_model.UsdModel.from_file(scene).root_link == "room"
 
 
 _JOINTED_USDA = """#usda 1.0

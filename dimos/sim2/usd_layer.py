@@ -56,7 +56,7 @@ def scene_as_files(usd: str, fetch: Callable[[str], bytes]) -> Path:
     from dimos.robot.assets.usd_assets import asset_attributes
 
     pxr = load_pxr()
-    layer = layer_from(pxr, usd, "a scene")
+    layer = layer_from(pxr, usd, "a scene", None)
     _ASSETS.mkdir(parents=True, exist_ok=True)
     here: dict[str, str] = {}
     stack, rewritten = [layer.pseudoRoot], 0
