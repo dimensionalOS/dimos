@@ -23,8 +23,8 @@ fix is good enough, and hands it to :meth:`PremapModule.submit`. See ``lidar/mod
 Named locations live here too, in the ``map`` frame, so every new fix moves them with the old
 map. They are not tf frames: the list on ``named_locations`` is where they are read from.
 
-An empty request on the shared ``render_file_request`` topic resends the list, which is how a
-recording that starts later gets a snapshot of it.
+``named_locations_request`` resends the list, which is how a page or a recording that starts
+later gets a snapshot of it.
 
 ``named_locations`` is in and out: the whole list, as an ``InteractiveMarkerUpdate`` whose
 ``poses`` are ``InteractiveMarkerPose`` {header.frame_id = ``map``, pose, name}. Anyone may
@@ -227,8 +227,8 @@ class PremapModule(Module):
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
-    # frontends publish on here when they want render info
-    render_file_request: In[String]
+    # frontends publish on here when they want the list
+    named_locations_request: In[String]
 
     _placed: bool = False
 
@@ -376,16 +376,15 @@ class PremapModule(Module):
         logger.info(f"named locations: {list(locations)}")
         self.named_locations.publish(self.locations_snapshot())
 
-    async def handle_render_file_request(self, request: String) -> None:
-        """An empty request on the shared request topic: resend every named location.
+    async def handle_named_locations_request(self, _: String) -> None:
+        """Resend every named location.
 
-        A recording that starts after this module did would otherwise hold no snapshot of the
-        locations, and the next run reads them back out of the recording. A named request belongs
-        to whichever module owns that name (urdf_manager serves the URDF and the files it names),
-        so this stays silent on one.
+        The list goes out at ``start()`` and on each edit, so a page that connected after this
+        module came up hears nothing until it asks -- zenoh keeps no history for a late
+        subscriber, however reliable the topic. A recording that starts later asks too, since
+        the next run reads the locations back out of the recording.
         """
-        if request.data == "":
-            self.named_locations.publish(self.locations_snapshot())
+        self.named_locations.publish(self.locations_snapshot())
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
         """``frame -> child``: from this module's own fix for world/map, else from tf."""

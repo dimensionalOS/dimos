@@ -165,21 +165,17 @@ def test_a_list_from_another_run_is_applied_too(make):
     assert published[-1].server_id == module.locations_snapshot().server_id
 
 
-def test_an_empty_request_on_the_shared_topic_resends_the_list(make):
-    """A recording that starts later asks for the list, so its snapshot ends up in the recording."""
+def test_a_request_resends_the_list(make):
+    """A page or a recording that starts later asks, since nothing replays what it missed."""
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map")})
 
     published.clear()
-    asyncio.run(module.handle_render_file_request(String("")))
+    asyncio.run(module.handle_named_locations_request(String("")))
     assert len(published) == 1
     assert positions(published[-1]) == {"dock": (1, 2)}
     assert all(p.header.frame_id == "map" for p in published[-1].poses)
-
-    # another module's file: this one stays silent
-    asyncio.run(module.handle_render_file_request(String("/some/robot.urdf")))
-    assert len(published) == 1
 
 
 def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
