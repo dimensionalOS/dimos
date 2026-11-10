@@ -755,16 +755,22 @@ class RerunBridgeModule(Module):
                     keyed[channel] = attrgetter("seq")
 
         if self.config.topics:
-            allowed = {"dimos/" + name.strip("/") for name in self.config.topics}
-            message_types = {
-                channel: kind
-                for channel, kind in message_types.items()
-                if channel in allowed or channel.strip("/") in self.config.topics
+            # Resolve the requested logical names to the active backend's key
+            # prefix: a hosted run publishes under `dimos-domains/<domain>/`, so
+            # subscribing to the plain `dimos/...` key would receive nothing.
+            scoped = {
+                name.strip("/"): transport_topic(name.strip("/"), self.config.g)
+                for name in self.config.topics
             }
+            selected: dict[str, type[Any]] = {}
+            for channel, kind in message_types.items():
+                logical = KEY_PREFIX.sub("", channel.strip("/"))
+                if logical in scoped:
+                    selected[scoped[logical]] = kind
             if isinstance(pubsub, Zenoh):
                 unsubs = [
                     pubsub.subscribe(ZenohTopic(channel, message_type=kind), self._on_message)
-                    for channel, kind in message_types.items()
+                    for channel, kind in selected.items()
                 ]
 
                 def unsubscribe() -> None:
@@ -791,7 +797,9 @@ class RerunBridgeModule(Module):
             return unsubscribe
         if isinstance(pubsub, LCM):
             return pubsub.subscribe_all(self._on_message)
-        return pubsub.subscribe_all(self._on_message, keyed=keyed)  # type: ignore[call-arg]
+        # Typed backends (Zenoh's encoder mixin) also take the declared types.
+        subscribe_all = cast("Callable[..., Callable[[], None]]", pubsub.subscribe_all)
+        return subscribe_all(self._on_message, keyed=keyed, message_types=message_types)
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
