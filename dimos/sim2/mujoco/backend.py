@@ -157,7 +157,8 @@ class MujocoBackend:
 
         initial = {}
         for robot in self._robots.values():
-            for joint, (_kp, _kd, target) in usd_drives(robot.model.usd).items():
+            drives = usd_drives(robot.model.usd, robot.model._asset_root())
+            for joint, (_kp, _kd, target) in drives.items():
                 initial[f"{robot.robot_id}/{joint}"] = target
         return initial
 
