@@ -44,7 +44,80 @@ dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
+dimos run r1pro-vr-teleop        # Quest VR: both arms + torso, safe fake backend
 ```
+
+## Quest VR teleop
+
+`r1pro-vr-teleop` is the operator stack for a Meta Quest browser: both
+controllers drive both arms and the top torso pitch/yaw joints through one
+`teleop_ik` task. The lower two pitch joints are controlled independently
+by the joystick lift task. Top pitch has
+5× posture cost and a 0.15 rad/s velocity cap; arm and yaw costs are unchanged. Each trigger drives its own jaw through
+the existing gripper task with a separate input binding; the jaws never enter the IK model or a
+trajectory. Left thumbstick controls forward/lateral velocity and right
+thumbstick x controls yaw, reusing Go2's thumbstick mapping and deadzone.
+`ArmTeleopModule` publishes original `left_joy` / `right_joy` packets, not
+robot movement commands. `JoystickTeleopMapper` applies the axis mapping,
+deadzone, scales and input expiry, then publishes body-frame `Twist` and
+`Float32` lift speed (m/s). The existing `twist_velocity` task maps the Twist
+onto the named base joints; the connection still owns vendor conversion.
+Hold right-stick click to enable body motion: left X/Y translate, right X
+turns and right Y lifts/lowers. Default caps are 0.3 m/s, 0.5 rad/s and
+0.03 m/s. `make_r1pro_vr_teleop(joystick={...})` overrides mapper config.
+The R1Pro height task owns only torso joints 1/2; IK owns torso 3/4 and arms.
+The lift follows the pinned URDF's two-link geometry, retaining fore/aft
+position, with a 0.45 m minimum hip-relative height and 0.15 rad/s joint cap.
+Full extension is the upper boundary, so raising an already upright waist does
+nothing. Joystick lift and `full_torso=True` are rejected as overlapping owners.
+Both tasks read measured feedback independently; neither feeds the other.
+Raw Joy is emitted only on receipt: old input is not periodically re-stamped.
+Stale/disabled input zeros body intent; the lift task independently times out
+and clears its target on E-stop or preemption. Software stop is not vendor cancel.
+Operator hold is explicitly scoped to the upper-body joints;
+it does not claim jaw positions or chassis velocity interfaces. E-stop stops command
+publication and invalidates velocity intent. After clearing it, fresh velocity
+input may drive the chassis; the arm position hold still awaits acknowledgement.
+
+It starts on the **fake backend by default** — `FakeR1ProConnection`, an
+in-memory closed loop on the same contract (`position_command`, `velocity_command`,
+`joint_state`, the same 18-joint order, limits and metres for jaw openings).
+It pulls in no ROS 2, vendor stack, camera, lidar, CAN or robot; the Quest
+input visibly moves the simulated joints and jaws through the coordinator's
+`joint_state` feedback and the viewer. Selecting the real robot is explicit
+and only assembles the stack; starting it against hardware is a separate,
+deliberate operation:
+
+```bash
+dimos run r1pro-vr-teleop                       # fake, safe anywhere
+# real (assembly only, does NOT start hardware):
+#   python -c "from dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_vr_teleop \
+#       import make_r1pro_vr_teleop; make_r1pro_vr_teleop(backend='real')"
+```
+
+Both backends share the Quest input module, the task set, the IK model and
+the coordinator; only the connection module differs. Opening
+`https://<host>:8443/teleop` in the headset connects the browser; the actual
+headset session is verified by a human, not by CI.
+
+In fake mode, `FakeR1ProConnection.base_state()` reads the in-memory integrated
+chassis x/y/yaw and vx/vy/wz over RPC (`dimos shell`); joint feedback is also
+available on `coordinator_joint_state`. No physical base driver is started.
+
+**Deadman and session teardown.** Middle-finger grips engage both hands and
+capture the controller references. Releasing either grip, controller input
+going stale, or a coordinator E-STOP ends the session and clears the
+references, so the next engagement starts from a fresh capture and no old
+intent replays. The connection rejects jaw writes while feedback is invalid,
+and feedback recovery alone does not reauthorize an interrupted target. A
+different target is required; the unchanged generic task does not provide an
+intent-generation signal for reissuing the same opening.
+
+**Stop is not a cancel.** As with the rest of the R1 Pro stack, stopping the
+coordinator, the deadman, or an E-STOP only stops *us* from sending new
+targets. None of it is a vendor cancel or a physical E-stop; a command the
+vendor controller already accepted can keep executing. Use the robot's own
+E-stop hardware for a real emergency stop.
 
 ## Control path
 
