@@ -62,6 +62,7 @@ from dimos.robot.galaxea.r1pro.connection import (
     R1ProConnection,
 )
 from dimos.robot.galaxea.r1pro.fake_connection import FakeR1ProConnection, FakeR1ProConnectionConfig
+from dimos.robot.galaxea.r1pro.torso_height_task import R1ProTorsoHeightTask
 from dimos.teleop.joystick import JoystickTeleopMapper
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.utils.testing.waiting import wait_until
@@ -407,6 +408,8 @@ def test_ik_steers_arms_and_top_torso_joints() -> None:
     # Both lower pitch joints are outside the controlled set, so the solver
     # locks them at their feedback instead of folding the whole waist.
     assert not any(j in teleop.joint_names for j in R1PRO_UPPER_BODY_JOINTS[:2])
+    with pytest.raises(ValueError, match="full_torso IK would overlap"):
+        make_r1pro_vr_teleop(full_torso=True)
     full = next(t for t in _vr_tasks(full_torso=True) if t.type == "teleop_ik")
     assert full.joint_names == list(R1PRO_UPPER_BODY_JOINTS)
     assert len(full.joint_names) == 18
@@ -756,8 +759,9 @@ def test_estop_stops_the_chassis_and_clearing_it_does_not_resume_motion() -> Non
         wait_until(lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0)
 
 
-def test_body_sticks_move_base_and_lower_torso_without_ik_joint_overlap() -> None:
-    with Chain(enable_button=3) as chain:
+@pytest.mark.parametrize("stop", ["clutch", "timeout", "estop"])
+def test_body_sticks_move_base_and_lower_torso_without_ik_joint_overlap(stop: str) -> None:
+    with Chain(enable_button=3, deadman_s=0.5) as chain:
         # One actual Joy event enables driving and requests lower height.
         chain.send_sticks(left_y=-0.3, right_y=1.0, enable=True)
         wait_until(
@@ -768,7 +772,25 @@ def test_body_sticks_move_base_and_lower_torso_without_ik_joint_overlap() -> Non
         assert chain.body_q()[1] < 0.0
         assert chain.body_q()[2:] == [0.0] * 16
         lift = chain.coordinator._tasks["torso_height"]
+        assert isinstance(lift, R1ProTorsoHeightTask)
         assert not lift.claim().joints & chain.task.claim().joints
-        chain.send_sticks(enable=False)
+        if stop == "clutch":
+            chain.send_sticks(enable=False)
+        elif stop == "estop":
+            assert chain.coordinator.set_estop(True)
+        # No further input in the timeout case: neither module may replay Joy.
         wait_until(lambda: chain.base_state()["vx"] == 0.0, timeout=5.0)
+        wait_until(lambda: lift._target is None, timeout=5.0)
+
+        def settled() -> bool:
+            with chain.fake._lock:
+                return chain.fake._q == chain.fake._target_q
+
+        wait_until(settled, timeout=5.0)
+        if stop == "estop":
+            assert chain.coordinator.set_estop(False)
+        stopped = chain.body_q()
+        time.sleep(0.1)
+        assert chain.body_q() == stopped
+        assert chain.base_state()["vx"] == 0.0
         assert chain.joystick.config.enable_button == 3

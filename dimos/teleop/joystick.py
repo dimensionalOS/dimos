@@ -33,7 +33,7 @@ class JoystickTeleopMapper(Module):
 
     Joy axes are x, y, trigger, grip. The right thumbstick button is a
     hold-to-enable clutch (None disables it). Invalid input clears that hand.
-    Source age uses wall time; hand expiry uses only monotonic receive time.
+    Source age uses wall time, then advances on the monotonic clock.
     """
 
     config: JoystickTeleopConfig
@@ -85,18 +85,19 @@ class JoystickTeleopMapper(Module):
                 return
             self._hands.pop(hand, None)
             try:
+                age = time.time() - joy.ts
                 valid = (
                     isinstance(joy, Joy)
                     and len(joy.axes) >= 2
                     and all(math.isfinite(a) and -1 <= a <= 1 for a in joy.axes)
                     and math.isfinite(joy.ts)
-                    and -0.1 <= time.time() - joy.ts <= self.config.input_timeout_s
+                    and -0.1 <= age <= self.config.input_timeout_s
                 )
                 button = self.config.enable_button
                 enabled = button is None or (len(joy.buttons) > button and joy.buttons[button] == 1)
                 if valid:
                     x, y = (a if abs(a) > self.config.deadzone else 0.0 for a in joy.axes[:2])
-                    self._hands[hand] = (x, y, time.monotonic(), enabled)
+                    self._hands[hand] = (x, y, time.monotonic() - max(0.0, age), enabled)
             except (AttributeError, TypeError, ValueError, OverflowError):
                 pass
             self._publish()

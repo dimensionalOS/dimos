@@ -227,8 +227,8 @@ def make_r1pro_vr_teleop(
 ) -> Blueprint:
     """Assemble the R1 Pro Quest VR teleop stack on the chosen backend.
 
-    Both backends share the teleop module (poses, buttons, jaws and the
-    thumbstick twist), the task set, the IK model and the coordinator; only
+    Both backends share device input, the independent joystick mapper,
+    the task set, the IK model and the coordinator; only
     the connection module differs. ``fake`` (the default) instantiates no
     ROS, vendor or sensor code at all. ``real`` selects ``R1ProConnection``;
     other keyword args are its config fields. ``backend="real"`` only
@@ -251,9 +251,8 @@ def make_r1pro_vr_teleop(
     else:
         raise ValueError(f"unknown backend {backend!r}, expected 'fake' or 'real'")
 
-    # Full stick deflection is the chassis' own limit on each axis, so the
-    # teleop scaling never asks for more than declared velocity limits; the same
-    # range is enforced again by the connection's limits table.
+    # Conservative operator speeds stay within declared chassis limits;
+    # the same limits are enforced again by the connection.
     vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
     teleop_bp = ArmTeleopModule.blueprint(body_tracking_mode="optional")
     joystick_bp = JoystickTeleopMapper.blueprint(

@@ -70,6 +70,11 @@ def test_invalid_source_age_and_independent_freshness(rig, monkeypatch):
     emit(ports, "right", ts=1000.0)
     twist = sent["base_twist"][-1]
     assert twist.linear.x == 0 and twist.angular.z == pytest.approx(0.5)
+    emit(ports, "right", ts=999.85)
+    assert sent["lift_rate"][-1].data == pytest.approx(0.03)
+    clock[0] += 0.06
+    module._watchdog()
+    assert sent["base_twist"][-1].is_zero() and sent["lift_rate"][-1].data == 0
     for kwargs in (
         {"axes": ()},
         {"axes": (float("nan"), 0)},

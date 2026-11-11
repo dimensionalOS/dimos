@@ -373,8 +373,10 @@ class WebXRTeleopModule(Module):
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
             self._publish_button_state(None, None)
-            for output, hand in ((self.left_joy, "left"), (self.right_joy, "right")):
-                output.publish(Joy(ts=time.time(), frame_id=hand, axes=[0.0] * 4, buttons=[0] * 6))
+            for output, frame_id in ((self.left_joy, "left"), (self.right_joy, "right")):
+                output.publish(
+                    Joy(ts=time.time(), frame_id=frame_id, axes=[0.0] * 4, buttons=[0] * 6)
+                )
             self._release_all_buttons()
             self._publish_safe_command()
 
