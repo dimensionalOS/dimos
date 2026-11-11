@@ -27,8 +27,6 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -111,112 +109,6 @@ class Mid360Config(NativeModuleConfig):
         return config
 
 
-_LIDAR_TOKEN = "@LIDAR@"
-_IMU_TOKEN = "@IMU@"
-_IMU_OFFSET_TOKEN = "@IMU_OFFSET@"
-
-_MID360_USD = """\
-#usda 1.0
-(
-    defaultPrim = "mid360"
-    metersPerUnit = 1
-    upAxis = "Z"
-)
-
-def Xform "mid360"
-{
-    def Xform "lidar_link" (
-        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
-        displayName = "@LIDAR@"
-    )
-    {
-        def Xform "lidar_link_body" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
-            displayName = "@LIDAR@_body"
-        )
-        {
-            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, -0.02, 1) )
-            uniform token[] xformOpOrder = ["xformOp:transform"]
-
-            def Cube "visual_0"
-            {
-                color3f[] primvars:displayColor = [(0.25, 0.25, 0.27)]
-                double size = 1
-                float3 xformOp:scale = (0.065, 0.065, 0.06)
-                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
-            }
-
-            def Cube "collision_1" (
-                prepend apiSchemas = ["PhysicsCollisionAPI"]
-            )
-            {
-                double size = 1
-                token visibility = "invisible"
-                float3 xformOp:scale = (0.065, 0.065, 0.06)
-                matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1) )
-                uniform token[] xformOpOrder = ["xformOp:scale", "xformOp:transform"]
-            }
-        }
-
-        def Xform "imu_link" (
-            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
-            displayName = "@IMU@"
-        )
-        {
-            matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (@IMU_OFFSET@, 1) )
-            uniform token[] xformOpOrder = ["xformOp:transform"]
-        }
-    }
-
-    def Scope "joints"
-    {
-        def PhysicsFixedJoint "lidar_link_to_body" (
-            displayName = "@LIDAR@_to_body"
-        )
-        {
-            rel physics:body0 = </mid360/lidar_link>
-            rel physics:body1 = </mid360/lidar_link/lidar_link_body>
-            point3f physics:localPos0 = (0, 0, -0.02)
-            point3f physics:localPos1 = (0, 0, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsFixedJoint "lidar_link_to_imu_link" (
-            displayName = "@LIDAR@_to_@IMU@"
-        )
-        {
-            rel physics:body0 = </mid360/lidar_link>
-            rel physics:body1 = </mid360/lidar_link/imu_link>
-            point3f physics:localPos0 = (@IMU_OFFSET@)
-            point3f physics:localPos1 = (0, 0, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-    }
-}
-
-"""
-
-
-def _imu_offset() -> str:
-    from dimos.hardware.sensors.lidar.pointlio.module import PointLioConfig
-
-    field = PointLioConfig.model_fields["extrinsic_t"]
-    assert field.default_factory is not None, "extrinsic_t lost its default"
-    extrinsic: Sequence[float] = field.get_default(call_default_factory=True)
-    return ", ".join(repr(-value) for value in extrinsic)
-
-
-def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
-    return (
-        _MID360_USD.replace(_LIDAR_TOKEN, lidar_frame)
-        .replace(_IMU_TOKEN, imu_frame)
-        .replace(_IMU_OFFSET_TOKEN, _imu_offset())
-    )
-
-
 def _resolved_host_ip(config: Mid360Config) -> str | None:
     """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
@@ -243,13 +135,6 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    @rpc
-    def get_usd(self) -> list[str]:
-        return [
-            str(Path(__file__).parent),
-            mid360_usd(self.config.frame_id, self.config.imu_frame_id),
-        ]
 
 
 # Verify protocol port compliance (mypy will flag missing ports)
