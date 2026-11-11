@@ -379,7 +379,7 @@ def _unit_path() -> Path:
 
 def _unit_text() -> str:
     """`dimos agent gateway` from this checkout, with the installing shell's PATH and XDG dirs."""
-    captured = ["PATH", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
+    captured = ["PATH", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
     environment = [
         f"Environment={_quoted(f'{name}={os.environ[name]}')}"
         for name in captured

@@ -59,6 +59,7 @@ async function scratch(): Promise<{ readonly root: string; readonly paths: Agent
   const paths = agentPaths({
     HOME: root,
     XDG_CONFIG_HOME: join(root, "config"),
+    XDG_DATA_HOME: join(root, "data"),
     XDG_STATE_HOME: join(root, "state"),
     XDG_CACHE_HOME: join(root, "cache"),
     XDG_RUNTIME_DIR: join(root, "run"),
@@ -385,6 +386,7 @@ test(
   async (t) => {
     const { root, paths, remove } = await scratch();
     t.after(remove);
+    assert.equal(paths.userSkillsDir, join(root, "data", "dimos", "agent", "skills"));
     const skillDir = join(paths.userSkillsDir, "dimensional");
     await mkdir(join(skillDir, "references"), { recursive: true });
     const path = join(skillDir, "SKILL.md");

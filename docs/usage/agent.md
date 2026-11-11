@@ -100,7 +100,7 @@ Type `/skill:NAME [REQUEST]` to load a skill before the agent starts your reques
 
 Slash completion lists available skills alongside terminal commands. The harness reads the full `SKILL.md` and supplies its instructions and base directory with your request before calling the model. Your message keeps the slash text in the conversation history, followed by one loaded-skill entry. Click that entry or use `/expand` to see its contents. Unknown or unreadable skills report an error without starting a model turn.
 
-Bundled skills live in `dimos/agents/harness/skills/`. Add your own at `~/.config/dimos/agent/skills/NAME/SKILL.md`, with `name` and `description` in YAML frontmatter. A skill directory can also contain `scripts/`, `references/`, and `assets/`; the agent resolves their relative paths from that directory. Your skill replaces a bundled skill with the same name.
+Bundled skills live in `dimos/agents/harness/skills/`. Add your own at `~/.local/share/dimos/agent/skills/NAME/SKILL.md`, with `name` and `description` in YAML frontmatter. A skill directory can also contain `scripts/`, `references/`, and `assets/`; the agent resolves their relative paths from that directory. When `XDG_DATA_HOME` is set, the user skills directory is `$XDG_DATA_HOME/dimos/agent/skills/`. Your skill replaces a bundled skill with the same name.
 
 The gateway loads the skill catalog at startup. Restart it after adding skills or changing their catalog metadata. Skill contents are read for each new explicit invocation. To restart, run `dimos agent stop`, then `dimos agent`, or restart `dimos-agent.service` if you use the service.
 
@@ -112,7 +112,7 @@ On a robot, run the gateway as the systemd user service `dimos-agent.service`, s
 dimos agent service install
 ```
 
-`install` writes `~/.config/systemd/user/dimos-agent.service`, stops a gateway that `dimos agent` started, and enables and starts the service. The unit runs `dimos agent gateway` from this checkout's `.venv`, with the checkout as its working directory. It keeps the `PATH` of the shell that ran `install`, so the service finds the same Node. It also keeps that shell's `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` when they are set, so the service and your terminals use the same directories.
+`install` writes `~/.config/systemd/user/dimos-agent.service`, stops a gateway that `dimos agent` started, and enables and starts the service. The unit runs `dimos agent gateway` from this checkout's `.venv`, with the checkout as its working directory. It keeps the `PATH` of the shell that ran `install`, so the service finds the same Node. It also keeps that shell's `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` when they are set, so the service and your terminals use the same directories.
 
 systemd runs a user service only while you are logged in, unless lingering is on for your user. `install` prints a note when lingering is off. To start the gateway at boot, turn lingering on:
 
@@ -150,7 +150,7 @@ A running gateway keeps the build it started with. After a rebuild, `dimos agent
 |---|---|---|
 | `~/.config/dimos/agent/` | gateway | `auth.json` and `config.json`, copied once from `~/.dimcode` when it exists |
 | `~/.config/dimos/agent/models.json` | you | Optional provider overrides in pi's `models.json` format, such as a base URL |
-| `~/.config/dimos/agent/skills/` | you | Your own skills, one `NAME/SKILL.md` each. The agent lists them after the bundled ones in `dimos/agents/harness/skills/`. |
+| `~/.local/share/dimos/agent/skills/` | you | Your own skills, one `NAME/SKILL.md` each. The agent lists them after the bundled ones in `dimos/agents/harness/skills/`. |
 | `~/.config/systemd/user/dimos-agent.service` | `dimos agent service install` | The service unit |
 | `~/.local/state/dimos/agent/agent.sqlite` | gateway | Conversations, entries, tasks, submissions and documents, including jobs and the event and trajectory positions |
 | `~/.local/state/dimos/agent/tool-results/` | gateway | Full text of cut tool results and inputs |

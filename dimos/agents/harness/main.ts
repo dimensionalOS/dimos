@@ -56,7 +56,7 @@ type AgentOptions = {
   readonly toolResultsDir: string;
   /** Rendered previews; `~/.cache/dimos/agent/render/`. */
   readonly renderCacheDir: string;
-  /** The bundled `harness/skills/`, then `~/.config/dimos/agent/skills/`. */
+  /** The bundled `harness/skills/`, then `~/.local/share/dimos/agent/skills/`. */
   readonly skillRoots: readonly string[];
   readonly defaults: () => ConversationDefaults;
   readonly gatewayEnv: NodeJS.ProcessEnv;
