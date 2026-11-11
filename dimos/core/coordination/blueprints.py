@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from functools import cached_property, reduce
 import operator
@@ -188,8 +188,53 @@ class BlueprintAtom:
         )
 
 
+@dataclass(frozen=True)
+class ChoiceAtom:
+    """A named slot filled by one of several sub-blueprints, picked when the blueprint is solidified.
+
+    autoconnect(
+        VisModule.blueprint(),
+        ChoiceAtom(
+            name="PointClearing",
+            default="raycasting",
+            choices=dict(raycasting=RaytracerModule.blueprint(), column_carving=VoxelMapper.blueprint()),
+        ),
+    )
+    """
+
+    name: str
+    choices: Mapping[str, "Blueprint | ChoiceAtom"]
+    default: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("ChoiceAtom needs a name")
+        if not self.choices:
+            raise ValueError(f"ChoiceAtom {self.name!r} needs at least one choice")
+        if self.default is not None and self.default not in self.choices:
+            raise ValueError(
+                f"ChoiceAtom {self.name!r} default {self.default!r} is not one of "
+                f"{', '.join(self.choices)}"
+            )
+        branches = {key: _as_blueprint(value) for key, value in self.choices.items()}
+        object.__setattr__(self, "choices", MappingProxyType(branches))
+
+    def branch(self, selections: Mapping[str, str]) -> "Blueprint":
+        picked = selections.get(self.name, self.default)
+        if picked is None:
+            raise ValueError(
+                f"Choice {self.name!r} has no default; pick one of {', '.join(self.choices)} "
+                f"(e.g. `--choose {self.name}={next(iter(self.choices))}`)"
+            )
+        if picked not in self.choices:
+            raise ValueError(
+                f"Choice {self.name!r} has no option {picked!r}; pick one of {', '.join(self.choices)}"
+            )
+        return cast("Blueprint", self.choices[picked])
+
+
 # MappingProxyType fields: sent as plain dicts, rebuilt on decode.
-_PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map")
+_PROXY_FIELDS = ("transport_map", "global_config_overrides", "remapping_map", "choice_selections")
 
 
 @dataclass(frozen=True)
@@ -209,6 +254,10 @@ class Blueprint:
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
     hosted_placements: tuple[HostedPlacement, ...] = field(default_factory=tuple)
+    # Unpicked slots; solidify() replaces each with its chosen branch.
+    choice_atoms: tuple[ChoiceAtom, ...] = field(default_factory=tuple)
+    # Choice name to the picked option, applied by solidify().
+    choice_selections: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         module_names = {atom.name for atom in self.blueprints}
@@ -273,6 +322,11 @@ class Blueprint:
         controlling machine. Globals reach every Host; per-machine ones like
         ``n_workers`` belong in each Host's env.
         """
+        if not self.solidified:
+            raise ValueError(
+                "hosted() cannot place a blueprint with unpicked choices; "
+                "call hosted() on each choice's blueprint, or on the solidified blueprint"
+            )
         if not self.blueprints:
             raise ValueError("hosted() requires at least one module")
         if host is not None and (not isinstance(host, str) or not host.strip()):
@@ -359,13 +413,7 @@ class Blueprint:
 
         expose_set = frozenset(expose)
 
-        effective_names = set()
-        for atom in self.blueprints:
-            for stream in atom.streams:
-                effective = self.remapping_map.get((atom.name, stream.name), stream.name)
-                if isinstance(effective, str):
-                    effective_names.add(effective)
-
+        effective_names = self._stream_names()
         unknown = expose_set - effective_names
         if unknown:
             raise ValueError(
@@ -411,9 +459,25 @@ class Blueprint:
             else:
                 new_transports[f"{prefix}/{name}", type_] = _reprefix_transport(transport, prefix)
 
+        new_choice_atoms = tuple(
+            ChoiceAtom(
+                name=f"{prefix}/{atom.name}",
+                default=atom.default,
+                choices={
+                    key: branch.namespace(prefix, expose=expose_set & branch._stream_names())
+                    for key, branch in cast("Mapping[str, Blueprint]", atom.choices).items()
+                },
+            )
+            for atom in self.choice_atoms
+        )
+
         return replace(
             self,
             blueprints=tuple(new_atoms),
+            choice_atoms=new_choice_atoms,
+            choice_selections=MappingProxyType(
+                {f"{prefix}/{name}": picked for name, picked in self.choice_selections.items()}
+            ),
             remapping_map=MappingProxyType(new_remap),
             transport_map=MappingProxyType(new_transports),
             hosted_placements=tuple(
@@ -431,6 +495,104 @@ class Blueprint:
     def configurators(self, *checks: "SystemConfigurator") -> "Blueprint":
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
+    def _stream_names(self) -> set[str]:
+        """Effective stream names of this blueprint and of every choice branch."""
+        names = {
+            effective
+            for atom in self.blueprints
+            for stream in atom.streams
+            if isinstance(
+                effective := self.remapping_map.get((atom.name, stream.name), stream.name), str
+            )
+        }
+        for choice in self.choice_atoms:
+            for branch in cast("Mapping[str, Blueprint]", choice.choices).values():
+                names |= branch._stream_names()
+        return names
+
+    @property
+    def solidified(self) -> bool:
+        """False while any ChoiceAtom, at any depth, is still unpicked."""
+        return not self.choice_atoms
+
+    def choose(self, selections: Mapping[str, str] | None = None, **kwargs: str) -> "Blueprint":
+        """Pick options for choices by name, e.g. ``.choose(PointClearing="column_carving")``."""
+        return replace(
+            self,
+            choice_selections=MappingProxyType(
+                {**self.choice_selections, **(selections or {}), **kwargs}
+            ),
+        )
+
+    def solidify(self, selections: Mapping[str, str] | None = None, **kwargs: str) -> "Blueprint":
+        """Collapse every choice into its picked (else default) branch; a no-op when solidified.
+
+        Every combination of choices is stream- and rpc-checked first, so a bad
+        branch fails even when it is not the one picked.
+        """
+        if selections or kwargs:
+            return self.choose(selections, **kwargs).solidify()
+        return self._solidified
+
+    @cached_property
+    def _solidified(self) -> "Blueprint":
+        if self.solidified:
+            return self
+        unknown = set(self.choice_selections) - self.all_choice_names()
+        if unknown:
+            raise ValueError(
+                f"Unknown choice(s) {', '.join(sorted(unknown))}; "
+                f"this blueprint has {', '.join(sorted(self.all_choice_names()))}"
+            )
+        from dimos.core.coordination.module_coordinator import verify_every_choice
+
+        verify_every_choice(self)
+        return self.collapse(self.choice_selections)
+
+    def all_choice_names(self) -> set[str]:
+        """Names of every ChoiceAtom here and inside every branch."""
+        names = set()
+        for choice in self.choice_atoms:
+            names.add(choice.name)
+            for branch in cast("Mapping[str, Blueprint]", choice.choices).values():
+                names |= branch.all_choice_names()
+        return names
+
+    def choice_combinations(self) -> Iterator[dict[str, str]]:
+        """Every complete pick of this blueprint's choices, nested choices included."""
+
+        def expand(
+            pending: tuple[ChoiceAtom, ...], picked: dict[str, str]
+        ) -> Iterator[dict[str, str]]:
+            if not pending:
+                yield picked
+                return
+            first, rest = pending[0], pending[1:]
+            options = [picked[first.name]] if first.name in picked else list(first.choices)
+            for option in options:
+                branch = cast("Blueprint | None", first.choices.get(option))
+                if branch is not None:
+                    yield from expand((*branch.choice_atoms, *rest), {**picked, first.name: option})
+
+        yield from expand(self.choice_atoms, {})
+
+    def collapse(self, selections: Mapping[str, str]) -> "Blueprint":
+        """Replace each choice with its picked branch, without checking the other branches."""
+        if self.solidified:
+            return self
+        fixed = replace(self, choice_atoms=(), choice_selections=MappingProxyType({}))
+        branches = [choice.branch(selections).collapse(selections) for choice in self.choice_atoms]
+        # Branches go first so this blueprint's own modules and settings win over a branch's.
+        merged = autoconnect(*branches, fixed)
+        return replace(
+            merged,
+            transport_map=MappingProxyType({**merged.transport_map, **self.transport_map}),
+            global_config_overrides=MappingProxyType(
+                {**merged.global_config_overrides, **self.global_config_overrides}
+            ),
+            remapping_map=MappingProxyType({**merged.remapping_map, **self.remapping_map}),
+        )
+
     @cached_property
     def active_blueprints(self) -> tuple[BlueprintAtom, ...]:
         if not self.disabled_modules_tuple:
@@ -443,7 +605,16 @@ def transport_config_name(cls: type) -> str:
     return cls.__name__.removesuffix("Config").lower()
 
 
-def autoconnect(*blueprints: Blueprint) -> Blueprint:
+def _as_blueprint(item: "Blueprint | ChoiceAtom") -> Blueprint:
+    if isinstance(item, ChoiceAtom):
+        return Blueprint(blueprints=(), choice_atoms=(item,))
+    if not isinstance(item, Blueprint):
+        raise TypeError(f"Expected a Blueprint or ChoiceAtom, got {type(item).__name__}")
+    return item
+
+
+def autoconnect(*items: Blueprint | ChoiceAtom) -> Blueprint:
+    blueprints = tuple(map(_as_blueprint, items))
     all_atoms = [atom for blueprint in blueprints for atom in blueprint.blueprints]
     all_blueprints = tuple(_eliminate_duplicates(all_atoms))
     all_transports = dict(  # type: ignore[var-annotated]
@@ -487,6 +658,13 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
         hosted_placements=all_hosted_placements,
+        choice_atoms=tuple(
+            # Like modules, a later choice with the same name replaces an earlier one.
+            {choice.name: choice for bp in blueprints for choice in bp.choice_atoms}.values()
+        ),
+        choice_selections=MappingProxyType(
+            {name: picked for bp in blueprints for name, picked in bp.choice_selections.items()}
+        ),
     )
 
 

@@ -176,12 +176,32 @@ def _mcp_url(blueprint: Blueprint, coordinator: ModuleCoordinator) -> str | None
     return None
 
 
+def _read_choices(config_path: Path, choose: list[str]) -> dict[str, str]:
+    """Choice picks from the config file's ``choices`` section, then ``--choose NAME=OPTION``."""
+    from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+    from dimos.core.coordination.blueprint_config.sources import read_config_file
+
+    from_file = read_config_file(config_path).get("choices") or {}
+    if not isinstance(from_file, dict) or not all(isinstance(v, str) for v in from_file.values()):
+        raise BlueprintConfigError("config file section 'choices' must map choice names to options")
+    choices = dict(from_file)
+    for item in choose:
+        name, separator, option = item.partition("=")
+        if not separator or not name or not option:
+            raise BlueprintConfigError(f"--choose expects NAME=OPTION, got {item!r}")
+        choices[name] = option
+    return choices
+
+
 @cache_usage_locked
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    choose: list[str] = typer.Option(
+        [], "--choose", help="Pick a blueprint choice: NAME=OPTION (repeatable)"
+    ),
     config_path: Path = typer.Option(
         DEFAULT_CONFIG_PATH, "--config", "-c", help="Path to config file"
     ),
@@ -259,6 +279,11 @@ def run(
         raise typer.Exit(2) from error
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
+    try:
+        blueprint = blueprint.choose(_read_choices(config_path, choose)).solidify()
+    except (BlueprintConfigError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(2) from error
 
     if disable:
         disabled_classes = tuple(
