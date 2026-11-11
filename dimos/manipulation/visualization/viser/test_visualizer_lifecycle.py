@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import warnings
 
 import pytest
 import trimesh
@@ -68,6 +69,27 @@ class FakeSceneUrdf:
 
     def update_cfg(self, cfg: list[float]) -> None:
         self.cfg = list(cfg)
+
+
+class CollisionStrictUrdf:
+    """Like ViserUrdf, warns when asked to show collision meshes it did not load."""
+
+    def __init__(
+        self, _server: FakeServer, *, load_collision_meshes: bool = False, **_kwargs: object
+    ) -> None:
+        self.show_visual = True
+        self._loaded_collision_meshes = load_collision_meshes
+
+    @property
+    def show_collision(self) -> bool:
+        return False
+
+    @show_collision.setter
+    def show_collision(self, visible: bool) -> None:
+        if not self._loaded_collision_meshes:
+            warnings.warn(
+                "Cannot set `.show_collision`, since no collision meshes were loaded.", stacklevel=2
+            )
 
 
 class FakeServer:
@@ -597,6 +619,29 @@ def test_scene_prepares_urdf_applies_base_pose_and_rejects_wrong_root(
     wrong_root_config.model = RobotModel.from_file(non_fixed_world_root)
     with pytest.raises(ValueError, match="prepared URDF root 'world'"):
         scene.loaded_robot_description(materialized_model(wrong_root_config))
+
+
+def test_a_model_without_collision_meshes_is_never_asked_to_show_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scene = ViserManipulationScene(FakeServer(), CollisionStrictUrdf)
+    monkeypatch.setattr(
+        scene,
+        "_load_robot_model",
+        lambda _config: SimpleNamespace(
+            actuated_joint_names=(), collision_scene=SimpleNamespace(geometry={})
+        ),
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        scene.register_model(fake_prepared_model("arm"))
+        for mode in RobotDisplayMode:
+            scene.robot_display_mode = mode
+
+    # The visual meshes stand in for the missing collision meshes.
+    assert scene._collision_fallback_urdf is not None
+    assert not scene.collision_geometry_available
 
 
 @pytest.mark.parametrize("mode", ["collision", "both"])
