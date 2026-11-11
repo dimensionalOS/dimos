@@ -29,6 +29,11 @@ independently of the native body commands and measured body-rate feedback. Once 
 ``deadman_timeout_s`` without another halts the robot: zero chassis speed
 and the arms held where they were last measured.
 
+Grippers use ordinary position joints in metres; vendor messages use millimetres.
+Only fresh, fault-free feedback authorizes a jaw write. Duplicate targets and
+values interrupted by invalid feedback are not replayed; choose a different
+opening to resume. Stop is not a vendor cancel.
+
 Sensors run on a second RawROS node. Conversion happens on per-stream workers
 behind latest-wins queues.
 
@@ -40,7 +45,7 @@ the environment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import math
 from pathlib import Path
 import queue
@@ -78,7 +83,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES, R1PRO_CONTROL_MODEL
-from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
+from dimos.robot.galaxea.r1pro.joints import GRIPPER_JOINTS, UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -96,6 +101,16 @@ assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
 # Native body forward/lateral/turn velocity resources; no pose coordinates.
 R1PRO_BASE_JOINTS: list[str] = list(R1PRO_BODY_AXES)
+R1PRO_GRIPPER_JOINTS: list[str] = [coordinator_name(joint) for joint in GRIPPER_JOINTS]
+R1PRO_GRIPPER_SIDES = dict(zip(R1PRO_GRIPPER_JOINTS, ("left", "right"), strict=True))
+_GRIPPER_MM_PER_M = 1000.0
+_GRIPPER_COMMAND_TOPIC = "/motion_target/target_position_gripper_{}"
+_GRIPPER_FEEDBACK_TOPIC = "/hdas/feedback_gripper_{}"
+_GRIPPER_STATUS_TOPIC = "/hdas/feedback_status_{}"
+_GRIPPER_FAULT_SEGMENTS = {
+    "left": ("torso", "arm_left", "gripper_left"),
+    "right": ("torso", "arm_right", "gripper_right"),
+}
 
 # JPEG color streams gated by config.enable_wrist_color: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
@@ -141,6 +156,23 @@ def _stamp_secs(msg: Any) -> float:
     return ts if ts > 0 else time.time()
 
 
+@dataclass
+class _GripperChannel:
+    measured_m: float | None = None
+    feedback_at: float = 0.0
+    feedback_wall: float = 0.0
+    faults: dict[str, float] = field(default_factory=dict)
+    last_sent_m: float | None = None
+    blocked_intent_m: float | None = None
+
+    def valid(self, timeout_s: float, now: float) -> bool:
+        return (
+            self.measured_m is not None
+            and now - self.feedback_at <= timeout_s
+            and all(now - at > timeout_s for at in self.faults.values())
+        )
+
+
 def _ros_stamp_now() -> Any:
     from builtin_interfaces.msg import Time as RosTime
 
@@ -175,6 +207,8 @@ class R1ProConnectionConfig(ConnectionConfig):
             when unread; turn off if nothing reads them.
         color_publish_hz: Max Hz per color camera (0 = no cap); the cameras
             arrive at ~28 Hz, so 30 passes every frame.
+        gripper_feedback_timeout_s: How old a jaw's feedback may be before
+            its commands are dropped and its readback withheld.
         boot_vendor_stack: Boot the vendor stack (HDAS, mobiman), which
             serves every ROS topic used here, if it is not running.
         vendor_profile: "" boots vendor_setup.sh's own set; a vendor profile,
@@ -184,10 +218,9 @@ class R1ProConnectionConfig(ConnectionConfig):
     source: str = "r1pro"
     model: RobotModel | None = R1PRO_CONTROL_MODEL
     joint_commands: dict[str, tuple[Interface, ...]] = {
-        **dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, (Interface.POSITION,)),
+        **dict.fromkeys([*R1PRO_UPPER_BODY_JOINTS, *R1PRO_GRIPPER_JOINTS], (Interface.POSITION,)),
         **dict.fromkeys(R1PRO_BASE_JOINTS, (Interface.VELOCITY,)),
     }
-
     odometry_timeout_s: float = Field(default=0.2, gt=0)
     publish_rate_hz: float = Field(default=100.0)
     tracking_speed: float = Field(default=0.5)
@@ -198,6 +231,7 @@ class R1ProConnectionConfig(ConnectionConfig):
     enable_wrist_depth: bool = Field(default=False)
     enable_wrist_color: bool = Field(default=True)
     color_publish_hz: float = Field(default=30.0)
+    gripper_feedback_timeout_s: float = Field(default=1.0)
     boot_vendor_stack: bool = Field(default=True)
     vendor_profile: str = Field(default="")
 
@@ -248,6 +282,7 @@ class R1ProConnection(ConnectionModule):
         self._cmd_left_topic: RawROSTopic | None = None
         self._cmd_right_topic: RawROSTopic | None = None
         self._speed_topic: RawROSTopic | None = None
+        self._gripper_cmd_topics: dict[str, RawROSTopic] = {}
         self._control_unsubs: list[Any] = []
         self._sensor_unsubs: list[Any] = []
 
@@ -277,6 +312,10 @@ class R1ProConnection(ConnectionModule):
         self._odom_y = 0.0
         self._odom_yaw = 0.0
         self._odom_last_ts: float | None = None
+        # The jaws, by side ("left"/"right"); see _GripperChannel.
+        self._grippers: dict[str, _GripperChannel] = {
+            side: _GripperChannel() for side in _GRIPPER_FAULT_SEGMENTS
+        }
 
         # Sensor decode pipeline.
         self._sensor_stop = threading.Event()
@@ -431,6 +470,36 @@ class R1ProConnection(ConnectionModule):
         if base_packet is not None:
             self._send_chassis_speed(*base_packet, stamp)
 
+        self._write_grippers(values, stamp)
+
+    def _write_grippers(self, values: Values, stamp: Any) -> None:
+        now = time.monotonic()
+        sends: list[tuple[str, float]] = []
+        drops: list[str] = []
+        with self._lock:
+            for joint, side in R1PRO_GRIPPER_SIDES.items():
+                value = values.get(f"{joint}{SEPARATOR}{Interface.POSITION}")
+                if value is None:
+                    continue
+                ch = self._grippers[side]
+                if not ch.valid(self.config.gripper_feedback_timeout_s, now):
+                    ch.blocked_intent_m = value
+                    drops.append(f"gripper_{side}: feedback missing, stale or faulted")
+                    continue
+                if value == ch.blocked_intent_m:
+                    continue
+                ch.blocked_intent_m = None
+                # The source's initial measured-position hold is not a vendor target.
+                if ch.last_sent_m is None:
+                    ch.last_sent_m = ch.measured_m
+                if value != ch.last_sent_m:
+                    ch.last_sent_m = value
+                    sends.append((side, value))
+        for message in drops:
+            self._report(message, rejection=True)
+        for side, value in sends:
+            self._send_gripper_target(side, value, stamp)
+
     def halt(self) -> None:
         """Zero the chassis, and hold the arms where they were last measured.
 
@@ -490,6 +559,20 @@ class R1ProConnection(ConnectionModule):
         cmd.twist.angular.z = wz
         ros.publish(self._speed_topic, cmd)
 
+    def _send_gripper_target(self, side: str, opening_m: float, stamp: Any) -> None:
+        """One jaw's opening target on its vendor topic, in millimetres."""
+        from sensor_msgs.msg import JointState as RosJointState
+
+        ros = self._ros
+        topic = self._gripper_cmd_topics.get(side)
+        if ros is None or topic is None:
+            return  # pre-connect / post-stop
+        cmd = RosJointState()
+        cmd.header.stamp = stamp
+        cmd.name = [f"{side}_gripper"]
+        cmd.position = [opening_m * _GRIPPER_MM_PER_M]
+        ros.publish(topic, cmd)
+
     # Control topics
 
     def _setup_control_topics(self) -> None:
@@ -513,6 +596,10 @@ class R1ProConnection(ConnectionModule):
         self._speed_topic = RawROSTopic(
             "/motion_target/target_speed_chassis", TwistStamped, qos=qos
         )
+        self._gripper_cmd_topics = {
+            side: RawROSTopic(_GRIPPER_COMMAND_TOPIC.format(side), RosJointState, qos=qos)
+            for side in self._grippers
+        }
 
         for topic, cb in (
             (RawROSTopic("/hdas/feedback_torso", RosJointState, qos=qos), self._on_feedback_torso),
@@ -526,6 +613,23 @@ class R1ProConnection(ConnectionModule):
             ),
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
+
+        for side in self._grippers:
+            self._control_unsubs.append(
+                self._ros.subscribe(
+                    RawROSTopic(_GRIPPER_FEEDBACK_TOPIC.format(side), RosJointState, qos=qos),
+                    self._on_gripper_feedback,
+                )
+            )
+        from hdas_msg.msg import FeedbackStatus  # type: ignore[import-not-found, import-untyped]
+
+        for segment in sorted({s for segs in _GRIPPER_FAULT_SEGMENTS.values() for s in segs}):
+            self._control_unsubs.append(
+                self._ros.subscribe(
+                    RawROSTopic(_GRIPPER_STATUS_TOPIC.format(segment), FeedbackStatus, qos=qos),
+                    self._on_gripper_status,
+                )
+            )
 
         # Existing vendor executed-speed feedback, not the outgoing command topic.
         self._control_unsubs.append(
@@ -718,6 +822,29 @@ class R1ProConnection(ConnectionModule):
             ne = min(len(msg.effort), len(eff_dst))
             eff_dst[:ne] = msg.effort[:ne]
 
+    def _on_gripper_feedback(self, msg: Any, topic: Any) -> None:
+        side = topic.topic.rsplit("_", 1)[-1]
+        with self._lock:
+            ch = self._grippers[side]
+            if len(msg.position) != 1 or not math.isfinite(msg.position[0]):
+                ch.measured_m = None
+                return
+            ch.measured_m = float(msg.position[0]) / _GRIPPER_MM_PER_M
+            ch.feedback_wall = _stamp_secs(msg)
+            ch.feedback_at = time.monotonic() - max(0.0, time.time() - ch.feedback_wall)
+
+    def _on_gripper_status(self, msg: Any, topic: Any) -> None:
+        segment = topic.topic.removeprefix("/hdas/feedback_status_")
+        faulted = not msg.errors or any(e.error_code or e.error_description for e in msg.errors)
+        with self._lock:
+            for side, segments in _GRIPPER_FAULT_SEGMENTS.items():
+                if segment in segments:
+                    faults = self._grippers[side].faults
+                    if faulted:
+                        faults[segment] = time.monotonic()
+                    else:
+                        faults.pop(segment, None)
+
     # Local wheel odometry from measured vendor chassis speed, never commands.
 
     def _on_chassis_speed(self, msg: Any, _topic: Any) -> None:
@@ -814,6 +941,14 @@ class R1ProConnection(ConnectionModule):
                     # Oldest of the three segments: the fused snapshot is only
                     # as fresh as its stalest part.
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
+                now_mono = time.monotonic()
+                gripper_readings = []
+                for joint, side in R1PRO_GRIPPER_SIDES.items():
+                    ch = self._grippers[side]
+                    if ch.measured_m is not None and ch.valid(
+                        self.config.gripper_feedback_timeout_s, now_mono
+                    ):
+                        gripper_readings.append((joint, ch.measured_m, ch.feedback_wall))
 
             if bootstrapped:
                 self.joint_state.publish(
@@ -830,6 +965,16 @@ class R1ProConnection(ConnectionModule):
                     self.imu_chassis.publish(imu_chassis)
                 if imu_torso is not None:
                     self.imu_torso.publish(imu_torso)
+
+            if gripper_readings:
+                self.joint_state.publish(
+                    JointState(
+                        ts=min(stamp for _, _, stamp in gripper_readings),
+                        frame_id=frame_id,
+                        name=[joint for joint, _, _ in gripper_readings],
+                        position=[measured for _, measured, _ in gripper_readings],
+                    )
+                )
 
             next_tick += period
             sleep_for = next_tick - time.perf_counter()

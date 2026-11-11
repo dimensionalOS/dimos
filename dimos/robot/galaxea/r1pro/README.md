@@ -89,6 +89,24 @@ return. This replaces the old adapter path, where an estopped robot simply
 kept its last position command with no deadman. After clearing software E-stop,
 fresh operator velocity input is required; pre-stop intent is not replayed.
 
+**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`) is an
+ordinary position joint in metres over the vendor's 0–100 mm range. Each uses
+the unchanged gripper task and a separate input binding. Both measured jaw
+positions are required for initial coordinator readiness. The R1Pro connection
+owns feedback/fault checks, millimetre conversion and duplicate suppression;
+an initial hold at the measured opening does not issue a vendor target.
+Stale or faulted feedback blocks vendor writes. An interrupted target is not
+replayed merely because feedback returns; replace it with a different target.
+The generic task's readback remains its last measurement, not a freshness signal.
+
+**Stop is not a cancel.** `stop()`/`halt()` and the deadman only stop *us*
+from sending new targets. They are not a vendor cancel and not a physical
+E-stop: a jaw target the vendor controller already accepted keeps executing
+on the vendor side, and we have no verified way to recall it. The safety
+guarantee ends at "we never re-send an interrupted intent" — not at "the
+jaw stops moving". For a real emergency stop use the robot's own E-stop
+hardware.
+
 ## Point-LIO
 
 Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on

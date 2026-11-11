@@ -46,6 +46,7 @@ from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_CHASSIS_LIDAR_HOST_IP,
@@ -81,6 +82,8 @@ class R1ProCoordinator(ControlCoordinator):
     r1pro_velocity_command: Out[JointState]
     r1pro_joint_state: In[JointState]
     r1pro_imu: In[Imu]
+    left_gripper_command: In[Float32]
+    right_gripper_command: In[Float32]
 
 
 def _r1pro_rerun_blueprint() -> Any:

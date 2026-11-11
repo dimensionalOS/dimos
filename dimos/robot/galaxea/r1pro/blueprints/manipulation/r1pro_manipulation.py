@@ -14,8 +14,9 @@
 
 """R1 Pro upper-body manipulation (EXPERIMENTAL).
 
-The hardware-backed planner exposes the arms and torso. The chassis remains
-driven separately by the velocity task; grippers are not driven yet.
+The hardware-backed planner exposes the arms and torso, and each arm's jaw
+is driven through the standard manipulation API by its own gripper task. The
+chassis remains driven separately by the velocity task.
 
 Usage:
     dimos run r1pro-manipulation
@@ -33,11 +34,18 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     r1pro_visualization,
 )
-from dimos.robot.galaxea.r1pro.config import make_r1pro_model_config
+from dimos.robot.galaxea.r1pro.config import R1PRO_GRIPPER_TASKS, make_r1pro_model_config
 from dimos.robot.galaxea.r1pro.connection import R1PRO_BASE_JOINTS, R1PRO_UPPER_BODY_JOINTS
 
 # One canonical trajectory task spans both arms and the torso; the planner
 # selects an arm through the model's planning groups, not through task names.
+# Each jaw uses the existing gripper task, with its input routed separately.
+# Vendor feedback, fault handling and duplicate-target suppression live in the connection.
+_GRIPPER_TASK_JOINTS = {
+    "r1pro_left_gripper": "r1pro/left_gripper",
+    "r1pro_right_gripper": "r1pro/right_gripper",
+}
+assert set(_GRIPPER_TASK_JOINTS) == set(R1PRO_GRIPPER_TASKS.values())
 _manipulation_tasks = [
     joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
     TaskConfig(
@@ -50,6 +58,16 @@ _manipulation_tasks = [
         joint_names=R1PRO_BASE_JOINTS,
         priority=10,
     ),
+    *(
+        TaskConfig(
+            name=task_name,
+            type="gripper",
+            joint_names=[joint],
+            priority=10,
+            stream_bind={"gripper_command": task_name.removeprefix("r1pro_") + "_command"},
+        )
+        for task_name, joint in _GRIPPER_TASK_JOINTS.items()
+    ),
 ]
 
 r1pro_manipulation = autoconnect(
@@ -57,6 +75,7 @@ r1pro_manipulation = autoconnect(
     r1pro_control(tasks=_manipulation_tasks),
     ManipulationModule.blueprint(
         model=make_r1pro_model_config(),
+        gripper_tasks=R1PRO_GRIPPER_TASKS,
         planning_timeout=10.0,
         visualization=ViserVisualizationConfig(host=global_config.listen_host),
     ),

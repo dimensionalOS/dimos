@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 import math
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,11 +34,14 @@ from dimos.robot.galaxea.r1pro._connection_test_fakes import (
     TORSO_Q,
     FakeRos,
     LocalTransport,
+    RosFeedbackStatus,
     RosHeader,
     RosImu,
+    RosStatusError,
     chassis_speed,
     feed_all_segments,
     feed_chassis_interval,
+    gripper_feedback,
     install_fake_ros,
     joint_feedback,
 )
@@ -96,6 +100,27 @@ class Rig:
 
     def readings(self) -> list[JointState]:
         return list(self.ports["joint_state"].sent)
+
+    def feed_grippers(
+        self, left: float | None = None, right: float | None = None, ts: float | None = None
+    ) -> None:
+        """One feedback frame per named jaw, an opening in mm as the vendor sends it."""
+        if left is not None:
+            self.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(left, ts))
+        if right is not None:
+            self.fake.control.feed("/hdas/feedback_gripper_right", gripper_feedback(right, ts))
+
+    def feed_status(self, segment: str, errors: list[RosStatusError]) -> None:
+        """One segment's fault report, as the vendor's hdas_msg status topics carry it."""
+        self.fake.control.feed(f"/hdas/feedback_status_{segment}", RosFeedbackStatus(errors=errors))
+
+    def jaws(self, side: str) -> list[Any]:
+        """Every message sent to one jaw's vendor command topic, oldest first."""
+        return self.fake.control.sent_to(f"/motion_target/target_position_gripper_{side}")
+
+    def jaw_readings(self) -> list[JointState]:
+        """The joint_state messages that carry a jaw, separate from the arms' frame."""
+        return [msg for msg in self.readings() if any("gripper" in name for name in msg.name)]
 
 
 @pytest.fixture
@@ -210,6 +235,55 @@ def test_measured_body_rates_and_independent_odometry(
         assert r.ports["odom"].sent[-1].position.x == pytest.approx(odom.pose.position.x)
         assert r.ports["odom"].sent[-1].ts == ts
         assert r.ports["tf"].sent[-1].transforms[0].ts == ts
+
+
+def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:
+    r = rig()
+    assert not r.jaws("left") and not r.jaws("right")
+    r.feed_grippers(left=20.0, right=40.0, ts=time.time())
+    wait_until(lambda: bool(r.jaw_readings()), timeout=5.0)
+    assert list(r.jaw_readings()[-1].position) == pytest.approx([0.02, 0.04])
+    r.move({"r1pro/left_gripper": 0.02})  # Initial measured-position hold.
+    assert not r.jaws("left")
+    r.move({"r1pro/left_gripper": 0.05})
+    r.move({"r1pro/left_gripper": 0.05})
+    assert [list(msg.position) for msg in r.jaws("left")] == [[50.0]]
+    assert not r.jaws("right")
+    r.move({"r1pro/right_gripper": 0.03})
+    assert [list(msg.position) for msg in r.jaws("right")] == [[30.0]]
+    r.module.stop()
+    r.module._send_gripper_target("left", 0.06, None)
+    assert len(r.jaws("left")) == 1
+
+
+def test_gripper_invalid_feedback_blocks_without_replay(rig, monkeypatch):
+    clock = [time.monotonic()]
+    monkeypatch.setattr(
+        connection_module, "time", SimpleNamespace(**{**vars(time), "monotonic": lambda: clock[0]})
+    )
+    r = rig(gripper_feedback_timeout_s=0.1)
+    r.move({"r1pro/left_gripper": 0.05})
+    assert not r.jaws("left")
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.06})
+    assert len(r.jaws("left")) == 1
+    clock[0] += 0.2
+    r.move({"r1pro/left_gripper": 0.07})
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.07})
+    assert len(r.jaws("left")) == 1
+    r.feed_status("gripper_left", [RosStatusError(error_code=7)])
+    r.move({"r1pro/left_gripper": 0.08})
+    assert len(r.jaws("left")) == 1
+    r.feed_status("gripper_left", [RosStatusError()])
+    r.move({"r1pro/left_gripper": 0.09})
+    assert [list(msg.position) for msg in r.jaws("left")] == [[60.0], [90.0]]
+    r.fake.control.feed("/hdas/feedback_gripper_left", gripper_feedback(math.nan))
+    r.move({"r1pro/left_gripper": 0.1})
+    assert len(r.jaws("left")) == 2
+    r.feed_grippers(left=20.0)
+    r.move({"r1pro/left_gripper": 0.095})
+    assert list(r.jaws("left")[-1].position) == [95.0]
 
 
 def test_body_write_needs_no_odometry_and_halt_holds_measured_arms(rig):

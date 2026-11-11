@@ -102,6 +102,36 @@ class FakeRawROSTopic:
     msg_type: Any
     qos: Any = None
 
+    @property
+    def topic(self) -> str:
+        """The real RawROSTopic exposes its name as ``topic``."""
+        return self.name
+
+
+@dataclass
+class RosStatusError:
+    """One entry of the vendor's ``hdas_msg/FeedbackStatus`` report."""
+
+    name: str = ""
+    error_code: int = 0
+    error_description: str = ""
+
+
+@dataclass
+class RosFeedbackStatus:
+    """The vendor's per-segment fault report; no entries means all clear."""
+
+    errors: list[RosStatusError] = field(default_factory=list)
+
+
+def gripper_feedback(opening_mm: float, ts: float | None = None) -> RosJointState:
+    """One jaw's feedback frame: a single opening, in mm, stamped ``ts``."""
+    stamp = RosTime()
+    if ts is not None:
+        stamp.sec = int(ts)
+        stamp.nanosec = int((ts - stamp.sec) * 1e9)
+    return RosJointState(header=RosHeader(stamp=stamp), position=[opening_mm])
+
 
 class FakeRawROS:
     """Stands in for ``RawROS``: records publishes, dispatches subscriptions."""
@@ -113,6 +143,7 @@ class FakeRawROS:
         #: Every (topic name, message) ever published, oldest first.
         self.published: list[tuple[str, Any]] = []
         self.subs: dict[str, list[Any]] = {}
+        self.topics: dict[str, FakeRawROSTopic] = {}
 
     def start(self) -> None:
         self.started = True
@@ -122,6 +153,7 @@ class FakeRawROS:
 
     def subscribe(self, topic: FakeRawROSTopic, cb: Any) -> Any:
         self.subs.setdefault(topic.name, []).append(cb)
+        self.topics[topic.name] = topic
 
         def unsubscribe() -> None:
             self.subs[topic.name].remove(cb)
@@ -133,8 +165,9 @@ class FakeRawROS:
 
     def feed(self, topic_name: str, msg: Any) -> None:
         """Deliver ``msg`` to every subscriber of ``topic_name``, as the vendor would."""
+        topic = self.topics.get(topic_name)
         for cb in list(self.subs.get(topic_name, [])):
-            cb(msg, None)
+            cb(msg, topic)
 
     def listener_count(self) -> int:
         """How many live subscriptions this node has (unsubscribed topics don't count)."""
@@ -186,6 +219,7 @@ def install_fake_ros(monkeypatch: pytest.MonkeyPatch) -> FakeRos:
             "Imu": RosImu,
         },
         "geometry_msgs.msg": {"TwistStamped": RosTwistStamped},
+        "hdas_msg.msg": {"FeedbackStatus": RosFeedbackStatus},
         "dimos.protocol.pubsub.impl.rospubsub": {
             "RawROS": fake._raw_ros,
             "RawROSTopic": FakeRawROSTopic,
