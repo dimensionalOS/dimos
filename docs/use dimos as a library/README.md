@@ -38,10 +38,8 @@ None of the tutorials need a robot, hardware, a network service or an API key.
 The external package builds the same way with a released dimOS and with a local
 checkout; only the way dimOS itself was installed differs.
 
-## Changing dimOS itself
+## For dimOS developers
 
-Adding a message to the built-in package is a maintainer task, not a library
-use case:
-[Add a message inside the DimOS repository](/docs/development/adding-internal-message.md).
-Built-in message provenance, packaging and native examples are in
+Changing the repository itself, including its built-in messages, is covered by
+the developer documentation:
 [CDR generation in dimOS](/docs/development/message-source-packages.md).

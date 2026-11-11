@@ -27,7 +27,15 @@ garden = autoconnect(
 `readings: Out[String]`, `GardenLogger` has `readings: In[String]`, so the two
 `readings` streams are connected. If the names differed you would rename one
 side with `.remappings(...)`; see [Blueprints](/docs/usage/blueprints.md) for
-composition, namespaces and transport overrides.
+the remaining composition rules and transport options.
+
+`GardenSensor.blueprint(interval=1.0, beds=2)` is a blueprint fragment for one
+configured module instance; the long form is
+`Blueprint.create(GardenSensor, interval=1.0, beds=2)`. `autoconnect(...)`
+returns a new expanded `Blueprint`, so expanding a stack never changes the
+fragments it was built from and the same fragment can be reused elsewhere. A
+blueprint can contain other blueprints as well as modules, which is how the
+stack below adds a built-in dimOS module.
 
 The package tree now looks like this:
 
