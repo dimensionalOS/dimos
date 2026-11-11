@@ -12,6 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Tick loop for the ControlCoordinator.
+
+This module contains the core control loop logic:
+- Read state from all hardware
+- Compute outputs from all active tasks
+- Arbitrate conflicts per-joint (highest priority wins)
+- Route commands to hardware
+- Publish aggregated joint state
+
+Separated from coordinator.py following the DimOS pattern of
+splitting coordination logic from module wrapper.
+"""
 
 from __future__ import annotations
 
@@ -48,6 +60,8 @@ logger = setup_logger()
 
 
 class JointWinner(NamedTuple):
+    """Tracks the winning task for a joint during arbitration."""
+
     priority: int
     value: float
     mode: ControlMode
@@ -55,6 +69,38 @@ class JointWinner(NamedTuple):
 
 
 class TickLoop:
+    """Core tick loop for the control coordinator.
+
+    Runs the deterministic control cycle:
+    1. READ: Collect joint state from all hardware
+    2. COMPUTE: Run all active tasks
+    3. ARBITRATE: Per-joint conflict resolution (highest priority wins)
+    4. NOTIFY: Send preemption notifications to affected tasks
+    5. ROUTE: Convert joint-centric commands to hardware-centric
+    6. WRITE: Send commands to hardware, and a complete command to every
+       robot behind a connection module
+    7. PUBLISH: Output aggregated JointState, plus one stream per robot
+
+    Args:
+        tick_rate: Control loop frequency in Hz
+        hardware: Dict of hardware_id -> ConnectedHardware
+        hardware_lock: Lock protecting hardware dict
+        tasks: Dict of task_name -> ControlTask
+        task_lock: Lock protecting tasks dict
+        joint_to_hardware: Dict mapping joint_name -> hardware_id
+        publish_callback: Optional callback to publish the merged JointState
+        publish_command_callback: Optional callback for intended position-command updates
+        publish_robot_callback: Optional callback, called with (hardware_id, msg)
+        publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
+        frame_pose_hz: Maximum rate for publish_tf_callback
+        frame_id: Frame ID for published JointState
+        log_ticks: Whether to log tick information
+        connections: Robots driven through connection modules, by name. Guarded
+            by hardware_lock; their joints are in joint_to_hardware too.
+        connection_command_callback: Called once per tick for each robot in
+            ``connections`` that has reported, with (name, command by key)
+    """
+
     def __init__(
         self,
         tick_rate: float,
@@ -79,6 +125,7 @@ class TickLoop:
             connections if connections is not None else {}
         )
         self._connection_command_callback = connection_command_callback
+        # Robots already told off for never reporting, so each is told off once.
         self._silence_logged: set[str] = set()
         self._started_at = time.monotonic()
         self._hardware_lock = hardware_lock
@@ -95,7 +142,7 @@ class TickLoop:
         self._log_ticks = log_ticks
 
         self._stop_event = threading.Event()
-        self._stop_event.set()
+        self._stop_event.set()  # Initially stopped
         self._tick_thread: threading.Thread | None = None
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
@@ -103,17 +150,21 @@ class TickLoop:
 
     @property
     def joint_positions(self) -> dict[str, float]:
+        """Copy the latest tick snapshot; the stored dictionary is only replaced."""
         return self._joint_positions.copy()
 
     @property
     def tick_count(self) -> int:
+        """Number of ticks since start."""
         return self._tick_count
 
     @property
     def is_running(self) -> bool:
+        """Whether the tick loop is currently running."""
         return not self._stop_event.is_set()
 
     def start(self) -> None:
+        """Start the tick loop in a daemon thread."""
         if not self._stop_event.is_set():
             logger.warning("TickLoop already running")
             return
@@ -131,12 +182,14 @@ class TickLoop:
         logger.info(f"TickLoop started at {self._tick_rate}Hz")
 
     def stop(self) -> None:
+        """Stop the tick loop."""
         self._stop_event.set()
         if self._tick_thread and self._tick_thread.is_alive():
             self._tick_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         logger.info("TickLoop stopped")
 
     def _loop(self) -> None:
+        """Main control loop - deterministic read → compute → arbitrate → write."""
         period_ns = round(1_000_000_000 / self._tick_rate)
         next_tick_time = time.perf_counter_ns()
 
@@ -146,14 +199,18 @@ class TickLoop:
             except Exception as e:
                 logger.error(f"TickLoop tick error: {e}")
 
+            # We simply increment the time from the last loop so we correct for long
+            # sleeps (e.g. Mac OS typically oversleeps upto 25%).
             next_tick_time += period_ns
             sleep_ns = next_tick_time - time.perf_counter_ns()
             if sleep_ns > 0:
                 time.sleep(sleep_ns / 1_000_000_000)
             else:
+                # Over a full period behind, reset the timer.
                 next_tick_time = time.perf_counter_ns()
 
     def _tick(self) -> None:
+        """Single tick: read → compute → arbitrate → route → write."""
         t_now = time.perf_counter()
         dt = t_now - self._last_tick_time
         self._last_tick_time = t_now
@@ -194,6 +251,7 @@ class TickLoop:
             self._last_frame_pose_time = t_now
             self._publish_frame_poses(state)
 
+        # Optional logging
         if self._log_ticks:
             active = len([c for c in commands if c[2] is not None])
             logger.debug(
@@ -205,6 +263,7 @@ class TickLoop:
     def _read_all_hardware(
         self,
     ) -> tuple[JointStateSnapshot, dict[HardwareId, dict[JointName, JointReading]]]:
+        """Read state from all hardware interfaces."""
         joint_positions: dict[str, float] = {}
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
@@ -229,6 +288,8 @@ class TickLoop:
                         read_at.append(stamp)
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
+            # Read whether or not a robot can be commanded: one whose readings
+            # stopped keeps its last joints in the state.
             for source in self._connections.values():
                 joints = source.read_joints()
                 joint_positions.update(joints.joint_positions)
@@ -246,6 +307,12 @@ class TickLoop:
         return snapshot, per_hardware
 
     def _read_all_imu(self) -> dict[str, IMUState]:
+        """Poll IMU from every whole-body hardware in the pool.
+
+        Tasks read this through ``CoordinatorState.imu[hardware_id]``
+        instead of reaching into adapters directly. Hardware without
+        IMU support is absent from the dict.
+        """
         from dimos.control.hardware_interface import ConnectedWholeBody
 
         out: dict[str, IMUState] = {}
@@ -265,6 +332,7 @@ class TickLoop:
         return out
 
     def _read_all_sensors(self) -> SensorStateSnapshot:
+        """Collect the latest sensor readings from every connection."""
         readings: dict[str, dict[str, float]] = {}
         with self._hardware_lock:
             for source in self._connections.values():
@@ -274,6 +342,7 @@ class TickLoop:
     def _compute_all_tasks(
         self, state: CoordinatorState
     ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
+        """Compute outputs from all active tasks."""
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
 
         with self._task_lock:
@@ -298,8 +367,15 @@ class TickLoop:
         dict[str, tuple[float, ControlMode, str]],
         dict[str, dict[str, str]],
     ]:
-        winners: dict[str, JointWinner] = {}
-        preemptions: dict[str, dict[str, str]] = {}
+        """Per-joint arbitration with mode conflict detection.
+
+        Returns:
+            Tuple of:
+            - joint_commands: {joint_name: (value, mode, task_name)}
+            - preemptions: {preempted_task: {joint: winning_task}}
+        """
+        winners: dict[str, JointWinner] = {}  # joint_name -> current winner
+        preemptions: dict[str, dict[str, str]] = {}  # loser_task -> {joint: winner_task}
 
         for task, claim, output in commands:
             if output is None:
@@ -312,21 +388,25 @@ class TickLoop:
             for i, joint_name in enumerate(output.joint_names):
                 candidate = JointWinner(claim.priority, values[i], output.mode, task.name)
 
+                # First claim on this joint
                 if joint_name not in winners:
                     winners[joint_name] = candidate
                     continue
 
                 current = winners[joint_name]
 
+                # Lower priority loses - notify preemption
                 if candidate.priority < current.priority:
                     preemptions.setdefault(task.name, {})[joint_name] = current.task_name
                     continue
 
+                # Higher priority - take over
                 if candidate.priority > current.priority:
                     preemptions.setdefault(current.task_name, {})[joint_name] = task.name
                     winners[joint_name] = candidate
                     continue
 
+                # Same priority - check for mode conflict
                 if candidate.mode != current.mode:
                     logger.warning(
                         f"Mode conflict on {joint_name}: {task.name} wants "
@@ -334,24 +414,29 @@ class TickLoop:
                         f"{current.mode.name}. Dropping {task.name}."
                     )
                     preemptions.setdefault(task.name, {})[joint_name] = current.task_name
+                # Same priority + same mode: first wins (keep current)
 
+        # Convert to output format: joint -> (value, mode, task_name)
         joint_commands = {joint: (w.value, w.mode, w.task_name) for joint, w in winners.items()}
 
         return joint_commands, preemptions
 
     def _notify_preemptions(self, preemptions: dict[str, dict[str, str]]) -> None:
+        """Notify each preempted task with affected joints, grouped by winning task."""
         with self._task_lock:
             for task_name, joint_winners in preemptions.items():
                 task = self._tasks.get(task_name)
                 if not task:
                     continue
 
+                # Group joints by winning task
                 by_winner: dict[str, set[str]] = {}
                 for joint, winner in joint_winners.items():
                     if winner not in by_winner:
                         by_winner[winner] = set()
                     by_winner[winner].add(joint)
 
+                # Notify once per distinct winning task
                 for winner, joints in by_winner.items():
                     try:
                         task.on_preempted(
@@ -365,6 +450,11 @@ class TickLoop:
         self,
         joint_commands: dict[str, tuple[float, ControlMode, str]],
     ) -> dict[str, tuple[dict[str, float], ControlMode]]:
+        """Route joint-centric commands to hardware.
+
+        Returns:
+            {hardware_id: ({joint: value}, mode)}
+        """
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]] = {}
 
         with self._hardware_lock:
@@ -377,6 +467,7 @@ class TickLoop:
                 if hw_id not in hw_commands:
                     hw_commands[hw_id] = ({}, mode)
                 else:
+                    # Check for mode conflict across joints on same hardware
                     existing_mode = hw_commands[hw_id][1]
                     if mode != existing_mode:
                         logger.error(
@@ -394,6 +485,7 @@ class TickLoop:
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
     ) -> None:
+        """Write commands to all hardware interfaces."""
         hardware = self._hardware
         joint_commands: dict[str, float] = {}
         with self._hardware_lock:
@@ -438,6 +530,12 @@ class TickLoop:
         self,
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
     ) -> None:
+        """Send every robot behind a connection module its complete command.
+
+        Every robot that has reported gets one, every tick, whether or not a
+        task drives it, so its connection module's deadman never fires while
+        the coordinator runs. One whose readings are stale gets none.
+        """
         publish = self._connection_command_callback
         if publish is None:
             return
@@ -457,6 +555,12 @@ class TickLoop:
                     logger.error(f"Failed to send a command to {name}: {e}")
 
     def _note_silence(self, name: str, source: ConnectionSource, now: float) -> None:
+        """Log once that a robot has never reported, naming its silent ports and the likely cause.
+
+        Nothing is logged until ten reading timeouts after start, nor for a
+        robot that reported and then went quiet: its connection module's
+        deadman halts it.
+        """
         if name in self._silence_logged or now - self._started_at < 10 * source.reading_timeout_s:
             return
         silent = source.unreported()
@@ -472,6 +576,7 @@ class TickLoop:
         )
 
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
+        """Publish an aggregate only after every connection's initial readings are complete."""
         if any(source.unreported() for source in self._connections.values()):
             return
         reported = (
@@ -496,6 +601,7 @@ class TickLoop:
             self._publish_callback(msg)
 
     def _publish_frame_poses(self, state: CoordinatorState) -> None:
+        """Publish each task's measured frame poses (FK on this tick's joints) as TF."""
         with self._task_lock:
             tasks = list(self._tasks.values())
         poses: dict[str, PoseStamped] = {}
@@ -510,6 +616,8 @@ class TickLoop:
                     Transform(
                         translation=pose.position,
                         rotation=pose.orientation,
+                        # IK solvers return world coordinates (base pose applied), but
+                        # stamp them with the base link's name.
                         frame_id="world",
                         child_frame_id=frame,
                         ts=ts,

@@ -12,6 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Python NativeModule wrapper for the Rust Livox Mid-360 driver.
+
+Usage::
+    from dimos.hardware.sensors.lidar.livox.module import Mid360
+    from dimos.core.coordination.blueprints import autoconnect
+
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
+        Mid360.blueprint(lidar_ip="192.168.1.155"),  # host_ip auto-detected
+        SomeConsumer.blueprint(),
+    )).loop()
+"""
 
 from __future__ import annotations
 
@@ -48,20 +60,33 @@ class Mid360Config(NativeModuleConfig):
     build_command: str | None = "nix build -L path:."
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
+    # None derives host_ip from a NIC on the lidar's subnet; a box with two links
+    # into that subnet sets it explicitly.
     host_ip: str | None = None
+    # Required for a live sensor.
     lidar_ip: str | None = None
     frequency: float = 10.0
     enable_imu: bool = True
+    # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
     pcap: str | None = None
+    # Replay speed relative to capture time. None runs flat-out.
     replay_rate: float | None = Field(default=1.0, gt=0)
+    # Seconds a replay holds its first packet, so consumers can subscribe first.
     replay_delay: float = Field(default=0.0, ge=0)
+    # Multicast group the device streams to. None receives unicast only, which
+    # loopback replay needs and macOS requires (see virtual_mid360).
     multicast_ip: str | None = Field(
         default_factory=lambda: None if sys.platform == "darwin" else SDK_MULTICAST_GROUP
     )
+    # Wire layout per point:
+    #   "minimal" x,y,z,offset_time                    - 16 B (default)
+    #   "full"    x,y,z,intensity,offset_time,tag,line - 22 B
+    #   "legacy"  x,y,z,intensity                      - 16 B
     point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
 
+    # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
     push_msg_port: int = SDK_PUSH_MSG_PORT
     point_data_port: int = SDK_POINT_DATA_PORT
@@ -80,6 +105,7 @@ class Mid360Config(NativeModuleConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
+        # The rust struct has every key. None crosses as an explicit null.
         for key in ("host_ip", "lidar_ip", "pcap", "replay_rate", "multicast_ip"):
             config[key] = getattr(self, key)
         return config
@@ -192,6 +218,7 @@ def mid360_usd(lidar_frame: str, imu_frame: str) -> str:
 
 
 def _resolved_host_ip(config: Mid360Config) -> str | None:
+    """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
     if config.pcap is not None:
         return config.host_ip
     if not config.lidar_ip:
@@ -225,5 +252,6 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
         ]
 
 
+# Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     Mid360()

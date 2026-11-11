@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Generic in-memory whole-body adapter for blueprints and tests."""
 
 from __future__ import annotations
 
@@ -20,6 +21,8 @@ from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 
 
 class MockWholeBodyAdapter:
+    """Stateful ordered whole-body IO without robot-specific behavior."""
+
     def __init__(
         self,
         *,

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Tests for ``ConnectionSource``: reading messages in, complete commands out."""
 
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ TIMEOUT = 0.1
 
 
 def model_of(*joints: tuple[str, float, float]) -> RobotModel:
+    """A model of some turning joints, each (name, lower, upper) in radians, one after another."""
     links = "".join(f'<link name="link{i}"/>' for i in range(len(joints) + 1))
     xml = "".join(
         f'<joint name="{name}" type="revolute"><parent link="link{i}"/>'
@@ -50,7 +52,9 @@ def model_of(*joints: tuple[str, float, float]) -> RobotModel:
     return RobotModel.from_file(path)
 
 
+#: Two arm joints limited to +-1 rad, and another robot's joint in the same model.
 ARM_MODEL = model_of((J1, -1.0, 1.0), (J2, -1.0, 1.0), ("other/joint1", -1.0, 1.0))
+#: One arm joint, and a gripper that opens 0 to 0.1.
 GRIPPER_MODEL = model_of((J1, -1.0, 1.0), (GRIPPER, 0.0, 0.1))
 
 
@@ -61,16 +65,19 @@ def arm(
     timeout: float = TIMEOUT,
     zero_stiffness_joints: Collection[str] = (),
 ) -> ConnectionSource:
+    """The arm behind a connection module, with no reading yet."""
     return ConnectionSource(
         "arm", commands, readings, model, timeout, zero_stiffness_joints=zero_stiffness_joints
     )
 
 
 def base(readings: Collection[str] = ("odom", "base_velocity")) -> ConnectionSource:
+    """A base called "go2" that takes speeds and reports where it is and how fast it goes."""
     return ConnectionSource("go2", ["cmd_vel"], readings, None, TIMEOUT)
 
 
 def reading(*positions: float) -> JointState:
+    """The arm's joint positions, joint1 first."""
     return JointState(name=[J1, J2][: len(positions)], position=list(positions))
 
 
@@ -79,6 +86,7 @@ def arm_at(
     commands: Collection[str] = ("position_command", "velocity_command"),
     timeout: float = TIMEOUT,
 ) -> ConnectionSource:
+    """The arm after one reading of its two joints."""
     source = arm(commands=commands, timeout=timeout)
     source.on_message("joint_state", reading(*positions))
     return source
@@ -101,6 +109,7 @@ def test_joints_and_sensors_come_from_readings() -> None:
 
     joints = source.read_joints()
     assert joints.joint_positions == {J1: 0.3, J2: -0.2}
+    # Not reported, so left out rather than read as 0.0.
     assert joints.get_velocity(J1) is None
     sensors = source.read_sensors()
     assert list(sensors) == ["arm/imu"]
@@ -158,11 +167,15 @@ def test_task_values_are_sent_and_the_other_joints_held() -> None:
         f"{J2}/position": -0.2,
     }
 
+    # Once the task stops, the joint stays at what it was last told, not
+    # wherever it has got to.
     source.on_message("joint_state", reading(0.45, -0.2))
     assert source.command({}, None)[f"{J1}/position"] == 0.5
 
 
 def test_a_position_outside_its_limit_is_refused_and_the_holds_kept() -> None:
+    """A refused tick leaves the holds alone, so stopping the task afterwards
+    does not move the robot to what was refused."""
     source = arm_at(0.2, -0.2)
     assert source.command({J1: 0.4, J2: 0.1}, ControlMode.POSITION) == {
         f"{J1}/position": 0.4,
@@ -246,8 +259,10 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
     source.command({J1: 0.5}, ControlMode.POSITION)
 
     wait_until(lambda: not source.ready_for_control(), timeout=2.0)
+    # Its joints stay in what tasks see.
     assert source.read_joints().joint_positions[J1] == 0.3
 
+    # Back with only part of a reading: it waits for the rest.
     source.on_message("joint_state", reading(0.8))
     assert not source.ready_for_control()
     source.on_message("joint_state", reading(0.8, 0.0))
@@ -258,10 +273,12 @@ def test_a_robot_that_goes_quiet_is_held_where_it_is_when_it_comes_back() -> Non
 def test_dropped_holds_are_taken_again_from_the_next_whole_reading() -> None:
     source = arm_at(0.3, 0.0)
     source.command({J1: 0.5}, ControlMode.POSITION)
+    # Halted short of where it was told to go.
     source.on_message("joint_state", reading(0.4, 0.0))
 
     source.drop_holds()
 
+    # The last reading may predate the halt, so it waits for a whole new one.
     assert not source.ready_for_control()
     assert source.read_joints().joint_positions[J1] == 0.4
     source.on_message("joint_state", reading(0.42))
@@ -287,6 +304,9 @@ def test_a_robot_it_cannot_drive_is_refused() -> None:
 
 
 def test_a_reading_in_another_robots_frame_is_dropped() -> None:
+    """A frame with a namespace must be this robot's, so a stream two robots
+    share can neither fill in this robot's readings nor keep them fresh. A
+    frame with no namespace is taken as its own."""
     source = base()
     source.on_message("odom", PoseStamped(frame_id="go2a/odom"))
     source.on_message("base_velocity", TwistStamped(frame_id="go2a/base"))
