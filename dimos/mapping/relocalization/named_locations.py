@@ -28,14 +28,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def same_locations(a: dict[str, PoseStamped], b: dict[str, PoseStamped]) -> bool:
-    """The same names at the same poses (a list comes back over the wire bit for bit)."""
-    return a.keys() == b.keys() and all(
-        a[name].position == b[name].position and a[name].orientation == b[name].orientation
-        for name in a
-    )
-
-
 def load_locations(path: str, stream: str) -> dict[str, PoseStamped]:
     """The locations in the last snapshot on *stream* of a .db or .mcap."""
     from dimos.mapping.relocalization.module import find_stream

@@ -48,7 +48,6 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.mapping.relocalization.named_locations import (
     load_locations,
-    same_locations,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -356,7 +355,8 @@ class PremapModule(Module):
                 return
             locations[named.name] = pose
         with self._lock:
-            if same_locations(locations, self._locations):
+            # PoseStamped == compares position and orientation, so an echo of the list is a no-op
+            if locations == self._locations:
                 return
             self._locations = locations
             self._revision += 1
