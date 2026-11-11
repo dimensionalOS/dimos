@@ -48,8 +48,8 @@ dimos --simulation run teleop-openarm-mini --leaderteleopmodule.port-left <feete
 ```
 
 Leader joint N drives follower joint N of the same side, clamped to the OpenArm
-limits before publishing and low-passed at 6 Hz (`--leaderteleopmodule.command-filter-cutoff-hz`
-to change it). The targets stream into the coordinator's `joint_trajectory` task
+limits before publishing, read every 10 ms and low-passed at 6 Hz
+(`--leaderteleopmodule.tick-period-s`, `--leaderteleopmodule.command-filter-cutoff-hz` to change). The targets stream into the coordinator's `joint_trajectory` task
 with human-speed velocity limits; the trigger drives that side's gripper task,
 1 = open.
 

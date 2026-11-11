@@ -71,6 +71,9 @@ _GRIPPER_TRAVEL_RADIANS = 1.0
 # Low-pass on the leader targets: halves wrist roughness on the OpenArm for
 # about 10 ms of lag; without it the wrists step at the 50 Hz target rate.
 _COMMAND_FILTER_CUTOFF_HZ = 6.0
+# A target every coordinator tick: each ramp the trajectory task runs is half
+# the size of the 50 Hz one, and the feel on the arm is the best measured.
+_LEADER_TICK_PERIOD_S = 0.01
 
 OPENARM_ROUTER = os.environ.get("DIMOS_OPENARM_ROUTER", "tcp/127.0.0.1:7447")
 
@@ -106,7 +109,9 @@ _VELOCITY_LIMITS = {
 
 def _leader() -> Blueprint:
     return LeaderTeleopModule.blueprint(
-        mappings=MAPPINGS, command_filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ
+        mappings=MAPPINGS,
+        command_filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ,
+        tick_period_s=_LEADER_TICK_PERIOD_S,
     )
 
 
