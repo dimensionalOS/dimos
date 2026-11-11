@@ -24,6 +24,7 @@ import numpy as np
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.sampling import Acquisition, same_acquisition
 
 
@@ -50,6 +51,7 @@ class SimJointEncoderModule(Module):
         super().__init__(**kwargs)
         c = self.config.sensor
         self._sampling = Acquisition(c.hz)
+        self._publication_rate = PublicationRate(self, "joint_state", c.hz)
         self._last: JointState | None = None
         self._last_header: SampleHeader | None = None
         if (
@@ -86,6 +88,8 @@ class SimJointEncoderModule(Module):
         return self._last
 
     async def handle_observations(self, truth: WorldState) -> None:
+        self._publication_rate.begin()
         sample = self.measure(truth)
         if sample is not None:
             self.joint_state.publish(sample)
+            self._publication_rate.published()
