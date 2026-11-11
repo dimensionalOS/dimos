@@ -195,6 +195,7 @@ def manipulation_mapping(
     self_filter_model: RobotModel,
     voxel_size: float,
     world_frame: str = "world",
+    max_box_edge_m: float | None = None,
 ) -> Blueprint:
     """Turn a camera's point cloud into the voxel map a ManipulationModule plans around.
 
@@ -211,6 +212,7 @@ def manipulation_mapping(
             same ``voxel_map_resolution``, or its octree will not line up with
             the map.
         world_frame: Fixed frame the map is built and published in.
+        max_box_edge_m: The longest box edge the box filter accepts, metres; None for any.
     """
     return autoconnect(
         UrdfManagerPointClearing.blueprint(
@@ -231,7 +233,7 @@ def manipulation_mapping(
             world_frame=world_frame,
             max_range=2.0,
         ),
-        PointCloudBoxFilter.blueprint(),
+        PointCloudBoxFilter.blueprint(max_box_edge_m=max_box_edge_m),
     ).remappings(
         [
             (RayTracingVoxelMap, "lidar", "filtered_pointcloud"),

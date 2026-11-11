@@ -323,6 +323,38 @@ class TestVoxelMap:
         assert module._world_monitor.add_obstacle.call_count == 0
 
 
+@pytest.mark.parametrize(
+    "default,passed,checked", [(False, None, False), (True, None, True), (True, False, False)]
+)
+def test_linear_collision_check_defaults_to_the_config(
+    module_factory, mocker, default, passed, checked
+):
+    module = module_factory()
+    module.config.linear_check_collision = default
+    mocker.patch.object(module, "_resolve_pose_group", return_value=MagicMock(id="manipulator"))
+    mocker.patch.object(module, "_planning_input_error", return_value=None)
+    generate = mocker.patch.object(module, "generate_cartesian_plan", return_value=None)
+    mocker.patch.object(module, "_planning_failure", return_value=MagicMock())
+
+    result = module.move_linear(dz=-0.01, check_collision=passed)
+
+    assert generate.call_args.kwargs["check_collision"] is checked
+    assert result.check_collision is checked
+
+
+def test_an_unchecked_linear_move_is_refused_when_the_check_is_required(module_factory, mocker):
+    module = module_factory()
+    module.config.require_linear_collision_check = True
+    generate = mocker.patch.object(module, "generate_cartesian_plan")
+
+    result = module.move_linear(dz=-0.01, check_collision=False)
+
+    assert result.plan.status is PlanStatus.INVALID_TARGET
+    assert "required" in result.plan.message
+    assert result.execution is None
+    generate.assert_not_called()
+
+
 class TestObstacleUpdates:
     async def test_perception_objects_are_refreshable_and_queryable(self, module_factory) -> None:
         module = module_factory()
