@@ -24,12 +24,18 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
     arm_remaps,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_SIDES,
     dual_openyam_control_model,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
 
 _dual_openyam = dual_openyam_model_config(robot="arm")
+
+# Planning group to the gripper task that moves its jaw.
+DUAL_OPENYAM_GRIPPER_TASKS = {
+    f"{side}_manipulator": f"{side}_arm_gripper" for side in DUAL_OPENYAM_SIDES
+}
 
 
 def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
@@ -45,12 +51,12 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
 def _gripper_tasks() -> list[TaskConfig]:
     return [
         TaskConfig(
-            name=f"{side}_arm_gripper",
+            name=DUAL_OPENYAM_GRIPPER_TASKS[f"{side}_manipulator"],
             type="gripper",
             joint_names=[f"arm/{side}_gripper"],
             priority=20,
         )
-        for side in ("left", "right")
+        for side in DUAL_OPENYAM_SIDES
     ]
 
 
@@ -69,12 +75,6 @@ def dual_openyam_control() -> Blueprint:
 
 coordinator_dual_openyam = dual_openyam_control().remappings([])
 dual_openyam_planner_coordinator = autoconnect(
-    planner(
-        model=_dual_openyam,
-        gripper_tasks={
-            "left_manipulator": "left_arm_gripper",
-            "right_manipulator": "right_arm_gripper",
-        },
-    ),
+    planner(model=_dual_openyam, gripper_tasks=DUAL_OPENYAM_GRIPPER_TASKS),
     dual_openyam_control(),
 )
