@@ -44,7 +44,7 @@ from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 from dimos.utils.testing.waiting import wait_until
 
-pytestmark = pytest.mark.native_e2e
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture
