@@ -59,6 +59,7 @@ from dimos.robot.usd_manager import (
 )
 from dimos.robot.usd_manager_point_clearing import UsdManagerPointClearing
 
+# A 20cm cube on `arm`, with no external assets.
 _URDF = """<?xml version="1.0"?>
 <robot name="box_robot">
   <link name="base"/>
@@ -115,6 +116,7 @@ def make_filter(tmp_path: Path) -> Iterator[Callable[..., UsdManagerPointClearin
 
 
 def _place_arm(module: UsdManagerPointClearing, at: tuple[float, float, float], ts: float) -> None:
+    """Move the rigid robot base at capture time in both frames."""
     for parent in ("camera", "world"):
         module.tfbuffer.receive_transform(
             Transform(
@@ -150,6 +152,7 @@ def test_points_on_the_robot_are_dropped_and_the_rest_survive(
 def test_a_cloud_without_capture_time_tf_is_dropped_whole(
     make_filter: Callable[..., UsdManagerPointClearing],
 ) -> None:
+    # Half-filtering would let the arm into the map. Better to lose the frame.
     module = make_filter()
 
     assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is None
@@ -331,6 +334,7 @@ def test_cached_xarm_arm_surfaces_need_no_gripper_state(make_filter, monkeypatch
                 timestamp=stamp,
             )
         )
+    # Both captures are processed after the newer state arrived.
     first = module.filter_cloud(captures[0])
     assert first is not None
     second = module.filter_cloud(captures[1])
@@ -373,6 +377,7 @@ def test_the_joint_state_is_published_as_one_tf_edge_per_joint(make_filter):
 @pytest.mark.parametrize(
     "overrides",
     [
+        # Multi-DOF joints are read from tf, so publishing them would feed the filter its own output.
         {"urdf_xml": _joint_robot("planar")},
         {"urdf_xml": _joint_robot("prismatic"), "publish_joint_tf": False},
     ],
@@ -409,6 +414,7 @@ def test_render_file_request_serves_the_usd_and_only_files_it_names(
     texture = str((package / "textures" / "skin.png").resolve())
 
     pytest.importorskip("pxr")
+    # the URDF and the files by the full paths it names; anything else on disk gets nothing
     for request in (
         "robot.usda",
         cube,
@@ -440,6 +446,8 @@ def test_a_filtered_cloud_keeps_its_fields_and_capture_metadata_and_a_late_captu
     assert (result.frame_id, result.ts, result.seq) == ("camera", 2.0, 7)
     np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
     np.testing.assert_array_equal(result.pointcloud_tensor.point["intensity"].numpy(), [[20]])
+    # a second sensor on the same input lags the first: its older capture is matched to its own
+    # capture time
     _place_arm(module, (0.0, 0.0, 0.0), 1.0)
     late = module.filter_cloud(_cloud([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], ts=1.0))
     assert late is not None
@@ -1257,6 +1265,43 @@ def test_the_circular_mount_error_names_every_manager_in_the_loop(
         assert "A -> UsdManager -> B -> UsdManager" in str(caught.value)
 
     asyncio.run(ask())
+
+
+class _ForwardingClient:
+    """A client that really calls the other manager's get_scene, so a cycle has to end itself."""
+
+    def __init__(self, other: UsdManager) -> None:
+        self.other = other
+        self.hops = 0
+
+    def get_scene(self, visited: list[str] | None = None) -> Any:
+        self.hops += 1
+        coroutine = cast("Any", UsdManager.get_scene).aio.__get__(self.other, UsdManager)
+        return asyncio.run(coroutine(list(visited or [])))
+
+    def get_usd(self) -> Any:
+        return self.other.get_usd()
+
+    def stop_rpc_client(self) -> None: ...
+
+
+def test_a_manager_mounted_on_a_manager_recurses_once_per_mount_and_no_further(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """Mounting a manager on a manager *is* recursion, so the chain is what has to bound it."""
+    pytest.importorskip("pxr")
+    left = make_manager(instance_name="left_scene", mounts={"arm": UsdManager})
+    right = make_manager(instance_name="right_scene", mounts={"arm": UsdManager})
+    to_right, to_left = _ForwardingClient(right), _ForwardingClient(left)
+    left._subtree_clients["UsdManager"] = cast("Any", to_right)
+    right._subtree_clients["UsdManager"] = cast("Any", to_left)
+
+    with pytest.raises(ValueError, match="left_scene -> right_scene -> left_scene"):
+        _scene(left)
+
+    assert (to_right.hops, to_left.hops) == (1, 1), (
+        "each manager was asked exactly once: the second time round, left recognised itself"
+    )
 
 
 def test_the_mount_chain_travels_to_a_mounted_manager(
