@@ -246,6 +246,25 @@ PARALLEL = OrchestratorDefinition(
     ],
 )
 
+# Entering Both starts drive and a timer on Left. Then the requires of Right fails.
+HALFWAY = OrchestratorDefinition(
+    root="Top",
+    signals=signals("go"),
+    activities=[Activity(name="drive", start="Base.drive", cancel="Base.stop")],
+    nodes=[
+        Node(name="Top", children=["Idle", "Both"], initial="Idle"),
+        Node(name="Idle", transitions=[Transition(trigger="go", goto="Both")]),
+        Node(
+            name="Both",
+            parallel=["Left", "Right"],
+            outcomes=["done"],
+            transitions=[Transition(trigger="done", goto="Idle")],
+        ),
+        Node(name="Left", activity="drive", transitions=[Transition(after=5, goto="done")]),
+        Node(name="Right", requires=[Check(expect=["false"])]),
+    ],
+)
+
 LOOP = OrchestratorDefinition(
     root="Top",
     nodes=[
@@ -455,8 +474,6 @@ CASES = [
                 [
                     "Work -leave-> Stop",
                     "cancel Arm.release",
-                    "set deadline Job 3.0",
-                    "clear deadline Job 3.0",
                     "cancel Arm.release",
                     "cancel Base.stop",
                     "fault at Job: a failed `ensures` check on a node an outer node left",
@@ -506,6 +523,22 @@ CASES = [
         PARALLEL,
         [],
         [(1.0, ("signal", "bad"), ["Right -bad-> failed", "Both -failed-> After"])],
+    ),
+    Case(
+        "a fault drops the starts and timers of its own step",
+        HALFWAY,
+        [],
+        [
+            (
+                1.0,
+                ("signal", "go"),
+                [
+                    "Idle -go-> Both",
+                    "cancel Base.stop",
+                    "fault at Right: a failed `requires` check with no fallback",
+                ],
+            ),
+        ],
     ),
     Case(
         "too many transitions with no outside event is a fault",
