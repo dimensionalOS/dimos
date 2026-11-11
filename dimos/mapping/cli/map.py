@@ -703,17 +703,17 @@ def main(
         subprocess.Popen(["rerun", str(out)])
 
     if export_cloud and pgo_map is not None:
-        from dimos.mapping.relocalization.module import map_cloud_stream
+        from dimos.mapping.relocalization.module import map_cloud_stream, named_map_frame
         from dimos.memory.store.sqlite import SqliteStore
 
         out_path = Path.cwd() / f"{db_path.stem}_map.db"
         out_path.unlink(missing_ok=True)
-        # A .db stream name is a SQL identifier, so the map's streams are the underscored spelling
+        # A .db stream name is a SQL identifier, so no slashes
         stream = map_cloud_stream(map_name, slashed=False)
         with SqliteStore(path=str(out_path)) as map_store:
             map_store.stream(stream, PointCloud2).append(pgo_map, ts=pgo_map.ts or 0.0)
         print(
-            f"wrote {out_path} ({stream}, frame map/{map_name}), "
+            f"wrote {out_path} ({stream}, frame {named_map_frame(map_name)}), "
             f"relocalize against it with --map-file {out_path.name}"
         )
 

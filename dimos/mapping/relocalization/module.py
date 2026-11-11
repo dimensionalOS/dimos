@@ -14,21 +14,9 @@
 
 """Relocalization: place the live ``world`` frame inside a prior map's ``map`` frame.
 
-The base loads ``map_file`` into ``self.premap``, publishes accepted ``world -> map`` fixes on
-``tf``, and the premap on ``loaded_map`` once a fix lands. An implementation reads
-``self.premap`` after ``super().start()`` and hands a fix it believes to
-:meth:`PremapModule.submit`. See ``lidar/module.py``.
-
-Named locations live here too, in the ``map`` frame, so every fix moves them with the old map.
-``named_locations`` carries the whole list both ways: anyone may publish one, any list that is
-not a no-op is applied and republished a revision on, and listeners take what comes back, so
-last writer wins and the echo agrees everyone. ``named_locations_request`` resends it, for a
-page or a recording that started after this module did. They are not tf frames, and going to one
-is the viewer's job: it sends the pose on the planner's ``goal`` in ``map_frame``.
-
-The locations come from the map's own ``named_locations`` snapshot in ``map_file`` -- the map is
-the only place they live, so **an edit made with no recording running is for this session only**.
-With no map and ``new_map`` set, this run's world frame is the map.
+Implementations read ``self.premap`` after ``super().start()`` and call :meth:`PremapModule.submit`.
+Named locations live in the ``map`` frame; ``named_locations`` carries the whole list both ways
+(last writer wins). They persist only in the map file, so edits made without a recording are lost.
 """
 
 from __future__ import annotations
@@ -68,37 +56,33 @@ RECORDING_SUFFIXES = (".db", ".mcap")
 
 
 def stream_key(name: str) -> str:
-    """*name* as both stores spell it: no leading ``/``, and ``/`` folded to the ``_`` McapStore uses.
-
-    Reading an .mcap, ``map/v1/cloud`` comes back as ``map_v1_cloud``, and a ``.db`` can only hold
-    the underscore form at all (a stream name there is a SQL identifier). So the two spellings are
-    one stream as far as a reader is concerned.
-    """
+    """*name* with ``/`` folded to ``_``, since a ``.db`` stream name is a SQL identifier."""
     return name.lstrip("/_").replace("/", "_")
 
 
 def find_stream(streams: list[str], wanted: str) -> str | None:
-    """The stream named *wanted*, however the recording spells it."""
     return next((name for name in streams if stream_key(name) == stream_key(wanted)), None)
 
 
-MAP_CLOUD_RE = re.compile(r"^map_(?P<name>.+)_cloud$")
+DEFAULT_MAP_FRAME = "map"
 
-# Where an overridden cloud stream's locations come from: it is not a named map, so it has none
-# of its own, and the recording's own list is the only thing left to seed them from.
+MAP_CLOUD_RE = re.compile(rf"^{re.escape(DEFAULT_MAP_FRAME)}_(?P<name>.+)_cloud$")
+
+# A cloud_stream that is not a named map has no locations of its own
 OVERRIDE_LOCATIONS = "named_locations"
 
-# Where a run with no map at all puts its map frame (`new_map`: this run's world frame is the map)
-DEFAULT_MAP_FRAME = "map"
+
+def named_map_frame(name: str) -> str:
+    return f"{DEFAULT_MAP_FRAME}/{name}"
 
 
 def map_cloud_stream(name: str, slashed: bool = True) -> str:
-    """The stream a map called *name* keeps its cloud on, in either spelling."""
-    return f"map/{name}/cloud" if slashed else f"map_{name}_cloud"
+    stream = f"{named_map_frame(name)}/cloud"
+    return stream if slashed else stream_key(stream)
 
 
 def map_names(streams: list[str]) -> dict[str, str]:
-    """Every map in *streams*, as its name -> the stream its cloud is on."""
+    """Map name -> its cloud stream."""
     found: dict[str, str] = {}
     for name in streams:
         match = MAP_CLOUD_RE.match(stream_key(name))
@@ -108,22 +92,7 @@ def map_names(streams: list[str]) -> dict[str, str]:
 
 
 def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str, str]:
-    """The cloud stream to load, the frame it is the map of, and the stream its locations are on.
-
-    A recording holds its maps under their names, as ``map/<name>/cloud`` beside
-    ``map/<name>/named_locations`` (an .mcap; a ``.db`` spells the same streams
-    ``map_<name>_cloud``, which is what both come back as -- see :func:`stream_key`). With no
-    *wanted*, a lone map is taken as the one meant, several is an error since neither is, and
-    none is an error too rather than a guess at some other cloud in the recording.
-
-    *wanted* overrides all of that: it is the stream to load, whether or not it is a named map.
-    One of the recording's maps still brings its own locations; any other stream has none, so
-    they come from the recording's own list.
-
-    **The stream names the frame.** A named map is the map at ``map/<name>``, whichever way the
-    recording spells its streams, so the same map keeps one frame in a ``.db`` and an ``.mcap``.
-    Any other stream is the map of a frame of its own name. ``map_frame`` overrides either.
-    """
+    """(cloud stream, map frame, locations stream); *wanted* overrides the lone ``map/<name>/cloud``."""
     named = map_names(streams)
     if wanted is not None:
         name = next((n for n, s in named.items() if stream_key(s) == stream_key(wanted)), None)
@@ -137,19 +106,19 @@ def resolve_map(streams: list[str], wanted: str | None) -> tuple[str, str, str]:
         name = next(iter(named))
     elif not named:
         raise ValueError(
-            f"no map in the recording: nothing in {sorted(streams)} is a map/<name>/cloud"
+            f"no map in the recording: nothing in {sorted(streams)} is a {map_cloud_stream('<name>')}"
         )
     else:
         raise ValueError(
             f"{len(named)} maps in the recording ({', '.join(sorted(named))}): "
             "pass cloud_stream to say which"
         )
-    frame = f"map/{name}"
+    frame = named_map_frame(name)
     return named[name], frame, f"{frame}/named_locations"
 
 
 def load_premap(map_file: str, stream: str | None = None) -> PointCloud2:
-    """The last cloud of a ``.db``/``.mcap`` recording's map, or of *stream* when one is named."""
+    """The last cloud of the recording's map, or of *stream*."""
     if Path(map_file).suffix not in RECORDING_SUFFIXES:
         raise ValueError(
             f"map_file {map_file!r} must be a {' or '.join(RECORDING_SUFFIXES)} recording"
@@ -189,14 +158,13 @@ def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Tran
 
 
 class Config(ModuleConfig):
-    # Premap: the `.db`/`.mcap` recording holding the map; None never fixes
+    # Premap `.db`/`.mcap` recording; None never fixes
     map_file: str | None = None
     # Cloud to load, overriding the recording's own `map/<name>/cloud`
     cloud_stream: str | None = None
     # Live fixed frame
     world_frame: str = "world"
-    # Frame for the loaded premap
-    # Frame the premap is placed at, overriding the one its stream names
+    # Frame for the loaded premap; None: the frame its stream names
     map_frame: str | None = None
     # Seconds between tf republishes of the accepted fix (tf is not latched)
     tf_interval: float = 10.0
@@ -204,7 +172,7 @@ class Config(ModuleConfig):
     republish_loaded_map: float = 0.0
     # Stop attempting once a fix is accepted.
     relocalize_once: bool = True
-    # No map_file: this run's world frame is the map (submit an identity fix)
+    # No map_file: this run's world frame is the map
     new_map: bool = False
 
 
@@ -213,7 +181,6 @@ class PremapModule(Module):
     tf: IO[TFMessage]
     loaded_map: Out[PointCloud2]
     named_locations: IO[InteractiveMarkerUpdate]
-    # frontends publish on here when they want the list
     named_locations_request: In[String]
 
     _placed: bool = False
@@ -227,7 +194,6 @@ class PremapModule(Module):
         self._locations: dict[str, PoseStamped] = {}
         self._server_id = uuid.uuid4().hex
         self._revision = 0
-        # Resolved from the map file at start(): its cloud stream, the map's name, its locations
         self._cloud_stream: str | None = None
         self._map_frame: str | None = None
         self._locations_stream: str | None = None
@@ -241,7 +207,7 @@ class PremapModule(Module):
         if self.config.map_file:
             self._resolve_map(self.config.map_file)
         self.open_locations()
-        # A client that connected before this module came up would never learn the list exists
+        # Clients connected before start() would otherwise never hear the list
         self.named_locations.publish(self.locations_snapshot())
         if not self.config.map_file:
             if self.config.new_map:
@@ -255,14 +221,12 @@ class PremapModule(Module):
 
     @property
     def map_frame(self) -> str:
-        """Where the premap is placed: ``config.map_frame`` wins, else the frame its stream names."""
         return self.config.map_frame or self._map_frame or DEFAULT_MAP_FRAME
 
     def _identity(self) -> Transform:
         return Transform(frame_id=self.config.world_frame, child_frame_id=self.map_frame)
 
     def _resolve_map(self, map_file: str) -> None:
-        """Pick the map to load out of the recording, and take its name as the map frame."""
         from dimos.memory.cli.dataset import open_store
 
         path = resolve_named_path(map_file, Path(map_file).suffix)
@@ -292,7 +256,6 @@ class PremapModule(Module):
         )
 
     def publish_tf(self) -> None:
-        """The current ``world -> map`` fix."""
         if self.fix is None:
             return
         self.tf.publish(TFMessage(self.fix.now()))
@@ -328,14 +291,13 @@ class PremapModule(Module):
         self._placed = True
 
     def open_locations(self) -> None:
-        """Load the locations recorded in the map file."""
         if self.config.map_file:
             source = str(
                 resolve_named_path(self.config.map_file, Path(self.config.map_file).suffix)
             )
             assert self._locations_stream is not None, "_resolve_map runs before this"
             self._locations = load_locations(source, self._locations_stream)
-            # A premap's locations are in its coordinates whatever frame its writer named
+            # Locations are in premap coordinates whatever frame their writer named
             for pose in self._locations.values():
                 pose.frame_id = self.map_frame
             logger.info(
@@ -347,7 +309,7 @@ class PremapModule(Module):
         for named in published.poses:
             pose = self.reexpress(pose_of(named), self.map_frame)
             if pose is None:
-                # The publisher is waiting on an echo: give it the truth, not silence
+                # The publisher waits on an echo
                 logger.warning(
                     f"named locations ignored: no transform from {named.header.frame_id!r} to {self.map_frame!r}"
                 )
@@ -355,7 +317,7 @@ class PremapModule(Module):
                 return
             locations[named.name] = pose
         with self._lock:
-            # PoseStamped == compares position and orientation, so an echo of the list is a no-op
+            # An echo of our own list is a no-op
             if locations == self._locations:
                 return
             self._locations = locations
@@ -364,17 +326,11 @@ class PremapModule(Module):
         self.named_locations.publish(self.locations_snapshot())
 
     async def handle_named_locations_request(self, _: String) -> None:
-        """Resend every named location.
-
-        The list goes out at ``start()`` and on each edit, so a page that connected after this
-        module came up hears nothing until it asks -- zenoh keeps no history for a late
-        subscriber, however reliable the topic. A recording that starts later asks too, since
-        the next run reads the locations back out of the recording.
-        """
+        """Resend the list; zenoh keeps no history for late subscribers."""
         self.named_locations.publish(self.locations_snapshot())
 
     def frame_to(self, frame: str, child: str) -> Transform | None:
-        """``frame -> child``: from this module's own fix for world/map, else from tf."""
+        """``frame -> child``, preferring our own fix over tf for world/map."""
         world, map_frame = self.config.world_frame, self.map_frame
         if self.fix is not None and (frame, child) == (world, map_frame):
             return self.fix
@@ -383,7 +339,7 @@ class PremapModule(Module):
         return self.tfbuffer.get(frame, child)
 
     def reexpress(self, pose: PoseStamped, frame: str) -> PoseStamped | None:
-        """*pose* re-expressed in *frame*; None without a transform yet."""
+        """*pose* in *frame*; None without a transform yet."""
         if pose.frame_id == frame:
             return pose
         frame_to_pose = self.frame_to(frame, pose.frame_id)
