@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List  # noqa: UP035 - Typer inspects callbacks as classes on Python 3.10.
+from typing import Any
 
 import requests
 import typer
@@ -57,7 +57,7 @@ def _parse_key_value_arg(value: str) -> tuple[str, Any]:
         return (key, val)
 
 
-def _validate_key_value_args(values: List[str]) -> list[str]:  # noqa: UP006
+def _validate_key_value_args(values: list[str]) -> list[str]:
     """Validate KEY=VALUE arguments during CLI parsing."""
     for value in values:
         if "=" not in value:
@@ -69,7 +69,12 @@ def _validate_key_value_args(values: List[str]) -> list[str]:  # noqa: UP006
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
     args: list[str] = typer.Option(
-        [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
+        [],
+        "--arg",
+        "-a",
+        # Avoid Typer's inspection of list[str] callback annotations on Python 3.10.
+        callback=lambda values: _validate_key_value_args(values),
+        help="Arguments as key=value",
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
     timeout: int = typer.Option(
