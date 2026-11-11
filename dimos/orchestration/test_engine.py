@@ -29,16 +29,20 @@ from dimos.orchestration.definition import (
     Transition,
 )
 from dimos.orchestration.engine import (
+    AfterTimer,
     ClearTimer,
     Effect,
     FaultReport,
     Limits,
     QueueItem,
+    ReturnItem,
     Runtime,
     SendCancel,
     SendStart,
     SetTimer,
+    SignalItem,
     Timer,
+    TimerItem,
     TransitionRecord,
     enqueue,
     start,
@@ -519,7 +523,7 @@ CASES = [
 
 
 def label(timer: Timer) -> str:
-    kind = "timer" if timer.cancel is None else "deadline"
+    kind = "timer" if isinstance(timer, AfterTimer) else "deadline"
     return f"{kind} {timer.node} {timer.due}"
 
 
@@ -544,13 +548,13 @@ def queue_item(runtime: Runtime, happening: Happening) -> QueueItem:
     kind, name, *rest = happening
     value = rest[0] if rest else None
     if kind == "signal":
-        return QueueItem("signal", key=name, value=value)
+        return SignalItem(name, value)
     if kind in ("timer", "deadline"):
         timers = [t for t in runtime.timers if t.node == name and label(t).startswith(kind)]
-        return QueueItem("timer", timer=timers[0])
+        return TimerItem(timers[0])
     sent = "start" if kind in ("returns", "raises") else "cancel"
     call = next(call for call in runtime.calls if call.node == name and call.kind == sent)
-    return QueueItem(f"{sent}_return", call=call, value=value, raised="raises" in kind)
+    return ReturnItem(call, value, raised="raises" in kind)
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
@@ -574,16 +578,13 @@ def test_a_stale_return_and_a_cleared_timer_are_discarded() -> None:
     assert runtime.active == {"Work"}
 
     assert step(checked, runtime, drive, 3.0) == (runtime, [])
-    cleared = QueueItem("timer", timer=Timer("Work", 9.0, transition=0))
+    cleared = TimerItem(AfterTimer("Work", 9.0, transition=0))
     assert step(checked, runtime, cleared, 3.0) == (runtime, [])
 
 
 def test_enqueue_replaces_an_unhandled_item_for_the_same_signal() -> None:
-    items = [QueueItem("signal", key="level", value=1.0), QueueItem("timer")]
-    enqueue(items, QueueItem("signal", key="level", value=2.0))
-    enqueue(items, QueueItem("signal", key="skip"))
-    assert items == [
-        QueueItem("signal", key="level", value=2.0),
-        QueueItem("timer"),
-        QueueItem("signal", key="skip"),
-    ]
+    timer = TimerItem(AfterTimer("Wait", 2.0, transition=0))
+    items: list[QueueItem] = [SignalItem("level", 1.0), timer]
+    enqueue(items, SignalItem("level", 2.0))
+    enqueue(items, SignalItem("skip"))
+    assert items == [SignalItem("level", 2.0), timer, SignalItem("skip")]

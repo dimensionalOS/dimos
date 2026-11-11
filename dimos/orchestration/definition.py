@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The structs an orchestrator file is read into."""
+"""The primitives an orchestrator definition file is parsed into.
+
+Static checks then run over them to confirm the orchestrator is valid.
+"""
 
 import json
 from typing import Annotated, Literal
