@@ -97,6 +97,18 @@ print(arm.pose())      # the tool pose in the world frame
 help(arm)              # every method
 ```
 
+## Mobile robots
+
+Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
+arrives or gives up; `help(app.skills.move_to)` explains its world and relative
+coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
+and `stop_navigation()` cancels the goal:
+
+```python
+app.skills.go_to(x=4.0, y=1.5)
+pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
+```
+
 ## Streams
 
 `app.list_streams()` lists every stream, with its message type and module.
