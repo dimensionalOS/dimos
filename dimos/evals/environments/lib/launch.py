@@ -14,14 +14,11 @@
 
 """Finding and validating the dimos a live eval case drives."""
 
-from collections.abc import Mapping, Sequence
-import os
+from collections.abc import Sequence
 import subprocess
-import sys
 import time
 
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
-from dimos.core.global_config import global_config
 from dimos.core.run_registry import RunEntry, list_runs
 
 _REGISTRY_POLL_S = 0.5
@@ -60,19 +57,14 @@ def launched_mcp_url(process: subprocess.Popen[bytes], deadline: float) -> str:
     return entry.mcp_url
 
 
-def wait_connectable(
-    deadline: float,
-    process: subprocess.Popen[bytes] | None = None,
-    client_env: Mapping[str, str] | None = None,
-) -> None:
+def wait_connectable(deadline: float, process: subprocess.Popen[bytes] | None = None) -> None:
     """Wait until the coordinator answers the ping a ``Dimos.connect()`` client starts with.
 
-    The coordinator answers only after every module has started. ``client_env`` holds the
-    variables a client needs to reach this dimos, such as a transport its launch forced.
+    The coordinator answers only after every module has started.
     """
     while True:
         try:
-            _ping(max(1.0, min(5.0, deadline - time.monotonic())), client_env or {})
+            CoordinatorRPC.connect(timeout=max(1.0, min(5.0, deadline - time.monotonic()))).stop()
             return
         except TimeoutError:
             if process is not None and process.poll() is not None:
@@ -83,33 +75,6 @@ def wait_connectable(
                 raise TimeoutError(
                     "no dimos coordinator answered before the launch deadline"
                 ) from None
-
-
-def _ping(timeout: float, client_env: Mapping[str, str]) -> None:
-    """Ping the coordinator, from a client with ``client_env`` when it changes the transport."""
-    transport = client_env.get("DIMOS_TRANSPORT", global_config.transport)
-    if transport == global_config.transport:
-        CoordinatorRPC.connect(timeout=timeout).stop()
-        return
-    # The transport is read at import, so ping from a process that starts with it.
-    code = (
-        "from dimos.core.coordination.coordinator_rpc import CoordinatorRPC; "
-        f"CoordinatorRPC.connect(timeout={timeout}).stop()"
-    )
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            env={**os.environ, **client_env},
-            capture_output=True,
-            timeout=timeout + 60.0,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise TimeoutError("the coordinator ping did not finish") from e
-    if result.returncode:
-        lines = result.stderr.decode(errors="replace").strip().splitlines()
-        if lines and lines[-1].startswith("TimeoutError"):
-            raise TimeoutError(lines[-1])
-        raise RuntimeError("the coordinator ping could not run: " + " / ".join(lines[-3:]))
 
 
 def validate_blueprints(names: Sequence[str]) -> None:

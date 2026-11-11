@@ -387,13 +387,3 @@ def test_malformed_assistant_events_fail_without_inventing_a_step(
     with pytest.raises((ValueError, RuntimeError)):
         events.append_event({"type": "message_end", "message": message})
     assert len(events.trajectory.build("error").steps) == 1
-
-
-def test_the_scripts_reach_dimos_with_the_transport_its_launch_forced(tmp_path: Path) -> None:
-    paths = RunPaths.for_run(tmp_path)
-    agent = PiAdapter()
-    agent._client_env = {"DIMOS_TRANSPORT": "zenoh"}
-    assert agent._build_process_env(paths)["DIMOS_TRANSPORT"] == "zenoh"
-    raw = PiAdapter(no_dimos=True)
-    raw._client_env = {"DIMOS_TRANSPORT": "zenoh"}
-    assert "DIMOS_TRANSPORT" not in raw._build_process_env(paths)

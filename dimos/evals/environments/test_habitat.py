@@ -166,7 +166,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
     store.stop.assert_called_once()
 
 
-def test_a_python_api_launch_pings_and_hands_out_the_forced_transport(tmp_path, mocker):
+def test_a_python_api_launch_waits_for_the_coordinator(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     proc.extra_env = {}
     mocker.patch(
@@ -178,9 +178,8 @@ def test_a_python_api_launch_pings_and_hands_out_the_forced_transport(tmp_path, 
     mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
     mocker.patch.object(env, "wait_ready")
     try:
-        result = env.start(())
-        assert connectable.call_args.args[2] == {"DIMOS_TRANSPORT": "zenoh"}
-        assert result.client_env == {"DIMOS_TRANSPORT": "zenoh"}
+        env.start(())
+        connectable.assert_called_once()
     finally:
         env.stop()
 
