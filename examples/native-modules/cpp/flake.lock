@@ -19,6 +19,7 @@
     },
     "dimos-native-cpp": {
       "inputs": {
+        "dimos-source": "dimos-source",
         "flake-utils": "flake-utils",
         "lcm-extended": "lcm-extended",
         "nix-filter": "nix-filter",
@@ -28,11 +29,11 @@
       },
       "locked": {
         "dir": "native/cpp",
-        "lastModified": 1792452883,
-        "narHash": "sha256-7HWaDC9KHTTpMr3bQTqAc6B7RuVq+dSrT58XWKM7hBc=",
+        "lastModified": 1794265361,
+        "narHash": "sha256-3oG6Kl1tA6ZCDXqNMtT8H/lQ3lcXIoDNhIySEBEOSBw=",
         "owner": "dimensionalOS",
         "repo": "dimos",
-        "rev": "502b697763f8aef12f073900a948e66eeb4b8b1e",
+        "rev": "4bb37d16dd2451b50422a205e4261f01cbcf8a0a",
         "type": "github"
       },
       "original": {
@@ -41,6 +42,20 @@
         "repo": "dimos",
         "type": "github"
       }
+    },
+    "dimos-source": {
+      "flake": false,
+      "locked": {
+        "path": "../..",
+        "type": "path"
+      },
+      "original": {
+        "path": "../..",
+        "type": "path"
+      },
+      "parent": [
+        "dimos-native-cpp"
+      ]
     },
     "flake-utils": {
       "inputs": {
