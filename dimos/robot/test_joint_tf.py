@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -156,7 +157,9 @@ def test_an_edge_that_has_not_moved_is_not_sent_again(make_model) -> None:
     joint_tf.add_joint_state(state, sink)
     joint_tf.add_joint_state(state, sink)
 
-    assert len(sink.sent) == 2, "both edges once; neither moved the second time and neither is stale"
+    assert len(sink.sent) == 2, (
+        "both edges once; neither moved the second time and neither is stale"
+    )
 
 
 def test_a_stale_edge_is_sent_again_even_though_it_never_moved(make_model) -> None:
@@ -246,3 +249,17 @@ def test_a_mimic_joint_follows_its_leader(tmp_path: Path) -> None:
 
     right = next(one for one in sink.sent if one.child_frame_id == "right")
     np.testing.assert_allclose(right.translation.to_tuple(), (-0.02, 0.0, 0.0), atol=1e-6)
+
+
+def test_nothing_to_say_and_nobody_to_hear_gets_no_thread(tmp_path: Path) -> None:
+    """A manager standing on a bare world link has no joints and no controller."""
+    urdf = tmp_path / "bare.urdf"
+    urdf.write_text('<?xml version="1.0"?><robot name="world"><link name="world"/></robot>')
+    joint_tf = JointTf(RobotModel.from_file(urdf), None, _Sink())
+
+    joint_tf.start()
+    try:
+        assert joint_tf.static_transforms() == []
+        assert not any(one.name == "JointTf" for one in threading.enumerate())
+    finally:
+        joint_tf.stop()
