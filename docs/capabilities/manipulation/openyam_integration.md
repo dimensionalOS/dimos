@@ -93,7 +93,7 @@ YAM uses its arm-only combined model for planning and gravity compensation.
 
 New Quest recordings and policy rollout use the deployed seven-coordinate names.
 Hand-guided teaching retains its original bare names, PD gains and passive-jaw
-behavior; its CAN override remains `--controlcoordinator.can-port`.
+behavior; its CAN override is `--can-port`, as for the other single-arm stacks.
 
 Planner gripper routing is explicit through `ManipulationModuleConfig.gripper_tasks`:
 single YAM binds `manipulator` to `arm_gripper`; dual YAM binds

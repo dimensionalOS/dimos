@@ -166,7 +166,7 @@ dimos/hardware/manipulators/
 
 ### adapter.py: Full Skeleton
 
-Below is a complete annotated adapter. Implement each method by wrapping your vendor SDK calls. All values crossing the adapter boundary **must use SI units**.
+Below is a complete annotated adapter. Implement each method by wrapping your vendor SDK calls. All values crossing the adapter boundary **must use SI units**, except a gripper position, which may use the gripper's own unit.
 
 | Quantity         | SI Unit  |
 |------------------|----------|
@@ -200,6 +200,9 @@ from dimos.hardware.spec import JointLimits
 MM_TO_M = 0.001
 M_TO_MM = 1000.0
 
+# Gripper opening in meters, 0 = closed (take the maximum from your gripper's spec)
+GRIPPER_MAX_OPENING = 0.08
+
 
 class YourArmAdapter:
     """YourArm hardware adapter.
@@ -208,17 +211,21 @@ class YourArmAdapter:
     No inheritance required. Just match the method signatures in spec.py.
     """
 
-    def __init__(self, address: str, dof: int = 6) -> None:
+    def __init__(self, address: str, dof: int = 6, arm_dof: int | None = None, **_: object) -> None:
         """Initialize the adapter.
 
         Args:
             address: Connection address (IP, CAN port, serial device, etc.)
-            dof: Degrees of freedom.
+            dof: Number of joints in the blueprint: the arm's, then the gripper's.
+            arm_dof: Number of arm joints, when a gripper adds one (set in adapter_kwargs).
+            **_: Other arguments the coordinator passes, such as hardware_id.
         """
         if not address:
             raise ValueError("address is required for YourArmAdapter")
         self._address = address
         self._dof = dof
+        self._arm_dof = dof if arm_dof is None else arm_dof
+        self._gripper_dof = dof - self._arm_dof  # 0, or 1 with a gripper
         self._sdk: YourArmSDK | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
 
@@ -267,18 +274,18 @@ class YourArmAdapter:
         )
 
     def get_dof(self) -> int:
-        """Get degrees of freedom."""
+        """Get the number of joints, including the gripper."""
         return self._dof
 
     def get_limits(self) -> JointLimits:
-        """Get joint position and velocity limits in SI units.
+        """Get limits for every joint: the arm's in SI units, then the gripper's.
 
         Either hardcode known limits or query them from the SDK.
         """
         return JointLimits(
-            position_lower=[-math.pi] * self._dof,     # radians
-            position_upper=[math.pi] * self._dof,       # radians
-            velocity_max=[math.pi] * self._dof,          # rad/s
+            position_lower=[-math.pi] * self._arm_dof + [0.0] * self._gripper_dof,  # radians, gripper meters
+            position_upper=[math.pi] * self._arm_dof + [GRIPPER_MAX_OPENING] * self._gripper_dof,
+            velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,  # rad/s
         )
 
 
@@ -313,14 +320,17 @@ class YourArmAdapter:
 
 
     def read_joint_positions(self) -> list[float]:
-        """Read current joint positions in radians.
+        """Read current joint positions: the arm's in radians, then the gripper's.
 
         Convert from SDK units to radians.
         """
         if not self._sdk:
             raise RuntimeError("Not connected")
         raw_positions = self._sdk.get_joint_positions()
-        return [math.radians(p) for p in raw_positions[:self._dof]]
+        positions = [math.radians(p) for p in raw_positions[:self._arm_dof]]
+        if self._gripper_dof:
+            positions.append(self._sdk.get_gripper_position() * MM_TO_M)
+        return positions
 
     def read_joint_velocities(self) -> list[float]:
         """Read current joint velocities in rad/s.
@@ -332,7 +342,7 @@ class YourArmAdapter:
             return [0.0] * self._dof
         # If SDK supports velocity reading:
         # raw_velocities = self._sdk.get_joint_velocities()
-        # return [math.radians(v) for v in raw_velocities[:self._dof]]
+        # return [math.radians(v) for v in raw_velocities[:self._arm_dof]] + [0.0] * self._gripper_dof
         return [0.0] * self._dof
 
     def read_joint_efforts(self) -> list[float]:
@@ -343,7 +353,7 @@ class YourArmAdapter:
         if not self._sdk:
             return [0.0] * self._dof
         # If SDK supports torque reading:
-        # return list(self._sdk.get_joint_torques()[:self._dof])
+        # return list(self._sdk.get_joint_torques()[:self._arm_dof]) + [0.0] * self._gripper_dof
         return [0.0] * self._dof
 
     def read_state(self) -> dict[str, int]:
@@ -370,27 +380,30 @@ class YourArmAdapter:
         positions: list[float],
         velocity: float = 1.0,
     ) -> bool:
-        """Command joint positions in radians.
+        """Command joint positions: the arm's in radians, then the gripper's.
 
         Args:
-            positions: Target positions in radians.
+            positions: One target per joint, in get_limits() order and units.
             velocity: Speed as fraction of max (0-1).
 
         Convert from radians to SDK units before sending.
         """
-        if not self._sdk:
+        if not self._sdk or len(positions) != self._dof:
             return False
-        sdk_positions = [math.degrees(p) for p in positions]
-        return self._sdk.set_joint_positions(sdk_positions)
+        arm, gripper = positions[:self._arm_dof], positions[self._arm_dof:]
+        ok = self._sdk.set_joint_positions([math.degrees(p) for p in arm])
+        if gripper:
+            ok = self._sdk.set_gripper_position(gripper[0] * M_TO_MM) and ok
+        return ok
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
         """Command joint velocities in rad/s.
 
         Return False if velocity control is not supported.
         """
-        if not self._sdk:
-            return False
-        sdk_velocities = [math.degrees(v) for v in velocities]
+        if not self._sdk or len(velocities) != self._dof or any(velocities[self._arm_dof:]):
+            return False  # a gripper velocity may be ignored only when it is zero (spec.py)
+        sdk_velocities = [math.degrees(v) for v in velocities[:self._arm_dof]]
         return self._sdk.set_joint_velocities(sdk_velocities)
 
     def write_stop(self) -> bool:
@@ -436,15 +449,6 @@ class YourArmAdapter:
         return False
 
 
-    def read_gripper_position(self) -> float | None:
-        """Read gripper position in meters. Return None if no gripper."""
-        return None
-
-    def write_gripper_position(self, position: float) -> bool:
-        """Command gripper position in meters. Return False if no gripper."""
-        return False
-
-
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
         return None
@@ -463,6 +467,7 @@ ADAPTER_FACTORIES = {
 
 - **Unsupported features**: Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
 - **Velocity/effort feedback**: If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
+- **Gripper**: there are no gripper methods. A gripper is the last joint: `dof` counts it, `get_limits()` gives its range in the gripper's own unit (meters of opening above), and the joint arrays carry it last. A gripper task opens it toward the `upper` end of that range unless the task has `params={"open_at": "lower"}`.
 - **Lazy SDK import**: If the vendor SDK is an optional dependency, you can import it inside `connect()` instead of at module level (see Piper adapter for this pattern):
 
   ```py
@@ -561,6 +566,11 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 
 ```
 
+If your arm has a gripper, list its joint last (`joints=[*make_joints("arm", 6), "arm/gripper"]`), pass
+`adapter_kwargs={"arm_dof": 6}` so the adapter knows which entry is the gripper, and add
+`TaskConfig(name="arm_gripper", type="gripper", joint_names=["arm/gripper"])` (from `dimos.control.coordinator`) to
+`tasks`.
+
 ### Blueprint field reference
 
 | Field | Description |
@@ -571,7 +581,7 @@ coordinator_yourarm = ControlCoordinator.blueprint(
 | `joints` | List of joint names. `make_joints("arm", 6)` creates `["arm/joint1", ..., "arm/joint6"]`. |
 | `auto_enable` | If `True`, servos are enabled automatically when the coordinator starts. |
 | `task.name` | Name used by the ManipulationModule to invoke trajectory execution via RPC. |
-| `task.type` | Task type: `"trajectory"`, `"servo"`, `"velocity"`, or `"cartesian_ik"`. |
+| `task.type` | Task type, such as `"trajectory"`, `"velocity"`, `"cartesian_ik"` or `"gripper"`. |
 | `task.priority` | Priority for per-joint arbitration. Higher number wins. |
 
 ## Step 4: Add URDF and Planning Integration (Optional)
