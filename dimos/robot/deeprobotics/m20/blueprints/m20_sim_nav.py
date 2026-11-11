@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""M20 navigation driving the simulated walking M20 to a clicked goal."""
 
 from __future__ import annotations
 
@@ -30,9 +31,11 @@ m20_sim_nav = autoconnect(
         [
             (SimM20World, "lidar", "slam_body_points"),
             (SimM20World, "odometry", "slam_odom"),
+            # the sim's measured joint angles pose the same URDF the real robot shows
             (SimM20World, "joint_state", "coordinator_joint_state"),
         ]
     ),
     UsdManager.blueprint(model=M20_MODEL),
     m20_nav_stack(SIM_M20),
+    # gossip off: with it on, zenoh's pending-connection bug keeps native modules spawned together from linking
 ).global_config(zenoh_gossip=False, n_workers=9)
