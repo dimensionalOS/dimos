@@ -269,7 +269,7 @@ ${BOLD}OPTIONS${RESET}
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
     --no-cuda              Skip optional CUDA extras and GPU verification
-    --no-sysctl            Skip LCM sysctl configuration
+    --no-sysctl            Skip system configuration (sysctl, memlock limit)
     --use-nix              Force Nix-based setup
     --no-nix               Skip Nix entirely
     --skip-tests           Skip the optional replay smoke test
@@ -813,14 +813,20 @@ do_install() {
 
 # ─── system configuration ────────────────────────────────────────────────────
 configure_system() {
-    [[ "$NO_SYSCTL" == "1" ]] && { dim "  skipping sysctl (--no-sysctl)"; return; }
+    [[ "$NO_SYSCTL" == "1" ]] && { dim "  skipping system configuration (--no-sysctl)"; return; }
     [[ "$DETECTED_OS" == "macos" ]] && return
     if [[ "$DETECTED_OS" == "nixos" ]]; then
         info "NixOS: add to configuration.nix:"
         dim "  networking.kernel.sysctl.\"net.core.rmem_max\" = 67108864;"
         dim "  networking.kernel.sysctl.\"net.core.rmem_default\" = 67108864;"
+        dim "  security.pam.loginLimits = [{ domain = \"*\"; type = \"-\"; item = \"memlock\"; value = \"65536\"; }];"
         return
     fi
+    configure_lcm_buffers
+    configure_memlock
+}
+
+configure_lcm_buffers() {
     local current_rmem; current_rmem="$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)"
     if [[ "$current_rmem" -ge 67108864 ]]; then ok "LCM buffers already configured"; return; fi
 
@@ -839,6 +845,42 @@ configure_system() {
             else dim "[dry-run] would write /etc/sysctl.d/99-dimos.conf"; fi
         fi
         ok "LCM buffers configured"
+    fi
+}
+
+# The stack checks this limit at startup (MemlockConfiguratorLinux) and would
+# otherwise warn on the first run. Raising it on this shell covers the smoke
+# test below. The limits.d file covers later logins.
+configure_memlock() {
+    local hard; hard="$(ulimit -H -l)"
+    if [[ "$hard" == "unlimited" || "$hard" -ge 65536 ]]; then ok "locked-memory limit already configured"; return; fi
+    local user; user="$(id -un)"
+    local limits_file=/etc/security/limits.d/99-dimos-memlock.conf
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then
+        privilege=(sudo)
+        if [[ "$NON_INTERACTIVE" == "1" ]]; then privilege+=(-n); fi
+    fi
+
+    printf "\n"
+    info "DimOS uses Zenoh shared memory which needs a 64MB locked-memory limit (now $((hard / 1024))MB):"
+    dim "  sudo prlimit --pid=$$ --memlock=67108864:67108864"
+    dim "  write $limits_file for user $user (applies at the next login)"
+    printf "\n"
+
+    if prompt_confirm "Raise the locked-memory limit?" "yes"; then
+        if run_cmd "${privilege[@]}" prlimit --pid=$$ --memlock=67108864:67108864; then
+            if [[ "$DRY_RUN" != "1" ]]; then ok "locked-memory limit raised for this session"; fi
+        else
+            warn "could not raise the limit for this session"
+        fi
+        if [[ "$DRY_RUN" != "1" ]]; then
+            if printf "# Written by dimos: zenoh's SHM pool must be lockable.\n%s\t-\tmemlock\t65536\n" "$user" | "${privilege[@]}" tee "$limits_file" >/dev/null; then
+                ok "locked-memory limit saved for future logins"
+            else
+                warn "could not save locked-memory limit to $limits_file"
+            fi
+        else dim "[dry-run] would write $limits_file"; fi
     fi
 }
 
