@@ -155,8 +155,8 @@ def _mujoco_lidar_kwargs(camera_name: str, camera_names: tuple[str, ...]) -> dic
     }
 
 
-if global_config.simulation and global_config.simulation != "mujoco":
-    raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco")
+if global_config.simulation not in ("", "mujoco", "sim2"):
+    raise ValueError("unitree-g1-groot-wbc only supports --simulation mujoco or sim2")
 
 if global_config.simulation == "mujoco":
     from dimos.mapping.voxels.module import VoxelGridMapper
@@ -305,27 +305,68 @@ else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
 
-    # Real-hw backend: DDS connection module + transport_lcm adapter.
-    _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+    if global_config.simulation == "sim2":
+        from dimos.robot.assets.model import UsdModel
+        from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
+        from dimos.robot.usd_manager import UsdManager
+        from dimos.sim2.assets.logistics import LOGISTICS
+        from dimos.sim2.livox import LivoxSim
+        from dimos.sim2.sim import sim_module
+        from dimos.sim2.spec import SimulatedRobot
+
+        _robot_id = "g1"
+        _scene_manager = f"scene/{UsdManager.name}"
+        _mid360 = LivoxSim.blueprint(
+            frame_id=G1Sim.lidar_mount_frame, scene_manager=_scene_manager
+        ).remappings([(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")])
+        _robot_usd = UsdManager.blueprint(
+            model=G1Sim.usd,
+            publish_joint_tf=False,
+            mounts={G1Sim.lidar_mount_frame: _mid360},
+        )
+        _backend = autoconnect(
+            sim_module(
+                scene_manager=_scene_manager,
+                robots=[SimulatedRobot(_robot_id, G1Sim.usd)],
+            ),
+            G1Sim.blueprint(robot_id=_robot_id, scene_manager=_scene_manager),
+            _robot_usd,
+            UsdManager.blueprint(
+                model=UsdModel.from_file(LOGISTICS).with_frames(
+                    {_robot_id: ("logistics", (0.0, 0.0, HOME_HEIGHT), (0.0, 0.0, 0.0))}
+                ),
+                mounts={_robot_id: _robot_usd},
+                frame_id_prefix="",
+                tf_renames={"logistics": "world"},
+            ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),
+        )
+        _auto_arm = True
+        _auto_dry_run = False
+        _default_ramp_seconds = 0.0
+    else:
+        from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnection
+
+        # Real-hw backend: DDS connection module + transport_lcm adapter.
+        _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
+        _mid360 = mid360_for_pointlio()
+        # Real hardware: come up unarmed + dry-run; operator must click
+        # Activate (10 s ramp) after verifying commands.
+        _auto_arm = False
+        _auto_dry_run = True
+        _default_ramp_seconds = 10.0
     _adapter_type = "transport_lcm"
     _adapter_address = ""
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
-    # Real hardware: come up unarmed + dry-run; operator must click
-    # Activate (10 s ramp) after verifying commands.
-    _auto_arm = False
-    _auto_dry_run = True
-    _default_ramp_seconds = 10.0
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 11
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
-        mid360_for_pointlio(),
+        _mid360,
         PointLio.blueprint(),
         RayTracingVoxelMap.blueprint(
             voxel_size=_G1_REAL_NAV_VOXEL_RESOLUTION,
