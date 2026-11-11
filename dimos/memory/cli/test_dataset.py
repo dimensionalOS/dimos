@@ -22,15 +22,18 @@ from mcap.writer import Writer
 import pytest
 from typer.testing import CliRunner
 
+from dimos import constants
 from dimos.memory.cli.app import mem_app
-from dimos.memory.cli.dataset import open_dataset, open_store
-from dimos.memory.replay_module import stream_types_of
+from dimos.memory.cli.dataset import open_dataset, open_store, resolve_dataset
+from dimos.memory.replay import resolve_db_path
+from dimos.memory.replay_module import dataset_path, stream_types_of
 from dimos.memory.store.mcap import McapStore
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
 from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
 from dimos.robot.unitree.go2.dds.store import Go2McapStore
+from dimos.utils import data
 
 
 def test_native_mcap_cli_and_replay_resolve_typed_stream(tmp_path):
@@ -214,3 +217,76 @@ def test_legacy_json_selection_respects_encoding_and_metadata(
             assert decoded.data == payload.decode()
         else:
             assert decoded == payload
+
+
+@pytest.fixture
+def dataset_dirs(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    data_dir = project / "data"
+    (data_dir / ".lfs").mkdir(parents=True)
+    downloads = tmp_path / "downloads"
+    recordings = tmp_path / "recordings"
+    downloads.mkdir()
+    recordings.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(data, "DIMOS_PROJECT_ROOT", project)
+    monkeypatch.setattr(data, "get_project_root", lambda: project)
+    monkeypatch.setattr(data, "get_data_dir", lambda: data_dir)
+    monkeypatch.setattr(data, "_get_lfs_dir", lambda: data_dir / ".lfs")
+    monkeypatch.setattr(constants, "DOWNLOADS_DIR", downloads)
+    monkeypatch.setattr(constants, "RECORDINGS_DIR", recordings)
+    return recordings, downloads
+
+
+def test_resolve_recording_and_download_names(dataset_dirs):
+    recordings, downloads = dataset_dirs
+    run = recordings / "20260830-120000-go2" / "memory.db"
+    run.parent.mkdir()
+    run.touch()
+    pulled = downloads / "20260830-120000-u0-memory.db"
+    pulled.touch()
+
+    assert resolve_dataset(run.parent.name) == run
+    assert resolve_db_path(run.parent.name) == run
+    assert dataset_path(run.parent.name) == str(run)
+    assert resolve_dataset("memory.db") == pulled
+    assert resolve_dataset("memory") == pulled
+    assert resolve_db_path("u0") == pulled
+    assert resolve_dataset("20260830-120000-u0") == pulled
+    assert resolve_dataset(pulled.name) == pulled
+
+
+def test_resolve_mcap_recording_by_folder_name(dataset_dirs):
+    recordings, _ = dataset_dirs
+    run = recordings / "2026-11-11_01-00-00pm-PST" / "memory.mcap"
+    run.parent.mkdir()
+    run.touch()
+
+    assert resolve_dataset(run.parent.name) == run
+    assert dataset_path(run.parent.name) == str(run)
+
+
+def test_ambiguous_download_name_lists_candidates(dataset_dirs):
+    _, downloads = dataset_dirs
+    first = downloads / "20260830-120000-u0-memory.db"
+    second = downloads / "20260831-120000-u1-memory.db"
+    first.touch()
+    second.touch()
+
+    with pytest.raises(RuntimeError, match="Ambiguous dataset") as error:
+        resolve_dataset("memory.db")
+    assert str(first) in str(error.value)
+    assert str(second) in str(error.value)
+    with pytest.raises(RuntimeError, match="Ambiguous dataset"):
+        dataset_path("memory.db")
+
+
+def test_unknown_dataset_lists_search_locations(dataset_dirs):
+    recordings, downloads = dataset_dirs
+
+    with pytest.raises(FileNotFoundError, match="Dataset 'unknown' not found") as error:
+        resolve_dataset("unknown")
+    assert str(recordings) in str(error.value)
+    assert str(downloads) in str(error.value)
+    assert str(data.get_data_dir()) in str(error.value)
+    assert "Test file" not in str(error.value)
