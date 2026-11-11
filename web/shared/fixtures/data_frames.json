@@ -19,6 +19,27 @@
       "frame_b64": "vgAAAAQAAAB7ImNoIjoiQHQ6djIiLCJzZXEiOjksInRzIjoxNzUyNTc2MDAwLjc1LCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWV0YSI6eyJrZXkiOiJkZW1vL86yL2Nsb2NrIiwiZW5jb2RpbmciOiJhcHBsaWNhdGlvbi9vY3RldC1zdHJlYW0iLCJnZW4iOjMsImluZ3Jlc3NUcyI6MTc1MjU3NjAwMC41LCJzb3VyY2VUcyI6MTc1MjU3NjAwMC4yNX19AP+AAQ=="
     },
     {
+      "name": "topic_variant_sample",
+      "header": {
+        "ch": "@t:p2",
+        "seq": 10,
+        "ts": 1752576000.75,
+        "delivery": "latest",
+        "meta": {
+          "key": "sensor/β/camera",
+          "encoding": "image/jpeg",
+          "gen": 3,
+          "ingressTs": 1752576000.5,
+          "variant": "v2",
+          "w": 320,
+          "h": 240,
+          "quality": 40
+        }
+      },
+      "payload_b64": "/9j/2Q==",
+      "frame_b64": "xQAAAAQAAAB7ImNoIjoiQHQ6cDIiLCJzZXEiOjEwLCJ0cyI6MTc1MjU3NjAwMC43NSwiZGVsaXZlcnkiOiJsYXRlc3QiLCJtZXRhIjp7ImtleSI6InNlbnNvci/Osi9jYW1lcmEiLCJlbmNvZGluZyI6ImltYWdlL2pwZWciLCJnZW4iOjMsImluZ3Jlc3NUcyI6MTc1MjU3NjAwMC41LCJ2YXJpYW50IjoidjIiLCJ3IjozMjAsImgiOjI0MCwicXVhbGl0eSI6NDB9ff/Y/9k="
+    },
+    {
       "name": "topic_publish",
       "header": {
         "ch": "@put",
