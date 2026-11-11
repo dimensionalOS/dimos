@@ -848,6 +848,10 @@ asyncio_default_fixture_loop_scope = "function"
 branch = true
 source = ["dimos"]
 concurrency = ["multiprocessing", "thread"]
+# Outside the repo root "dimos" in source is a package name, not a directory.
+# A forked child never runs dimos/__init__.py again, so coverage would report
+# the package as unmeasured on the child's stderr.
+disable_warnings = ["module-not-measured"]
 
 [tool.coverage.report]
 exclude_also = [
