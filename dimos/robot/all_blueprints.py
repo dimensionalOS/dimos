@@ -195,6 +195,7 @@ all_blueprints = {
     "unitree-go2-rpp-controller": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_controller:unitree_go2_rpp_controller",
     "unitree-go2-security": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_security:unitree_go2_security",
     "unitree-go2-sim2-l1": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_sim2_l1:unitree_go2_sim2_l1",
+    "unitree-go2-sim2-mid360": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_sim2_mid360:unitree_go2_sim2_mid360",
     "unitree-go2-spatial": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
     "unitree-go2-typesafe": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_typesafe:unitree_go2_typesafe",

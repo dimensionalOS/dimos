@@ -40,6 +40,10 @@ robots:
           title: Go2 basic
           description: 'Connects to a Go2 and streams its camera, lidar and pose. The simplest way to get a Go2 going: drive it from Controller.'
           starter: 1
+        unitree-go2-sim2-mid360:
+          title: Go2 in sim2 with a Mid-360
+          description: 'A simulated Go2 in sim2 carrying a Livox Mid-360 instead of its L1: no robot needed.'
+          recommended_config: []
         unitree-go2-sim2-l1:
           title: Go2 in sim2 with its L1 lidar
           description: 'A simulated Go2 in sim2, scanning with its own L1: camera, lidar and pose, no robot needed.'
