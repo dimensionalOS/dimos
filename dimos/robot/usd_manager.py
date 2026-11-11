@@ -24,8 +24,10 @@ from threading import Event, RLock, Thread
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_lcm.sim_msgs import WorldState
 import numpy as np
 from pydantic import Field, field_validator
+from scipy.spatial.transform import Rotation
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
@@ -185,6 +187,7 @@ class UsdManager(Module):
 
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
+    observations: In[WorldState]
     render_file_request: In[String]
     file_info: Out[File]
 
@@ -199,11 +202,15 @@ class UsdManager(Module):
         self._joints = {joint.name: joint for joint in self._description.joints}
         self._frames = self._renamed_own_frames()
         self._next_joint_tf_t = 0.0
+        self._sim_clock: str | None = None
+        self._sim_epoch = -1
+        self._next_sim_tf_ns = 0
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._usd: str | None = None
         self._usd_lock = RLock()
         self._scene_build = asyncio.Lock()
         self._scene: str | None = None
+        self._scene_description: UsdModel | None = None
         self._subtree_clients: dict[str, RPCClient] = {}
         self._published_assets: dict[str, str] = {}
         try:
@@ -251,7 +258,12 @@ class UsdManager(Module):
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
         self._stop_static_tf.clear()
-        if self.config.publish_joint_tf and self.static_transforms():
+        # A connected simulation supplies all edges at acquisition time.
+        if (
+            self.config.publish_joint_tf
+            and self.observations.transport is None
+            and self.static_transforms()
+        ):
             self._static_tf_thread = Thread(
                 target=self._publish_static_tf, daemon=True, name="UrdfManagerStaticTf"
             )
@@ -292,6 +304,9 @@ class UsdManager(Module):
                 root, scene = await self._compose(chain)
                 where = root[ASSET_ROOT] or None
                 await asyncio.to_thread(self._check_scene_assets, scene, where)
+                self._scene_description = UsdModel.from_layer(
+                    resolve_usd_assets(scene, root[ASSET_ROOT])
+                )
                 published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
                 self._published_assets = assets
                 self._scene = published
@@ -456,6 +471,14 @@ class UsdManager(Module):
 
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
+        urdf = self._description.urdf()
+        if (
+            name.endswith(".urdf")
+            and Path(name).stem == self.config.instance_name
+            and urdf is not None
+        ):
+            self.file_info.publish(File(name, urdf.xml.encode()))
+            return
         if name.endswith(USD_SUFFIXES):
             usd = self._scene
             if usd is None and self.config.mounts:
@@ -501,6 +524,59 @@ class UsdManager(Module):
             if transforms:
                 self.tfbuffer.publish(*transforms)
             self._stop_static_tf.wait(period)
+
+    async def handle_observations(self, sample: WorldState) -> None:
+        """Publish the same model tree from a complete physical pose sample."""
+        if not self.config.publish_joint_tf:
+            return
+        h = sample.header
+        if self._sim_clock is not None and self._sim_clock != h.clock_id:
+            raise ValueError("robot model TF clock changed; restart its binding")
+        self._sim_clock = h.clock_id
+        if h.epoch < self._sim_epoch:
+            return
+        if h.epoch > self._sim_epoch:
+            self._sim_epoch, self._next_sim_tf_ns = h.epoch, 0
+        if h.time_ns < self._next_sim_tf_ns:
+            return
+        period = round(1e9 / self.config.joint_tf_hz)
+        self._next_sim_tf_ns = (h.time_ns // period + 1) * period
+        poses = {}
+        for body in sample.bodies:
+            p, q = body.pose.position, body.pose.orientation
+            matrix = np.eye(4)
+            matrix[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+            matrix[:3, 3] = [p.x, p.y, p.z]
+            poses[body.body_id] = matrix
+        edges = []
+        model = self._scene_description or self._description
+        poses["world"] = np.eye(4)
+        if model.root_link not in poses:
+            raise ValueError(f"missing model root in body poses: {model.root_link}")
+        if model.root_link != "world":
+            edges.append(
+                Transform.from_matrix(
+                    poses[model.root_link],
+                    frame_id="world",
+                    child_frame_id=model.root_link,
+                    ts=sample.header.time_ns / 1e9,
+                )
+            )
+        for joint in model.joints:
+            parent_id, child_id = joint.parent_link, joint.child_link
+            parent, child = poses[parent_id], poses[child_id]
+            relative = np.eye(4)
+            relative[:3, :3] = parent[:3, :3].T @ child[:3, :3]
+            relative[:3, 3] = parent[:3, :3].T @ (child[:3, 3] - parent[:3, 3])
+            edges.append(
+                Transform.from_matrix(
+                    relative,
+                    frame_id=parent_id,
+                    child_frame_id=child_id,
+                    ts=sample.header.time_ns / 1e9,
+                )
+            )
+        self.tfbuffer.publish(*edges)
 
     async def handle_coordinator_joint_state(self, state: JointState) -> None:
         await asyncio.to_thread(self.add_joint_state, state)
