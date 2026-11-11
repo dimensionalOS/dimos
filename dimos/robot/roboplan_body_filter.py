@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""UrdfManager's self-filter backend on RoboPlan's narrowphase robot body filter."""
 
 from __future__ import annotations
 
@@ -27,7 +28,10 @@ from dimos.utils.transform_utils import matrix_to_pose
 
 
 class RoboPlanBodyFilter:
+    """Which points (in the URDF root frame) lie on the robot's collision geometry, padded by padding_m."""
+
     def __init__(self, description: LoadedRobotModel, padding_m: float) -> None:
+        # RoboPlan is optional for stacks that never self-filter.
         native = importlib.import_module("roboplan.core")
         root = ET.fromstring(description.xml)
         root.set("version", "1.0")
@@ -58,6 +62,7 @@ class RoboPlanBodyFilter:
         joint_configuration = self.configuration(joint_positions, joint_motions)
         if joint_configuration is None:
             return None
+        # This Scene is rooted at the URDF root, so its world is the root frame.
         return ~np.asarray(
             self._body_filter.computeMask(joint_configuration, root_points), dtype=bool
         )
@@ -67,6 +72,8 @@ class RoboPlanBodyFilter:
         joint_positions: Mapping[str, float],
         joint_motions: Mapping[str, NDArray[np.float64]],
     ) -> NDArray[np.float64] | None:
+        """RoboPlan's q for the state, or None when a joint it moves is missing or a planar motion leaves its plane."""
+        # Start from the model's neutral configuration, never its latest state.
         joint_configuration = self._neutral_q.copy()
         for name in self._scene.getJointNames():
             info = self._scene.getJointInfo(name)
