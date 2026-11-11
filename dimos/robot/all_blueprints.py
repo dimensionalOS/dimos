@@ -324,6 +324,7 @@ all_modules = {
     "module-a": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleA",
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts.ModuleB",
     "movement-manager": "dimos.navigation.movement_manager.movement_manager.MovementManager",
+    "mujoco-sim": "dimos.sim2.mujoco.sim.MujocoSim",
     "mujoco-sim-module": "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule",
     "navigation-skill-container": "dimos.agents.skills.navigation.NavigationSkillContainer",
     "object-db-module": "dimos.perception.experimental.moduleDB.ObjectDBModule",
