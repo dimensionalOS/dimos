@@ -878,8 +878,6 @@ jobs:
             container: null  # run on host — `container:` is Linux-only
             # native_e2e: livox live loopback; hosted macOS has no nix-built binaries, Linux runs it in tests.
             markers: "self_hosted or native_e2e"
-            # TODO: Remove pyver once runners are on MacOS 15+
-            pyver: "3.12"
             experimental: false
     runs-on:
       - self-hosted
