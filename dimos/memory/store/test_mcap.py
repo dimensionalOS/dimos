@@ -27,16 +27,8 @@ from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.type.observation import Observation
 from dimos.message_utils import image as image_utils, time as message_time
-from dimos.msgs.sensor_msgs.Imu import Imu as LegacyImu
-from dimos.msgs.std_msgs.String import String as LegacyString
 from dimos_messages.sensor_msgs.msg import Image, Imu
 from dimos_messages.std_msgs.msg import Header, String
-
-
-def _frame_id(message: object) -> str:
-    """Frame of a generated (``header``) or legacy (``frame_id``) message."""
-    header = getattr(message, "header", None)
-    return str(header.frame_id if header is not None else message.frame_id)  # type: ignore[attr-defined]
 
 
 def _imu(ts: float, frame_id: str = "imu_link"):
@@ -68,13 +60,8 @@ def _jpeg_envelope(message):
 mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
 
 
-@pytest.mark.parametrize(
-    ("explicit", "family"),
-    [(False, LegacyImu), (True, Imu)],
-)
-def test_lcm_channel_decodes_from_native_metadata(
-    tmp_path: Path, explicit: bool, family: type
-) -> None:
+@pytest.mark.parametrize("explicit", [False, True])
+def test_lcm_channel_decodes_from_native_metadata(tmp_path: Path, explicit: bool) -> None:
     path = tmp_path / "recording.mcap"
     expected = _imu(12.5)
     with path.open("wb") as output:
@@ -107,23 +94,16 @@ def test_lcm_channel_decodes_from_native_metadata(
         assert store.list_streams() == ["imu"]
         observation: Observation[Imu] = store.stream("imu").order_by("ts").first()
         assert observation.ts == 11.5
-        assert type(observation.data) is family
-        assert _frame_id(observation.data) == "earlier"
+        assert observation.data.header.frame_id == "earlier"
 
         latest_observation: Observation[Imu] = store.stream("imu").order_by("ts", desc=True).first()
         assert latest_observation.ts == 12.5
-        assert type(latest_observation.data) is family
-        assert _frame_id(latest_observation.data) == "imu_link"
+        assert latest_observation.data.header.frame_id == "imu_link"
         assert latest_observation.data.angular_velocity.x == 1.0
 
 
-@pytest.mark.parametrize(
-    ("explicit", "family"),
-    [(False, LegacyImu), (True, Imu)],
-)
-def test_wrapped_codec_decodes_from_native_metadata(
-    tmp_path: Path, explicit: bool, family: type
-) -> None:
+@pytest.mark.parametrize("explicit", [False, True])
+def test_wrapped_codec_decodes_from_native_metadata(tmp_path: Path, explicit: bool) -> None:
     path = tmp_path / "recording.mcap"
     expected = _imu(12.5)
     codec = Lz4Codec(LcmCodec(Imu))
@@ -150,7 +130,7 @@ def test_wrapped_codec_decodes_from_native_metadata(
     with McapStore(path=str(path), codecs={"imu": codec} if explicit else None) as store:
         observation: Observation[Imu] = store.stream("imu").first()
         assert observation.ts == 12.5
-        assert type(observation.data) is family
+        assert type(observation.data) is Imu
         assert observation.data.angular_velocity.x == 1.0
 
 
@@ -250,15 +230,7 @@ def test_unknown_metadata_stays_raw(tmp_path, encoding, payload_type):
         assert "raw bytes" in store.summary()
 
 
-@pytest.mark.parametrize(
-    ("declared", "family"),
-    [
-        ("dimos.msgs.std_msgs.String.String", LegacyString),
-        (String.__msgtype__, String),
-    ],
-)
-def test_json_native_metadata_decodes_string(tmp_path, declared, family):
-    """Legacy artifacts keep their writer's class; canonical metadata is generated."""
+def test_json_native_metadata_decodes_string(tmp_path):
     path = tmp_path / "events.mcap"
     value = String('{"ts":12.5,"event":"ready"}')
     with path.open("wb") as output:
@@ -269,7 +241,7 @@ def test_json_native_metadata_decodes_string(tmp_path, declared, family):
             message_encoding="json",
             schema_id=0,
             metadata={
-                "dimos.payload_type": declared,
+                "dimos.payload_type": "dimos.msgs.std_msgs.String.String",
                 "dimos.observation_time": "publish_time",
             },
         )
@@ -282,7 +254,7 @@ def test_json_native_metadata_decodes_string(tmp_path, declared, family):
         writer.finish()
     with McapStore(path=str(path)) as store:
         observation = store.streams.events.first()
-        assert type(observation.data) is family
+        assert isinstance(observation.data, String)
         assert observation.data.data == value.data
         assert observation.ts == 12.5
 

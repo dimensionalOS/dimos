@@ -18,14 +18,7 @@ from dimos.memory.codecs.legacy import decode_lcm
 
 
 class LcmCodec:
-    """Round-trip historical LCM envelopes, or lift them into the generated family.
-
-    A legacy ``dimos.msgs`` target keeps the class that wrote the artifact, so
-    historical recordings decode (and re-encode) exactly as they did before CDR:
-    the recorded values are retained. A generated target is the canonical family
-    a migrated consumer reads: the same envelope decodes into it, read-only —
-    new recordings use ``CdrCodec``.
-    """
+    """Read historical LCM envelopes directly into generated messages."""
 
     def __init__(self, msg_type: type) -> None:
         self._msg_type = msg_type
@@ -34,15 +27,8 @@ class LcmCodec:
     def payload_type(self) -> type:
         return self._msg_type
 
-    def _generated(self) -> bool:
-        return getattr(self._msg_type, "__msgtype__", None) is not None
-
     def encode(self, value: Any) -> bytes:
-        if self._generated():
-            raise TypeError("Historical LCM codecs are read-only; use CDR for new recordings")
-        return value.lcm_encode()  # type: ignore[no-any-return]
+        raise TypeError("Historical LCM codecs are read-only; use CDR for new recordings")
 
     def decode(self, data: bytes) -> Any:
-        if self._generated():
-            return decode_lcm(data, self._msg_type)
-        return self._msg_type.lcm_decode(data)  # type: ignore[attr-defined,no-any-return]
+        return decode_lcm(data, self._msg_type)
