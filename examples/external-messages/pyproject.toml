@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=70", "wheel", "dimos-cdrgen==0.1.2", "dimos>=0.0.15"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+description = "An external message reusing the installed DimOS Header"
+requires-python = ">=3.12"
+dependencies = ["dimos>=0.0.15", "dimos-cdrgen==0.1.2"]
+
+[tool.dimos.messages]
+python-module = "acme_telemetry"
+
+# Message identity, not a pip constraint: `dimos-cdrgen` matches this value
+# against the installed message manifest and requires its exact version string
+# (a PEP 440 specifier is rejected), so it reads as the DimOS message package
+# this example builds against. The installable minimum is `dimos>=0.0.15`
+# above; bump this literal only when the example's messages must be rebuilt
+# against a newer built-in message package.
+[tool.dimos.messages.dependencies]
+"dimos_messages" = "0.0.15"

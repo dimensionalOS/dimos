@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify the external message package built by build_example.py."""
+"""Verify the installed external message package."""
 
 from importlib.metadata import distribution
 from importlib.util import find_spec
+import json
 
 from acme_telemetry.demo_msgs.msg import Reading
 from acme_telemetry_schemas.provider import package_root as external_root
@@ -34,7 +35,9 @@ def main() -> None:
     assert type(restored.header) is Header
     assert (external_root() / "schemas/std_msgs/msg/Header.msg").is_file()
     assert (external_root() / "schemas/demo_msgs/msg/Reading.msg").is_file()
-    assert not (external_root() / "cpp/demo_msgs").exists()
+    manifest = json.loads((external_root() / "message-package.json").read_text())
+    assert manifest["owned"] == ["demo_msgs/msg/Reading"], manifest["owned"]
+    assert "std_msgs/msg/Header" not in manifest["owned"]
     assert all(
         "dimos-generated" not in req for req in distribution("acme-telemetry").requires or ()
     )

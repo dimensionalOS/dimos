@@ -80,13 +80,19 @@ retain Rust build artifacts. Cold builds download pinned dependencies;
 the installed built-in `Header` by version dependency instead of redeclaring it:
 
 ```sh skip
-python examples/external-messages/build_example.py
+cd examples/external-messages
+pip install .
+python demo_external.py
 ```
 
-The checked-in `pyproject.toml.in` has no version literal. The script reads the
-installed DimOS version, renders a temporary `pyproject.toml`, and builds with
-`--no-build-isolation --no-deps`, so the build uses the local DimOS instead of
-downloading a different PyPI release.
+`pyproject.toml` is an ordinary setuptools project file: it declares
+`dimos>=0.0.15`, so the build resolves any compatible DimOS release and the
+built wheel carries the same minimum. The `dimos_messages` entry under
+`[tool.dimos.messages.dependencies]` is a message identity, not a pip
+requirement. `dimos-cdrgen` matches it against the installed message manifest
+and requires that manifest's exact version string. Against an unpublished
+checkout, build with `pip install --no-build-isolation --no-deps .` so the
+local DimOS is used instead of a PyPI release.
 
 ### What installation does
 
