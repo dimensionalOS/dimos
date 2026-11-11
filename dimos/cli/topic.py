@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import importlib
 import pkgutil
 import re
@@ -71,6 +70,10 @@ def _split_topic(topic: str) -> tuple[str, type | None]:
         head, _, last = name.rpartition("/")
         if not msg_name and head and resolve_msg_type(last) is not None:
             name, msg_name = head, last
+        try:
+            zenoh.KeyExpr(transport_topic(name))
+        except zenoh.ZError as e:
+            _fail(f"Invalid topic '{topic}': {e}")
     if not msg_name:
         return name, None
     msg_type = resolve_msg_type(msg_name)
@@ -87,14 +90,13 @@ def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
     return cls.lcm_decode(data)
 
 
-def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: None) -> None:
-    """Print the banner and block until Ctrl+C, then run on_stop."""
+def _listen_forever(listening_msg: str) -> None:
+    """Print the banner and block until Ctrl+C."""
     typer.echo(listening_msg)
     try:
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
-        on_stop()
         typer.echo("\nStopped.")
 
 
@@ -103,22 +105,20 @@ def topic_echo(topic: str, type_name: str | None) -> None:
     if type_name is not None:
         msg_type = _resolve_type(type_name)
 
-    try:
-        # Typed mode: backend chosen by make_transport from global_config.
-        if msg_type is not None:
-            transport: PubSubTransport[object] = make_transport(topic, msg_type)
+    # Typed mode: backend chosen by make_transport from global_config.
+    if msg_type is not None:
+        transport: PubSubTransport[object] = make_transport(topic, msg_type)
+        with transport:
             transport.subscribe(lambda msg: print(msg, flush=True))
             _listen_forever(
                 f"Listening on {topic} for {msg_type.__name__} messages... (Ctrl+C to stop)"
             )
-        # Inferred typed mode: decode each message from the type embedded in its
-        # channel/key. The wire format is backend-specific, so dispatch on it.
-        elif global_config.transport == "zenoh":
-            _topic_echo_inferred_zenoh(topic)
-        else:
-            _topic_echo_inferred_lcm(topic)
-    except zenoh.ZError as e:
-        _fail(f"Invalid topic '{topic}': {e}")
+    # Inferred typed mode: decode each message from the type embedded in its
+    # channel/key. The wire format is backend-specific, so dispatch on it.
+    elif global_config.transport == "zenoh":
+        _topic_echo_inferred_zenoh(topic)
+    else:
+        _topic_echo_inferred_lcm(transport_topic(topic))
 
 
 def _topic_echo_inferred_lcm(topic: str) -> None:
@@ -128,40 +128,42 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
     autoconf(check_only=True)
 
     # Listen on /topic#pkg.Msg and decode from the msg_name suffix.
-    bus = LCMPubSubBase()
-    bus.start()  # starts threaded handle loop
-
     typed_pattern = rf"^{re.escape(topic)}#.*"
 
     def on_msg(channel: str, data: bytes) -> None:
         print(_decode_typed_lcm_message(channel, data), flush=True)
 
-    assert bus.l is not None
-    bus.l.subscribe(typed_pattern, on_msg)
+    bus = LCMPubSubBase()
+    try:
+        bus.start()
+        assert bus.l is not None
+        bus.l.subscribe(typed_pattern, on_msg)
 
-    _listen_forever(
-        f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg')... "
-        "(Ctrl+C to stop)",
-        bus.stop,
-    )
+        _listen_forever(
+            f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg')... "
+            "(Ctrl+C to stop)"
+        )
+    finally:
+        bus.stop()
 
 
 def _topic_echo_inferred_zenoh(topic: str) -> None:
     key = transport_topic(topic)
-    bus = Zenoh()
-    bus.start()
-
     # Typed Zenoh keys embed the type as a trailing segment ("dimos/topic/pkg.Msg");
     # a wildcard subscription decodes each message from that suffix. Untyped keys
     # don't resolve to a type and are skipped by the encoder. The ignore reflects the
     # pattern Topic vs the encoder's concrete-topic protocol (see lcmpubsub.py).
-    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg, flush=True))  # type: ignore[arg-type]
+    bus = Zenoh()
+    try:
+        bus.start()
+        bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg, flush=True))  # type: ignore[arg-type]
 
-    _listen_forever(
-        f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "
-        "(Ctrl+C to stop)",
-        bus.stop,
-    )
+        _listen_forever(
+            f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "
+            "(Ctrl+C to stop)"
+        )
+    finally:
+        bus.stop()
 
 
 def _build_eval_context() -> dict[str, object]:
@@ -193,9 +195,12 @@ def topic_send(topic: str, message_expr: str) -> None:
 
     msg_type = type(message)
     topic, topic_type = _split_topic(topic)
-    if topic_type is not None and topic_type is not msg_type:
+    if topic_type is not None and getattr(topic_type, "msg_name", None) != getattr(
+        msg_type, "msg_name", None
+    ):
         _fail(f"Topic expects {topic_type.__name__} but the message is {msg_type.__name__}")
     transport: PubSubTransport[object] = make_transport(topic, msg_type)
 
-    transport.broadcast(None, message)
+    with transport:
+        transport.broadcast(None, message)
     typer.echo(f"Sent to {topic}: {message}")
