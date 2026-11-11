@@ -38,13 +38,24 @@ class Call:
 
 
 @dataclass(frozen=True)
-class Timer:
-    """The clock of one `after` transition, or the deadline of one cancel."""
+class AfterTimer:
+    """The clock of one `after` transition, by its place on the node."""
 
     node: str
     due: float
-    transition: int | None = None
-    cancel: int | None = None
+    transition: int
+
+
+@dataclass(frozen=True)
+class CancelDeadline:
+    """When the cancel sent on leaving a node must have returned."""
+
+    node: str
+    due: float
+    call_id: int
+
+
+Timer = AfterTimer | CancelDeadline
 
 
 @dataclass(frozen=True)
@@ -55,13 +66,26 @@ class Pending:
 
 
 @dataclass(frozen=True)
-class QueueItem:
-    kind: Literal["signal", "start_return", "cancel_return", "timer"]
-    call: Call | None = None
-    timer: Timer | None = None
-    key: str | None = None
+class SignalItem:
+    key: str
+    value: Plain = None
+
+
+@dataclass(frozen=True)
+class ReturnItem:
+    """A start or a cancel that returned `value`, or raised."""
+
+    call: Call
     value: Plain = None
     raised: bool = False
+
+
+@dataclass(frozen=True)
+class TimerItem:
+    timer: Timer
+
+
+QueueItem = SignalItem | ReturnItem | TimerItem
 
 
 @dataclass(frozen=True)
@@ -127,9 +151,9 @@ DEFAULT_LIMITS = Limits()
 
 def enqueue(items: MutableSequence[QueueItem], item: QueueItem) -> None:
     """Add an item to a queue. A signal replaces an unhandled item for the same signal."""
-    if item.kind == "signal":
+    if isinstance(item, SignalItem):
         for index, waiting in enumerate(items):
-            if waiting.kind == "signal" and waiting.key == item.key:
+            if isinstance(waiting, SignalItem) and waiting.key == item.key:
                 items[index] = item
                 return
     items.append(item)
@@ -155,7 +179,18 @@ def step(
 ) -> tuple[Runtime, list[Effect]]:
     """Handle one queue item."""
     work = _Step(checked, runtime, now, limits)
-    return work.run(item.key or item.kind, lambda: work.handle(item))
+    return work.run(_event(item), lambda: work.handle(item))
+
+
+def _event(item: QueueItem) -> str:
+    """What a fault report calls a queue item."""
+    match item:
+        case SignalItem(key):
+            return key
+        case ReturnItem(call):
+            return f"{call.kind}_return"
+        case TimerItem():
+            return "timer"
 
 
 class _FaultError(Exception):
@@ -218,35 +253,36 @@ class _Step:
         self.effects.append(FaultReport(fault.rule, fault.node, event, dict(self.blackboard)))
 
     def handle(self, item: QueueItem) -> None:
-        if item.kind == "timer":
-            self.handle_timer(item.timer)
-        elif item.kind != "signal":
-            self.handle_return(item)
-        elif item.key is not None:
-            key = item.key
-            self.blackboard[key] = item.value
-            self.walk(self.root, lambda node: self.offer(node, key), first=False)
+        match item:
+            case SignalItem(key, value):
+                self.blackboard[key] = value
+                self.walk(self.root, lambda node: self.offer(node, key), first=False)
+            case ReturnItem():
+                self.handle_return(item)
+            case TimerItem(timer):
+                self.handle_timer(timer)
 
-    def handle_timer(self, timer: Timer | None) -> None:
-        if timer is None or timer not in self.timers:
+    def handle_timer(self, timer: Timer) -> None:
+        if timer not in self.timers:
             return
         self.timers.remove(timer)
         node = self.tree.nodes[timer.node]
-        if timer.transition is None:
+        if isinstance(timer, CancelDeadline):
             raise _FaultError("a `cancel` that has not returned by its deadline", node)
         transition = node.transitions[timer.transition]
         if self.passes(node, transition):
             self.take(node, transition, "after")
 
-    def handle_return(self, item: QueueItem) -> None:
-        returned = item.call.id if item.call is not None else None
-        call = next((call for call in self.calls if call.id == returned), None)
+    def handle_return(self, item: ReturnItem) -> None:
+        call = next((call for call in self.calls if call.id == item.call.id), None)
         if call is None or call.node is None:
             return
         self.calls.remove(call)
         node = self.tree.nodes[call.node]
         if call.kind == "cancel":
-            self.clear_timers([timer for timer in self.timers if timer.cancel == call.id])
+            self.clear_timers(
+                [t for t in self.timers if isinstance(t, CancelDeadline) and t.call_id == call.id]
+            )
             if item.raised:
                 raise _FaultError("a `cancel` that raised", node)
             self.release()
@@ -367,14 +403,15 @@ class _Step:
         self.active.discard(node.name)
         self.calls = [c for c in self.calls if c.node != node.name or c.kind != "start"]
         self.clear_timers(
-            [t for t in self.timers if t.node == node.name and t.transition is not None]
+            [t for t in self.timers if isinstance(t, AfterTimer) and t.node == node.name]
         )
         activity = self.tree.activity(node)
         if activity is None or activity.cancel is None:
             return
         call = self.call(node, "cancel", "sent", frozenset(activity.uses), activity.cancel, {})
         self.effects.append(SendCancel(call))
-        self.set_timer(Timer(node.name, self.now + self.limits.cancel_deadline_s, cancel=call.id))
+        due = self.now + self.limits.cancel_deadline_s
+        self.set_timer(CancelDeadline(node.name, due, call.id))
 
     def enter(self, node: Node) -> None:
         failed = self.failed_check(node, node.requires)
@@ -385,7 +422,7 @@ class _Step:
         for index, transition in enumerate(node.transitions):
             if transition.after is not None:
                 due = self.now + self.seconds(node, transition.after)
-                self.set_timer(Timer(node.name, due, transition=index))
+                self.set_timer(AfterTimer(node.name, due, index))
         activity = self.tree.activity(node)
         if activity is None:
             self.enter_inside(node)
