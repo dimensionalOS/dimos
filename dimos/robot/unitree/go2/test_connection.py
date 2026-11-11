@@ -244,6 +244,11 @@ def test_body_command_and_pose_derived_feedback(connection):
     conn._publish_tf(PoseStamped(ts=10.1, orientation=q))  # duplicate time: no rate
     conn._publish_tf(PoseStamped(ts=12.0, orientation=q))  # missing interval
     assert conn.joint_state.publish.call_count == 1
+    half_yaw = math.pi / 4 + 0.01
+    turning = Quaternion(0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+    conn._publish_tf(PoseStamped(ts=12.1, orientation=turning))
+    assert conn.joint_state.publish.call_args.args[0].velocity[2] == pytest.approx(0.2)
+    assert conn.odometry.publish.call_args.args[0].twist.angular.z == pytest.approx(0.2)
     conn.halt()
     conn.connection.stop_movement.assert_called_once()
 

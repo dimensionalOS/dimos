@@ -380,12 +380,21 @@ retains the firmware safe-stop packet before closing DDS. SDK stop sentinels
 are internal firmware values, never ordinary joint position targets. Feedback
 silence is not hidden by republishing cached DDS samples with fresh timestamps.
 
-Go2's planar model joints are `go2/x`, `go2/y`, and `go2/yaw`: measured positions
-and world-frame velocity commands. The connection uses its existing odometry
-stream and requires independently fresh measured yaw before converting a
-canonical command to the vendor's body Twist. Teleop and calibrated path tasks
-explicitly declare the measured yaw used for their body-to-world output mapping.
-The existing odometry, camera, lidar, replay/simulation backends, body-Twist
-RPC/stream, and high-level sport skills remain available to their existing
-non-coordinator callers. The canonical command path uses the connection
+Go2's velocity-only control resources are `go2/base_forward`,
+`go2/base_lateral`, and `go2/base_turn`. Commands map directly to the vendor's
+body Twist, without a cached yaw gate. The backend exposes measured
+`PoseStamped` odometry, not native base rates (lowstate carries IMU/motors/battery).
+The concrete connection estimates average body rates from successive valid
+source-timestamped poses. It publishes those rates without positions on
+`joint_state`, and pose plus estimated body twist on independent
+`odometry: Out[Odometry]`. The first pose and invalid/nonpositive/too-large
+intervals cannot produce a rate measurement. WebRTC pose stamps are preserved,
+not replaced by callback receipt time.
+
+The existing `odom: Out[PoseStamped]` port remains for navigation consumers.
+Holonomic and RPP follower cards consume `odometry` separately from the action
+resources. Their control laws already convert world path goals using measured
+pose and produce body velocities; no second output rotation is performed.
+The camera, lidar, replay/simulation backends, body-Twist RPC/stream, and sport
+skills remain available. The canonical command path retains the connection
 deadman and rejects commands after stop without replaying a target.

@@ -230,8 +230,10 @@ class PathFollowerTask(BaseControlTask):
         if self._path is None or self._distancer is None:
             return None
 
-        if self._current_odom is None or (
-            self._odom_received_at is not None and state.t_now - self._odom_received_at > 0.3
+        if (
+            self._current_odom is None
+            or self._odom_received_at is None
+            or state.t_now - self._odom_received_at > 0.3
         ):
             return None
 

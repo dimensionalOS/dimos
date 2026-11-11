@@ -208,6 +208,8 @@ def test_measured_body_rates_and_independent_odometry(
     assert bool(r.ports["tf"].sent) is publish_tf
     if publish_tf:
         assert r.ports["odom"].sent[-1].position.x == pytest.approx(odom.pose.position.x)
+        assert r.ports["odom"].sent[-1].ts == ts
+        assert r.ports["tf"].sent[-1].transforms[0].ts == ts
 
 
 def test_body_write_needs_no_odometry_and_halt_holds_measured_arms(rig):
@@ -225,3 +227,34 @@ def test_body_write_needs_no_odometry_and_halt_holds_measured_arms(rig):
         (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC), (TORSO_Q, LEFT_Q, RIGHT_Q), strict=True
     ):
         assert list(r.joint_targets()[topic].position) == pytest.approx(q)
+
+
+@pytest.mark.parametrize("name", ["coordinator", "manipulation"])
+def test_physical_assembly_parses_body_resources_without_hardware(name, monkeypatch):
+    import importlib
+
+    from dimos.control.connection_source import ConnectionSource
+    from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+
+    def no_hardware(*args, **kwargs):
+        raise AssertionError("configuration parsing must not initialize hardware")
+
+    monkeypatch.setattr(R1ProConnection, "connect", no_hardware)
+    monkeypatch.setattr(R1ProConnection, "build", no_hardware)
+    category = "basic" if name == "coordinator" else "manipulation"
+    module = importlib.import_module(
+        f"dimos.robot.galaxea.r1pro.blueprints.{category}.r1pro_{name}"
+    )
+    blueprint = getattr(module, f"r1pro_{name}")
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
+    config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
+    declaration = next(c for c in config.connections if c.source == "r1pro")
+    source = ConnectionSource(
+        declaration, ["position_command", "velocity_command"], ["joint_state"], 0.2
+    )
+    assert set(R1PRO_BASE_JOINTS) <= set(source.joint_names)
+    assert not {"r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"} & set(source.joint_names)
+    for task in config.tasks:
+        assert "yaw_joint" not in task.params

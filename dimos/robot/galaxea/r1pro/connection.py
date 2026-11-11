@@ -16,7 +16,7 @@
 
 Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams under
 the control contract: the upper body's 18 joints (torso 4 + left arm 7 +
-right arm 7) take positions on ``position_command``. The ordinary planar
+right arm 7) take positions on ``position_command``. The
 body-axis resources take native body-frame velocities on ``velocity_command``. Feedback
 goes out on ``joint_state``, the two
 IMU streams and wheel odometry. The chassis lidar is ours, not the
@@ -159,8 +159,7 @@ class R1ProConnectionConfig(ConnectionConfig):
     body resources take bounded forward/lateral/turn velocities; they carry no pose.
 
     Attributes:
-        odometry_timeout_s: Independent measured chassis timestamp and receipt
-            age limit. Wheel odometry integrates /motion_control/chassis_speed
+        odometry_timeout_s: Measured chassis source-timestamp age limit. Wheel odometry integrates /motion_control/chassis_speed
             in a local relative frame, not an externally localized map frame.
         tracking_speed: rad/s the on-board tracker follows targets at.
         publish_odom_tf: Gates wheel odometry's odom -> base_link tf and the
@@ -207,11 +206,11 @@ class R1ProConnection(ConnectionModule):
     """R1 Pro connection module — ROS 2 control and sensor nodes.
 
     ``position_command`` carries all 18 upper-body joints' targets in rad,
-    named ``r1pro/<joint>``; ``velocity_command`` carries planar joint velocities. Both
+    named ``r1pro/<joint>``; ``velocity_command`` carries native body rates. Both
     are checked against the limits table before anything is sent. Feedback
     for the upper body is published once every segment has reported, at
-    ``config.publish_rate_hz``. Planar feedback is published on actual odometry
-    receipts, independently of that timer and the IMUs.
+    ``config.publish_rate_hz``. Body-rate feedback is published on actual chassis
+    measurements, independently of that timer, odometry integration and the IMUs.
     """
 
     config: R1ProConnectionConfig

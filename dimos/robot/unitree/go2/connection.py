@@ -573,7 +573,11 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         with self._odom_lock:
             previous = self._previous_odom
             self._previous_odom = copy.deepcopy(msg)
-        if previous is not None and 0 < msg.ts - previous.ts <= self.config.odom_timeout_s:
+        if (
+            previous is not None
+            and msg.frame_id == previous.frame_id
+            and 0 < msg.ts - previous.ts <= self.config.odom_timeout_s
+        ):
             dt = msg.ts - previous.ts
             # Express measured displacement and angular increment in current body frame.
             linear = msg.orientation.inverse().rotate_vector(
@@ -581,24 +585,25 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
             )
             delta = previous.orientation.inverse() * msg.orientation
             angular = Vector3(*Rotation.from_matrix(delta.to_rotation_matrix()).as_rotvec()) / dt
-            twist = Twist(linear, angular)
-            self.joint_state.publish(
-                JointState(
-                    ts=msg.ts,
-                    frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
-                    name=list(GO2_BASE_JOINTS),
-                    velocity=[linear.x, linear.y, angular.z],
+            if all(math.isfinite(v) for v in (*linear, *angular)):
+                twist = Twist(linear, angular)
+                self.joint_state.publish(
+                    JointState(
+                        ts=msg.ts,
+                        frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
+                        name=list(GO2_BASE_JOINTS),
+                        velocity=[linear.x, linear.y, angular.z],
+                    )
                 )
-            )
-            self.odometry.publish(
-                Odometry(
-                    ts=msg.ts,
-                    frame_id=self.config.odom_frame_id,
-                    child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
-                    pose=Pose(msg.position, msg.orientation),
-                    twist=twist,
+                self.odometry.publish(
+                    Odometry(
+                        ts=msg.ts,
+                        frame_id=self.config.odom_frame_id,
+                        child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
+                        pose=Pose(msg.position, msg.orientation),
+                        twist=twist,
+                    )
                 )
-            )
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
