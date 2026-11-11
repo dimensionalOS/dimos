@@ -50,8 +50,9 @@ from dimos.memory.observationstore.base import ObservationStore, ObservationStor
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.protocol.pubsub.codec import describe_message
 from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
-from dimos.protocol.pubsub.message_types import resolve_message_type
+from dimos.protocol.pubsub.message_types import resolve_declared_message_type, resolve_message_type
 
 
 @runtime_checkable
@@ -83,25 +84,38 @@ class _DimosCodec:
     payload_type: type
 
     def decode(self, data: bytes) -> Any:
-        return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
+        from dimos.memory.codecs.legacy import decode_lcm
+
+        return decode_lcm(data, self.payload_type)
 
 
 def _dimos_wire(topic: str) -> tuple[str, type] | None:
-    """Split a dimos wire topic into its port name and message type.
+    """Recognize historical ``dimos/<port>/<msg_name>`` topic suffixes.
 
-    A legacy dimos topic embeds the type in its last segment,
-    ``dimos/<port>/<msg_name>`` (built by ``zenohpubsub.Topic.key_expr``), so
-    every dimos channel describes itself and no per-topic registry is needed.
-    None for anything that is not one, which leaves DDS and app channels to
-    the injected codecs. Raw CDR channels carry their type in the MCAP schema
-    instead (see the ``cdr``/``lz4+cdr`` arms below).
+    New raw CDR channels obtain their type from the declared channel schema.
+    This reader still accepts old topic suffixes for recorded-data compatibility.
     """
     prefix, _, rest = topic.partition("/")
     port, _, msg_name = rest.rpartition("/")
     if prefix != "dimos" or not port:
         return None
-    msg_type = get_dimos_type(msg_name)
+    msg_type = resolve_declared_message_type(msg_name)
     return (port, msg_type) if msg_type is not None else None
+
+
+def _declared_legacy_type(declared: str) -> type | None:
+    """Resolve a ``dimos.msgs.<pkg>.<Class>.<Class>`` artifact payload type.
+
+    Artifact metadata may select only a built-in message class, never an
+    arbitrary Python module or pickle decoder. The historical class wins: an
+    artifact declared this way was written by the legacy encoder, so it decodes
+    to the type that recorded it (the recorded values are retained), while raw
+    CDR channels carry the canonical generated type in their schema instead.
+    """
+    match = re.fullmatch(r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2", declared)
+    if match is None:
+        return None
+    return get_dimos_type(f"{match[1]}.{match[2]}")
 
 
 def _slug(topic: str) -> str:
@@ -258,7 +272,7 @@ class McapStore(Store):
                     # `streams=`, not something to guess at.
                     wire, had = _dimos_wire(ch.topic), _dimos_wire(taken)
                     if wire is not None and had is not None and wire[0] == had[0]:
-                        name = f"{name}_{wire[1].__name__}"
+                        name = f"{name}_{describe_message(wire[1]).name.rsplit('/', 1)[-1]}"
                     if self._stream_topic.get(name, ch.topic) != ch.topic:
                         raise ValueError(
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
@@ -301,25 +315,21 @@ class McapStore(Store):
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
-                    # Artifact metadata may select only a built-in message class,
-                    # never an arbitrary Python module or pickle decoder.
-                    match = re.fullmatch(
-                        r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2",
-                        ch.metadata.get("dimos.payload_type", ""),
-                    )
-                    kind = get_dimos_type(f"{match[1]}.{match[2]}") if match else None
+                    kind = _declared_legacy_type(ch.metadata.get("dimos.payload_type", ""))
                     if kind is not None and hasattr(kind, "lcm_decode"):
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (
                             Lz4Codec(codec) if ch.message_encoding == "lz4+lcm" else codec
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
+                    declared = ch.metadata.get("dimos.payload_type", "")
                     kind = JsonCodec.payload_type
-                    if ch.metadata.get("dimos.payload_type") in {
-                        getattr(kind, "__msgtype__", None),
-                        f"{kind.__module__}.{kind.__qualname__}",
-                    }:
+                    if declared in {kind.__msgtype__, f"{kind.__module__}.{kind.__qualname__}"}:
                         self._codecs[ch.topic] = JsonCodec()
+                    else:
+                        legacy = _declared_legacy_type(declared)
+                        if legacy is not None and getattr(legacy, "msg_name", "") == "std_msgs.String":
+                            self._codecs[ch.topic] = JsonCodec(legacy)
                 self._stream_topic[name] = ch.topic
                 self._available[name] = self._available.get(name, 0) + count
                 self._observation_uses_publish_time[name] = (

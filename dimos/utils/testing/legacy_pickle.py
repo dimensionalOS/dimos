@@ -27,6 +27,7 @@ from typing import Any, cast
 from reactivex.observable import Observable
 
 from dimos.utils.data import get_data, get_data_dir
+from dimos.utils.testing.pickle_messages import load_message_pickle
 from dimos.utils.timeseries.base import T, TimeSeriesStore
 
 
@@ -157,7 +158,7 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         for idx, filepath in enumerate(self._iter_files()):
             try:
                 with open(filepath, "rb") as f:
-                    raw = pickle.load(f)
+                    raw = load_message_pickle(f)
 
                 # Handle both timed (timestamp, data) and non-timed (just data) formats
                 if isinstance(raw, tuple) and len(raw) == 2:
@@ -253,7 +254,7 @@ class LegacyPickleStore(TimeSeriesStore[T]):
             full_path = root_dir / Path(f"{name}.pickle")
 
         with open(full_path, "rb") as f:
-            data = pickle.load(f)
+            data = load_message_pickle(f)
 
         # Legacy format: (timestamp, data) tuple
         if isinstance(data, tuple) and len(data) == 2:

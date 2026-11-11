@@ -12,27 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+from typing import Any
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dimos.msgs.protocol import DimosMsg
+from dimos.memory.codecs.legacy import decode_lcm
 
 
 class LcmCodec:
-    """Codec for DimosMsg types — uses lcm_encode/lcm_decode."""
+    """Round-trip historical LCM envelopes, or lift them into the generated family.
 
-    def __init__(self, msg_type: type[DimosMsg]) -> None:
+    A legacy ``dimos.msgs`` target keeps the class that wrote the artifact, so
+    historical recordings decode (and re-encode) exactly as they did before CDR:
+    the recorded values are retained. A generated target is the canonical family
+    a migrated consumer reads: the same envelope decodes into it, read-only —
+    new recordings use ``CdrCodec``.
+    """
+
+    def __init__(self, msg_type: type) -> None:
         self._msg_type = msg_type
 
     @property
-    def payload_type(self) -> type[DimosMsg]:
-        """Message type encoded by this codec."""
+    def payload_type(self) -> type:
         return self._msg_type
 
-    def encode(self, value: DimosMsg) -> bytes:
-        return value.lcm_encode()
+    def _generated(self) -> bool:
+        return getattr(self._msg_type, "__msgtype__", None) is not None
 
-    def decode(self, data: bytes) -> DimosMsg:
-        return self._msg_type.lcm_decode(data)
+    def encode(self, value: Any) -> bytes:
+        if self._generated():
+            raise TypeError("Historical LCM codecs are read-only; use CDR for new recordings")
+        return value.lcm_encode()  # type: ignore[no-any-return]
+
+    def decode(self, data: bytes) -> Any:
+        if self._generated():
+            return decode_lcm(data, self._msg_type)
+        return self._msg_type.lcm_decode(data)  # type: ignore[attr-defined,no-any-return]

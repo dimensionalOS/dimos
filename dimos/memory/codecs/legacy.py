@@ -77,10 +77,23 @@ def _convert_fields(old: Any, sequences: dict[str, int], path: str = "") -> Any:
     return target(**values)
 
 
-def decode_lcm(data: bytes, message_type: type) -> Any:
+def _generated_name(message_type: type) -> str:
+    """Canonical generated name for a generated or legacy ``dimos.msgs`` class."""
     name = getattr(message_type, "__msgtype__", "")
+    if name:
+        return name
+    module = getattr(message_type, "__module__", "")
+    prefix = "dimos.msgs."
+    if module.startswith(prefix):
+        package = module[len(prefix) :].split(".", 1)[0]
+        return f"{package}/msg/{message_type.__name__}"
+    return ""
+
+
+def decode_lcm(data: bytes, message_type: type) -> Any:
+    name = _generated_name(message_type)
     package, _, message = name.split("/")
-    if message_types().get(name) is not message_type:
+    if message_types().get(name) is None:
         raise TypeError("Expected a registered generated message type")
     if name == "dimos_msgs/msg/LineSegments3D":
         from dimos_lcm.nav_msgs import Path
