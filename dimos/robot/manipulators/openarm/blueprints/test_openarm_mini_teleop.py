@@ -161,6 +161,7 @@ def test_leader_ports_select_the_sides() -> None:
     assert right_only.sides() == ("right",)
     assert right_only.port_right == "/dev/ttyACM0"
     assert right_only.baudrate == FEETECH_DEFAULT_BAUDRATE
+    assert right_only.command_filter_cutoff_hz == 6.0
     assert right_only.mappings["right"] == mini_teleop.MAPPINGS["right"]
 
     both = _leader_config_after_cli_override(
