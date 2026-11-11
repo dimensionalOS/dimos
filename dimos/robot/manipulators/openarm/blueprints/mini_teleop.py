@@ -68,6 +68,9 @@ _JOINT_LIMITS: dict[LeaderSide, tuple[tuple[float, float], ...]] = {
 }
 # Squeezing the trigger this far closes the jaw fully.
 _GRIPPER_TRAVEL_RADIANS = 1.0
+# Low-pass on the leader targets: halves wrist roughness on the OpenArm for
+# about 10 ms of lag; without it the wrists step at the 50 Hz target rate.
+_COMMAND_FILTER_CUTOFF_HZ = 6.0
 
 OPENARM_ROUTER = os.environ.get("DIMOS_OPENARM_ROUTER", "tcp/127.0.0.1:7447")
 
@@ -102,7 +105,9 @@ _VELOCITY_LIMITS = {
 
 
 def _leader() -> Blueprint:
-    return LeaderTeleopModule.blueprint(mappings=MAPPINGS)
+    return LeaderTeleopModule.blueprint(
+        mappings=MAPPINGS, command_filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ
+    )
 
 
 def _follower(visualization: ViserVisualizationConfig | None = None) -> Blueprint:
