@@ -58,8 +58,7 @@
         packages.tests = (buildOf (callWith "test")).override { runTests = true; };
         checks.tests = self.packages.${system}.tests;
 
-        # A binary for the robot, cross built from a laptop. No tests here: they would need an aarch64
-        # emulator, and `checks.tests` already ran them on the build machine.
+        # Cross-built robot binary; no tests, they would need an aarch64 emulator.
         packages.aarch64 = buildOf (callForPkgs pkgs.pkgsCross.aarch64-multiplatform null);
 
         devShells.default = pkgs.mkShell { packages = rustTools; };

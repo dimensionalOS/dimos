@@ -284,7 +284,6 @@ pub struct MlsPlanner {
     // on map processing. Seed regions queue in arrival order.
     pending: Shared<MapUpdate>,
     seed_regions: Arc<Mutex<VecDeque<QueuedSeed>>>,
-    // The active goal carries the frame it was given in, looked up on tf every replan.
     active_goal: Shared<Goal>,
     goal_changed: Arc<AtomicBool>,
     wake: Arc<Notify>,
@@ -487,13 +486,11 @@ fn goal_position(p: &Point) -> Option<Xyz> {
     (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
 }
 
-/// Whether a goal's frame names a tf frame. Viewer clicks carry rerun entity paths, which
-/// start with "/" (a tf frame never does); those, like an empty frame, are the world frame.
+/// Viewer clicks carry rerun entity paths (leading "/"); those and "" mean the world frame.
 fn is_tf_frame(frame: &str) -> bool {
     !frame.is_empty() && !frame.starts_with('/')
 }
 
-/// A goal position given in a frame, in the world frame through that frame's pose on tf.
 fn goal_in_world(at: Xyz, frame_to_world: &Transform) -> Xyz {
     let p = frame_to_world.rotation() * Vector3::new(at.0 as f64, at.1 as f64, at.2 as f64)
         + frame_to_world.translation();
@@ -865,8 +862,7 @@ impl Worker {
         }
     }
 
-    /// *goal*'s position in the world frame, or None while its tf frame is not on tf yet (a
-    /// saved location sent before relocalization placed its map), so the goal waits.
+    /// None while the goal's frame is not on tf yet (e.g. before relocalization), so it waits.
     // DIM-638: read only on a replan, so a new relocalization fix waits for the next live region.
     fn goal_world_position(&self, goal: &Goal) -> Option<Xyz> {
         let frame = goal

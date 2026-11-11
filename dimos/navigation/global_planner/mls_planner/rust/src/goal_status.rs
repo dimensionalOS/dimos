@@ -124,15 +124,11 @@ impl GoalId {
     }
 }
 
-/// The active goal, the id its status reports carry, and the frame it arrived in.
-///
-/// The frame travels with the position because they arrived together on one `PointStamped`: held
-/// apart, a reader can take a new goal's frame with the previous goal's position.
+/// The active goal, its status id, and its frame, held together so a reader never mixes goals.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Goal {
     pub(crate) id: GoalId,
     pub(crate) position: Xyz,
-    /// `header.frame_id`, or None when the goal came without one
     pub(crate) frame: Option<Arc<str>>,
 }
 

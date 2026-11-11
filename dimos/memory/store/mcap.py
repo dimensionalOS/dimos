@@ -258,7 +258,7 @@ class McapStore(Store):
                     if wire is not None and had is not None and wire[0] == had[0]:
                         name = f"{name}_{wire[1].__name__}"
                     if self._stream_topic.get(name, ch.topic) != ch.topic:
-                        # Only an error for whoever reads that stream; the rest still open.
+                        # Only an error for whoever reads that stream; the rest still opens
                         self._ambiguous[name] = (
                             f"stream {name!r} would name both {taken!r} and {ch.topic!r};"
                             " pass streams= to name them apart"
@@ -320,11 +320,7 @@ class McapStore(Store):
         return sorted((set(self._available) | set(self._streams)) - set(self._ambiguous))
 
     def ambiguous_streams(self) -> dict[str, str]:
-        """Names two topics fold to, and why each is left out of :meth:`list_streams`.
-
-        Reading one is an error, so they are not listed and the rest of the file still opens. A
-        whole-file pass (a conversion) has to say what it left behind rather than drop it quietly.
-        """
+        """Stream names two topics fold to (name -> error), left out of :meth:`list_streams`."""
         return dict(self._ambiguous)
 
     def summary(self) -> str:

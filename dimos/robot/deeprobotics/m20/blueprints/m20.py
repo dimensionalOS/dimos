@@ -14,19 +14,9 @@
 
 """Robot-local M20 integration for the current DimOS 3D navigation stack.
 
-It also runs the premap relocalizer, which keeps named map locations. A map is loaded from a
-recording that holds it under its own name, as ``map/<name>/cloud`` beside
-``map/<name>/named_locations``, and ``map/<name>`` is the frame the relocalizer places
-(``map -> map/<name>`` is the fix, since the M20's live LIO frame is already called ``map``).
-Walk the space, recording what a map is built from::
-
-    dimos run m20 --record sqlite --record-topics 'tf,global_map,named_locations'
-
-Build and name the map out of that recording in the Map Editor, then come back to it::
-
-    dimos run m20 --map-file <that recording>.db
-
-A recording holding more than one map needs ``--cloud-stream`` to say which.
+The relocalizer fixes ``map -> map/<name>``, since the M20's live LIO frame is already ``map``.
+Record with ``--record sqlite --record-topics 'tf,global_map,named_locations'``, build the map in
+the Map Editor, then run with ``--map-file <recording>.db``.
 """
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -60,7 +50,7 @@ m20 = (
             relocalize=MID360_NAV,
             new_map=True,
             tf_interval=1.0,
-            # pre_trace_subsample=5 leaves a carved local map of ~12k points, under the 20k default
+            # pre_trace_subsample=5 leaves ~12k local points, under the 20k default
             min_local_points=8_000,
         ),
     )

@@ -31,7 +31,7 @@ from dimos.msgs.visualization_msgs.InteractiveMarkerUpdate import (
 )
 from dimos.protocol.tf.tf import TF
 
-# world -> map of a relocalized run: the old map sits 10 m along x and turned a quarter turn
+# Old map 10 m along x, turned a quarter turn
 FIX = Transform(
     translation=Vector3(10.0, 0.0, 0.0),
     rotation=Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2)),
@@ -42,7 +42,6 @@ FIX = Transform(
 
 @pytest.fixture
 def make(monkeypatch: pytest.MonkeyPatch):
-    """A PremapModule on an in-process tf, recording what it publishes."""
     built: list[PremapModule] = []
 
     def build(
@@ -63,7 +62,7 @@ def make(monkeypatch: pytest.MonkeyPatch):
 
 
 def begin(module: PremapModule) -> None:
-    """What start() does for named locations once its ports are bound."""
+    """start() without binding ports."""
     if module.config.map_file:
         module._resolve_map(module.config.map_file)
     module.open_locations()
@@ -84,7 +83,6 @@ def at(x: float, y: float, frame_id: str, yaw: float = 0.0) -> PoseStamped:
 def listing(
     poses: dict[str, PoseStamped], heard: InteractiveMarkerUpdate
 ) -> InteractiveMarkerUpdate:
-    """A whole list of named locations, as a publisher sends it carrying the revision it last *heard*."""
     return InteractiveMarkerUpdate(
         [named_pose(name, pose) for name, pose in poses.items()],
         server_id=heard.server_id,
@@ -93,7 +91,6 @@ def listing(
 
 
 def publish(module: PremapModule, poses: dict[str, PoseStamped]) -> None:
-    """A publisher that is up to date sends a new whole list."""
     asyncio.run(module.handle_named_locations(listing(poses, module.locations_snapshot())))
 
 
@@ -111,13 +108,11 @@ def test_a_published_list_replaces_the_locations_and_goes_out_as_the_next_revisi
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map"), "desk": at(3, 4, "map")})
-    # rename dock, move desk, then delete desk
     publish(module, {"charger": at(1, 2, "map"), "desk": at(5, 6, "map")})
     assert positions(module.locations_snapshot()) == {"charger": (1, 2), "desk": (5, 6)}
     publish(module, {"charger": at(1, 2, "map")})
     assert names(module.locations_snapshot()) == ["charger"]
 
-    # start() says what the list is, then every applied list goes out one revision on
     assert [names(p) for p in published] == [[], ["dock", "desk"], ["charger", "desk"], ["charger"]]
     assert [p.seq_num for p in published] == [0, 1, 2, 3]
 
@@ -132,7 +127,6 @@ def test_its_own_list_coming_back_changes_nothing(make):
 
 
 def test_the_last_writer_wins_whatever_revision_it_saw(make):
-    """No gate: a publisher that missed a rename still has its list applied, and hears the result."""
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map")})
@@ -142,14 +136,12 @@ def test_the_last_writer_wins_whatever_revision_it_saw(make):
     stale = listing({"dock": at(1, 2, "map"), "desk": at(3, 4, "map")}, both_saw)
     asyncio.run(module.handle_named_locations(stale))
 
-    # the second publisher wrote last, so "dock" is back and the one that renamed hears it
     assert names(module.locations_snapshot()) == ["dock", "desk"]
     assert names(published[-1]) == ["dock", "desk"]
     assert published[-1].seq_num == 3
 
 
 def test_a_list_from_another_run_is_applied_too(make):
-    """A publisher that outlived a restart carries the old run's server_id; it is not a gate."""
     old_run, _ = make()
     begin(old_run)
     publish(old_run, {"dock": at(1, 2, "map")})
@@ -166,7 +158,6 @@ def test_a_list_from_another_run_is_applied_too(make):
 
 
 def test_a_request_resends_the_list(make):
-    """A page or a recording that starts later asks, since nothing replays what it missed."""
     module, published = make()
     begin(module)
     publish(module, {"dock": at(1, 2, "map")})
@@ -182,7 +173,7 @@ def test_locations_in_the_world_frame_are_kept_in_the_map_frame(make):
     module, _ = make()
     module.submit(FIX)
 
-    # 1 m in front of the old map's origin: map x points along world y
+    # map x points along world y
     publish(module, {"door": at(10, 1, "world")})
     assert positions(module.locations_snapshot()) == {"door": (1, 0)}
 
@@ -195,7 +186,6 @@ def test_a_list_without_a_map_transform_is_ignored_and_the_truth_resent(make):
 
 
 def test_a_new_map_is_the_world_frame(make):
-    """Nothing to load: this run's world frame is the map, so a location's pose is the same in both."""
     module, _ = make(new_map=True)
     begin(module)
     publish(module, {"door": at(4, 5, "world")})
@@ -213,7 +203,6 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
     begin(first)
     publish(first, {"dock": at(1, 2, "map", yaw=0.5), "desk": at(3, 4, "map")})
     publish(first, {"dock": at(1, 2, "map", yaw=0.5)})
-    # what a recording of the map's named_locations holds
     with SqliteStore(path=run1) as store:
         store.stream("map_v1_cloud", PointCloud2).append(
             PointCloud2.from_numpy(np.zeros((3, 3), dtype=np.float32), timestamp=0.0), ts=0.0
@@ -226,7 +215,6 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
 
     second, published = make(map_file=run1)
     begin(second)
-    # start() publishes the seeded list, so a client that connected first hears it unasked
     assert positions(published[0]) == {"dock": (1, 2)}
     assert all(p.header.frame_id == "map/v1" for p in published[0].poses)
     loaded = published[0].poses[0]
@@ -236,7 +224,6 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
         == 0.5
     )
 
-    # the stream names the frame, but a configured map_frame overrides it
     relabelled, published = make(map_file=run1, map_frame="premap")
     begin(relabelled)
     assert relabelled.map_frame == "premap"
@@ -245,7 +232,6 @@ def test_locations_are_loaded_from_the_map_recording_at_startup(make, tmp_path):
 
 
 def write_mcap(path, channels):
-    """An .mcap holding one message per (topic, type, message), the way a recorder writes them."""
     mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
     with path.open("wb") as output:
         writer = mcap_writer.Writer(output)
@@ -266,7 +252,6 @@ def write_mcap(path, channels):
 
 
 def test_a_named_map_is_found_and_names_the_frame(make, tmp_path):
-    """One `map/<name>/cloud`: it is the map, `map/<name>` is the frame, its own locations load."""
     import numpy as np
 
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -282,7 +267,7 @@ def test_a_named_map_is_found_and_names_the_frame(make, tmp_path):
                 InteractiveMarkerUpdate,
                 InteractiveMarkerUpdate([named_pose("dock", at(1, 2, "map/v1"))]),
             ),
-            # the flat streams an older build left behind are not what gets picked
+            # Legacy flat streams must not be picked
             (
                 "map_cloud",
                 PointCloud2,
@@ -308,42 +293,33 @@ def test_a_named_map_is_found_and_names_the_frame(make, tmp_path):
 
 
 def test_which_map_to_load():
-    """resolve_map: a lone named map, a picked one, several, and a recording from before names."""
     one = ["/tf", "map/v1/cloud", "map/v1/named_locations"]
     assert map_names(one) == {"v1": "map/v1/cloud"}
     assert resolve_map(one, None) == ("map/v1/cloud", "map/v1", "map/v1/named_locations")
-    # a map with no locations of its own: the stream is still its own, there is just nothing on it
     assert resolve_map(["map/v1/cloud"], None) == (
         "map/v1/cloud",
         "map/v1",
         "map/v1/named_locations",
     )
-    # a recording with no named map has no map at all: say so rather than guess at a flat stream
     with pytest.raises(ValueError, match="no map in the recording"):
         resolve_map(["map_cloud", "/tf"], None)
-    # several maps: neither is "the" map, so say so instead of guessing
     two = ["map/v1/cloud", "map/v2/cloud"]
     assert sorted(map_names(two)) == ["v1", "v2"]
     with pytest.raises(ValueError, match="2 maps in the recording"):
         resolve_map(two, None)
-    # ... unless one is asked for, which also names the frame
     assert resolve_map(two, "map/v2/cloud") == ("map/v2/cloud", "map/v2", "map/v2/named_locations")
-    # a stream that is not one of its maps: the override, taken as is, and it names its own frame
     assert resolve_map(["global_map", "named_locations"], "global_map") == (
         "global_map",
         "global_map",
         "named_locations",
     )
-    # an .mcap topic's leading slash is not part of the frame
     assert resolve_map(["/global_map"], "/global_map") == (
         "/global_map",
         "global_map",
         "named_locations",
     )
-    # ... but a stream the recording does not have at all is a mistake
     with pytest.raises(ValueError, match="has no 'nope' stream"):
         resolve_map(two, "nope")
-    # an .mcap topic keeps its leading slash
     assert resolve_map(["/map/v3/cloud"], None) == (
         "/map/v3/cloud",
         "map/v3",
@@ -381,7 +357,6 @@ def test_locations_are_loaded_from_an_mcap(tmp_path):
 
 
 def test_a_list_in_another_frame_goes_through_tf(make):
-    """Only world/map come from the module's own fix; any other frame is looked up in tf."""
     module, _ = make()
     module.tfbuffer.receive_transform(
         Transform(translation=Vector3(0.0, 2.0, 0.0), frame_id="map", child_frame_id="desk_frame")
@@ -391,7 +366,6 @@ def test_a_list_in_another_frame_goes_through_tf(make):
 
 
 def test_locations_are_kept_in_the_map_frame_and_follow_every_fix(make):
-    """A location is held in the old map's frame, so a new world -> map moves it with that map."""
     module, _ = make(relocalize_once=False)
     module.submit(FIX)
     publish(module, {"door": at(1, 0, "map")})
@@ -408,7 +382,6 @@ def test_locations_are_kept_in_the_map_frame_and_follow_every_fix(make):
 
 
 def test_a_premap_recording_also_seeds_its_named_locations(make, tmp_path):
-    """map_file a .db: the premap is the map's last cloud, the locations its last snapshot."""
     import numpy as np
 
     from dimos.memory.store.sqlite import SqliteStore
