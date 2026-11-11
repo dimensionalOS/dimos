@@ -82,7 +82,6 @@ all_blueprints = {
     "go2-sim": "dimos.robot.unitree.go2.blueprints.basic.go2_sim:go2_sim",
     "go2-sim-nav": "dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav:go2_sim_nav",
     "go2-sim-nav-episode": "dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav_episode:go2_sim_nav_episode",
-    "go2-sim-nav-named-locations": "dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav_named_locations:go2_sim_nav_named_locations",
     "habitat-nav": "dimos.simulation.habitat.blueprints:habitat_nav",
     "habitat-raycaster": "dimos.simulation.habitat.blueprints:habitat_raycaster",
     "habitat-teleop": "dimos.simulation.habitat.blueprints:habitat_teleop",
