@@ -161,6 +161,26 @@ def test_a_checkout_with_an_older_gateway_of_its_own_is_introspected_with_this_o
         asyncio.run(run_child(tmp_path, ["blueprint", "r1pro-nav"]))
 
 
+def test_a_blueprints_source_is_found_without_importing_its_missing_dependencies(
+    tmp_path: Path,
+) -> None:
+    # an R1 checkout lists unitree-go2 without the go2 packages installed: its source must still be found
+    robot = tmp_path / "dimos" / "robot"
+    (robot / "go2").mkdir(parents=True)
+    for package in (tmp_path / "dimos", robot, robot / "go2"):
+        (package / "__init__.py").write_text("")
+    (robot / "go2" / "blueprints.py").write_text(
+        "import not_installed_here\n\n\nclass Go2Connection: ...\n\n\ngo2 = Go2Connection\n"
+    )
+    (robot / "all_blueprints.py").write_text(
+        "all_blueprints = {'unitree-go2': 'dimos.robot.go2.blueprints:go2'}\n"
+        "all_modules = {'go2-connection': 'dimos.robot.go2.blueprints.Go2Connection'}\n"
+    )
+    for name, line in (("unitree-go2", 7), ("go2-connection", 4)):
+        found = asyncio.run(run_child(tmp_path, ["source", name], python=sys.executable))
+        assert found == {"name": name, "file": "dimos/robot/go2/blueprints.py", "line": line}
+
+
 class NeedsArgsConfig(ModuleConfig):
     rate_hz: float = 1.0
 

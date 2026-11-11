@@ -175,7 +175,7 @@ async def blueprint(state: GatewayState, name: str, fields: str | None = None) -
 @router.get("/blueprints/{name}/source", response_model=responses.SourceFile)
 async def blueprint_source(state: GatewayState, name: str) -> dict[str, Any]:
     await check_blueprint(state, name)
-    found = await from_run_checkout(state, ["blueprint", name], await has_locally(state, name))
+    found = await from_run_checkout(state, ["source", name], await has_locally(state, name))
     return await read_source(state, found, name, found)
 
 

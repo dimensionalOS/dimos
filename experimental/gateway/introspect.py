@@ -21,6 +21,7 @@ import contextlib
 import enum
 import functools
 import importlib
+import importlib.util
 import inspect
 import json
 import os
@@ -194,9 +195,32 @@ def source_of(target: Any) -> dict[str, Any]:
     return {"file": relative_to_checkout(file) if file else None, "line": line if file else None}
 
 
+def file_without_importing(path: str, line: re.Pattern[str]) -> dict[str, Any] | None:
+    """Where `path`'s .py file is, found without running it (only its parent packages get imported)."""
+    try:
+        spec = importlib.util.find_spec(path)
+    except Exception:  # a parent package's __init__ can raise anything
+        return None
+    if spec is None or not spec.origin or not spec.origin.endswith(".py"):
+        return None
+    lines = Path(spec.origin).read_text("utf-8", "replace").splitlines()
+    found = next((number for number, text in enumerate(lines, 1) if line.match(text)), 1)
+    return {"file": relative_to_checkout(spec.origin), "line": found}
+
+
 def blueprint_source(name: str) -> dict[str, Any]:
+    """A blueprint's (or registered module's) file and line, read without importing it when it's named in all_blueprints."""
     from dimos.robot.all_blueprints import all_blueprints, all_modules
 
+    if name in all_modules:
+        path, _, attribute = all_modules[name].rpartition(".")
+        line = re.compile(rf"class\s+{re.escape(attribute)}\b")
+    else:
+        path, _, attribute = all_blueprints.get(name, "").partition(":")
+        line = re.compile(rf"{re.escape(attribute)}\s*(:|=(?!=))")
+    found = file_without_importing(path, line) if path else None
+    if found is not None:
+        return found
     try:
         if name in all_modules:
             path, _, attribute = all_modules[name].rpartition(".")
@@ -660,6 +684,7 @@ def main(argv: list[str]) -> None:
     request = json.loads(sys.stdin.read() or "null")
     commands: dict[str, Callable[..., dict[str, Any]]] = {
         "blueprint": blueprint_detail,
+        "source": lambda name: {"name": name, **blueprint_source(name)},
         "config": config,
         "module": module,
         "module_config": module_config,
