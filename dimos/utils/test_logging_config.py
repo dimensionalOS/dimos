@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -323,7 +324,10 @@ with closing(follow_log(path, stop=emit_warning)) as records:
     )
 
 
-def test_console_prints_traceback_of_exc_info(monkeypatch, tmp_path):
+def test_console_prints_traceback_of_exc_info(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", "INFO")
     monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
     result = subprocess.run(
         [
@@ -347,3 +351,45 @@ except ZeroDivisionError:
     assert lines[0].endswith("Error during worker shutdown")
     assert lines[1] == "Traceback (most recent call last):"
     assert lines[-1] == "ZeroDivisionError: division by zero"
+
+
+@pytest.mark.parametrize(
+    "level,disable_level",
+    [
+        ("INFO", logging.NOTSET),
+        ("ERROR", logging.NOTSET),
+        ("CRITICAL", logging.NOTSET),
+        ("FATAL", logging.NOTSET),
+        ("INFO", logging.CRITICAL),
+    ],
+)
+def test_uncaught_exception_prints_traceback_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, level: str, disable_level: int
+) -> None:
+    monkeypatch.setenv("DIMOS_LOG_LEVEL", level)
+    monkeypatch.setenv("DIMOS_RUN_LOG_DIR", str(tmp_path))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import logging
+import sys
+from dimos.utils.logging_config import setup_exception_handler
+
+setup_exception_handler()
+logging.disable(int(sys.argv[1]))
+raise RuntimeError("uncaught sentinel")
+""",
+            str(disable_level),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    output = result.stdout + result.stderr
+    assert output.count("Traceback (most recent call last):") == 1
+    assert output.count("RuntimeError: uncaught sentinel") == 1

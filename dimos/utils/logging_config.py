@@ -342,6 +342,11 @@ def setup_exception_handler() -> None:
         # Get a logger for uncaught exceptions
         logger = setup_logger()
 
+        # Uncaught exceptions must remain visible even when error logging is disabled.
+        if not logger.isEnabledFor(logging.ERROR):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
         # The console handler prints the traceback under the line
         logger.error(
             "Uncaught exception occurred",
