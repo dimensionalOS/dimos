@@ -18,6 +18,7 @@ import logging
 import logging.handlers
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import traceback
@@ -35,6 +36,8 @@ logging.getLogger("websockets.server").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 _LOG_FILE_PATH: Path | None = None
+# Only the process that selected a private startup file may move it into a run.
+_STARTUP_LOG_FILE: tuple[Path, int] | None = None
 
 _RUN_LOG_DIR: Path | None = None
 
@@ -44,15 +47,17 @@ def set_run_log_dir(log_dir: str | Path) -> None:
 
     Updates the global path AND migrates any existing FileHandlers on
     stdlib loggers so that logs written after this call go to the new
-    directory.  Records already written to the per-process file move there
-    too.  Workers spawned after this call inherit the env var.
+    directory. Records in this process's private startup file move there
+    too; existing run logs are preserved. Workers inherit the env var.
     """
-    global _RUN_LOG_DIR, _LOG_FILE_PATH
-    log_dir = Path(log_dir)
-    _RUN_LOG_DIR = log_dir
-    _RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    global _RUN_LOG_DIR, _LOG_FILE_PATH, _STARTUP_LOG_FILE
+    log_dir = Path(log_dir).resolve()
+    log_dir.mkdir(parents=True, exist_ok=True)
     new_path = log_dir / "main.jsonl"
+    # Viewers must be able to follow even a quiet run before its first record.
+    new_path.touch(exist_ok=True)
     old_path = _LOG_FILE_PATH
+    _RUN_LOG_DIR = log_dir
     _LOG_FILE_PATH = new_path
     os.environ["DIMOS_RUN_LOG_DIR"] = str(log_dir)
 
@@ -65,14 +70,22 @@ def set_run_log_dir(log_dir: str | Path) -> None:
                 new_handler = _file_handler(new_path)
                 new_handler.setLevel(handler.level)
                 new_handler.setFormatter(handler.formatter)
+                for log_filter in handler.filters:
+                    new_handler.addFilter(log_filter)
                 logger_obj.handlers[i] = new_handler
 
     # Carry over what this process logged before the run directory existed,
     # so it does not stay behind in a per-process file.
-    if old_path is not None and old_path != new_path and old_path.exists():
-        with new_path.open("a", encoding="utf-8") as f:
-            f.write(old_path.read_text(encoding="utf-8"))
+    if (
+        old_path is not None
+        and _STARTUP_LOG_FILE == (old_path, os.getpid())
+        and old_path.exists()
+        and not old_path.samefile(new_path)
+    ):
+        with old_path.open("rb") as source, new_path.open("ab") as destination:
+            shutil.copyfileobj(source, destination)
         old_path.unlink()
+    _STARTUP_LOG_FILE = None
 
 
 def _file_handler(path: Path) -> logging.handlers.RotatingFileHandler:
@@ -124,12 +137,15 @@ def _get_log_file_path() -> Path:
 
 
 def _configure_structlog() -> Path:
-    global _LOG_FILE_PATH
+    global _LOG_FILE_PATH, _STARTUP_LOG_FILE
 
-    if _LOG_FILE_PATH:
+    if _LOG_FILE_PATH is not None and structlog.is_configured():
         return _LOG_FILE_PATH
 
-    _LOG_FILE_PATH = _get_log_file_path()
+    if _LOG_FILE_PATH is None:
+        _LOG_FILE_PATH = _get_log_file_path()
+        if _RUN_LOG_DIR is None and not os.environ.get("DIMOS_RUN_LOG_DIR"):
+            _STARTUP_LOG_FILE = (_LOG_FILE_PATH, os.getpid())
 
     shared_processors: list[Any] = [
         structlog.stdlib.add_log_level,
