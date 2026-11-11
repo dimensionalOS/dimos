@@ -27,7 +27,6 @@ benchmark battery is obstacle-free.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-import math
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -54,14 +53,14 @@ from dimos.control.tasks.velocity_tracking_pid import (
 )
 from dimos.core.global_config import global_config as _gc
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.navigation.go2.replanning_a_star.controllers import PController
 from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_values
 from dimos.utils.trigonometry import angle_diff
 
 if TYPE_CHECKING:
@@ -80,8 +79,6 @@ _UNSET: object = object()
 
 @dataclass
 class PathFollowerTaskConfig:
-    # Explicit measured yaw for world-coordinate output joints. None: body axes.
-    yaw_joint: str | None = None
     joint_names: list[str] = field(default_factory=lambda: ["base/vx", "base/vy", "base/wz"])
     priority: int = 20
     speed: float = 0.55
@@ -184,6 +181,7 @@ class PathFollowerTask(BaseControlTask):
         self._path: Path | None = None
         self._distancer: PathDistancer | None = None
         self._current_odom: PoseStamped | None = None
+        self._odom_received_at: float | None = None
         # Pursuit-speed proxy for adaptive lookahead: the |vx| the controller
         # commanded last tick. 0 on the first tick ⟹ lookahead starts at
         # lookahead_min and grows as the robot accelerates.
@@ -221,46 +219,20 @@ class PathFollowerTask(BaseControlTask):
         return self._state in ("initial_rotation", "path_following", "final_rotation")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        output_yaw = None
-        if self._config.yaw_joint is not None:
-            output_yaw = state.joints.get_position(self._config.yaw_joint)
-            if output_yaw is None or not math.isfinite(output_yaw):
-                return None
         if self._pending_path is not None:
             # Arm a stream-delivered path on the first tick that carries a pose;
             # the card handler has no odom to hand us.
-            pos = state.joints.joint_positions
-            px = pos.get(self._joint_names_list[0])
-            py = pos.get(self._joint_names_list[1])
-            pyaw = pos.get(self._joint_names_list[2])
-            if px is not None and py is not None and pyaw is not None:
+            if self._current_odom is not None:
                 path, self._pending_path = self._pending_path, None
-                self.start_path(
-                    path,
-                    PoseStamped(
-                        ts=state.t_now,
-                        position=Vector3(float(px), float(py), 0.0),
-                        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(pyaw))),
-                    ),
-                )
+                self.start_path(path, self._current_odom)
         if not self._running():
             return None
         if self._path is None or self._distancer is None:
             return None
 
-        # Pull pose from CoordinatorState. The twist-base ConnectedHardware
-        # routes adapter.read_odometry() -> [x, y, yaw]
-        pos = state.joints.joint_positions
-        x = pos.get(self._joint_names_list[0])
-        y = pos.get(self._joint_names_list[1])
-        yaw = pos.get(self._joint_names_list[2])
-        if x is not None and y is not None and yaw is not None:
-            self._current_odom = PoseStamped(
-                ts=state.t_now,
-                position=Vector3(float(x), float(y), 0.0),
-                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
-            )
-        if self._current_odom is None:
+        if self._current_odom is None or (
+            self._odom_received_at is not None and state.t_now - self._odom_received_at > 0.3
+        ):
             return None
 
         match self._state:
@@ -314,9 +286,6 @@ class PathFollowerTask(BaseControlTask):
             actual_vx = state.joints.joint_velocities.get(self._joint_names_list[0], 0.0)
             actual_vy = state.joints.joint_velocities.get(self._joint_names_list[1], 0.0)
             actual_wz = state.joints.joint_velocities.get(self._joint_names_list[2], 0.0)
-            if output_yaw is not None:
-                c, s = math.cos(output_yaw), math.sin(output_yaw)
-                actual_vx, actual_vy = c * actual_vx + s * actual_vy, -s * actual_vx + c * actual_vy
             vx, vy, wz = self._pid.compute(vx, vy, wz, actual_vx, actual_vy, actual_wz)
         elif self._ff is not None:
             # Static gain compensation: cmd_to_robot = controller_cmd / K_plant
@@ -337,9 +306,6 @@ class PathFollowerTask(BaseControlTask):
             assert abs(vy) < 1e-6, f"PathFollowerTask forward_only: vy={vy} must be 0"
             vx = max(0.0, vx)
 
-        if output_yaw is not None:
-            c, s = math.cos(output_yaw), math.sin(output_yaw)
-            vx, vy = c * vx - s * vy, s * vx + c * vy
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             velocities=[vx, vy, wz],
@@ -565,12 +531,16 @@ class PathFollowerTask(BaseControlTask):
         )
         return True
 
-    def update_odom(self, odom: PoseStamped) -> None:
-        # Pose now flows in through compute()'s CoordinatorState (sourced
-        # from the twist-base adapter's read_odometry → joint positions).
-        # This setter is kept as a no-op-or-override seam so out-of-tree
-        # callers that still pump odom externally don't break.
-        self._current_odom = odom
+    def on_odometry(self, msg: Odometry, t_now: float) -> None:
+        pose = PoseStamped(
+            ts=msg.ts,
+            frame_id=msg.frame_id,
+            position=msg.pose.position,
+            orientation=msg.pose.orientation,
+        )
+        pose_to_values(pose, ("x", "y", "yaw"))
+        self._current_odom = pose
+        self._odom_received_at = t_now
 
     def on_path(self, msg: Path, t_now: float) -> None:
         """``path`` card handler. Latched, not armed here: the handler carries no
@@ -642,7 +612,6 @@ class PathFollowerTask(BaseControlTask):
 
 
 class PathFollowerTaskParams(BaseConfig):
-    yaw_joint: str | None = None
     speed: float = 0.55
     control_frequency: float = 10.0
     goal_tolerance: float = 0.2
@@ -661,7 +630,6 @@ def create_task(cfg: Any, hardware: Any) -> PathFollowerTask:
     return PathFollowerTask(
         cfg.name,
         PathFollowerTaskConfig(
-            yaw_joint=params.yaw_joint,
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             speed=params.speed,

@@ -71,7 +71,7 @@ class R1ProCoordinator(ControlCoordinator):
     """The R1 Pro driven through ``R1ProConnection``, robot name "r1pro".
 
     ``r1pro_position_command`` carries the 18 upper-body joints' targets and
-    ``r1pro_velocity_command`` the world-frame planar joint velocities;
+    ``r1pro_velocity_command`` the native body forward/lateral/turn velocities;
     ``r1pro_joint_state`` is the joint
     feedback and ``r1pro_imu`` the chassis IMU (the torso IMU stays on the
     bus, as before).
@@ -215,7 +215,6 @@ def r1pro_control(
                 joint_names=R1PRO_BASE_JOINTS,
                 params={
                     "axes": ["linear.x", "linear.y", "angular.z"],
-                    "yaw_joint": R1PRO_BASE_JOINTS[2],
                     "timeout": 0.2,
                 },
                 priority=10,

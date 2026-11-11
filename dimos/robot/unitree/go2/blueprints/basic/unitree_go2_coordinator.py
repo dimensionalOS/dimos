@@ -50,7 +50,6 @@ unitree_go2_coordinator = (
                     joint_names=_go2_joints,
                     params={
                         "axes": ["linear.x", "linear.y", "angular.z"],
-                        "yaw_joint": GO2_BASE_JOINTS[2],
                     },
                     priority=10,
                 ),

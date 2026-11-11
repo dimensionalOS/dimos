@@ -15,6 +15,7 @@
 import copy
 from enum import Enum
 from importlib import resources
+import math
 import sys
 from threading import Event, Lock, Thread
 import time
@@ -25,6 +26,7 @@ from reactivex import defer, empty, operators as ops
 from reactivex.abc import SchedulerBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+from scipy.spatial.transform import Rotation
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -32,24 +34,26 @@ from dimos.control.connection.connection_module import (
     ConnectionConfig as JointConnectionConfig,
     ConnectionModule,
 )
-from dimos.control.contract.convert import joint_state_from_values, joint_state_to_values
+from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import Interface
 from dimos.core.core import rpc
 from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
 from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.robot.unitree.config import connection_type
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.simulation.dimsim.config import DimSimConfig
@@ -57,7 +61,7 @@ from dimos.simulation.mujoco.config import MujocoConfig
 from dimos.spec.perception import Camera, Pointcloud
 from dimos.utils.decorators.decorators import cached_property, simple_mcache
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_values, twist_from_values
+from dimos.utils.transform_utils import pose_to_values
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -72,12 +76,28 @@ class Go2Mode(str, Enum):
     RAGE = "rage"
 
 
-GO2_BASE_JOINTS: tuple[str, str, str] = ("go2/x", "go2/y", "go2/yaw")
-GO2_MODEL = RobotModel.from_root_link("base_link", name="go2").with_planar_base(
-    PlanarBaseDefinition(
-        joint_names=GO2_BASE_JOINTS,
-        velocity_limits=(2.0, 2.0, 3.0),
-        acceleration_limits=(5.0, 5.0, 8.0),
+# Control-only native body resources, not generalized planar coordinates.
+GO2_BASE_JOINTS: tuple[str, str, str] = ("go2/base_forward", "go2/base_lateral", "go2/base_turn")
+GO2_MODEL = RobotModel.from_root_link("base_link", name="go2").with_added_joints(
+    *(
+        JointDescription(
+            name=name,
+            type="continuous" if i == 2 else "prismatic",
+            parent_link="base_link",
+            child_link=f"go2_body_control_{i}",
+            axis=axis,
+            velocity=velocity,
+            acceleration=acceleration,
+        )
+        for i, (name, axis, velocity, acceleration) in enumerate(
+            zip(
+                GO2_BASE_JOINTS,
+                ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                (2.0, 2.0, 3.0),
+                (5.0, 5.0, 8.0),
+                strict=True,
+            )
+        )
     )
 )
 
@@ -379,6 +399,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
     joint_state: Out[JointState]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
+    odometry: Out[Odometry]
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
@@ -404,8 +425,7 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._odom_lock = Lock()
-        self._odom_yaw: float | None = None
-        self._odom_received_at = float("-inf")
+        self._previous_odom: PoseStamped | None = None
         self._camera_info_stop = Event()
         self.connection = make_connection(
             self.config.ip,
@@ -479,20 +499,15 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
 
     def connect(self) -> None:
         with self._odom_lock:
-            self._odom_yaw = None
-            self._odom_received_at = float("-inf")
+            self._previous_odom = None
         self.connection.start()
 
     def write(self, values: dict[str, float]) -> None:
-        with self._odom_lock:
-            yaw = self._odom_yaw
-            received = self._odom_received_at
-            if yaw is None or time.monotonic() - received > self.config.odom_timeout_s:
-                raise ValueError(
-                    "Go2 requires fresh measured odometry before a joint velocity command"
-                )
-            if not self.connection.move(twist_from_values(values, GO2_BASE_JOINTS, yaw=yaw)):
-                raise RuntimeError("Go2 rejected movement")
+        vx, vy, wz = (values.get(f"{name}/velocity", 0.0) for name in GO2_BASE_JOINTS)
+        if not all(math.isfinite(v) for v in (vx, vy, wz)):
+            raise ValueError("body velocities must be finite")
+        if not self.connection.move(Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz))):
+            raise RuntimeError("Go2 rejected movement")
 
     def halt(self) -> None:
         self.connection.stop_movement()
@@ -545,17 +560,45 @@ class GO2Connection(ConnectionModule, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        # The backend exposes measured poses, not native chassis rates. Estimate
+        # average body rates over valid source-timestamp intervals, never commands.
         try:
-            values = pose_to_values(msg, GO2_BASE_JOINTS)
+            pose_to_values(msg, ("x", "y", "yaw"))
+            if not math.isfinite(msg.ts) or msg.ts <= 0 or not math.isfinite(msg.position.z):
+                raise ValueError("invalid odometry timestamp/position")
         except ValueError:
-            # Malformed feedback cannot authorize motion or refresh its receipt.
             with self._odom_lock:
-                self._odom_yaw = None
+                self._previous_odom = None
             return
         with self._odom_lock:
-            self._odom_yaw = values[f"{GO2_BASE_JOINTS[2]}/position"]
-            self._odom_received_at = time.monotonic()
-        self.joint_state.publish(joint_state_from_values(values, GO2_BASE_JOINTS, ts=msg.ts))
+            previous = self._previous_odom
+            self._previous_odom = copy.deepcopy(msg)
+        if previous is not None and 0 < msg.ts - previous.ts <= self.config.odom_timeout_s:
+            dt = msg.ts - previous.ts
+            # Express measured displacement and angular increment in current body frame.
+            linear = msg.orientation.inverse().rotate_vector(
+                (msg.position - previous.position) / dt
+            )
+            delta = previous.orientation.inverse() * msg.orientation
+            angular = Vector3(*Rotation.from_matrix(delta.to_rotation_matrix()).as_rotvec()) / dt
+            twist = Twist(linear, angular)
+            self.joint_state.publish(
+                JointState(
+                    ts=msg.ts,
+                    frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
+                    name=list(GO2_BASE_JOINTS),
+                    velocity=[linear.x, linear.y, angular.z],
+                )
+            )
+            self.odometry.publish(
+                Odometry(
+                    ts=msg.ts,
+                    frame_id=self.config.odom_frame_id,
+                    child_frame_id=_prefixed(self.config.frame_id_prefix, "base_link"),
+                    pose=Pose(msg.position, msg.orientation),
+                    twist=twist,
+                )
+            )
         msg.frame_id = self.config.odom_frame_id
         if self.config.publish_tf:
             transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
