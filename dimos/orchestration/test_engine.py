@@ -53,10 +53,13 @@ Happening = tuple[str, str] | tuple[str, str, Plain]
 
 @dataclass
 class Case:
-    """A definition, the effects of starting it, and the effects of each happening in turn."""
+    """A definition, the effects of starting it, and the effects of each happening in turn.
+
+    A definition of None stands for the patrol fixture.
+    """
 
     name: str
-    definition: OrchestratorDefinition
+    definition: OrchestratorDefinition | None
     startup: list[str]
     script: list[tuple[float, Happening, list[str]]]
     limits: Limits = Limits()
@@ -248,7 +251,81 @@ LOOP = OrchestratorDefinition(
     ],
 )
 
+PATROL_STARTUP = ["NextWaypoint --> Navigating", "start FakeBase.go_to(name='lobby')"]
+
+
+def waypoint(now: float, goal: str, then: str) -> list[tuple[float, Happening, list[str]]]:
+    """One waypoint of the patrol: `go_to` returns a goal, the goal is reached, `stop` returns."""
+    reached: Plain = {"status": 3, "goal_id": {"id": goal}}
+    return [
+        (now, ("returns", "Navigating", goal), []),
+        (
+            now + 1.0,
+            ("signal", "nav_status", reached),
+            [
+                "Navigating -arrived-> NextWaypoint",
+                "cancel FakeBase.stop",
+                f"set deadline Navigating {now + 3.0}",
+                "NextWaypoint --> Navigating",
+            ],
+        ),
+        (
+            now + 1.5,
+            ("canceled", "Navigating"),
+            [f"clear deadline Navigating {now + 3.0}", f"start FakeBase.go_to(name='{then}')"],
+        ),
+    ]
+
+
 CASES = [
+    Case(
+        "the patrol visits every waypoint and starts the route again",
+        None,
+        PATROL_STARTUP,
+        [
+            *waypoint(1.0, "goal 1", "lab"),
+            *waypoint(3.0, "goal 2", "kitchen"),
+            *waypoint(5.0, "goal 3", "lobby"),
+        ],
+    ),
+    Case(
+        "an estop stops the patrol, and its release starts the waypoint again",
+        None,
+        PATROL_STARTUP,
+        [
+            (1.0, ("returns", "Navigating", "goal 1"), []),
+            (
+                2.0,
+                ("signal", "estop_button", True),
+                [
+                    "Patrolling -estop-> Estopped",
+                    "cancel FakeBase.stop",
+                    "set deadline Navigating 4.0",
+                ],
+            ),
+            (2.5, ("canceled", "Navigating"), ["clear deadline Navigating 4.0"]),
+            (
+                3.0,
+                ("signal", "estop_button", False),
+                ["Estopped -estop_cleared-> Patrolling", *PATROL_STARTUP],
+            ),
+        ],
+    ),
+    Case(
+        "the patrol faults when `go_to` raises",
+        None,
+        PATROL_STARTUP,
+        [
+            (
+                1.0,
+                ("raises", "Navigating"),
+                [
+                    "cancel FakeBase.stop",
+                    "fault at Navigating: a `failed` that no node handles",
+                ],
+            ),
+        ],
+    ),
     Case(
         "an activity on a node with nodes inside, a switch node and a held start",
         WORK,
@@ -477,8 +554,8 @@ def queue_item(runtime: Runtime, happening: Happening) -> QueueItem:
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
-def test_cases(case: Case) -> None:
-    checked = check(case.definition)
+def test_cases(case: Case, patrol: OrchestratorDefinition) -> None:
+    checked = check(case.definition or patrol)
     assert checked.problems == ()
     runtime, effects = start(checked, 0.0, case.limits)
     assert [render(effect) for effect in effects] == case.startup
