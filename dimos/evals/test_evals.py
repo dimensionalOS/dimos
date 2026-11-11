@@ -412,13 +412,13 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
     [
         (DimosAgentAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ("mcp-server",)),
         (
-            McpClientAdapter(modules=("mcp-client",)),
+            McpClientAdapter(modules=("agent",)),
             DimSimEnvironment(blueprint=["unitree-go2"]),
-            ("mcp-client", "mcp-server"),
+            ("agent", "mcp-server"),
         ),
         (PiAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ()),
         (DimosAgentAdapter(), _sim(), ()),
-        (McpClientAdapter(modules=("mcp-client",)), _sim(), ("mcp-client",)),
+        (McpClientAdapter(modules=("agent",)), _sim(), ("agent",)),
     ],
     ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client"],
 )
