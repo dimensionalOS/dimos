@@ -79,6 +79,7 @@ class GlobalPlanner(Resource):
         robot_rotation_diameter: float,
         nerf_speed: float = 1.0,
         simulation: bool = False,
+        stuck_time_window: float | None = None,
     ) -> None:
         self.path = Subject()
         self.goal_reached = Subject()
@@ -93,6 +94,9 @@ class GlobalPlanner(Resource):
             nerf_speed=nerf_speed,
             simulation=simulation,
         )
+
+        if stuck_time_window is not None:
+            self._stuck_time_window = stuck_time_window
 
         stuck_threshold = self._stuck_threshold
         if simulation:

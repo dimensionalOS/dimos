@@ -39,6 +39,9 @@ class ReplanningAStarPlannerConfig(ModuleConfig):
     robot_width: float = Field(default_factory=lambda m: m["g"].robot_width)
     robot_rotation_diameter: float = Field(default_factory=lambda m: m["g"].robot_rotation_diameter)
     nerf_speed: float = 1.0
+    # Seconds of wall-clock time the robot may go without progress before it is
+    # considered stuck. Raise it when the simulator runs slower than real time.
+    stuck_time_window: float = Field(default=8.0, gt=0)
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
@@ -67,6 +70,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             robot_rotation_diameter=self.config.robot_rotation_diameter,
             nerf_speed=self.config.nerf_speed,
             simulation=bool(self.config.g.simulation),
+            stuck_time_window=self.config.stuck_time_window,
         )
 
     @rpc
