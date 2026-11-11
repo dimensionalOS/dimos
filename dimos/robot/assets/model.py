@@ -38,6 +38,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+Vector = tuple[float, float, float]
+
 
 @dataclass(frozen=True)
 class JointDescription:
@@ -106,6 +108,138 @@ class LoadedRobotModel:
     def get_joint(self, name: str) -> JointDescription | None:
         """Return the named joint when it exists."""
         return next((joint for joint in self.joints if joint.name == name), None)
+
+    def referenced_files(self) -> set[str]:
+        """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
+        return {
+            element.attrib["filename"]
+            for element in ET.fromstring(self.xml).iter()
+            if "filename" in element.attrib
+        }
+
+
+@dataclass(frozen=True)
+class UsdModel:
+    _source_path: Path | str | os.PathLike[str] | None = None
+    _urdf: LoadedRobotModel | None = None
+    _text: str | None = None
+    _added_frames: tuple[tuple[str, str, Vector, Vector], ...] = ()
+
+    @classmethod
+    def from_file(cls, source_path: Path | str | os.PathLike[str]) -> UsdModel:
+        if Path(source_path).suffix not in _USD_SUFFIXES:
+            raise ValueError(
+                f"UsdModel.from_file wants a USD file, got {str(source_path)!r}; "
+                f"a URDF or Xacro source is RobotModel.from_file"
+            )
+        return cls(source_path)
+
+    def with_frames(self, frames: Mapping[str, tuple[str, Vector, Vector]]) -> UsdModel:
+        added = tuple((name, parent, xyz, rpy) for name, (parent, xyz, rpy) in frames.items())
+        return replace(self, _added_frames=self._added_frames + added)
+
+    @classmethod
+    def from_layer(cls, usd: str) -> UsdModel:
+        return cls(_text=usd)
+
+    @classmethod
+    def from_robot_model(cls, model: RobotModel) -> UsdModel:
+        loaded = model.load()
+        return cls(loaded.source_path, loaded)
+
+    @property
+    def source_path(self) -> Path | None:
+        return None if self._source_path is None else Path(self._source_path).expanduser()
+
+    @cached_property
+    def usd(self) -> str:
+        return self._with_added_frames(self._layer())
+
+    def _asset_root(self) -> Path | None:
+        source = self.source_path
+        return source.parent if source is not None else None
+
+    def _with_added_frames(self, layer: str) -> str:
+        if not self._added_frames:
+            return layer
+        from dimos.robot.assets.usd import usd_with_frames
+
+        return usd_with_frames(
+            layer,
+            {name: (parent, xyz, rpy) for name, parent, xyz, rpy in self._added_frames},
+            root=self._asset_root(),
+        )
+
+    def _layer(self) -> str:
+        if self._text is not None:
+            return self._text
+        if self._urdf is not None:
+            from dimos.robot.assets.urdf_to_usd import urdf_to_usd
+
+            return urdf_to_usd(self._urdf)
+        path = self.source_path
+        if path is None:
+            raise ValueError("a UsdModel has neither a layer, a URDF nor a file to read one from")
+        if not path.is_file():
+            raise FileNotFoundError(f"no USD file at {path}")
+        try:
+            return path.read_text()
+        except UnicodeDecodeError as error:
+            raise ValueError(
+                f"{path} is a binary (crate) USD layer; a scene travels as text, so export "
+                f"it as .usda"
+            ) from error
+
+    @cached_property
+    def _poseable(self) -> LoadedRobotModel:
+        from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+
+        source = self.source_path
+        return RobotModel.from_urdf_string(
+            usd_to_urdf(self.usd, root=self._asset_root()),
+            asset_dir=None if source is None else source.parent,
+        ).load()
+
+    @property
+    def joints(self) -> tuple[JointDescription, ...]:
+        return self._urdf.joints if self._urdf is not None else self._poseable.joints
+
+    @property
+    def root_link(self) -> str:
+        if self._urdf is not None:
+            return self._urdf.root_link
+        from dimos.robot.assets.usd_to_urdf import usd_root_link
+
+        return usd_root_link(self.usd, self._asset_root())
+
+    def get_joint(self, name: str) -> JointDescription | None:
+        return next((joint for joint in self.joints if joint.name == name), None)
+
+    def urdf(self) -> LoadedRobotModel | None:
+        return self._urdf
+
+    def frame_names(self) -> set[str]:
+        if self._urdf is None:
+            from dimos.robot.assets.usd import usd_frame_names
+
+            return usd_frame_names(self.usd, self._asset_root())
+        names = {self._urdf.root_link}
+        for joint in self._urdf.joints:
+            names |= {joint.name, joint.parent_link, joint.child_link}
+        return names
+
+    def referenced_files(self) -> set[str]:
+        if self._urdf is None:
+            from dimos.robot.assets.usd_assets import referenced_asset_paths
+
+            return referenced_asset_paths(self.usd, self._asset_root())
+        return self._urdf.referenced_files()
+
+    def load(self) -> UsdModel:
+        return self
+
+
+_USD_SUFFIXES = frozenset({".usd", ".usda"})
 
 
 @dataclass(frozen=True)
@@ -432,6 +566,9 @@ class RobotModel:
         if not old:
             raise ValueError("The text to replace in mesh paths must not be empty")
         return replace(self, _mesh_path_replacements=(*self._mesh_path_replacements, (old, new)))
+
+    def to_usd(self) -> UsdModel:
+        return UsdModel.from_robot_model(self)
 
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter.
