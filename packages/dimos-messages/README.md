@@ -28,7 +28,7 @@ the built-in messages.
 
 See the [built-in example tutorial](/docs/development/message-source-packages.md)
 for install commands, example commands, and output directories. To add a message
-to the built-in package, follow [Add a message inside the DimOS repository](/docs/use%20dimos%20as%20a%20library/internal-message.md).
+to the built-in package, follow [Add a message inside the DimOS repository](/docs/development/adding-internal-message.md).
 
 After you change a definition, reinstall the package. Keep the upstream license
 files; generated code and wire formats do not change when only comments change.

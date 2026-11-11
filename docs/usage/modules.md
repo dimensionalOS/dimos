@@ -10,6 +10,8 @@ Some examples of modules are:
 
 Below is an example of a structure for controlling a robot. Black blocks represent modules, and colored lines are connections and message types. It's okay if this doesn't make sense now. It will by the end of this document.
 
+A module in your own installed package uses the same API and lifecycle. [Add a module in your own project](/docs/use%20dimos%20as%20a%20library/external-module.md) covers the package, install and discovery side.
+
 > **Prerequisite:** Blueprint visualization (both SVG export and the Rerun Graph tab) requires Graphviz:
 > ```bash
 > sudo apt install graphviz   # Ubuntu/Debian

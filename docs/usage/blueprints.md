@@ -86,49 +86,17 @@ Blueprints are frozen data classes, and `autoconnect()` always constructs an exp
 
 ## Publishing external blueprints
 
-dimOS can discover runnable blueprints from installed Python packages. External
-packages declare entry points in the `dimos.blueprints` group:
+dimOS discovers runnable blueprints from installed Python packages that declare
+entry points in the `dimos.blueprints` group. External names are always
+`<distribution-namespace>.<entry-point-name>`, and `dimos list` lists them
+separately from built-ins.
 
-```toml
-[project]
-name = "my-robot-stack"
+[Run your modules with a
+blueprint](/docs/use%20dimos%20as%20a%20library/external-blueprint.md) covers the
+package layout, the `pyproject.toml` entry point, the naming rules and the
+`dimos run` command end to end.
 
-[project.entry-points."dimos.blueprints"]
-go2 = "my_robot_stack.go2:go2_blueprint"
-keyboard-teleop = "my_robot_stack.teleop:KeyboardTeleop"
-```
-
-After the package is installed in the same Python environment as dimOS, users can run
-those blueprints by fully qualified name:
-
-```bash
-dimos run my-robot-stack.go2
-dimos run unitree-go2 my-robot-stack.keyboard-teleop
-```
-
-External names are always `<canonical-distribution-namespace>.<external-local-blueprint-name>`:
-
-- The namespace comes from the installed distribution name. dimOS lowercases it and
-  collapses runs of `-`, `_`, and `.` into `-`, so `My_Robot.Stack` becomes
-  `my-robot-stack`.
-- The local blueprint name is the entry point name. It must be lowercase kebab-case
-  matching `^[a-z0-9]+(-[a-z0-9]+)*$`, such as `go2` or `keyboard-teleop`.
-
-Entry point targets may be either:
-
-- a `Blueprint` object, such as a module-level `go2_blueprint`; or
-- a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
-  `.blueprint()`.
-
-`dimos list` includes external names from package metadata without importing the target
-modules. `dimos run my-robot-stack.go2` imports only the requested entry point target.
-
-Remote coordinator resolution happens in the coordinator environment. If a client asks
-a coordinator to load `my-robot-stack.go2`, the `my-robot-stack` package must be
-installed where the coordinator performs name resolution; installing it only in the
-client environment is not enough.
-
-### Duplicate module handling
+## Duplicate module handling
 
 If the same module appears multiple times in `autoconnect`, the **later blueprint wins** and overrides earlier ones:
 

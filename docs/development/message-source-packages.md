@@ -7,7 +7,10 @@ per-file hashes). `setup.py` generates Python messages from those files through
 `dimos-cdrgen==0.1.2`; builds never download definitions or prepare schema
 archives.
 
-To add your own message, start with [Use dimOS as a library](/docs/use%20dimos%20as%20a%20library/README.md).
+To add a message to dimOS itself, follow [Add a message inside the DimOS
+repository](/docs/development/adding-internal-message.md). To define one in your
+own package and reuse the installed built-in types, start with [Use dimOS as a
+library](/docs/use%20dimos%20as%20a%20library/README.md).
 The rest of this page covers the built-in sources, packaging and verification.
 
 The wheel contains the generated `dimos_messages` package, the
