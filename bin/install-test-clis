@@ -7,11 +7,17 @@
 set -euo pipefail
 prefix=${1:-"${XDG_CACHE_HOME:-$HOME/.cache}/dimos-test-clis"}
 packages=(@earendil-works/pi-coding-agent@0.85.1 @dimensionalos/dimcode@0.1.0-next.7 @vscode/ripgrep@1.18.0)
+flags=(--no-fund --no-audit)
 case "$(node --version 2>/dev/null || true)" in
   v24.*) ;;
-  *) packages+=(node@24) ;;
+  *)
+    packages+=(node@24)
+    # npm checks engines against the host node and warns EBADENGINE for dimcode, but
+    # the private Node 24 runs the CLIs. npm cannot silence that warning alone.
+    flags+=(--loglevel=error)
+    ;;
 esac
-npm install --prefix "$prefix" --no-fund --no-audit "${packages[@]}"
+npm install --prefix "$prefix" "${flags[@]}" "${packages[@]}"
 
 # Pi's grep tool (dimcode bundles Pi) otherwise downloads rg into each test's
 # isolated HOME. This package ships platform binaries in npm; expose rg beside
