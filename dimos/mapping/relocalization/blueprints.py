@@ -23,6 +23,8 @@ relocalizer. In Rerun, `loaded_map` appears once a fix lands, on top of
 
 from typing import Any
 
+from reactivex.disposable import CompositeDisposable
+
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -57,15 +59,16 @@ class RecordingPlayer(Module):
     lidar: Out[PointCloud2]
     tf: Out[TFMessage]
 
-    _store: SqliteStore | None = None
-
     @rpc
     def start(self) -> None:
         super().start()
         path = resolve_named_path(self.config.dataset, ".db")
         store = SqliteStore(path=str(path), must_exist=True)
+        subscriptions = CompositeDisposable()
+        # One disposer drains the subscriptions before closing their store,
+        # even when stop() is called concurrently or setup fails partway through.
+        self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
-        self._store = store
         replay = store.replay(
             speed=self.config.speed,
             seek=self.config.seek,
@@ -76,18 +79,10 @@ class RecordingPlayer(Module):
             f"Replaying {path.name}:{self.config.stream} "
             f"({lidar.count()} frames at {self.config.speed}x)"
         )
-        self.register_disposable(lidar.observable().subscribe(self.lidar.publish))
+        subscriptions.add(lidar.observable().subscribe(self.lidar.publish))
 
         tf: ReplayStream[TFMessage] = replay.stream("tf")
-        self.register_disposable(tf.observable().subscribe(self.tf.publish))
-
-    @rpc
-    def stop(self) -> None:
-        # Dispose the replay subscriptions before closing the database they read.
-        super().stop()
-        if self._store is not None:
-            self._store.stop()
-            self._store = None
+        subscriptions.add(tf.observable().subscribe(self.tf.publish))
 
 
 def _fine_points(cloud: Any) -> Any:

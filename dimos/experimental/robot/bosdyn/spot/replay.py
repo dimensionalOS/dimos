@@ -30,8 +30,9 @@ from collections.abc import AsyncIterator
 import math
 from pathlib import Path
 
+from reactivex.disposable import CompositeDisposable
+
 from dimos.constants import RECORDINGS_DIR
-from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.experimental.robot.bosdyn.spot.config import (
@@ -112,16 +113,6 @@ class SpotReplay(Module):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
-    _store: SqliteStore | None = None
-
-    @rpc
-    def stop(self) -> None:
-        # Dispose the replay subscriptions before closing the database they read.
-        super().stop()
-        if self._store is not None:
-            self._store.stop()
-            self._store = None
-
     def _resolve_db_path(self) -> Path:
         if self.config.db_path:
             return resolve_db_path(Path(self.config.db_path).expanduser())
@@ -156,8 +147,11 @@ class SpotReplay(Module):
         logger.info(f"Replaying Spot recording from {db_path}")
 
         store = SqliteStore(path=str(db_path), must_exist=True)
+        subscriptions = CompositeDisposable()
+        # One disposer drains the subscriptions before closing their store,
+        # even when stop() is called concurrently or setup fails partway through.
+        self.register_disposable(CompositeDisposable(subscriptions, store))
         store.start()
-        self._store = store
 
         replay = store.replay(
             speed=self.config.speed,
@@ -171,12 +165,12 @@ class SpotReplay(Module):
             if name not in available:
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
                 continue
-            self.register_disposable(
+            subscriptions.add(
                 replay.stream(name).observable().subscribe(getattr(self, name).publish)
             )
 
         if "tf" in available:
-            self.register_disposable(replay.stream("tf").observable().subscribe(self._republish_tf))
+            subscriptions.add(replay.stream("tf").observable().subscribe(self._republish_tf))
         else:
             logger.warning("Spot replay: no tf stream in recording; 3D frames will be missing")
 
