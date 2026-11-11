@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 
 use crate::goal_status::{
     clear_if_held, stop_on_arrival, Blocked, Goal, GoalId, LatestStatus, Report, Stall,
-    StatusReporter, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED, PREEMPT_REPLACED,
+    StatusReporter, NO_GOAL_FRAME, NO_POSE, NO_PROGRESS, NO_SAFE_PATH, PREEMPT_CANCELED,
+    PREEMPT_REPLACED,
 };
 use crate::mls_planner::{ms_since, Config, Plan, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::planner::snap_pose_to_cell;
@@ -486,13 +487,16 @@ fn goal_position(p: &Point) -> Option<Xyz> {
     (goal.0.is_finite() && goal.1.is_finite() && goal.2.is_finite()).then_some(goal)
 }
 
-/// A goal position given in `frame`, in the world frame through that frame's latest pose on
-/// tf. A frame tf does not know (clicks carry viewer entity paths) is taken as the world frame.
-fn goal_in_world(at: Xyz, frame_to_world: Option<Transform>) -> Xyz {
-    let Some(t) = frame_to_world else {
-        return at;
-    };
-    let p = t.rotation() * Vector3::new(at.0 as f64, at.1 as f64, at.2 as f64) + t.translation();
+/// Whether a goal's frame names a tf frame. Viewer clicks carry rerun entity paths, which
+/// start with "/" (a tf frame never does); those, like an empty frame, are the world frame.
+fn is_tf_frame(frame: &str) -> bool {
+    !frame.is_empty() && !frame.starts_with('/')
+}
+
+/// A goal position given in a frame, in the world frame through that frame's pose on tf.
+fn goal_in_world(at: Xyz, frame_to_world: &Transform) -> Xyz {
+    let p = frame_to_world.rotation() * Vector3::new(at.0 as f64, at.1 as f64, at.2 as f64)
+        + frame_to_world.translation();
     (p.x as f32, p.y as f32, p.z as f32)
 }
 
@@ -861,12 +865,18 @@ impl Worker {
         }
     }
 
-    /// *goal*'s frame to the world frame, or None when it is the world frame or tf does not know it.
-    fn goal_frame_to_world(&self, goal: &Goal) -> Option<Transform> {
-        let frame = goal.frame.clone()?;
-        (*frame != *self.config.world_frame)
-            .then(|| self.tf.get_latest(&self.config.world_frame, &frame))
-            .flatten()
+    /// *goal*'s position in the world frame, or None while its tf frame is not on tf yet (a
+    /// saved location sent before relocalization placed its map), so the goal waits.
+    fn goal_world_position(&self, goal: &Goal) -> Option<Xyz> {
+        let frame = goal
+            .frame
+            .as_deref()
+            .filter(|frame| is_tf_frame(frame) && *frame != &*self.config.world_frame);
+        let Some(frame) = frame else {
+            return Some(goal.position);
+        };
+        let frame_to_world = self.tf.get_latest(&self.config.world_frame, frame)?;
+        Some(goal_in_world(goal.position, &frame_to_world))
     }
 
     /// The base frame position in the world frame, from the latest tf.
@@ -938,10 +948,10 @@ impl Worker {
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             }
             GoalStep::NoPose(goal) => progress.block(goal, NO_POSE),
-            GoalStep::Plan { start, goal } => {
-                let at = goal_in_world(goal.position, self.goal_frame_to_world(&goal));
-                self.plan(planner, start, goal, at, progress).await
-            }
+            GoalStep::Plan { start, goal } => match self.goal_world_position(&goal) {
+                Some(at) => self.plan(planner, start, goal, at, progress).await,
+                None => progress.block(goal, NO_GOAL_FRAME),
+            },
         }
     }
 
@@ -1739,19 +1749,25 @@ mod tests {
     }
 
     #[test]
-    fn a_goal_follows_its_frame_on_tf_and_an_unknown_frame_is_world() {
+    fn a_goal_follows_its_frame_on_tf() {
         use dimos_module::nalgebra::{Isometry3, Translation3, UnitQuaternion};
-        assert_eq!(goal_in_world((1.0, 2.0, 0.0), None), (1.0, 2.0, 0.0));
-
         let quarter_turn = Isometry3::from_parts(
             Translation3::new(10.0, 0.0, 0.0),
             UnitQuaternion::from_euler_angles(0.0, 0.0, std::f64::consts::FRAC_PI_2),
         );
         let (x, y, z) = goal_in_world(
             (1.0, 0.0, 0.0),
-            Some(Transform::new("odom", "map", 0.0, quarter_turn)),
+            &Transform::new("odom", "map", 0.0, quarter_turn),
         );
         assert!((x - 10.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5 && z.abs() < 1e-5);
+    }
+
+    #[test]
+    fn only_entity_paths_and_empty_frames_are_not_tf_frames() {
+        assert!(is_tf_frame("map"));
+        assert!(is_tf_frame("map/office"));
+        assert!(!is_tf_frame(""));
+        assert!(!is_tf_frame("/world/global_map"));
     }
 
     #[test]

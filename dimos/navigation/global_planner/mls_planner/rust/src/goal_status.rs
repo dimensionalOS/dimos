@@ -33,6 +33,7 @@ pub(crate) const PREEMPT_CANCELED: &str = "canceled";
 /// Why a goal was aborted.
 pub(crate) const NO_SAFE_PATH: &str = "no safe path";
 pub(crate) const NO_POSE: &str = "no robot pose";
+pub(crate) const NO_GOAL_FRAME: &str = "goal frame not on tf";
 pub(crate) const NO_PROGRESS: &str = "no progress";
 
 /// How often the latest goal status repeats between transitions.
