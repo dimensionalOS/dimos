@@ -160,12 +160,10 @@ def test_pull_lfs_archive_initializes_lfs_before_pull(
 
 
 def test_resolve_named_path_appends_the_suffix_to_a_path(tmp_path: Path) -> None:
-    (tmp_path / "premap.pc2.lcm").touch()
-    assert resolve_named_path(tmp_path / "premap", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
-    assert (
-        resolve_named_path(tmp_path / "premap.pc2.lcm", ".pc2.lcm") == tmp_path / "premap.pc2.lcm"
-    )
-    assert resolve_named_path("/nowhere/premap", ".pc2.lcm") == Path("/nowhere/premap.pc2.lcm")
+    (tmp_path / "premap.map.db").touch()
+    assert resolve_named_path(tmp_path / "premap", ".map.db") == tmp_path / "premap.map.db"
+    assert resolve_named_path(tmp_path / "premap.map.db", ".map.db") == tmp_path / "premap.map.db"
+    assert resolve_named_path("/nowhere/premap", ".map.db") == Path("/nowhere/premap.map.db")
 
 
 def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
@@ -187,10 +185,10 @@ def test_resolve_named_path_without_must_exist_says_where_a_new_file_goes(
 
 
 def test_resolve_named_path_keeps_a_nested_lfs_name(mocker: MockerFixture) -> None:
-    pulled = Path("/lfs/maps/office.pc2.lcm")
+    pulled = Path("/lfs/maps/office.map.db")
     get_data = mocker.patch.object(data, "get_data", return_value=pulled)
-    assert resolve_named_path("maps/office", ".pc2.lcm") == pulled
-    get_data.assert_called_once_with("maps/office.pc2.lcm")
+    assert resolve_named_path("maps/office", ".map.db") == pulled
+    get_data.assert_called_once_with("maps/office.map.db")
 
 
 def test_resolve_named_path_falls_back_to_the_basename(mocker: MockerFixture) -> None:
