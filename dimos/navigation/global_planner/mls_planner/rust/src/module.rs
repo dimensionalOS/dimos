@@ -867,6 +867,7 @@ impl Worker {
 
     /// *goal*'s position in the world frame, or None while its tf frame is not on tf yet (a
     /// saved location sent before relocalization placed its map), so the goal waits.
+    // DIM-638: read only on a replan, so a new relocalization fix waits for the next live region.
     fn goal_world_position(&self, goal: &Goal) -> Option<Xyz> {
         let frame = goal
             .frame
