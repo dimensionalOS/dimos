@@ -25,7 +25,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
 import dimos
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleStatus
@@ -38,10 +38,10 @@ from dimos.agents.harness.runtime.constants import (
 from dimos.core.coordination.blueprints import BlueprintAtom
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
+from dimos.web.lcm_codec import export_schema, schema_class_for
 
 if TYPE_CHECKING:
     from dimos.core.introspection.module.info import ModuleInfo, RpcInfo, StreamInfo
-    from dimos.core.rpc_client import RPCClient
     from dimos.porcelain.dimos import Dimos
 
 
@@ -113,6 +113,7 @@ class StreamEntry:
     direction: str | None
     type: str
     channel: str | None
+    lcm: dict[str, Any] | None = None
     import_line: str | None = None
     """How to import the message type, when the module's class imports here."""
 
@@ -124,6 +125,7 @@ class StreamEntry:
             "type": self.type,
             "channel": self.channel,
             "import": self.import_line,
+            "lcm": self.lcm,
         }
 
 
@@ -247,7 +249,9 @@ def _signature(rpc: RpcInfo) -> str:
     return f"{rpc.name}({params}){returns}"
 
 
-def _stream(stream: StreamInfo, import_line: str | None = None) -> StreamEntry:
+def _stream(
+    stream: StreamInfo, import_line: str | None = None, lcm: dict[str, Any] | None = None
+) -> StreamEntry:
     return StreamEntry(
         module=stream.module_name or "",
         name=stream.name,
@@ -255,19 +259,17 @@ def _stream(stream: StreamInfo, import_line: str | None = None) -> StreamEntry:
         type=stream.type_name,
         channel=stream.channel,
         import_line=import_line,
+        lcm=lcm,
     )
 
 
-def _stream_imports(path: str | None) -> dict[str, str]:
+def _stream_types(path: str | None) -> dict[str, type[Any]]:
     module_path, _, class_name = (path or "").rpartition(".")
     try:
         atom = BlueprintAtom.create(getattr(importlib.import_module(module_path), class_name), {})
     except Exception:
         return {}
-    return {
-        stream.name: f"from {stream.type.__module__} import {stream.type.__qualname__}"
-        for stream in atom.streams
-    }
+    return {stream.name: stream.type for stream in atom.streams}
 
 
 def _find(app: Dimos, module: str) -> ModuleInfo:
@@ -278,19 +280,21 @@ def _find(app: Dimos, module: str) -> ModuleInfo:
     return info
 
 
-def relay_endpoint(app: Dimos) -> dict[str, str] | None:
-    """The endpoint of the running bridge, including authored bridge subclasses."""
-    for module in app.list_modules():
-        if any(rpc.name == "relay_endpoint" for rpc in module.rpcs):
-            endpoint: dict[str, str] | None = cast(
-                "RPCClient", app.get_module(module.name)
-            ).relay_endpoint()
-            return endpoint
-    return None
+@functools.cache
+def _stream_schemas(path: str | None) -> dict[str, dict[str, Any]]:
+    schemas = {}
+    for name, message_type in _stream_types(path).items():
+        try:
+            schemas[name] = export_schema(schema_class_for(message_type))
+        except ValueError:
+            pass  # Python value streams have no LCM representation.
+    return schemas
 
 
 def describe_runtime(app: Dimos) -> Runtime:
     """Every module with its RPCs (signature, first doc line) and every wired stream."""
+    modules = app.list_modules()
+    schemas = {info.name: _stream_schemas(info.qualified_path) for info in modules}
     return Runtime(
         modules=[
             ModuleEntry(
@@ -303,9 +307,12 @@ def describe_runtime(app: Dimos) -> Runtime:
                     for rpc in info.rpcs
                 ],
             )
-            for info in app.list_modules()
+            for info in modules
         ],
-        streams=[_stream(stream) for stream in app.list_streams()],
+        streams=[
+            _stream(stream, lcm=schemas.get(stream.module_name or "", {}).get(stream.name))
+            for stream in app.list_streams()
+        ],
     )
 
 
@@ -313,7 +320,10 @@ def describe_module(app: Dimos, module: str) -> ModuleDetail:
     """One module: its documentation, RPC signatures with the first paragraph of their
     documentation, and its streams with the import of each message type."""
     info = _find(app, module)
-    imports = _stream_imports(info.qualified_path)
+    imports = {
+        name: f"from {cls.__module__} import {cls.__qualname__}"
+        for name, cls in _stream_types(info.qualified_path).items()
+    }
     return ModuleDetail(
         module=info.name,
         class_name=info.class_name,

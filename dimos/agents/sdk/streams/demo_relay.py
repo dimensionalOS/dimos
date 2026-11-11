@@ -16,62 +16,81 @@
 
 import asyncio
 import base64
+from contextlib import suppress
 import json
+import socket
 import sys
 
-from dimos.web.relay_bridge.protocol import Manifest, RobotInfo
+import zenoh
+
+from dimos.protocol.service.zenoh_wire import make_zenoh_config
+from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.web.relay_bridge.relay_process import RelayProcess
-from dimos.web.relay_bridge.wt_client import RelayClient
+from dimos.web.relay_bridge.topic_metadata import METADATA_PREFIX, DescriptorSnapshot
+from dimos.web.relay_bridge.topic_protocol import TopicDescriptor
+from dimos.web.relay_bridge.topic_service import TopicServiceConfig, serve
 
 
 async def main() -> None:
     relay = RelayProcess()
-    info = relay.start()
-    robot: RelayClient | None = None
+    stop = asyncio.Event()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        bus = f"tcp/127.0.0.1:{probe.getsockname()[1]}"
+    wire = ZenohConfig(
+        mode="peer", listen=[bus], connect=[], multicast=False, gossip=False
+    ).to_wire()
+    publisher = zenoh.open(make_zenoh_config(wire))
+    metadata_key = METADATA_PREFIX + "adapter-test"
+    snapshot = DescriptorSnapshot(owner="adapter-test", revision=0, entries=[])
+    payload = snapshot.model_dump_json().encode()
+    queryable = publisher.declare_queryable(
+        metadata_key, lambda query: query.reply(metadata_key, payload)
+    )
+    provider = None
     try:
-        print(json.dumps({"url": info.open_url, "robot": "adapter-test"}), flush=True)
+        info = await asyncio.to_thread(relay.start)
+        config = TopicServiceConfig(
+            source="adapter-test",
+            relay_url=info.open_url,
+            zenoh={**wire, "listen": ["tcp/127.0.0.1:0"], "connect": [bus]},
+        )
+        provider = asyncio.create_task(serve(config, stop))
+        print(json.dumps({"url": info.open_url, "source": config.source}), flush=True)
         while line := await asyncio.to_thread(sys.stdin.readline):
             command = json.loads(line)
-            if command["kind"] == "manifest":
-                manifest = {
-                    "version": 1,
-                    "channels": command["channels"],
-                    "panels": [],
-                    "layout": None,
-                    "pages": [],
-                }
-                if robot is None:
-                    robot = await RelayClient.connect(info.wt_url, "robot", insecure=True)
-                    await robot.hello(
-                        robot=RobotInfo(id="adapter-test", name="Adapter test", model="test"),
-                        manifest=manifest,
-                    )
-                else:
-                    robot.send_control_frame(Manifest(robotId="adapter-test", manifest=manifest))
-            elif command["kind"] == "frame":
-                assert robot is not None
-                robot.send_frame(
-                    command["channel"],
-                    base64.b64decode(command["bytes"]),
-                    delivery="reliable",
-                    meta=command.get("meta"),
+            if command["kind"] == "descriptors":
+                snapshot = DescriptorSnapshot(
+                    owner="adapter-test",
+                    revision=snapshot.revision + 1,
+                    entries=[TopicDescriptor.model_validate(entry) for entry in command["entries"]],
                 )
-            elif command["kind"] == "restart":
-                if robot is not None:
-                    await robot.close()
-                    robot = None
-                relay.stop()
-                relay = RelayProcess(port=info.http_port)
-                info = relay.start()
-            elif command["kind"] == "disconnect":
-                assert robot is not None
-                await robot.close()
-                robot = None
+                payload = snapshot.model_dump_json().encode()
+                publisher.put(metadata_key, payload)
+            elif command["kind"] == "frame":
+                publisher.put(
+                    command["key"], base64.b64decode(command["bytes"]), encoding=command["encoding"]
+                )
+            elif command["kind"] in ("disconnect", "restart"):
+                stop.set()
+                await provider
+                if command["kind"] == "restart":
+                    await asyncio.to_thread(relay.stop)
+                    relay = RelayProcess(port=info.http_port)
+                    info = await asyncio.to_thread(relay.start)
+                stop = asyncio.Event()
+                provider = asyncio.create_task(serve(config, stop))
             print(json.dumps({"done": True}), flush=True)
     finally:
-        if robot is not None:
-            await robot.close()
-        relay.stop()
+        stop.set()
+        try:
+            if provider is not None:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.wait_for(provider, 10)
+        finally:
+            queryable.undeclare()
+            publisher.close()
+            await asyncio.to_thread(relay.stop)
 
 
 asyncio.run(main())

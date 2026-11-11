@@ -12,7 +12,7 @@ import type { StreamRef } from "#dimos/agents/shared/protocol/streams.ts";
 import { Status } from "#dimos/agents/shared/protocol/status.ts";
 import { AgentModuleRecordSchema } from "#dimos/agents/shared/protocol/runtime/module.ts";
 import { Type } from "typebox";
-import { openRelay, relayStreams } from "#dimos/agents/sdk/relay.ts";
+import { abortable, openRelay, topicStreams } from "#dimos/agents/sdk/relay.ts";
 import { inventoryDecoder, inventoryFactsDecoder } from "#dimos/agents/harness/dimos/wire/inventory.ts";
 import { moduleOutcomeDecoder } from "#dimos/agents/harness/dimos/wire/module.ts";
 import { wireDecoder } from "#dimos/agents/harness/dimos/wire/decoder.ts";
@@ -103,9 +103,14 @@ export class RuntimeClient {
       void current.session.then(
         (session) => {
           if (this.currentRelay !== current) return;
-          const changed = () => this.streamStatus.set(relayStreams(session, current.inventory));
-          current.stop = session.status.subscribe(changed);
-          changed();
+          const changed = () => {
+            this.streamStatus.set([]);
+            void this.refreshStreams(current, session).catch(() => {});
+          };
+          const stops = [session.topics.onSources(changed), session.topics.onReconnect(changed)];
+          current.stop = () => {
+            for (const stop of stops) stop();
+          };
         },
         () => {
           if (this.currentRelay === current) this.disconnectRelay();
@@ -114,9 +119,19 @@ export class RuntimeClient {
     }
     const current = this.currentRelay;
     current.inventory = currentInventory;
-    const session = await current.session;
-    if (this.currentRelay === current) this.streamStatus.set(relayStreams(session, current.inventory));
+    const session = await abortable(current.session, signal ?? AbortSignal.timeout(10_000));
+    await this.refreshStreams(current, session, signal);
     return session;
+  }
+
+  private async refreshStreams(
+    current: NonNullable<RuntimeClient["currentRelay"]>,
+    session: Session,
+    signal = AbortSignal.timeout(10_000),
+  ): Promise<void> {
+    const inventory = current.inventory;
+    const streams = await topicStreams(session, inventory, signal);
+    if (this.currentRelay === current && current.inventory === inventory) this.streamStatus.set(streams);
   }
 
   close(): void {
