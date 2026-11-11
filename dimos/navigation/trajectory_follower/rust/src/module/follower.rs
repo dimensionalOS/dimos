@@ -32,7 +32,7 @@ use crate::emb;
 use dimos_local_planner::module::msg;
 use dimos_local_planner::module::tf_pose::PoseWatch;
 
-/// Mirrors TrajectoryFollowerNativeConfig in fancy/native.py.
+/// Mirrors TrajectoryFollowerNativeConfig in native.py.
 #[native_config]
 #[derive(Clone)]
 pub struct Config {

@@ -83,6 +83,8 @@ def get_project_root() -> Path:
     with FileLock(data_dir / "repo.lock"):
         # Clone if not already cloned
         if not (repo_dir / ".git").exists():
+            logger.info("Cloning the DimOS repository for its data files", path=str(repo_dir))
+            started = time.monotonic()
             try:
                 env = os.environ.copy()
                 env["GIT_LFS_SKIP_SMUDGE"] = "1"
@@ -107,6 +109,9 @@ def get_project_root() -> Path:
                     f"Failed to clone dimos repository: {e.stderr}\n"
                     f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
                 )
+            logger.info(
+                "Cloned the DimOS repository", duration=f"{time.monotonic() - started:.1f}s"
+            )
 
     return repo_dir
 
@@ -253,7 +258,7 @@ def _decompress_archive(filename: str | Path) -> Path:
     staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=f".{name}."))
     try:
         with tarfile.open(filename_path, "r:gz") as tar:
-            tar.extractall(staging)
+            tar.extractall(staging, filter="data")
         (staging / name).rename(target_dir / name)
     finally:
         shutil.rmtree(staging, ignore_errors=True)

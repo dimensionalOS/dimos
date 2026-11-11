@@ -19,19 +19,56 @@ export const TOPIC_PUBLISH_CHANNEL = "@put";
 export const TOPIC_GUARD_CHANNEL = "@guard";
 export const MAX_TOPIC_GUARD_BYTES = 8192;
 export const MAX_TOPIC_GUARDS = 32;
+/** Encode variants one provider route serves at once; ids are v1..v4. */
+export const MAX_TOPIC_VARIANTS = 4;
+export const MAX_TOPIC_PROFILE_OPTIONS = 8;
+export const TOPIC_SETTING_NAMES = [
+  "maxHz",
+  "maxResolution",
+  "quality",
+  "keepEvery",
+  "fields",
+] as const;
+export type TopicSettingName = typeof TOPIC_SETTING_NAMES[number];
 /** Little-endian "DIMP": distinguishes a bulk bidi stream from length-prefixed
  * control JSON. Client-to-Deno uni stream payloads are broken in Deno 2.6.10. */
 export const TOPIC_PUBLISH_STREAM_MAGIC = 0x504d4944;
 /** "DIMG": independent command lane, so a bulk put cannot hold up stop/drive. */
 export const TOPIC_GUARD_STREAM_MAGIC = 0x474d4944;
 
+/** One updatable setting of a profile. `default` is the profile value, which
+ * is also the ceiling (the floor for keepEvery): requests beyond it come back
+ * clamped, requests outside min..max or values are rejected. */
+export interface OptionRange {
+  kind: "int" | "number" | "size" | "enum" | "boolean";
+  min?: number;
+  max?: number;
+  default?: number | boolean | readonly number[] | readonly string[];
+  values?: readonly string[];
+}
+export type OptionRanges = Record<string, OptionRange>;
 export interface TopicCapabilities {
   read: boolean;
   write: boolean;
   profiles: string[];
   /** Provider-owned stop/expiry. Older peers do not advertise this. */
   guardedPublishers?: boolean;
+  /** Updatable settings per profile. An older provider omits this and
+   * accepts nothing beyond rate changes. */
+  profileOptions?: Record<string, OptionRanges>;
 }
+/** The settings a subscription runs with. Keys beyond maxHz exist only where
+ * the profile supports them; the acknowledgement reports the values in force. */
+export interface TopicSettings {
+  maxHz: number;
+  maxResolution?: [number, number];
+  quality?: number;
+  keepEvery?: number;
+  fields?: string[];
+}
+/** A change request: absent keys keep their value, null resets one to the
+ * profile default. */
+export type TopicSettingsUpdate = { [K in keyof TopicSettings]?: TopicSettings[K] | null };
 export interface TopicSourceInfo extends TopicCapabilities {
   source: string;
   gen: number;
@@ -51,6 +88,8 @@ export interface TopicSubMsg {
   delivery: Delivery;
   profile: string;
   maxHz: number;
+  /** Initial settings beyond the rate, so a handle starts with them in one round trip. */
+  settings?: Partial<TopicSettings>;
 }
 export interface TopicOpenMsg {
   t: "topic_open";
@@ -60,6 +99,8 @@ export interface TopicOpenMsg {
   delivery: Delivery;
   profile: string;
   maxHz: number;
+  /** The route's first variant, v1, with its full normalized settings. */
+  settings?: TopicSettings;
 }
 export interface TopicOpenedMsg {
   t: "topic_opened";
@@ -72,6 +113,45 @@ export interface TopicReadyMsg {
   source: string;
   route: string;
   gen: number;
+  /** The settings in force; an older relay omits them. */
+  settings?: TopicSettings;
+}
+/** Viewer -> relay: change the settings of one desired subscription. The
+ * revision is echoed by the acknowledgement or rejection. */
+export interface TopicUpdateMsg {
+  t: "topic_update";
+  id: string;
+  revision: number;
+  options: TopicSettingsUpdate;
+}
+/** Relay -> viewer: the viewer now receives frames with these settings. Also
+ * sent without a request when the relay moves a viewer itself. */
+export interface TopicAppliedMsg {
+  t: "topic_applied";
+  id: string;
+  revision: number;
+  settings: TopicSettings;
+}
+/** Relay -> provider: open variant `variant` of a route, or change its rate. */
+export interface TopicVariantMsg {
+  t: "topic_variant";
+  route: string;
+  gen: number;
+  variant: string;
+  settings: TopicSettings;
+}
+export interface TopicVariantReadyMsg {
+  t: "topic_variant_ready";
+  route: string;
+  gen: number;
+  variant: string;
+  settings: TopicSettings;
+}
+export interface TopicVariantCloseMsg {
+  t: "topic_variant_close";
+  route: string;
+  gen: number;
+  variant: string;
 }
 export interface TopicActivateMsg {
   t: "topic_activate";
@@ -101,6 +181,8 @@ export interface TopicUnsubMsg {
 export interface TopicErrorMsg {
   t: "topic_error";
   id: string;
+  /** Present when the error rejects one topic_update; the handle keeps its settings. */
+  revision?: number;
   code: string;
   message: string;
   outcome: "rejected" | "unknown" | "interrupted";
@@ -193,19 +275,27 @@ export type TopicMsg =
   | TopicCloseMsg
   | TopicCreditMsg
   | TopicUnsubMsg
+  | TopicUpdateMsg
+  | TopicAppliedMsg
+  | TopicVariantMsg
+  | TopicVariantReadyMsg
+  | TopicVariantCloseMsg
   | TopicErrorMsg
   | TopicListMsg
   | TopicPageMsg
   | TopicPubResultMsg;
 
 /** FrameHeader.meta for @t: routes. ts is send time; ingressTs and optional
- * sourceTs retain the actual acquisition/receive times in epoch seconds. */
+ * sourceTs retain the actual acquisition/receive times in epoch seconds.
+ * A media provider stamps the encode variant; the relay dispatches on it and
+ * strips it before forwarding. */
 export interface TopicSampleMeta extends Record<string, unknown> {
   key: string;
   encoding: string;
   gen: number;
   ingressTs: number;
   sourceTs?: number;
+  variant?: string;
 }
 /** Binary @put frame metadata. The relay replaces id with a private receipt
  * token before forwarding; a source generation is required, never guessed. */
@@ -250,10 +340,129 @@ const options = (v: Record<string, unknown>) =>
   string(v.profile, 64) && typeof v.maxHz === "number" && Number.isFinite(v.maxHz) &&
   v.maxHz > 0 && v.maxHz <= 1000;
 const routed = (v: Record<string, unknown>) => topicRouteOk(v.route) && topicGenerationOk(v.gen);
+const count = (v: unknown): v is number =>
+  typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+const rate = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1000;
+const names = (v: unknown, max: number): v is string[] =>
+  Array.isArray(v) && v.length <= max && v.every((s) => string(s, 32)) &&
+  new Set(v).size === v.length;
+export const topicVariantOk = (v: unknown): v is string =>
+  typeof v === "string" && /^v[1-4](?![\s\S])/.test(v); // MAX_TOPIC_VARIANTS
+const settingOk = (name: string, v: unknown): boolean => {
+  switch (name) {
+    case "maxHz":
+      return rate(v);
+    case "maxResolution":
+      return Array.isArray(v) && v.length === 2 && v.every(count);
+    case "quality":
+    case "keepEvery":
+      return count(v);
+    case "fields":
+      return names(v, 8);
+  }
+  return false;
+};
+/** Shape and bounds of a settings object. `full` requires the rate (the
+ * normalized form the relay and provider exchange); `update` admits null
+ * resets; `sparse` is a request on topic_sub. Range checks happen against the
+ * advertised profile options, not here. */
+export const topicSettingsOk = (
+  v: unknown,
+  mode: "full" | "sparse" | "update",
+): v is TopicSettingsUpdate =>
+  record(v) && (mode !== "full" || rate(v.maxHz)) &&
+  Object.entries(v).every(([name, value]) =>
+    (TOPIC_SETTING_NAMES as readonly string[]).includes(name) &&
+    (mode === "update" && value === null || settingOk(name, value))
+  );
+const optionRangeOk = (v: unknown): v is OptionRange =>
+  record(v) && ["int", "number", "size", "enum", "boolean"].includes(v.kind as string) &&
+  (v.min === undefined || finite(v.min)) && (v.max === undefined || finite(v.max)) &&
+  (v.values === undefined || names(v.values, 16)) &&
+  (v.default === undefined || finite(v.default) || typeof v.default === "boolean" ||
+    Array.isArray(v.default) && v.default.length <= 16 &&
+      v.default.every((d) => finite(d) || string(d, 32)));
+const profileOptionsOk = (v: unknown): boolean =>
+  record(v) && Object.keys(v).length <= 16 &&
+  Object.entries(v).every(([profile, ranges]) =>
+    string(profile, 64) && record(ranges) &&
+    Object.keys(ranges).length <= MAX_TOPIC_PROFILE_OPTIONS &&
+    Object.entries(ranges).every(([name, range]) => string(name, 32) && optionRangeOk(range))
+  );
 export const topicCapabilitiesOk = (v: unknown): v is TopicCapabilities =>
   record(v) && typeof v.read === "boolean" && typeof v.write === "boolean" &&
   (v.guardedPublishers === undefined || typeof v.guardedPublishers === "boolean") &&
+  (v.profileOptions === undefined || profileOptionsOk(v.profileOptions)) &&
   Array.isArray(v.profiles) && v.profiles.length <= 16 && v.profiles.every((p) => string(p, 64));
+
+const RATE_RANGE: OptionRange = { kind: "number", max: 1000, default: 1000 };
+function clamp(name: string, range: OptionRange, value: unknown): unknown {
+  const d = range.default;
+  switch (range.kind) {
+    case "number":
+    case "int": {
+      const n = value as number;
+      if (
+        !(range.kind === "number" ? finite(n) : count(n)) || (name === "maxHz" && !rate(n)) ||
+        (range.min !== undefined && n < range.min) || (range.max !== undefined && n > range.max)
+      ) return null;
+      if (typeof d !== "number") return n;
+      // The profile bounds the data: a coarser stride is a smaller output.
+      return name === "keepEvery" ? Math.max(n, d) : Math.min(n, d);
+    }
+    case "size": {
+      if (
+        !Array.isArray(value) || value.length !== 2 ||
+        !value.every((n) =>
+          count(n) && (range.min === undefined || n >= range.min) &&
+          (range.max === undefined || n <= range.max)
+        )
+      ) return null;
+      const [w, h] = value as [number, number];
+      return Array.isArray(d) && d.length === 2 && typeof d[0] === "number" &&
+          typeof d[1] === "number"
+        ? [Math.min(w, d[0]), Math.min(h, d[1])]
+        : [w, h];
+    }
+    case "enum": {
+      const values = range.values ?? [];
+      if (!names(value, values.length) || !value.every((f) => values.includes(f))) return null;
+      return values.filter((f) => value.includes(f));
+    }
+    case "boolean":
+      return typeof value === "boolean" ? value : null;
+  }
+}
+export type TopicSettingsResult =
+  | { settings: TopicSettings; error?: undefined }
+  | { settings?: undefined; error: "unsupported_option" | "option_out_of_range" };
+/** The settings in force for a request against one profile's advertised
+ * options: unknown names and values outside a range are rejected; the profile
+ * value is the ceiling and the default, so nothing is accepted as a no-op.
+ * Mirrors normalize_settings in dimos/web/relay_bridge/topic_profiles.py. */
+export function normalizeTopicSettings(
+  ranges: OptionRanges,
+  requested: Record<string, unknown>,
+): TopicSettingsResult {
+  const options: OptionRanges = { maxHz: RATE_RANGE, ...ranges };
+  for (const name of Object.keys(requested)) {
+    if (requested[name] !== undefined && requested[name] !== null && !(name in options)) {
+      return { error: "unsupported_option" };
+    }
+  }
+  const settings: Record<string, unknown> = {};
+  for (const name of TOPIC_SETTING_NAMES) {
+    const range = options[name];
+    if (range === undefined) continue;
+    const value = requested[name] ?? range.default;
+    if (value === undefined) continue;
+    const normalized = clamp(name, range, value);
+    if (normalized === null) return { error: "option_out_of_range" };
+    settings[name] = normalized;
+  }
+  return { settings: settings as unknown as TopicSettings };
+}
 const sourceInfo = (v: unknown) =>
   record(v) && topicSourceOk(v.source) && topicGenerationOk(v.gen) && topicCapabilitiesOk(v);
 const descriptor = (v: unknown) =>
@@ -263,7 +472,8 @@ const descriptor = (v: unknown) =>
 export function topicSampleMeta(v: unknown): TopicSampleMeta | null {
   return record(v) && topicKeyOk(v.key) && string(v.encoding, 256, 0) &&
       topicGenerationOk(v.gen) && finite(v.ingressTs) &&
-      (v.sourceTs === undefined || finite(v.sourceTs))
+      (v.sourceTs === undefined || finite(v.sourceTs)) &&
+      (v.variant === undefined || topicVariantOk(v.variant))
     ? v as TopicSampleMeta
     : null;
 }
@@ -323,13 +533,29 @@ export function topicMsgFromUnknown(v: Record<string, unknown>): TopicMsg | null
         v.sources.every(sourceInfo);
       break;
     case "topic_sub":
-      ok = id(v.id) && topicSourceOk(v.source) && options(v);
+      ok = id(v.id) && topicSourceOk(v.source) && options(v) &&
+        (v.settings === undefined || topicSettingsOk(v.settings, "sparse"));
       break;
     case "topic_open":
-      ok = routed(v) && options(v);
+      ok = routed(v) && options(v) &&
+        (v.settings === undefined || topicSettingsOk(v.settings, "full"));
       break;
     case "topic_ready":
-      ok = id(v.id) && topicSourceOk(v.source) && routed(v);
+      ok = id(v.id) && topicSourceOk(v.source) && routed(v) &&
+        (v.settings === undefined || topicSettingsOk(v.settings, "full"));
+      break;
+    case "topic_update":
+      ok = id(v.id) && topicGenerationOk(v.revision) && topicSettingsOk(v.options, "update");
+      break;
+    case "topic_applied":
+      ok = id(v.id) && topicGenerationOk(v.revision) && topicSettingsOk(v.settings, "full");
+      break;
+    case "topic_variant":
+    case "topic_variant_ready":
+      ok = routed(v) && topicVariantOk(v.variant) && topicSettingsOk(v.settings, "full");
+      break;
+    case "topic_variant_close":
+      ok = routed(v) && topicVariantOk(v.variant);
       break;
     case "topic_opened":
     case "topic_close":
@@ -347,7 +573,8 @@ export function topicMsgFromUnknown(v: Record<string, unknown>): TopicMsg | null
       break;
     case "topic_error":
       ok = id(v.id) && string(v.code, 64) && string(v.message, 256, 0) &&
-        ["rejected", "unknown", "interrupted"].includes(v.outcome as string);
+        ["rejected", "unknown", "interrupted"].includes(v.outcome as string) &&
+        (v.revision === undefined || topicGenerationOk(v.revision));
       break;
     case "topic_list":
       ok = id(v.id) && topicSourceOk(v.source) && topicKeyOk(v.prefix, true) &&
