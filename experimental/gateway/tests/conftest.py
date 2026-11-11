@@ -65,8 +65,9 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # no ~/.dimos/config.yaml of the machine running the tests
     monkeypatch.setenv("DIMOS_APP", json.dumps({"home": str(tmp_path / "dimos_home")}))
     shared_config.shared_config.cache_clear()
-    # nor its DTOP, which a launch passes on
-    monkeypatch.delenv(launches.DTOP_ENV, raising=False)
+    # nor its DTOP or ZENOH_GOSSIP, which a launch passes on as it does the rest of the environment
+    monkeypatch.delenv("DTOP", raising=False)
+    monkeypatch.delenv("ZENOH_GOSSIP", raising=False)
     # nor a git repo the temp dir happens to be inside
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     return tmp_path

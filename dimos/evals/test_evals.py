@@ -41,8 +41,10 @@ from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.evals.agents.base import EvalSubject
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
+from dimos.evals.agents.dimos_agent import DimosAgentAdapter
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter, _Turn
+from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.constants import RAW_README
@@ -50,6 +52,8 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.environments.live import LiveEnvironment
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -132,7 +136,7 @@ class FakeEnvironment(Environment):
     def preflight(self, agent: Any) -> None:
         self.calls.append("preflight")
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         self.calls.append("start")
         return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": self.path})
 
@@ -296,7 +300,11 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     proc.global_args = []
     proc.extra_env = {}
-    mocker.patch("dimos.evals.environments.live.launched_mcp_url", return_value="http://x/mcp")
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    connectable = mocker.patch("dimos.evals.environments.live.wait_connectable")
     adapter = mocker.patch("dimos.evals.environments.live.McpAdapter")
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
@@ -311,6 +319,7 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
 
     try:
         env.start(("agent", "speak-skill"))
+        connectable.assert_not_called()
         assert proc.demo_args == [
             "run",
             "unitree-go2",
@@ -396,6 +405,56 @@ def test_agent_preflight_mismatches(dataset: str) -> None:
         McpClientAdapter().preflight(frozen)
     McpClientAdapter(modules=("mcp-server", "agent")).preflight(frozen)  # brings its own
     McpClientAdapter().preflight(_sim())  # the environment will launch the stack
+
+
+@pytest.mark.parametrize(
+    ("agent", "environment", "added"),
+    [
+        (DimosAgentAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ("mcp-server",)),
+        (
+            McpClientAdapter(modules=("agent",)),
+            DimSimEnvironment(blueprint=["unitree-go2"]),
+            ("agent", "mcp-server"),
+        ),
+        (PiAdapter(), DimSimEnvironment(blueprint=["unitree-go2"]), ()),
+        (DimosAgentAdapter(), _sim(), ()),
+        (McpClientAdapter(modules=("agent",)), _sim(), ("agent",)),
+    ],
+    ids=["dimos-agent", "mcp-client", "pi", "suite-mcp", "suite-mcp-client"],
+)
+def test_the_environment_adds_mcp_server_for_agents_that_need_it(
+    agent: EvalSubject, environment: LiveEnvironment, added: tuple[str, ...]
+) -> None:
+    assert environment._launch_modules(agent.config.modules, agent.requires_mcp) == added
+    assert environment.python_guide == (None if environment.serves_mcp else PYTHON_API_GUIDE)
+
+
+def test_attaching_an_agent_that_needs_mcp_requires_a_running_mcp_server(
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch("dimos.evals.environments.live.attached_mcp_url", return_value="")
+    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True)
+    with pytest.raises(RuntimeError, match="serving MCP"):
+        env.preflight(DimosAgentAdapter())
+
+
+def test_a_blueprint_with_mcp_server_fails_without_its_mcp_url(
+    dataset: str, mocker: MockerFixture
+) -> None:
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    proc.global_args = []
+    proc.extra_env = {}
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(run_id="r1", mcp_url=None),
+    )
+    mocker.patch("dimos.evals.environments.dimsim.DimSimClient")
+    env = _sim(scene="empty", launch_timeout_s=4.0)
+    try:
+        with pytest.raises(RuntimeError, match="r1 has no McpServer"):
+            env.start(())
+    finally:
+        env.stop()
 
 
 def test_question_answer_encodes_the_recording_into_one_call(
@@ -700,7 +759,9 @@ def test_runner_gives_the_agent_only_agent_artifacts(tmp_path: Path) -> None:
     seen: dict[str, set[str]] = {}
 
     class WithAnswers(FakeEnvironment):
-        def start(self, modules: Sequence[str]) -> RunningEnvironment:
+        def start(
+            self, modules: Sequence[str], *, requires_mcp: bool = False
+        ) -> RunningEnvironment:
             return RunningEnvironment(
                 mcp_url="", streams=(), artifacts={"recording": self.path, "answers": self.path}
             )
