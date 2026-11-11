@@ -34,9 +34,9 @@ function sample(payload: Uint8Array, encoding = "application/cbor", metadata = {
     metadata,
   };
 }
-async function until(check: () => boolean): Promise<void> {
+async function until(check: () => boolean | Promise<boolean>): Promise<void> {
   const deadline = Date.now() + 8_000;
-  while (!check()) {
+  while (!(await check())) {
     assert.ok(Date.now() < deadline, "topic adapter did not reach expected state");
     await delay(10);
   }
@@ -151,14 +151,16 @@ test("real topic provider discovery, reads, cancellation and preview lifecycle",
   const selected = streams.find((s) => s.channel === stream.channel);
   assert.ok(selected);
   async function receive(mode: "next" | "latest", n: number) {
-    const pending = readTopic(session, selected!, mode, AbortSignal.timeout(5_000));
-    const timer = setInterval(() => {
-      void relay.frame(stream.channel, Uint8Array.of(n));
-    }, 40);
+    const ready = session.topics.subscribe(stream.channel, { profile: selected!.profile }, () => {});
     try {
-      return await pending;
+      await ready.ready();
+      const [result] = await Promise.all([
+        readTopic(session, selected!, mode, AbortSignal.timeout(5_000)),
+        relay.frame(stream.channel, Uint8Array.of(n)),
+      ]);
+      return result;
     } finally {
-      clearInterval(timer);
+      ready.close();
     }
   }
   assert.equal((await receive("latest", 1)).sample.payload[0], 1);
@@ -179,14 +181,11 @@ test("real topic provider discovery, reads, cancellation and preview lifecycle",
   frames.want(new Set([stream.channel]));
   frames.configure(relay.endpoint, streams);
   async function preview(n: number) {
-    const timer = setInterval(() => {
-      void relay.frame(stream.channel, Uint8Array.of(n));
-    }, 40);
-    try {
-      await until(() => records.some((r) => r.kind === "value" && r.text === String(n)));
-    } finally {
-      clearInterval(timer);
-    }
+    await until(async () => {
+      if (records.some((r) => r.kind === "value" && r.text === String(n))) return true;
+      await relay.frame(stream.channel, Uint8Array.of(n));
+      return false;
+    });
   }
   await preview(3);
   await until(() =>
