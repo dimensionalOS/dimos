@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 import time
 
-from pydantic import Field
+from pydantic import Field, InstanceOf
 import reactivex as rx
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -23,28 +24,31 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import image, time as message_time
+from dimos_messages.builtin_interfaces.msg import Time
+from dimos_messages.geometry_msgs.msg import Quaternion, Transform, TransformStamped, Vector3
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.spec import perception
+from dimos.utils.reactive import quality_barrier
 from dimos.visualization.vis_module import vis_module
 
 
-def default_transform() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
+def default_transform() -> TransformStamped:
+    return TransformStamped(
+        header=Header(frame_id="base_link", stamp=Time(sec=0, nanosec=0)),
         child_frame_id="camera_link",
+        transform=Transform(
+            rotation=Quaternion(w=1.0, x=0.0, y=0.0, z=0.0),
+            translation=Vector3(x=0.0, y=0.0, z=0.0),
+        ),
     )
 
 
 class WebcamModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Transform | None = Field(default_factory=default_transform)
+    transform: InstanceOf[TransformStamped] | None = Field(default_factory=default_transform)
     hardware: WebcamConfig = Field(default_factory=WebcamConfig)
     frequency: float = 0.0  # Hz, 0 means no limit
 
@@ -67,7 +71,7 @@ class WebcamModule(Module, perception.Camera):
         stream = camera.image_stream()
 
         if self.config.frequency > 0:
-            stream = stream.pipe(sharpness_barrier(self.config.frequency))
+            stream = stream.pipe(quality_barrier(image.sharpness, self.config.frequency))
 
         self.register_disposable(
             stream.subscribe(self.color_image.publish),
@@ -81,24 +85,24 @@ class WebcamModule(Module, perception.Camera):
         camera = self._camera
         if camera is None:
             return
-        camera_info = camera.camera_info.with_ts(time.time())
+        camera_info = deepcopy(camera.camera_info)
+        camera_info.header.stamp = message_time.time_from_nanoseconds(time.time_ns())
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:
             return
 
-        camera_link = self.config.transform
-        camera_link.ts = camera_info.ts
-
-        camera_optical = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
+        camera_link = deepcopy(self.config.transform)
+        camera_link.header.stamp = camera_info.header.stamp
+        camera_optical = TransformStamped(
+            header=Header(frame_id="camera_link", stamp=camera_info.header.stamp),
             child_frame_id="camera_optical",
-            ts=camera_link.ts,
+            transform=Transform(
+                rotation=Quaternion(x=-0.5, y=0.5, z=-0.5, w=0.5),
+                translation=Vector3(x=0.0, y=0.0, z=0.0),
+            ),
         )
-
-        self.tf.publish(TFMessage(camera_link, camera_optical))
+        self.tf.publish(TFMessage(transforms=[camera_link, camera_optical]))
 
     @rpc
     def stop(self) -> None:

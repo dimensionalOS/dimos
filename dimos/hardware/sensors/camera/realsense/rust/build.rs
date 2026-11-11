@@ -17,6 +17,9 @@
 // names lib/x86_64-linux-gnu while the .so sits in lib/, so walk up to it --
 // for the linker too, or `-lrealsense2` is not found at all.
 fn main() {
+    if std::env::var_os("CARGO_FEATURE_DOCS_ONLY").is_some() {
+        return;
+    }
     let lib = pkg_config::probe_library("realsense2").expect("librealsense2 via pkg-config");
     for path in lib.link_paths {
         let dir = path

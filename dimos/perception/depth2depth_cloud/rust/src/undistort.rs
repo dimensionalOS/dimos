@@ -16,7 +16,7 @@
 //! projection both assume straight lines stay straight.
 
 use depth2depth::Pinhole;
-use lcm_msgs::sensor_msgs::CameraInfo;
+use dimos_generated_messages::sensor_msgs::msg::camera_info::CameraInfo;
 use rayon::prelude::*;
 
 /// Pinhole + distortion, as it arrives in a `CameraInfo`.
@@ -56,21 +56,21 @@ impl Lens {
     /// The lens as seen in an image `scale` times the calibration's resolution; None without usable intrinsics
     /// or for a distortion model this cannot undistort.
     pub fn from_info(info: &CameraInfo, scale: f64) -> Option<Self> {
-        let (fx, fy) = (info.K[0], info.K[4]);
+        let (fx, fy) = (info.k[0], info.k[4]);
         if !(fx > 0.0 && fy > 0.0 && fx.is_finite() && fy.is_finite()) {
             return None;
         }
         let model = Model::from_name(&info.distortion_model)?;
         // Eight coefficients mean the rational model whatever `distortion_model` claims; some drivers mislabel it plumb_bob.
         let mut distortion = [0.0; 8];
-        for (slot, value) in distortion.iter_mut().zip(&info.D) {
+        for (slot, value) in distortion.iter_mut().zip(&info.d) {
             *slot = *value;
         }
         Some(Self {
             fx: fx * scale,
             fy: fy * scale,
-            cx: (info.K[2] + 0.5) * scale - 0.5,
-            cy: (info.K[5] + 0.5) * scale - 0.5,
+            cx: (info.k[2] + 0.5) * scale - 0.5,
+            cy: (info.k[5] + 0.5) * scale - 0.5,
             model,
             distortion,
         })
@@ -185,9 +185,27 @@ mod tests {
         CameraInfo {
             width: 1920,
             height: 1536,
-            K: [1000.0, 0.0, 959.5, 0.0, 1000.0, 767.5, 0.0, 0.0, 1.0],
-            D: coefficients.to_vec(),
-            ..Default::default()
+            k: [1000.0, 0.0, 959.5, 0.0, 1000.0, 767.5, 0.0, 0.0, 1.0],
+            d: coefficients.to_vec(),
+            header: dimos_generated_messages::std_msgs::msg::header::Header {
+                stamp: dimos_generated_messages::builtin_interfaces::msg::time::Time {
+                    sec: 0,
+                    nanosec: 0,
+                },
+                frame_id: String::new(),
+            },
+            distortion_model: "plumb_bob".into(),
+            r: [0.; 9],
+            p: [0.; 12],
+            binning_x: 0,
+            binning_y: 0,
+            roi: dimos_generated_messages::sensor_msgs::msg::region_of_interest::RegionOfInterest {
+                x_offset: 0,
+                y_offset: 0,
+                width: 0,
+                height: 0,
+                do_rectify: false,
+            },
         }
     }
 
@@ -227,7 +245,7 @@ mod tests {
         let mut head = info(&[
             -0.6792, -0.638, 0.0002, -0.0002, -0.0302, -0.2868, -0.9987, -0.1752,
         ]);
-        head.K = [1012.59, 0.0, 962.21, 0.0, 1012.13, 765.67, 0.0, 0.0, 1.0];
+        head.k = [1012.59, 0.0, 962.21, 0.0, 1012.13, 765.67, 0.0, 0.0, 1.0];
         let lens = Lens::from_info(&head, 1.0).unwrap();
         for ((x, y), (u, v)) in [
             ((-0.9467, -0.7570), (300.77, 237.5)),
@@ -246,7 +264,7 @@ mod tests {
         // The Go2 front camera (front_camera_720.yaml); OpenCV's fisheye::distortPoints puts these rays here.
         let mut go2 = info(&[-0.0730943, -0.0234114, -0.0069306, 0.0092387]);
         go2.distortion_model = "equidistant".into();
-        go2.K = [
+        go2.k = [
             797.4756, 0.0, 643.5352, 0.0, 796.4872, 349.2784, 0.0, 0.0, 1.0,
         ];
         let lens = Lens::from_info(&go2, 1.0).unwrap();
@@ -274,7 +292,7 @@ mod tests {
     #[test]
     fn zero_focal_length_is_refused() {
         let mut bad = info(&[0.0; 5]);
-        bad.K[0] = 0.0;
+        bad.k[0] = 0.0;
         assert!(Lens::from_info(&bad, 1.0).is_none());
     }
 
