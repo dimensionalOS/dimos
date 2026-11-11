@@ -106,8 +106,18 @@ class DamiaoConnection(ConnectionModule):
         self._pending: dict[str, tuple[float, float, float | None]] = {}
         # Most keys ever pending at once, for observability and tests.
         self._pending_max = 0
-        # Set by an accepted command to wake the owning thread at once.
-        self._write_wake = threading.Event()
+        # Bumped by every invalidation, so a target taken just before a stop
+        # or fault cannot start an SDK write after it.
+        self._generation = 0
+        # The generation of the target ``_take_fresh`` returned last.
+        self._taken_generation = 0
+        # Wakes the owner for new targets, safety requests and shutdown.
+        self._owner_wake = threading.Event()
+        # A due deadman halt, handed to the owner as (deadman, seq).
+        self._halt_request: tuple[bool, int] | None = None
+        self._disable_request = False
+        self._hardware_closed = False
+        self._close_error: Exception | None = None
 
     @property
     def joint_names(self) -> list[str]:
@@ -149,6 +159,11 @@ class DamiaoConnection(ConnectionModule):
             self._limits = limits_of(self.config)
             self._invalidate_pending()
             self._pending_max = 0
+            self._fault = None
+            self._hardware_closed = False
+            self._close_error = None
+            self._halt_request = None
+            self._disable_request = False
             self.connect()
             with self._hardware_lock:
                 arm = self._arm
@@ -186,34 +201,57 @@ class DamiaoConnection(ConnectionModule):
     def stop(self) -> None:
         self._stop_reading.set()
         self._invalidate_pending()
-        if (
-            self._reader is not None
-            and self._reader.is_alive()
-            and self._reader is not threading.current_thread()
-        ):
-            self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        try:
+        self._owner_wake.set()
+        super().stop()
+
+    def _shutdown_hardware(self) -> None:
+        """Close on the SDK owner, with a bound, never under a foreign lock.
+
+        The owner halts and disables the hardware and then exits, so nothing
+        is closed from another thread while it is inside an SDK call. If it
+        is still inside one after the join budget, the hardware lock is only
+        tried once, bounded: if the owner holds it we report and leave the
+        close to the owner (which will do it as soon as the call returns)
+        rather than block shutdown forever. If the lock is free the owner is
+        merely publishing or already gone, so the shutdown finishes here.
+        """
+        reader = self._reader
+        if reader is None or reader is threading.current_thread() or not reader.is_alive():
+            self._close_bounded()
+            if self._close_error is not None:
+                raise self._close_error
+            return
+        reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        if not reader.is_alive():
+            if self._close_error is not None:
+                raise self._close_error
+            return
+        error = f"{self.config.source} reader did not stop before the shutdown timeout"
+        if self._hardware_lock.acquire(timeout=DEFAULT_THREAD_JOIN_TIMEOUT):
             try:
-                super().stop()
+                self._close_hardware()
+            except Exception as close_error:
+                self._close_error = close_error
             finally:
-                with self._hardware_lock:
-                    arm, self._arm = self._arm, None
-                    try:
-                        if arm is not None:
-                            arm.disable()
-                    finally:
-                        self._fault = None
-        finally:
-            if (
-                self._reader is not None
-                and self._reader.is_alive()
-                and self._reader is not threading.current_thread()
-            ):
-                self._reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                if self._reader.is_alive():
-                    error = f"{self.config.source} reader did not stop before the shutdown timeout"
-                    self._report(error)
-                    raise RuntimeError(error)
+                self._hardware_lock.release()
+            self._report(error)
+            if self._close_error is not None:
+                raise self._close_error
+            raise RuntimeError(error)
+        self._report(error)
+
+    def _close_bounded(self) -> None:
+        """Close from this thread after a bounded wait for the hardware lock."""
+        if self._hardware_lock.acquire(timeout=DEFAULT_THREAD_JOIN_TIMEOUT):
+            try:
+                self._close_hardware()
+            except Exception as error:
+                self._close_error = error
+                self._report(f"shutdown failed: {type(error).__name__}: {error}")
+            finally:
+                self._hardware_lock.release()
+        else:
+            self._report(f"{self.config.source} hardware lock busy, leaving the close to the owner")
 
     def _on_position(self, msg: JointState) -> None:
         try:
@@ -229,27 +267,49 @@ class DamiaoConnection(ConnectionModule):
         The callback never touches the SDK or waits for the hardware lock:
         an accepted periodic setpoint is merged by key (a complete setpoint
         overwrites every pending key, a partial update only its own), the
-        owning thread is woken, and the callback returns. Acceptance, and
-        with it the deadman restart, still happens here; the actual SDK
-        write is asynchronous from the caller's point of view and only ever
-        carries the newest pending value of each key, not a FIFO backlog.
-        Commands for a disconnected or faulted robot are dropped as before.
+        owning thread is woken, and the callback returns. No deadman is
+        restarted here: authorisation happens only when the owner actually
+        writes a target, so traffic that is already stale, or that expires
+        before it can be written, neither moves the robot nor keeps the
+        deadman quiet. That is the enqueue-versus-write boundary: acceptance
+        is a merge, execution is a write.
+        Commands for a disconnected, faulted or stopping robot are dropped
+        as before.
         """
-        if not self._connected or self._fault is not None:
+        if (
+            self._stopping
+            or self._stop_reading.is_set()
+            or not self._connected
+            or self._fault is not None
+        ):
             return
-        self._record_command()
+        max_age = self._max_age()
+        if ts is not None and time.time() - ts > max_age:
+            self._report(
+                f"expired command dropped before write (older than {max_age:.3f} s"
+                " by source timestamp)",
+                rejection=True,
+            )
+            return
         receipt = time.monotonic()
         with self._pending_lock:
+            # Re-check under the lock that also guards invalidation, so a
+            # stop or fault racing this callback cannot leave work behind.
+            if self._stopping or self._stop_reading.is_set() or self._fault is not None:
+                return
             for key, value in values.items():
                 self._pending[key] = (value, receipt, ts)
             self._pending_max = max(self._pending_max, len(self._pending))
-        self._write_wake.set()
+        self._owner_wake.set()
+
+    def _max_age(self) -> float:
+        return self.config.command_max_age_s or self.config.deadman_timeout_s
 
     def _has_pending(self) -> bool:
         with self._pending_lock:
             return bool(self._pending)
 
-    def _take_fresh(self) -> Values:
+    def _take_fresh(self) -> dict[str, tuple[float, float, float | None]]:
         """Pop the pending target, keeping only keys still fresh enough to write.
 
         A key is fresh when its age by local receipt and, when the command
@@ -264,46 +324,159 @@ class DamiaoConnection(ConnectionModule):
         """
         with self._pending_lock:
             pending, self._pending = self._pending, {}
+            # Remember which invalidation generation this batch belongs to,
+            # so a stop or fault arriving while it is in hand drops it.
+            self._taken_generation = self._generation
         if not pending:
             return {}
-        max_age = self.config.command_max_age_s or self.config.deadman_timeout_s
+        fresh, expired = self._fresh(pending)
+        if expired:
+            self._report_expiry(expired)
+        return fresh
+
+    def _fresh(
+        self, pending: dict[str, tuple[float, float, float | None]]
+    ) -> tuple[dict[str, tuple[float, float, float | None]], int]:
+        max_age = self._max_age()
         now_mono = time.monotonic()
         now_wall = time.time()
-        fresh: Values = {}
+        fresh: dict[str, tuple[float, float, float | None]] = {}
         expired = 0
         for key, (value, receipt, ts) in pending.items():
             if now_mono - receipt > max_age or (ts is not None and now_wall - ts > max_age):
                 expired += 1
             else:
-                fresh[key] = value
-        if expired:
-            self._report(
-                f"{expired} pending target(s) expired before write (older than {max_age:.3f} s)",
-                rejection=True,
-            )
-        return fresh
+                fresh[key] = (value, receipt, ts)
+        return fresh, expired
+
+    def _report_expiry(self, count: int) -> None:
+        self._report(
+            f"{count} pending target(s) expired before write (older than {self._max_age():.3f} s)",
+            rejection=True,
+        )
 
     def _flush_pending(self) -> None:
         """Write the newest fresh pending target once, on the owning thread."""
-        values = self._take_fresh()
-        if not values:
+        targets = self._take_fresh()
+        if not targets:
             return
+        generation = self._taken_generation
         with self._hardware_lock:
-            if self._arm is None or not self._connected:
+            with self._pending_lock:
+                current = self._generation
+            if (
+                generation != current
+                or self._stopping
+                or self._stop_reading.is_set()
+                or self._fault is not None
+                or self._arm is None
+                or not self._connected
+            ):
+                return
+            # Final age check at the execution boundary: a target that went
+            # stale between the dequeue and the SDK call is not written.
+            fresh, expired = self._fresh(targets)
+            if expired:
+                self._report_expiry(expired)
+            if not fresh:
                 return
             try:
-                self.write(values)
+                self.write({key: value for key, (value, _, _) in fresh.items()})
             except Exception as error:
                 self._report(f"write failed: {type(error).__name__}: {error}")
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
+            else:
+                # The target reached the hardware: only now does it authorise
+                # the deadman, anchored to this absolute instant.
+                self._record_command()
 
     def _invalidate_pending(self) -> None:
         """Drop every pending target and wake the owner, so nothing accepted
         before a stop, fault or disable is written after it."""
         with self._pending_lock:
             self._pending = {}
-        self._write_wake.set()
+            self._generation += 1
+        self._owner_wake.set()
+
+    def _defer_halt(self, seq: int, *, deadman: bool) -> bool:
+        """Queue a due halt for the owner thread instead of halting here."""
+        reader = self._reader
+        if reader is None or not reader.is_alive() or reader is threading.current_thread():
+            return False
+        with self._lock:
+            self._halt_request = (deadman, seq)
+        self._invalidate_pending()
+        self._owner_wake.set()
+        return True
+
+    def _drain_owner_requests(self) -> None:
+        """Run safety actions that other threads handed to the owner."""
+        with self._lock:
+            halt = self._halt_request
+            self._halt_request = None
+            disable = self._disable_request
+            self._disable_request = False
+        if disable:
+            with self._hardware_lock:
+                self._disable_arm()
+        if halt is not None:
+            deadman, seq = halt
+            self._halt_if_current(seq, deadman=deadman)
+
+    def _request_disable(self) -> None:
+        """De-energize on the owner; fall back only when no owner runs."""
+        reader = self._reader
+        if reader is None:
+            # Before the owner starts, the caller is the only SDK user, and a
+            # fault during start may already hold the hardware lock.
+            self._disable_arm()
+            return
+        if reader.is_alive() and reader is not threading.current_thread():
+            with self._lock:
+                self._disable_request = True
+            self._owner_wake.set()
+            return
+        if reader is threading.current_thread():
+            # The owner already holds the hardware lock in its read path.
+            self._disable_arm()
+            return
+        with self._hardware_lock:
+            self._disable_arm()
+
+    def _disable_arm(self) -> None:
+        arm = self._arm
+        if arm is None:
+            return
+        try:
+            arm.disable()
+        except Exception as disable_error:
+            self._report(f"{self._fault}; disable failed: {disable_error}")
+
+    def _close_hardware(self) -> None:
+        """Halt and de-energize once. The caller holds the hardware lock."""
+        if self._hardware_closed:
+            return
+        self._hardware_closed = True
+        arm, self._arm = self._arm, None
+        try:
+            try:
+                if self._connected:
+                    self._call_halt()
+            finally:
+                if arm is not None:
+                    arm.disable()
+        finally:
+            self._connected = False
+            self._fault = None
+
+    def _owner_close(self) -> None:
+        try:
+            with self._hardware_lock:
+                self._close_hardware()
+        except Exception as error:
+            self._close_error = error
+            self._report(f"shutdown failed: {type(error).__name__}: {error}")
 
     def write(self, values: Values) -> None:
         if self._fault is not None:
@@ -336,36 +509,64 @@ class DamiaoConnection(ConnectionModule):
             raise
 
     def _feedback_failed(self, error: Exception) -> None:
-        self._fault = f"feedback failed: {type(error).__name__}: {error}"
+        with self._lock:
+            self._fault = f"feedback failed: {type(error).__name__}: {error}"
+            reader = self._reader
+            owner = (
+                reader is not None
+                and reader.is_alive()
+                and reader is not threading.current_thread()
+            )
+            if owner:
+                # Queued in the same critical section as the fault, so the
+                # owner cannot see the fault and exit before the disable.
+                self._disable_request = True
         self._invalidate_pending()
         self._report(self._fault)
-        arm = self._arm
-        if arm is not None:
-            try:
-                arm.disable()
-            except Exception as disable_error:
-                self._report(f"{self._fault}; disable failed: {disable_error}")
+        if owner:
+            self._owner_wake.set()
+        else:
+            self._request_disable()
 
     def _read_loop(self) -> None:
         """The one runtime owner of the SDK: write the newest target, read, repeat.
 
-        Every runtime SDK call (target writes, scheduled reads, and through
-        the hardware lock any safety halt) is serialized on this thread, so
-        no write thread competes with the reader for the lock. An accepted
-        command wakes the write at once instead of waiting for the next
-        sampling tick; the read still runs at its configured rate, and
-        because one flush drains the whole pending target, a command flood
-        can neither starve the read nor spin the loop.
+        Every runtime SDK call (target writes, scheduled reads, safety holds
+        and fault disables) runs here, so no other thread competes with the
+        reader for the hardware lock or closes the hardware out from under a
+        call in progress. An accepted command wakes the write at once instead
+        of waiting for the next sampling tick; the read still runs at its
+        configured rate, and because one flush drains the whole pending
+        target, a command flood can neither starve the read nor spin the
+        loop. A stop, fault or due deadman is a tiny request this thread
+        drains between SDK calls; it is never executed on the event loop.
         """
         period = 1.0 / self.config.state_rate_hz
         next_read = time.monotonic()
-        while not self._stop_reading.is_set():
-            if not self._has_pending():
-                self._write_wake.wait(max(0.0, next_read - time.monotonic()))
-                self._write_wake.clear()
+        while True:
             if self._stop_reading.is_set():
+                self._owner_close()
                 return
-            self._flush_pending()
+            self._drain_owner_requests()
+            if self._stop_reading.is_set():
+                self._owner_close()
+                return
+            if self._fault is not None:
+                # A fault disables the arm; leave the owner rather than keep
+                # reading and publishing from a faulted robot.
+                return
+            if self._has_pending():
+                self._flush_pending()
+            else:
+                self._owner_wake.wait(max(0.0, next_read - time.monotonic()))
+                self._owner_wake.clear()
+                self._drain_owner_requests()
+                if self._stop_reading.is_set():
+                    self._owner_close()
+                    return
+                if self._fault is not None:
+                    return
+                self._flush_pending()
             started = time.monotonic()
             if started < next_read:
                 continue
@@ -376,6 +577,7 @@ class DamiaoConnection(ConnectionModule):
                         return
                     reading = self._read_state()
                 if self._stop_reading.is_set():
+                    self._owner_close()
                     return
                 self.joint_state.publish(
                     JointState(
@@ -391,4 +593,7 @@ class DamiaoConnection(ConnectionModule):
                 with self._hardware_lock:
                     if self._fault is None:
                         self._feedback_failed(error)
+                # A fault raised elsewhere may have queued the disable; run
+                # anything left before this owner steps away.
+                self._drain_owner_requests()
                 return

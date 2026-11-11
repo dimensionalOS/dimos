@@ -121,6 +121,9 @@ def test_target_held_past_its_age_budget_is_dropped_at_the_write(make_rig, monke
     time.sleep(0.05)
     rows = [row[0, 2] for row in _written(module)]
     assert rows == [pytest.approx(0.1)]
+    # The target queued behind the blocked write expired without reaching the
+    # hardware, so it never authorised the deadman either.
+    assert module._command_seq == 1
 
 
 def test_stop_while_write_held_clears_pending_and_never_replays(make_rig, boundary, monkeypatch):
@@ -156,16 +159,28 @@ def test_stop_while_write_held_clears_pending_and_never_replays(make_rig, bounda
 def test_fault_while_write_held_invalidates_pending(make_rig, monkeypatch):
     module, commands, _ = make_rig()
     entered, release = _block_write(module, monkeypatch)
+    disabled: list[int] = []
+    original_disable = module._arm.disable
+
+    def tracked_disable():
+        disabled.append(threading.get_ident())
+        return original_disable()
+
+    monkeypatch.setattr(module._arm, "disable", tracked_disable)
     commands.publish(JointState(name=["arm/joint1"], position=[0.1]))
     assert entered.wait(2)
     commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
     module._feedback_failed(RuntimeError("lost feedback"))
     assert module._pending == {}
     release.set()
-    time.sleep(0.1)
-    # The fault disabled the arm, so the held write refuses; nothing queued
-    # before the fault is written after it.
-    assert _written(module) == []
+    wait_until(lambda: bool(disabled), timeout=2)
+    time.sleep(0.05)
+    rows = [row[0, 2] for row in _written(module)]
+    # The held write is already admitted, so it may finish: an SDK call is
+    # not preemptible. The target queued behind it must never run, and the
+    # disable itself must execute on the single SDK owner.
+    assert rows == [pytest.approx(0.1)]
+    assert disabled and all(owner == module._reader.ident for owner in disabled)
     assert "feedback failed" in (module._fault or "")
 
 
@@ -214,3 +229,88 @@ def test_reader_continues_under_command_flood_and_sdk_calls_never_overlap(make_r
     wait_until(lambda: _written(module), timeout=2)
     assert violations == []
     assert module._pending_max <= len(module.joint_names)
+
+
+def test_repeated_stale_source_traffic_never_renews_the_deadman(make_rig):
+    module, commands, _ = make_rig(command_max_age_s=0.05)
+    module.config.deadman_timeout_s = 0.08
+    commands.publish(JointState(name=["arm/joint1"], position=[0.1]))
+    wait_until(lambda: _written(module), timeout=2)
+    authorized = module._command_seq
+    for _ in range(12):
+        commands.publish(JointState(ts=time.time() - 10, name=["arm/joint1"], position=[0.7]))
+        time.sleep(0.01)
+    # Already-stale traffic is rejected at admission: it neither authorises
+    # the deadman nor increments the sequence the timer compares against.
+    assert module._command_seq == authorized
+    assert "expired" in (module.status().last_rejection or "")
+    # With no eligible write, the deadman is not suppressed by that traffic.
+    wait_until(lambda: module.status().deadman_fired, timeout=2)
+    written = [round(row[0, 2], 4) for row in _written(module)]
+    assert written[0] == 0.1
+    assert 0.7 not in written
+
+
+def test_deadman_hold_and_teardown_disable_run_on_the_owner(make_rig, monkeypatch):
+    module, commands, _ = make_rig()
+    module.config.deadman_timeout_s = 0.05
+    holds: list[int] = []
+    disables: list[int] = []
+    original_hold = module._arm.hold
+    original_disable = module._arm.disable
+
+    def tracked_hold():
+        holds.append(threading.get_ident())
+        return original_hold()
+
+    def tracked_disable():
+        disables.append(threading.get_ident())
+        return original_disable()
+
+    monkeypatch.setattr(module._arm, "hold", tracked_hold)
+    monkeypatch.setattr(module._arm, "disable", tracked_disable)
+    commands.publish(JointState(name=["arm/joint1"], position=[0.2]))
+    wait_until(lambda: module.status().deadman_fired, timeout=2)
+    assert holds and all(owner == module._reader.ident for owner in holds)
+    module.stop()
+    assert disables and all(owner == module._reader.ident for owner in disables)
+    assert module._arm is None
+
+
+def test_stop_is_bounded_when_the_hardware_lock_is_held(make_rig, monkeypatch):
+    module, _, _ = make_rig()
+    monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.05)
+    entered, release = threading.Event(), threading.Event()
+    original_read = module._read_state
+
+    def blocked_read():
+        entered.set()
+        assert release.wait(2)
+        return original_read()
+
+    monkeypatch.setattr(module, "_read_state", blocked_read)
+    assert entered.wait(2)
+    done = threading.Event()
+    stopper = threading.Thread(target=lambda: (module.stop(), done.set()), daemon=True)
+    stopper.start()
+    try:
+        # The read holds the hardware lock: shutdown returns at its bound
+        # instead of waiting for that lock without a limit.
+        assert done.wait(1.0)
+    finally:
+        release.set()
+        stopper.join(timeout=2)
+    # The owner closes the hardware itself once its SDK call returns.
+    wait_until(lambda: not module._reader.is_alive(), timeout=2)
+    assert module._arm is None
+    assert not module.status().connected
+
+
+def test_commands_after_stop_are_dropped_not_queued(make_rig, boundary):
+    module, commands, _ = make_rig()
+    written = len(boundary[0].groups["left_arm"].commands)
+    module.stop()
+    commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
+    time.sleep(0.05)
+    assert module._pending == {}
+    assert len(boundary[0].groups["left_arm"].commands) == written
