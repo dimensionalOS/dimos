@@ -31,6 +31,7 @@ from dimos.hardware.sensors.camera.realsense.camera import (
 )
 from dimos.hardware.sensors.camera.spec import CameraConfig
 from dimos.imitation.collection.episode_monitor import EpisodeCommand, EpisodeMonitorModule
+from dimos.imitation.collection.preset_buttons import PresetButtonsModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
@@ -41,7 +42,6 @@ from dimos.teleop.webxr.blueprints import (
     teleop_webxr_xarm7,
 )
 from dimos.teleop.webxr.headset_feed import HeadsetFeedModule
-from dimos.teleop.webxr.preset_buttons import PresetButtonsModule
 
 
 class _CollectionRealSenseConfig(RealSenseCameraConfig):

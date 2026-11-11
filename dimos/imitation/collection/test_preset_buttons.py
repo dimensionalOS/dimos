@@ -21,6 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from dimos.imitation.collection.preset_buttons import PresetButtonsModule
 from dimos.manipulation.manipulation_spec import (
     ExecutionResult,
     ExecutionStatus,
@@ -36,7 +37,6 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.teleop.webxr.controller_types import Buttons
-from dimos.teleop.webxr.preset_buttons import PresetButtonsModule
 from dimos.utils.testing.waiting import wait_until
 
 INIT = JointState(name=["j1", "j2"], position=[0.1, 0.2])
