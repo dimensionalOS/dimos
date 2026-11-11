@@ -132,3 +132,37 @@ def test_a_launch_whose_child_exits_is_published_as_failed(
     client: TestClient, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
 ) -> None:
     watch_a_launch(client, state, sent, watchers, "fail", "failed")
+
+
+def test_a_terminal_run_starting_or_ending_is_a_launch_event() -> None:
+    sent: list[str] = []
+    bus = events.Bus("ns", lambda key, _payload: sent.append(key))
+    for run_id in (None, "run-1", "run-1", None):
+        bus.active({"runId": run_id, "launch": None})
+    assert sent == ["ns/dimos/events/launch"] * 3
+
+
+def test_a_growing_run_log_or_launch_output_is_a_log_event(
+    home: Path, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
+) -> None:
+    from experimental.gateway import launches, logs
+
+    run_log = logs.logs_dirs(state.dimos_dir)[0] / "run-1" / "main.jsonl"
+    run_log.parent.mkdir(parents=True)
+
+    async def scenario() -> None:
+        watcher = asyncio.create_task(
+            events.watch_logs(state.bus, state.dimos_dir, debounce_ms=TEST_DEBOUNCE_MS)
+        )
+        await until(lambda: bool(watchers))
+        run_log.write_text('{"event": "hello"}\n')
+        await until(lambda: {"type": "log", "run": "run-1"} in [p for _, p in sent])
+        launches.launch_log().write_text("step 1\n")
+        await until(lambda: {"type": "log", "run": "launch"} in [p for _, p in sent])
+        # a file beside them that isn't a log is not news
+        (run_log.parent / "notes.txt").write_text("x")
+        await asyncio.sleep(TEST_DEBOUNCE_MS / 1000 * 4)
+        watcher.cancel()
+
+    asyncio.run(scenario())
+    assert {key for key, _ in sent} == {"ns/dimos/events/log"}
