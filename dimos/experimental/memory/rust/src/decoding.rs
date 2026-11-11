@@ -212,6 +212,8 @@ mod tests {
             codec: Codec::Json,
             timestamp_field: field.map(str::to_string),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: false,
         }
     }
 
