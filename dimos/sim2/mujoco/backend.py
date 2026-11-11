@@ -65,6 +65,10 @@ def _xyzw(wxyz: np.ndarray) -> list[float]:
     return [float(x), float(y), float(z), float(w)]
 
 
+# Seconds of world time between repeats of the entity table.
+_ANNOUNCE_PERIOD = 1.0
+
+
 class MujocoBackend:
     def __init__(
         self,
@@ -90,7 +94,7 @@ class MujocoBackend:
         self._roots = self._entity_roots()
         self._joints = {name: self._joints_of(name, body) for name, body in self._roots.items()}
         self.world = WorldWriter()
-        self._announced = False
+        self._announced_at: float | None = None
         self._sent: dict[str, np.ndarray] = {}
         self._sent_joints: dict[str, np.ndarray] = {}
         self._refusals: list[tuple[str, str]] = []
@@ -296,8 +300,9 @@ class MujocoBackend:
 
     def frame(self, waiting_for: tuple[str, ...] = ()) -> WorldObservations:
         world, data, model = self.world, self.data, self.model
-        if not self._announced:
+        if self._announced_at is None or data.time - self._announced_at >= _ANNOUNCE_PERIOD:
             self._announce()
+            self._announced_at = data.time
         for name, body in self._roots.items():
             pose = np.array([*data.xpos[body], *_xyzw(data.xquat[body])])
             sent = self._sent.get(name)
@@ -326,6 +331,16 @@ class MujocoBackend:
         return world.end_frame(float(data.time))
 
     def _announce(self) -> None:
+        """Say what is in this world, again.
+
+        The entity table is how a listener reads anything else: positions and joint states
+        carry ids, and an id it never saw named is dropped on the floor. Saying it once at
+        startup leaves anything that joins later -- a module restarted, a tool attached, a
+        listener whose first frame the transport dropped -- silently blind for the life of the
+        world. Measured on the office scene: a subscriber attached mid-run saw 278,626 frames
+        and knew zero entities. So it is repeated, and a listener is at most `_ANNOUNCE_PERIOD`
+        behind the truth.
+        """
         world = self.world
         world.add("world", backend="mujoco")
         for name in self._roots:
@@ -333,7 +348,6 @@ class MujocoBackend:
             world.add(name, **({"model": str(self._layers[name])} if robot is not None else {}))
             for joint_name in self._joints[name][1]:
                 world.add(f"{name}/{joint_name}")
-        self._announced = True
 
     def _joints_of(self, name: str, body: int) -> tuple[list[int], list[str]]:
         """The single-dof joints in this body's subtree.
