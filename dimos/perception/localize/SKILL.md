@@ -43,11 +43,11 @@ a view count and when it was first and last seen; an empty answer is an answer.
 | `start=-10, duration=10` (default) | the last 10 s |
 | `start=-60, duration=60` | the last minute |
 | `start=-60, duration=20` | from 60 s ago to 40 s ago |
-| `start=30, duration=20` | 20 s, from 30 s after the oldest frame held |
+| `start=30, duration=20` | 20 s, from 30 s after the first frame of the run |
 
 - A negative `start` counts back from the newest embedded frame, a positive one
-  forward from the oldest frame still held. The module holds `horizon_s` of
-  frames, 600 s by default, so once memory is full the oldest frame moves.
+  forward from the first frame of the run. Every embedded frame is kept while
+  the module runs.
 - Frames are embedded at 1 per second, 3 on a walking robot (`mobile=True`),
   each the sharpest of its slot.
 - The first answer line is the window as resolved:

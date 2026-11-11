@@ -88,8 +88,6 @@ Configuration of `PerceptionLocalize`, set on the blueprint:
   subscribed; the other sensor is not required.
 - `mobile`: `True` when the camera rides a walking base. The index then runs
   at 3 Hz instead of 1 Hz. `go2-localize` sets it.
-- `horizon_s`: how far back `localize` can look. Sets the tf buffer and the
-  memory windows.
 - `feed_frames`: raw frames kept for the embed tail and the pairing.
 - `embedder`, `detector`, `segmenter`: each a dandetect registry name or a
   `module:attr` path, see `../README.md`.
@@ -99,7 +97,8 @@ Configuration of `PerceptionLocalize`, set on the blueprint:
 
 Memory: the raw feeds are kept raw for `feed_frames`. What `localize` reads is
 at index rate: the embedded frames as JPEG, and the depth frame or lidar scan
-paired with each of them as lz4. Both roll over `horizon_s`. A lidar call
+paired with each of them as lz4. No frame is deleted while the module runs;
+memory use increases until the module stops. A lidar call
 lifts through its window's paired scans merged into one map.
 
 ### Other rigs
