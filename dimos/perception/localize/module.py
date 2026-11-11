@@ -261,9 +261,11 @@ class PerceptionLocalize(Module):
             embed_hz=self._embed_hz,
         )
         self.detector.embed_live(self.rig, self._color_feed, self.index, embed_hz=self.rig.embed_hz)
-        self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
         self.register_disposable(
-            self.index.live(Unbounded()).transform(self._publish_frames).drain_thread()
+            self.index.live(Unbounded())
+            .transform(self._pair_geometry)
+            .transform(self._publish_frames)
+            .drain_thread()
         )
 
         self._stage = "waiting for the first posed frame of the feed"
