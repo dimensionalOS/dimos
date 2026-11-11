@@ -26,7 +26,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.sim2.mujoco.sensor_world import WorldView, open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount
 from dimos.sim2.sensor_usd import camera_usd
-from dimos.sim2.sim import SceneConfig, scene_from
+from dimos.sim2.sim import SceneConfig, scene_from, until_it_stops
 from dimos.sim2.usd_layer import usd_layer
 from dimos.sim2.world_observations import WorldMirror
 
@@ -51,7 +51,9 @@ class SimCamera(Module):
     async def main(self) -> AsyncIterator[None]:
         self._world = WorldMirror()
         self._world.subscribe(self.world_observations)
-        self._capturing = asyncio.create_task(self._capture())
+        self._capturing = asyncio.create_task(
+            until_it_stops(f"{self.frame_id} camera", self._capture())
+        )
         yield
         self._capturing.cancel()
 

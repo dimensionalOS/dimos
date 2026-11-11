@@ -378,6 +378,10 @@ class ConnectedWholeBody(ConnectedHardware):
         """Wait for real motor feedback before exposing state or accepting commands."""
         return self._wb_adapter.has_motor_states()
 
+    def read_state_ts(self) -> float | None:
+        getter = getattr(self._wb_adapter, "motor_states_ts", None)
+        return getter() if callable(getter) else None
+
     def read_state(self) -> dict[JointName, JointState]:
         """Read motor states as {joint_name: JointState}."""
         from dimos.control.components import JointState

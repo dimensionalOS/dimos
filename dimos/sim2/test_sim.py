@@ -13,19 +13,22 @@
 # limitations under the License.
 
 
+from collections.abc import Callable
 from pathlib import Path
 import subprocess
 import sys
-from typing import Protocol
+from typing import Any, Protocol
 
 import pytest
 
 from dimos.robot.assets.model import UsdModel
+from dimos.robot.usd_manager import Mount
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.sim import (
     BACKENDS,
     SimulatedWorld,
     SimulatedWorldConfig,
+    driving,
     scene_from,
     sim_module,
 )
@@ -90,3 +93,60 @@ def test_core_names_its_engines_and_imports_none_of_them():
         " assert not [m for m in sys.modules if m.startswith('mujoco')], sorted(sys.modules)"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+class _Coordinator:
+    """A coordinator that answers the two calls `driving` makes of one."""
+
+    def __init__(self, tasks: dict[str, Any]) -> None:
+        self._tasks = tasks
+
+    def get_active_tasks(self) -> list[str]:
+        return list(self._tasks)
+
+    def task_invoke(self, task_name: str, method: str) -> Any:
+        assert method == "state_snapshot"
+        return self._tasks[task_name]
+
+
+@pytest.fixture
+def coordinator(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, Any]], Mount]:
+    """Stand a fake coordinator behind whatever client `driving` opens.
+
+    `Mount.of("walker")` names an instance and no module, which is the branch that builds a
+    client by constructor, so replacing the class with something that returns the fake is all
+    the interception needed.
+    """
+
+    def install(tasks: dict[str, Any]) -> Mount:
+        import dimos.sim2.sim as sim
+
+        monkeypatch.setattr(sim, "RPCClient", lambda *a, **k: _Coordinator(tasks))
+        return Mount.of("walker")
+
+    return install
+
+
+def test_a_module_with_no_tasks_yet_is_not_driving(coordinator: Any) -> None:
+    """The case worth waiting out: its tasks have not started, so it drives nothing."""
+    assert driving(coordinator({}), None) is False
+
+
+def test_an_unarmed_task_means_not_driving(coordinator: Any) -> None:
+    assert driving(coordinator({"groot_wbc": {"armed": False}}), None) is False
+
+
+def test_every_task_armed_means_driving(coordinator: Any) -> None:
+    mount = coordinator({"groot_wbc": {"armed": True}, "other": {"armed": True}})
+    assert driving(mount, None) is True
+
+
+def test_one_unarmed_task_among_armed_ones_still_means_not_driving(coordinator: Any) -> None:
+    mount = coordinator({"a": {"armed": True}, "b": {"armed": False}})
+    assert driving(mount, None) is False
+
+
+def test_a_task_that_does_not_report_arming_is_not_something_to_wait_for(coordinator: Any) -> None:
+    """Most tasks never arm. A snapshot without `armed` must not hold the world for ever."""
+    assert driving(coordinator({"plain": {"active": True}}), None) is True
+    assert driving(coordinator({"plain": "not even a mapping"}), None) is True

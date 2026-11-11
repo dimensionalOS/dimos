@@ -88,6 +88,17 @@ SERVO_JOINTS = (
 assert len(SERVO_JOINTS) == len(make_humanoid_joints("g1"))
 
 
+def joint_renames(robot_id: str) -> dict[str, str]:
+    """Each description joint against the name the control stack publishes it under.
+
+    `_publish` reorders the world's joints into SERVO_JOINTS and sends them out under
+    `make_humanoid_joints`, so the two are index-aligned by construction -- the description
+    calls a joint `left_knee_joint` and everything downstream calls it `g1/left_knee`.
+    Anything that has to read a joint state against this description needs the pair.
+    """
+    return dict(zip(SERVO_JOINTS, make_humanoid_joints(robot_id), strict=True))
+
+
 logger = setup_logger()
 
 

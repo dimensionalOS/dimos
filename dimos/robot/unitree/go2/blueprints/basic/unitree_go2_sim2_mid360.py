@@ -41,12 +41,12 @@ _camera = SimCamera.blueprint(frame_id=Go2Sim.camera_mount_frame, scene_manager=
 
 _robot = UsdManager.blueprint(
     model=Go2Sim.usd,
-    mounts={Go2Sim.lidar_mount_frame: _lidar, Go2Sim.camera_mount_frame: _camera},
+    mounts={Go2Sim.lidar_mount_frame: LivoxSim.name, Go2Sim.camera_mount_frame: SimCamera.name},
 ).remappings([(UsdManager, "coordinator_joint_state", "joint_state")])
 
 _scene = UsdManager.blueprint(
     model=_room,
-    mounts={ROBOT: _robot},
+    mounts={ROBOT: UsdManager.name},
     frame_id_prefix="",
     tf_renames={"logistics": "world"},
 ).namespace(SCENE, expose={"render_file_request", "file_info", "tf"})

@@ -332,6 +332,27 @@ def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
     assert welds[0].GetRelationship("physics:body0").GetTargets() == [base.GetPath()]
 
 
+def test_an_added_frames_pose_survives_into_the_kinematics(toy: Any) -> None:
+    """The prim transform places the body, but tf is rebuilt from the weld's local frames."""
+    import math
+
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+
+    from dimos.robot.assets.model import UsdModel
+
+    xyz, rpy = (0.1, 0.0, 0.42), (math.pi, -0.04, 0.0)
+    scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("base_link", xyz, rpy)})
+
+    joint = UsdModel.from_layer(scene).get_joint("spot_joint")
+    assert joint is not None, "the added frame is a joint of the description"
+    placed = joint.parent_from_child(0.0)
+    expected = np.eye(4)
+    expected[:3, :3] = Rotation.from_euler("xyz", rpy).as_matrix()
+    expected[:3, 3] = xyz
+    assert np.allclose(placed, expected, atol=1e-6), "the frame hangs where it was added"
+
+
 def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: Any) -> None:
     import xml.etree.ElementTree as ElementTree
 

@@ -52,6 +52,7 @@ class TransportWholeBodyAdapter:
 
         self._lock = threading.Lock()
         self._latest_motor_states: list[MotorState] | None = None
+        self._latest_motor_states_ts: float | None = None
         self._latest_imu: IMUState | None = None
 
         self._motor_states_transport: Any = None
@@ -101,6 +102,7 @@ class TransportWholeBodyAdapter:
 
         with self._lock:
             self._latest_motor_states = None
+            self._latest_motor_states_ts = None
             self._latest_imu = None
 
         self._connected = False
@@ -114,6 +116,10 @@ class TransportWholeBodyAdapter:
             if self._latest_motor_states is None:
                 return [MotorState() for _ in range(self._dof)]
             return list(self._latest_motor_states)
+
+    def motor_states_ts(self) -> float | None:
+        with self._lock:
+            return self._latest_motor_states_ts
 
     def has_motor_states(self) -> bool:
         """True once the first motor_states frame has been received."""
@@ -156,8 +162,12 @@ class TransportWholeBodyAdapter:
             MotorState(q=msg.position[i], dq=msg.velocity[i], tau=msg.effort[i])
             for i in range(self._dof)
         ]
+        stamp = getattr(msg, "ts", None)
         with self._lock:
             self._latest_motor_states = states
+            self._latest_motor_states_ts = (
+                float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else None
+            )
 
     def _on_imu(self, msg: Imu) -> None:
         # dimos Imu Quaternion is (x,y,z,w); IMUState.quaternion is (w,x,y,z).

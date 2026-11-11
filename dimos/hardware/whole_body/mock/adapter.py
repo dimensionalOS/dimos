@@ -60,6 +60,9 @@ class MockWholeBodyAdapter:
     def has_motor_states(self) -> bool:
         return self._connected
 
+    def motor_states_ts(self) -> float | None:
+        return None
+
     def read_imu(self) -> IMUState:
         return IMUState()
 

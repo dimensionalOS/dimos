@@ -1701,3 +1701,59 @@ def test_a_usd_native_robot_cuts_itself_out_of_its_own_cloud(tmp_path: Path) -> 
         np.testing.assert_allclose(result.points_f32(), [[2.0, 0.0, 0.0]], atol=1e-6)
     finally:
         module.dispose()
+
+
+_MIMIC_URDF = """<?xml version="1.0"?>
+<robot name="gripper">
+  <link name="base"/>
+  <link name="left"/>
+  <link name="right"/>
+  <joint name="drive" type="revolute">
+    <parent link="base"/><child link="left"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="0" velocity="0"/>
+  </joint>
+  <joint name="follower" type="revolute">
+    <parent link="base"/><child link="right"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-1" upper="1" effort="0" velocity="0"/>
+    <mimic joint="drive" multiplier="-1.0" offset="0.0"/>
+  </joint>
+</robot>
+"""
+
+
+def _angle_about_z(transform: Any) -> float:
+    from scipy.spatial.transform import Rotation
+
+    quaternion = transform.rotation
+    return float(
+        Rotation.from_quat([quaternion.x, quaternion.y, quaternion.z, quaternion.w]).as_euler(
+            "xyz"
+        )[2]
+    )
+
+
+def test_a_copied_joint_follows_its_leader_through_the_renaming(
+    make_manager: Callable[..., UsdManager],
+) -> None:
+    """A mimic joint is named by the description on both sides of its rule.
+
+    `positions` is keyed the way the joint state spells things, so reading the leader or
+    writing the follower without the rename leaves the copy at zero while the joint it copies
+    moves -- the frozen-model bug again, for one joint instead of all of them.
+    """
+    module = make_manager(
+        urdf_xml=_MIMIC_URDF,
+        joint_renames={"drive": "hand/drive", "follower": "hand/follower"},
+    )
+
+    drawn = {
+        transform.child_frame_id: transform
+        for transform in module.joint_transforms(
+            JointState(name=["hand/drive"], position=[0.4], ts=1.0)
+        )
+    }
+
+    assert _angle_about_z(drawn["left"]) == pytest.approx(0.4, abs=1e-6)
+    assert _angle_about_z(drawn["right"]) == pytest.approx(-0.4, abs=1e-6)

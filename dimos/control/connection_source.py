@@ -351,7 +351,10 @@ class ConnectionSource:
                 reported = reported | {port}
                 self._heard.add(port)
             self._latest, self._reported = latest, reported
-            self._received_at = time.time()
+            stamp = getattr(msg, "ts", None)
+            self._received_at = (
+                float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else time.time()
+            )
             self._freshness.mark(now)
 
     def drop_holds(self) -> None:

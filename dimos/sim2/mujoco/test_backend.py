@@ -17,6 +17,7 @@ import contextlib
 from pathlib import Path
 import time
 from typing import Any, cast
+import uuid
 
 import mujoco
 import numpy as np
@@ -115,9 +116,47 @@ def test_mounting_at_a_frame_the_world_does_not_have_is_rejected(scene):
         mount_sensor(spec, SensorMount("imu", "nowhere", "nowhere"))
 
 
+def test_a_robot_grafted_under_a_frame_still_reports_its_own_pose(scene, robot_model):
+    """The mount a robot hangs off must not take the robot's place in the world.
+
+    A composed scene grafts the robot under a frame of the scene's, and `_free_if_unjointed`
+    puts the freejoint on that frame -- so the frame is parented to the world and jointed,
+    which is what this world calls an object, and it shortens to the same name as the robot
+    standing on it. It used to win: every consumer was told the robot's pose was its mount's,
+    which for a G1 is 0.793 m below its pelvis, and drew it that far into the floor.
+    """
+    mount = 2.0
+    room = UsdModel.from_file(SCENE).with_frames({"dog": ("scene", (0.0, 0.0, mount), (0, 0, 0))})
+    composed = UsdModel.from_layer(
+        graft_usd(room.usd, {"dog": prefix_usd_frames(robot_model.usd, "dog")})
+    )
+    backend = MujocoBackend(composed, [SimulatedRobot("dog", robot_model)])
+    try:
+        base = backend.model.body("dog/base")
+        held = backend.model.body(int(backend.model.body_rootid[base.id]))
+        assert held.id != base.id, "the fixture is not composed; nothing holds the robot"
+        mirror = WorldMirror()
+        mirror.apply(backend.frame())
+        dog = mirror.entity("dog")
+        assert dog is not None and dog.pose is not None
+        assert dog.pose[:3] == pytest.approx(backend.data.xpos[base.id], abs=1e-6)
+        assert backend.data.xpos[held.id][2] == pytest.approx(mount, abs=1e-6)
+        assert dog.pose[2] != pytest.approx(mount, abs=1e-3)
+    finally:
+        pass
+
+
 def test_the_engine_runs_the_robots_the_blueprint_put_in_the_world(scene, robot_model):
-    blueprint = sim_module(scene=scene, robots=[SimulatedRobot("dog", robot_model)])
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
+    # Its own namespace *and* its own zenoh domain. An RPC goes out on the instance's name, so
+    # a plain `sim_module()` here is called what a sim running on this machine calls its own,
+    # and `describe()` is answered by that one: the test asked for its single "dog" and was
+    # handed the office's three G1s. It passed alone and failed whenever anything else was up,
+    # which is the worst shape a test can have.
+    blueprint = sim_module(scene=scene, robots=[SimulatedRobot("dog", robot_model)]).namespace(
+        f"t{uuid.uuid4().hex[:8]}"
+    )
+    overrides = {"g": {"viewer": "none", "zenoh_domain": f"sim2-test-{uuid.uuid4().hex[:8]}"}}
+    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides=overrides)
     coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
         sim = coordinator.get_instance(MujocoSim)

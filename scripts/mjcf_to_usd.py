@@ -62,7 +62,7 @@ import sys
 from typing import Any
 import xml.etree.ElementTree as ET
 
-from dimos.robot.assets.usd import hash_of_file
+from dimos.robot.assets.usd_assets import hash_of_file
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -165,6 +165,33 @@ def rereference(
     return done, skipped
 
 
+def paint_from_materials(stage: Any, pxr: Any) -> int:
+    """State a mesh's real colour where the simplest consumer looks for it.
+
+    The converter binds a UsdShade Material per MJCF material -- a G1's black parts and its
+    silver ones are stated there -- and then writes ``primvars:displayColor = (0.5, 0.5, 0.5)``
+    on every visual mesh as well. USD says the bound material wins, but displayColor is what a
+    reader with no shading graph reads, and ours takes it first: the whole robot came out in
+    that placeholder grey. So where a mesh binds a material that states a colour, the mesh says
+    the same colour, and no consumer has to choose.
+    """
+    painted = 0
+    for prim in list(stage.Traverse()):
+        if not prim.IsA(pxr.UsdGeom.Mesh):
+            continue
+        bound = prim.GetRelationship("material:binding")
+        targets = bound.GetTargets() if bound else []
+        if not targets:
+            continue
+        material = stage.GetPrimAtPath(targets[0])
+        color = material.GetAttribute("inputs:color").Get() if material else None
+        if color is None:
+            continue
+        pxr.UsdGeom.Gprim(prim).CreateDisplayColorAttr([pxr.Gf.Vec3f(*color)])
+        painted += 1
+    return painted
+
+
 def name_joints(stage: Any, pxr: Any) -> int:
     renamed = 0
     for prim in list(stage.Traverse()):
@@ -187,19 +214,36 @@ def name_joints(stage: Any, pxr: Any) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mjcf", type=Path, help="the vendor MJCF, for its mesh names")
+    parser.add_argument("--converted", type=Path, help="the converter's stage")
+    parser.add_argument("--meshes", type=Path, help="the directory holding the mesh files")
+    parser.add_argument("--out", type=Path, help="the .usda to write")
     parser.add_argument(
-        "--mjcf", required=True, type=Path, help="the vendor MJCF, for its mesh names"
+        "--repaint",
+        type=Path,
+        nargs="+",
+        help="apply only the colour step to layers already converted, in place",
     )
-    parser.add_argument("--converted", required=True, type=Path, help="the converter's stage")
-    parser.add_argument(
-        "--meshes", required=True, type=Path, help="the directory holding the mesh files"
-    )
-    parser.add_argument("--out", required=True, type=Path, help="the .usda to write")
     args = parser.parse_args()
 
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdPhysics
 
     pxr = argparse.Namespace(Gf=Gf, Sdf=Sdf, Usd=Usd, UsdGeom=UsdGeom, UsdPhysics=UsdPhysics)
+
+    if args.repaint:
+        for path in args.repaint:
+            stage = Usd.Stage.Open(str(path))
+            painted = paint_from_materials(stage, pxr)
+            stage.GetRootLayer().Export(str(path))
+            print(f"{painted} mesh(es) repainted in {path}")
+        return 0
+
+    missing = [
+        name for name in ("mjcf", "converted", "meshes", "out") if getattr(args, name) is None
+    ]
+    if missing:
+        print(f"ERROR: --{', --'.join(missing)} are required without --repaint", file=sys.stderr)
+        return 1
 
     for path in (args.mjcf, args.converted):
         if not path.is_file():
@@ -220,12 +264,14 @@ def main() -> int:
         return 1
     args.out.parent.mkdir(parents=True, exist_ok=True)
     named = name_joints(flat, pxr)
+    painted = paint_from_materials(flat, pxr)
     done, skipped = rereference(flat, files, args.meshes, args.out.parent.resolve(), pxr)
 
     flat.GetRootLayer().Export(str(args.out))
     size = args.out.stat().st_size
     print(f"{done} mesh(es) re-pointed with a .usdc sidecar, {skipped} left baked")
     print(f"{named} unnamed joint(s) named after the body they move")
+    print(f"{painted} mesh(es) given the colour of the material they bind")
     print(f"wrote {args.out} ({size / 1e6:.2f} MB)")
     if skipped:
         print("note: a baked mesh keeps the layer large; see the warnings above for why")

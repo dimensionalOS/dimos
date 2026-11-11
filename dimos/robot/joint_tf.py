@@ -25,7 +25,7 @@ the loop publishes those on their own until a state shows up.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from threading import Event, Lock, Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
@@ -93,6 +93,7 @@ class JointTf:
         tf: TfSink | None = None,
         *,
         frame: Callable[[str], str] | None = None,
+        joint_renames: Mapping[str, str] | None = None,
         joint_tf_hz: float = 30.0,
         unchanged_tf_hz: float = 4.0,
     ) -> None:
@@ -103,6 +104,7 @@ class JointTf:
             )
         self._joints = _joints_of(model)
         self._frame = frame or (lambda name: name)
+        self._joint_renames = dict(joint_renames or {})
         self._joint_period = 1.0 / joint_tf_hz
         self._keepalive = 1.0 / unchanged_tf_hz
         self._joint_state = joint_state
@@ -112,6 +114,7 @@ class JointTf:
         self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
         self._next_joint_t = 0.0
         self._latest: JointState | None = None
+        self._warned_about_joint_names = False
         self._woke = Event()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -237,14 +240,23 @@ class JointTf:
         """One parent -> child transform per joint; joints the state leaves out stay at zero."""
         positions = dict(zip(state.name, state.position, strict=False))
         for joint in self._joints.values():
-            if joint.mimic is not None and joint.mimic[0] in positions:
-                leader, multiplier, offset = joint.mimic
-                positions[joint.name] = multiplier * positions[leader] + offset
+            if joint.mimic is None:
+                continue
+            # Both sides are description names, and `positions` is keyed the way the joint
+            # state spells them, so a copied joint has to be read and written through the
+            # same renaming as the joint it is drawn from.
+            leader, multiplier, offset = joint.mimic
+            followed = self.joint_state_name(leader)
+            if followed in positions:
+                positions[self.joint_state_name(joint.name)] = (
+                    multiplier * positions[followed] + offset
+                )
+        self._warn_if_nothing_matches(positions)
         # Fixed joints are republished with the moving ones: a chained lookup is only as fresh as
         # its stalest edge.
         return [
             Transform.from_matrix(
-                joint.parent_from_child(positions.get(joint.name, 0.0)),
+                joint.parent_from_child(positions.get(self.joint_state_name(joint.name), 0.0)),
                 frame_id=self._frame(joint.parent_link),
                 child_frame_id=self._frame(joint.child_link),
                 ts=state.ts,
@@ -253,6 +265,30 @@ class JointTf:
             if joint.type not in MULTI_DOF_JOINT_TYPES
         ]
 
+    def joint_state_name(self, joint: str) -> str:
+        """What this description's joint is called in the joint state that drives it."""
+        return self._joint_renames.get(joint, joint)
+
+    def _warn_if_nothing_matches(self, positions: Mapping[str, float]) -> None:
+        """Say so when a joint state names nothing this description knows.
+
+        An unmatched joint falls back to 0.0, and a model drawn entirely at 0.0 looks like a
+        model: it is posed, it just never moves, and the base pose keeps moving under it. That
+        is a long way to find from the outside, so the one reading that catches it -- not one
+        name in common -- says it once.
+        """
+        if self._warned_about_joint_names or not positions:
+            return
+        self._warned_about_joint_names = True
+        if self.joint_names & set(positions):
+            return
+        logger.warning(
+            f"joint state names none of this description's joints, so every joint it draws "
+            f"stays at 0: it carries {sorted(positions)[:3]}, the description wants "
+            f"{sorted(self.joint_names)[:3]}. Give it joint_renames if the two spell joints "
+            f"differently."
+        )
+
     @property
     def joints(self) -> dict[str, JointDescription]:
         """The description's joints by name, which is what it poses."""
@@ -260,5 +296,5 @@ class JointTf:
 
     @property
     def joint_names(self) -> set[str]:
-        """The names it poses joints by, which is what a joint state has to use."""
-        return set(self._joints)
+        """The names a joint state has to use to reach these joints."""
+        return {self.joint_state_name(name) for name in self._joints}

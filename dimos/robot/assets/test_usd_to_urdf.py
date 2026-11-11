@@ -95,6 +95,46 @@ def test_every_joint_survives_the_round_trip_exactly(probe: Any, tmp_path: Path)
         assert (got.lower, got.upper) == pytest.approx((original.lower, original.upper), abs=1e-6)
 
 
+_AXIS_TOKEN_USDA = """#usda 1.0
+(
+    defaultPrim = "rig"
+)
+
+def Xform "rig"
+{
+    def Xform "base" (
+        prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+        def Xform "arm" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI"]
+        )
+        {
+            def PhysicsRevoluteJoint "elbow"
+            {
+                uniform token physics:axis = "Y"
+                rel physics:body0 = </rig/base>
+                rel physics:body1 = </rig/base/arm>
+                point3f physics:localPos0 = (0, 0, 0)
+                point3f physics:localPos1 = (0, 0, 0)
+                quatf physics:localRot0 = (1, 0, 0, 0)
+                quatf physics:localRot1 = (1, 0, 0, 0)
+            }
+        }
+    }
+}
+"""
+
+
+def test_a_joint_turns_about_the_axis_its_token_names() -> None:
+    """A converter states the axis as a token and leaves the local frames alone."""
+    urdf = ET.fromstring(usd_to_urdf(_AXIS_TOKEN_USDA))
+
+    axis = urdf.find(".//joint[@name='elbow']/axis")
+    assert axis is not None
+    assert [float(value) for value in axis.get("xyz").split()] == [0.0, 1.0, 0.0]
+
+
 def test_the_kinematic_tree_comes_back_the_same(probe: Any, tmp_path: Path) -> None:
     back = _round_trip(probe, tmp_path)
 

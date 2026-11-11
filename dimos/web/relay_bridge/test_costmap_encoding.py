@@ -44,7 +44,7 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
     the actual wire contract."""
     meta = vec["meta"]
     cells = np.frombuffer(base64.b64decode(vec["grid_b64"]), dtype=np.uint8)
-    rows = np.where(cells == 255, -1, cells).astype(np.int8).reshape(meta["h"], meta["w"])
+    rows = cells.view(np.int8).reshape(meta["h"], meta["w"])
     ox, oy, yaw = meta["origin"]
     msg = grid_msg(rows.tolist(), meta["res"], ox, oy, yaw)
     encoded = encode_costmap(msg)

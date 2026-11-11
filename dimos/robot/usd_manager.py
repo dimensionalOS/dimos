@@ -172,6 +172,10 @@ class UsdManagerConfig(ModuleConfig):
     mounts: dict[str, Mount] = Field(default_factory=dict)
     tf_renames: dict[str, str] = Field(default_factory=dict)
     tf_renames_pre_namespace: dict[str, str] = Field(default_factory=dict)
+    # Description joint -> the name joint state carries it under, where the two differ.
+    # A control stack names a joint for its hardware ("main/left_knee"); a description names
+    # it as its source does ("left_knee_joint"), and then no joint state reaches any joint.
+    joint_renames: dict[str, str] = Field(default_factory=dict)
     scene_retry_s: float = Field(default=0.5, gt=0.0)
 
     @field_validator("mounts", mode="before")
@@ -207,6 +211,7 @@ class UsdManager(Module):
         self._joint_tf = JointTf(
             self._description,
             frame=self.frame,
+            joint_renames=self.config.joint_renames,
             joint_tf_hz=self.config.joint_tf_hz,
             unchanged_tf_hz=self.config.unchanged_tf_hz,
         )
@@ -288,13 +293,30 @@ class UsdManager(Module):
         await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
-        root, scene = await self._compose(chain)
-        where = root[ASSET_ROOT] or None
-        await asyncio.to_thread(self._check_scene_assets, scene, where)
-        published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
-        self._published_assets = assets
-        self._scene = published
-        return ["", published]
+        async with self._scene_build:
+            return ["", await self._composed_scene(chain)]
+
+    async def _composed_scene(self, chain: list[str]) -> str:
+        """The composed scene, built once however many modules ask for it.
+
+        Every simulated sensor and robot asks the scene manager for the same scene as it
+        starts, so a scene with three robots and their lidars is asked for about ten
+        times. Composing grafts every subtree and republishes every asset, which for a
+        room-sized scene is seconds of work each time -- long enough that the robots fall
+        over before their controllers see a joint state. Build it once and hand out the
+        same answer.
+
+        The caller holds ``_scene_build``: ``handle_render_file_request`` takes that lock
+        before it reaches here, and an ``asyncio.Lock`` is not reentrant.
+        """
+        if self._scene is None:
+            root, scene = await self._compose(chain)
+            where = root[ASSET_ROOT] or None
+            await asyncio.to_thread(self._check_scene_assets, scene, where)
+            published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
+            self._published_assets = assets
+            self._scene = published
+        return self._scene
 
     def _check_scene_assets(self, scene: str, root: str | None) -> None:
         unopenable = unopenable_assets(scene, root)
@@ -459,7 +481,7 @@ class UsdManager(Module):
             async with self._scene_build:
                 usd = self._scene
                 if usd is None and self.config.mounts:
-                    usd = (await self.get_scene())[USD]
+                    usd = await self._composed_scene([])
                 if usd is None:
                     usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
@@ -499,6 +521,10 @@ class UsdManager(Module):
         """Pose this description's joints from a state the caller already has."""
         if self.config.publish_joint_tf:
             self._joint_tf.add_joint_state(state, self.tfbuffer)
+
+    def joint_state_name(self, joint: str) -> str:
+        """What this description's joint is called in the joint state that drives it."""
+        return self._joint_tf.joint_state_name(joint)
 
     def frame(self, link_or_joint: str) -> str:
         renamed = self._frames.get(link_or_joint, link_or_joint)

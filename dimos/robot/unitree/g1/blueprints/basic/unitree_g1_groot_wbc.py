@@ -308,7 +308,7 @@ else:
 
     if global_config.simulation == "sim2":
         from dimos.robot.assets.model import UsdModel
-        from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim
+        from dimos.robot.unitree.g1.sim2 import HOME_HEIGHT, G1Sim, joint_renames
         from dimos.robot.usd_manager import UsdManager
         from dimos.sim2.assets.logistics import LOGISTICS
         from dimos.sim2.livox import LivoxSim
@@ -322,8 +322,8 @@ else:
         ).remappings([(LivoxSim, "lidar", "lidar_raw"), (LivoxSim, "imu", "imu_raw")])
         _robot_usd = UsdManager.blueprint(
             model=G1Sim.usd,
-            publish_joint_tf=False,
-            mounts={G1Sim.lidar_mount_frame: _mid360},
+            mounts={G1Sim.lidar_mount_frame: LivoxSim.name},
+            joint_renames=joint_renames(_robot_id),
         )
         _backend = autoconnect(
             sim_module(
@@ -336,7 +336,7 @@ else:
                 model=UsdModel.from_file(LOGISTICS).with_frames(
                     {_robot_id: ("logistics", (0.0, 0.0, HOME_HEIGHT), (0.0, 0.0, 0.0))}
                 ),
-                mounts={_robot_id: _robot_usd},
+                mounts={_robot_id: UsdManager.name},
                 frame_id_prefix="",
                 tf_renames={"logistics": "world"},
             ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),

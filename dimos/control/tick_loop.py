@@ -268,6 +268,7 @@ class TickLoop:
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
         per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
+        read_at: list[float] = []
 
         with self._hardware_lock:
             for hw in self._hardware.values():
@@ -281,6 +282,10 @@ class TickLoop:
                         joint_efforts[joint_name] = joint_state.effort
                     if self._publish_robot_callback:
                         per_hardware[hw.hardware_id] = state
+                    taken = getattr(hw, "read_state_ts", None)
+                    stamp = taken() if callable(taken) else None
+                    if stamp:
+                        read_at.append(stamp)
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
             # Read whether or not a robot can be commanded: one whose readings
@@ -290,12 +295,14 @@ class TickLoop:
                 joint_positions.update(joints.joint_positions)
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
+                if joints.timestamp:
+                    read_at.append(joints.timestamp)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
             joint_velocities=joint_velocities,
             joint_efforts=joint_efforts,
-            timestamp=time.time(),
+            timestamp=max(read_at) if read_at else time.time(),
         )
         return snapshot, per_hardware
 

@@ -111,3 +111,22 @@ Keep consumer-specific processing outside this module. For example, Drake-specif
 cleanup and optional mesh conversion still belong in
 `dimos/manipulation/planning/utils/mesh_utils.py`. Only converted meshes are
 cached because backends require them as filesystem artifacts.
+
+## One layer, three readers
+
+A USD layer here is read by three things that each take a different slice of it, and a field
+one writes and another ignores diverges in silence:
+
+| reader | what it takes | what it does not |
+|---|---|---|
+| **MuJoCo** (the physics world) | each prim's own `xformOp:transform`, the Mjc* schemas, `physics:axis` | the weld joints' local frames, a material's `physics:dynamicFriction` (`sim2/mujoco/world.py` applies it afterwards) |
+| **`usd_to_urdf`** (the kinematics, so tf) | each joint's `physics:localPos0/localRot0` and `physics:axis`, the prim transform only for a world weld | the prim transforms of jointed bodies |
+| **the Controller** (what a person sees) | `primvars:displayColor` first, then the bound material's `inputs:color` | reference arcs, so a prototype's colour has to be stated where the mesh is |
+
+Three bugs came out of that split in one day: an added frame welded with identity local frames
+(right in physics, wrong on tf), joints read as turning about z because the axis token was
+ignored, and robots drawn in the converter's placeholder grey. `usd_with_frames` and
+`scripts/mjcf_to_usd.py` now state each fact everywhere its readers look, and
+`dimos/robot/unitree/test_vendored_usd.py::test_the_physics_and_the_tf_chain_place_a_frame_the_same`
+poses MuJoCo and the tf chain at the same angles and compares them, so the next divergence of
+this shape fails a test rather than a demo.

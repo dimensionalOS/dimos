@@ -247,6 +247,10 @@ robots:
           description: 'The basic G1 stack against a simulated G1: no robot needed.'
           starter: 8
           recommended_config: []
+        three-g1-office-555:
+          title: Three G1s in office 555
+          description: 'Three GR00T-driven G1s walking the office_555 room in sim2, each with its own Mid-360: no robot needed.'
+          recommended_config: []
         unitree-g1:
           title: G1 with perception + memory
           description: The basic G1 stack plus spatial memory and object tracking.

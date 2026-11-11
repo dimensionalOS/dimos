@@ -80,7 +80,6 @@ class SimMujocoG1WholeBodyAdapter:
         self._connected = False
 
     # Lifecycle
-
     def connect(self) -> bool:
         self._shm = ManipShmReader.wait_for_live(
             self._shm_key,
@@ -115,7 +114,6 @@ class SimMujocoG1WholeBodyAdapter:
         return self._live_shm() is not None
 
     # IO (WholeBodyAdapter protocol)
-
     def read_motor_states(self) -> list[MotorState]:
         if not self.has_motor_states():
             return [MotorState()] * _NUM_MOTORS
@@ -132,6 +130,9 @@ class SimMujocoG1WholeBodyAdapter:
         # No ramp-up window like real DDS adapters need before the
         # first state msg arrives.
         return self._live_shm() is not None
+
+    def motor_states_ts(self) -> float | None:
+        return None
 
     def read_imu(self) -> IMUState:
         if not self.has_motor_states():
