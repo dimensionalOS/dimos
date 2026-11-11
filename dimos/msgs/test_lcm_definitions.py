@@ -22,7 +22,6 @@ MSGS = Path(__file__).parent
 # Predate this test. Define each in dimos-lcm (or move it to a dimos-only package), then drop it.
 KNOWN = {
     # Mustafa Bhadsorawala, https://github.com/dimensionalOS/dimos/pull/831
-    "sensor_msgs.JointCommand",
     "sensor_msgs.RobotState",
     "trajectory_msgs.TrajectoryPoint",
     "trajectory_msgs.TrajectoryStatus",
@@ -36,6 +35,8 @@ KNOWN = {
     "sensor_msgs.ImuInfo",
     # leshy, https://github.com/dimensionalOS/dimos/pull/4497
     "shape_msgs.TriangleMesh",
+    # https://github.com/dimensionalOS/dimos/pull/4502; predates the generated sim_msgs package.
+    "sim_msgs.Contacts",
 }
 
 
