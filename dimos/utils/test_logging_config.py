@@ -127,6 +127,8 @@ logging_config.LOG_DIR = root / "logs"
     assert result.stderr == "", result.stderr
 
 
+# Subprocess scripts isolate global logging state and handler replacement from pytest.
+# _run_logging_script turns failed child assertions into test failures.
 def test_log_file_is_created_on_the_first_record(tmp_path: Path) -> None:
     _run_logging_script(
         tmp_path,
