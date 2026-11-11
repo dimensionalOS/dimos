@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Robot-local M20 integration for the current DimOS 3D navigation stack."""
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
