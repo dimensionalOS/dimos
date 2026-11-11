@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -394,7 +395,7 @@ def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
     drive = UsdPhysics.DriveAPI(joint, "angular")
     assert drive.GetStiffnessAttr().Get() == pytest.approx(40.0)
     assert drive.GetDampingAttr().Get() == pytest.approx(2.0)
-    assert drive.GetTargetPositionAttr().Get() == pytest.approx(0.25)
+    assert drive.GetTargetPositionAttr().Get() == pytest.approx(math.degrees(0.25))
 
 
 def _with_actuator(usd: str, joint: str, *, biased: bool) -> str:

@@ -159,8 +159,9 @@ def _weld_frame(pxr: Pxr, stage: Stage, parent_path: str, path: str, name: str) 
     if parent and parent.HasAPI(pxr.UsdPhysics.RigidBodyAPI):
         joint.CreateBody0Rel().SetTargets([parent.GetPath()])
     joint.CreateBody1Rel().SetTargets([pxr.Sdf.Path(path)])
-    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
-    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
+    transform = pxr.UsdGeom.Xformable(stage.GetPrimAtPath(path)).GetLocalTransformation()
+    joint.CreateLocalPos0Attr(pxr.Gf.Vec3f(*transform.ExtractTranslation()))
+    joint.CreateLocalRot0Attr(pxr.Gf.Quatf(transform.ExtractRotationQuat()))
     joint.CreateLocalPos1Attr(pxr.Gf.Vec3f(0.0, 0.0, 0.0))
     joint.CreateLocalRot1Attr(pxr.Gf.Quatf(1.0, 0.0, 0.0, 0.0))
     joint.GetPrim().SetDisplayName(f"{name}_joint")
@@ -189,7 +190,9 @@ def usd_with_drives(
         drive = pxr.UsdPhysics.DriveAPI.Apply(joint, _drive_kind(pxr, joint))
         drive.CreateStiffnessAttr(float(kp))
         drive.CreateDampingAttr(float(kd))
-        drive.CreateTargetPositionAttr(float(target))
+        drive.CreateTargetPositionAttr(
+            float(target if _drive_kind(pxr, joint) == "linear" else np.degrees(target))
+        )
         actuator = actuators.get(str(joint.GetPath()))
         if actuator is None:
             continue
@@ -238,7 +241,8 @@ def usd_drives(usd: str, root: Path | str | None = None) -> dict[str, tuple[floa
         drives[_frame_name(prim)] = (
             float(stiffness.Get()),
             float(drive.GetDampingAttr().Get() or 0.0),
-            float(drive.GetTargetPositionAttr().Get() or 0.0),
+            float(drive.GetTargetPositionAttr().Get() or 0.0)
+            * (1.0 if _drive_kind(pxr, prim) == "linear" else np.pi / 180.0),
         )
     return drives
 

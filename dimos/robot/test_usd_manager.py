@@ -39,9 +39,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.tf.tf import TF
+from dimos.robot.assets.client import materialize_scene
 from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT, GitAssetCache
 from dimos.robot.assets.model import RobotModel, UsdModel
-from dimos.robot.assets.usd import usd_frame_names
+from dimos.robot.assets.usd import load_pxr, usd_frame_names
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.manipulators.xarm.config import (
     XARM_ROS2_REF,
@@ -943,6 +944,42 @@ def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
 
     assert "arm.stl" in str(error.value)
     assert "git lfs checkout" in str(error.value)
+
+
+def test_relative_root_mesh_survives_rename_serving_and_a_different_reader_directory(
+    make_manager, tmp_path, capfd
+):
+    pxr = load_pxr()
+    geometry = pxr.Usd.Stage.CreateNew(str(tmp_path / "geometry.usdc"))
+    mesh = pxr.UsdGeom.Mesh.Define(geometry, "/mesh")
+    mesh.CreatePointsAttr([(0, 0, 0), (1, 0, 0), (0, 1, 0)])
+    mesh.CreateFaceVertexCountsAttr([3])
+    mesh.CreateFaceVertexIndicesAttr([0, 1, 2])
+    geometry.GetRootLayer().Save()
+    source = tmp_path / "robot.usda"
+    source.write_text("""#usda 1.0
+(defaultPrim = "robot")
+def Xform "robot" {
+    def Xform "base" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        def Mesh "surface" (prepend references = @geometry.usdc@</mesh>) {}
+    }
+}
+""")
+    module = make_manager(model=UsdModel.from_file(source), tf_renames={"base": "renamed"})
+    published = _scene(module)
+    local = materialize_scene(
+        published, lambda name: _asset(module, name), cache=tmp_path / "reader"
+    )
+    stage = pxr.Usd.Stage.Open(str(local.source_path))
+
+    assert stage.GetPrimAtPath("/robot/base").GetDisplayName() == "renamed"
+    assert list(stage.GetPrimAtPath("/robot/base/surface").GetAttribute("points").Get()) == [
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+    ]
+    assert str(tmp_path) not in published
+    assert "Could not open asset" not in capfd.readouterr().err
 
 
 def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(

@@ -270,7 +270,9 @@ def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim, *, by_gr
     for child in prim.GetChildren():
         if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
             continue
-        _write_geometry(pxr, element, child, by_group=by_group)
+        # Camera optics and mount containers are frames, not physical shapes.
+        if child.IsA(pxr.UsdGeom.Gprim):
+            _write_geometry(pxr, element, child, by_group=by_group)
     for fragment in _passthrough_of(prim):
         _append_fragment(element, fragment)
 
@@ -284,7 +286,7 @@ def _marks_collision(pxr: Pxr, stage: Stage) -> bool:
 
 def _collides(pxr: Pxr, prim: Prim, *, by_group: bool) -> bool:
     if prim.HasAPI(pxr.UsdPhysics.CollisionAPI):
-        return True
+        return bool(pxr.UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get())
     if not by_group:
         return False
     group = prim.GetAttribute("mjc:group")

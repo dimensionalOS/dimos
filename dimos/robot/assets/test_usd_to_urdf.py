@@ -490,3 +490,25 @@ def test_a_nested_link_with_no_record_is_still_read_as_welded() -> None:
     root = ET.fromstring(usd_to_urdf(_NESTED_USDA))
 
     assert [joint.get("type") for joint in root.findall("joint")] == ["fixed"]
+
+
+def test_camera_optics_are_not_geometry_and_disabled_colliders_stay_visual(mocker):
+    logger = mocker.patch("dimos.robot.assets.usd_to_urdf.logger")
+    root = ET.fromstring(
+        usd_to_urdf("""#usda 1.0
+(defaultPrim = "robot")
+def Xform "robot" {
+    def Xform "camera" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        def Camera "optics" {}
+        def Cube "housing" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {
+            bool physics:collisionEnabled = false
+            double size = 0.1
+        }
+    }
+}
+""")
+    )
+    assert root.find("link").get("name") == "camera"
+    assert root.find("link/visual/geometry/box").get("size") == "0.1 0.1 0.1"
+    assert root.find("link/collision") is None
+    logger.warning.assert_not_called()

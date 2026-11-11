@@ -285,13 +285,17 @@ class UsdManager(Module):
         await self._ready.wait()
         chain = list(visited or [])
         self._refuse_a_cycle(chain)
-        root, scene = await self._compose(chain)
-        where = root[ASSET_ROOT] or None
-        await asyncio.to_thread(self._check_scene_assets, scene, where)
-        published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
-        self._published_assets = assets
-        self._scene = published
-        return ["", published]
+        # Physics and every sensor request the same immutable startup scene.
+        # Compose it once; simultaneous readers share the completed result.
+        async with self._scene_build:
+            if self._scene is None:
+                root, scene = await self._compose(chain)
+                where = root[ASSET_ROOT] or None
+                await asyncio.to_thread(self._check_scene_assets, scene, where)
+                published, assets = await asyncio.to_thread(publish_usd_assets, scene, where)
+                self._published_assets = assets
+                self._scene = published
+            return ["", self._scene]
 
     def _check_scene_assets(self, scene: str, root: str | None) -> None:
         unopenable = unopenable_assets(scene, root)
@@ -453,12 +457,11 @@ class UsdManager(Module):
     async def handle_render_file_request(self, request: String) -> None:
         name = request.data
         if name.endswith(USD_SUFFIXES):
-            async with self._scene_build:
-                usd = self._scene
-                if usd is None and self.config.mounts:
-                    usd = (await self.get_scene())[USD]
-                if usd is None:
-                    usd = (await asyncio.to_thread(self.get_usd))[USD]
+            usd = self._scene
+            if usd is None and self.config.mounts:
+                usd = (await self.get_scene())[USD]
+            if usd is None:
+                usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
         real = self._published_assets.get(name, name if name in self._file_paths else None)
