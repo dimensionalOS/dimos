@@ -17,14 +17,17 @@
 import math
 import time
 
-from reactivex import interval
-
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.stream import Out
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_messages.std_msgs.msg import Header
+from reactivex import interval
+
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.global_config import global_config
+from dimos.core.module import Module
+from dimos.core.stream import Out
+from dimos.visualization.vis_module import vis_module
 
 
 class MovingPose(Module):
@@ -51,3 +54,9 @@ class MovingPose(Module):
                 ),
             )
         )
+
+
+# The same sample with the standard viewer next to it: `--viewer rerun` adds the
+# existing Rerun bridge (`RerunBridgeModule`), `--viewer none` adds nothing. One
+# process then records the stream and shows it at the same time.
+pose_view = autoconnect(MovingPose.blueprint(), vis_module(global_config.viewer))
