@@ -136,7 +136,10 @@ def test_msgs_js_is_cached_and_decodes_what_python_encodes(
     assert answer.status_code == 200 and answer.content == built.read_bytes()
     again = client.get("/msgs.js", headers={"if-none-match": answer.headers["etag"]})
     assert again.status_code == 304
-    assert list(built.parent.iterdir()) == [built], "a second ask reuses the build"
+    types = built.with_suffix(".d.ts")
+    assert set(built.parent.iterdir()) == {built, types}, "a second ask reuses the build"
+    assert answer.headers["x-typescript-types"] == "./msgs.d.ts"
+    assert client.get("/msgs.d.ts").content == types.read_bytes()
     pose = PoseStamped(
         ts=12.25, frame_id="map", position=[1.0, 2.0, 3.0], orientation=[0, 0, 0.6, 0.8]
     )
@@ -162,3 +165,17 @@ def test_msgs_js_is_cached_and_decodes_what_python_encodes(
     assert out["pose"]["header"]["frame_id"] == "map"
     assert out["pose"]["pose"]["position"] == {"x": 1.0, "y": 2.0, "z": 3.0}
     assert out["twist"] == twist.lcm_encode().hex()
+    typed = tmp_path / "typed.ts"
+    typed.write_text(
+        f'// @ts-types="{types.as_uri()}"\nimport {{ geometry_msgs }} from "{built.as_uri()}"\n'
+        "const twist: geometry_msgs.Twist = geometry_msgs.Twist.decode(new Uint8Array())\n"
+        "const wrong: string = twist.linear.x\n"
+    )
+    checked = subprocess.run(
+        [str(ensure_deno()), "check", "--no-config", str(typed)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "Type 'number' is not assignable to type 'string'" in checked.stdout + checked.stderr
+    assert checked.stderr.count("TS2") == 1, checked.stderr

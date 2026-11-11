@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 9.0.3
+    version: 9.1.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -333,6 +333,9 @@ provides:
     /msgs.js:
       get:
         summary: The LCM message decoders for the browser
+    /msgs.d.ts:
+      get:
+        summary: TypeScript types for msgs.js (one interface per message), which its X-TypeScript-Types header names
     /cloud/login/page:
       get:
         summary: The cloud login page apps embed

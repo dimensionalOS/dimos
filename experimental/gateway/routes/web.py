@@ -30,10 +30,16 @@ ASSETS = Path(__file__).parents[1] / "assets"
 async def msgs_js(request: Request) -> Response:
     path = await msgs.built_js(store.gateway_dir() / "msgs")
     etag = f'"{path.stem}"'  # the file name holds the hash of everything it's built from
-    headers = {"etag": etag, "cache-control": "no-cache"}
+    headers = {"etag": etag, "cache-control": "no-cache", "x-typescript-types": "./msgs.d.ts"}
     if etag in (tag.strip() for tag in request.headers.get("if-none-match", "").split(",")):
         return Response(status_code=304, headers=headers)
     return Response(path.read_bytes(), media_type="text/javascript; charset=utf-8", headers=headers)
+
+
+@router.get("/msgs.d.ts")
+async def msgs_types() -> Response:
+    path = (await msgs.built_js(store.gateway_dir() / "msgs")).with_suffix(".d.ts")
+    return Response(path.read_bytes(), media_type="application/typescript; charset=utf-8")
 
 
 @router.get("/cloud/login/page", response_class=HTMLResponse)
