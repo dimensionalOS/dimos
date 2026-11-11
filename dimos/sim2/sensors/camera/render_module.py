@@ -28,6 +28,7 @@ from dimos.core.stream import Transport
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.assets.model import UsdModel
+from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.camera.config import CameraConfig, CameraRenderer
 from dimos.sim2.sensors.camera.module import SimCameraModule
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
@@ -49,6 +50,7 @@ class CameraRenderModule(_PoseSensorModule):
         self._cameras: dict[str, CameraConfig] = {}
         self._sampling: dict[str, Acquisition] = {}
         self._counts: dict[str, int] = {}
+        self._publication_rates: dict[str, PublicationRate] = {}
         self._outputs: dict[
             str, tuple[Transport[Image], Transport[Image], Transport[CameraInfo]]
         ] = {}
@@ -72,6 +74,9 @@ class CameraRenderModule(_PoseSensorModule):
             self._cameras[camera.frame_id] = camera
             self._sampling[camera.frame_id] = Acquisition(camera.hz)
             self._counts[camera.frame_id] = 0
+            self._publication_rates[camera.frame_id] = PublicationRate(
+                self, f"{device_name}: color_image, depth_image, camera_info", camera.hz
+            )
             transports = (
                 outputs["color_image"].build(),
                 outputs["depth_image"].build(),
@@ -93,6 +98,8 @@ class CameraRenderModule(_PoseSensorModule):
             self._stats["scene_loads"] = self._stats.get("scene_loads", 0) + 1
 
     def acquire(self, sample: WorldState, *, latest: bool = True) -> None:
+        for rate in self._publication_rates.values():
+            rate.begin()
         if not latest:
             return
         due = tuple(
@@ -129,6 +136,7 @@ class CameraRenderModule(_PoseSensorModule):
                     ts=stamp,
                 )
             )
+            self._publication_rates[name].published()
             with self._stats_lock:
                 self._counts[name] += 1
                 self._stats["acquisitions"] += 1
