@@ -381,7 +381,7 @@ def test_an_upload_blocked_before_its_first_byte_still_cancels(
         release.set()
 
 
-def test_the_account_with_login_not_answers_once_the_login_moves_on(
+def test_the_login_after_a_state_answers_once_the_login_moves_on(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     approve = threading.Event()
@@ -407,7 +407,6 @@ def test_the_account_with_login_not_answers_once_the_login_moves_on(
     monkeypatch.setattr(uploads, "account", lambda: logged_in_account(approve.is_set()))
     assert client.post("/cloud/login").json()["state"] == "pending"
     # an answer that differs already comes at once
-    assert client.get("/cloud/account?loginNot=idle").json()["login"]["state"] == "pending"
+    assert client.get("/cloud/login?after=idle").json()["state"] == "pending"
     threading.Timer(0.2, approve.set).start()
-    answer = client.get("/cloud/account?loginNot=pending").json()
-    assert answer["login"]["state"] == "approved"
+    assert client.get("/cloud/login?after=pending").json()["state"] == "approved"

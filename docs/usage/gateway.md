@@ -26,12 +26,12 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 
 | | |
 | -- | -- |
-| `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema |
+| `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema and `{name}/source` (its .py file; a module's `?blueprint=` reads it from that blueprint's live run's checkout) |
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
-| `/cloud` | `account`, `login` (a device login; DELETE cancels it, or logs out with none pending), `uploads` (queue a recording, retry, cancel) |
-| views | `blueprint_view?name=` (a blueprint's graph, config and logs), `msgs.js` (decoders for dimos messages), `source?file=` |
-| other | `info`, `config` (the shared config.yaml as this gateway reads it, with the blueprint view's poll settings from its `blueprint-view:` section), `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
+| `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
+| views | `msgs.js` (decoders for dimos messages) |
+| other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
 ## Examples
 
@@ -48,17 +48,13 @@ const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)
 ```
 
 Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
-(`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`). The types are `launch`, `blueprints`, `config`,
+(`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`). The types are `launch`, `blueprints`,
 `upload`, `uploads`, `upload-removed`, `cloud-account`, `cloud-login`, `stats` and `log`.
 
 `stats` and `log` say something changed and carry no data, so a page refetches instead of polling. `stats` fires on each
 dtop sample (re-read `GET /active/stats`); `log` fires when a log grows, with `run` set to the run's id, or `launch` for
-the gateway's launch log. To wait for a device login, `GET /cloud/account?loginNot=<state>` answers once the login
+the gateway's launch log. To wait for a device login, `GET /cloud/login?after=<state>` answers once the login
 leaves that state.
-
-`config` is a bust signal and carries nothing: it says the shared `config.yaml` changed what `GET /config` answers, so
-anything that caches those settings re-reads that one route instead of the file. It is the event to listen for if you
-need the recordings directory somewhere a blocking request won't do.
 
 Decode dimos messages in a page with `msgs.js`:
 
@@ -76,9 +72,8 @@ app.subscribe("odom", (odom) => console.log(odom.pose.pose.position))
 
 - Settings come from `DIMOS_APP` (`socket`, `recordingsDir`, `zenohNamespace`, `zenohConnect`), else `<home>/config.yaml`
   (`home` from `DIMOS_APP`, else `~/.dimos`): `dimos-gateway.socket`, `zenoh.namespace`, `zenoh.connect`,
-  `zenoh.gossip`, `topics.enabled`, `recordings.dir`, and the blueprint view's remaining polls `blueprint-view.rates-poll-s`
-  (2), `blueprint-view.poll-without-events-s` (3) and `blueprint-view.log-max-records` (5000). Desktop writes
-  that file and the gateway watches it: `GET /config` is what it reads from it, and a `config` event follows a change.
+  `zenoh.gossip`, `topics.enabled` and `recordings.dir`, read once at start: Desktop writes that file and restarts the
+  gateway when they change.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

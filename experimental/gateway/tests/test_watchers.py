@@ -96,32 +96,6 @@ def test_only_sources_and_installs_wake_the_blueprint_watcher() -> None:
     assert not events.is_installed_package(added, "/site-packages/numpy")
 
 
-def test_a_shared_config_change_is_one_event_on_the_topic_of_the_setting_that_moved(
-    home: Path, state: State, sent: list[tuple[str, Any]], watchers: list[Any]
-) -> None:
-    config_file = home / "dimos_home" / "config.yaml"
-
-    async def scenario() -> None:
-        watcher = asyncio.create_task(
-            events.watch_config(state.config_changed, debounce_ms=TEST_DEBOUNCE_MS)
-        )
-        await until(lambda: bool(watchers))
-        config_file.write_text("recordings:\n  dir: /tmp/first\n")
-        await until(lambda: len(sent) == 1)
-        # the same answer written again is not news, and neither is a key the gateway doesn't read
-        config_file.write_text("recordings:\n  dir: /tmp/first\nzenoh:\n  gossip: true\n")
-        await asyncio.sleep(TEST_DEBOUNCE_MS / 1000 * 4)
-        config_file.write_text("recordings:\n  dir: /tmp/second\n")
-        await until(lambda: len(sent) == 2)
-        watcher.cancel()
-
-    asyncio.run(scenario())
-    # the topic names the setting, so a listener subscribes to the one it reads
-    assert [key for key, _ in sent] == ["ns/dimos/events/config/recordingsDir"] * 2
-    # a bust signal, not the values: GET /config is the one answer
-    assert [payload for _, payload in sent] == [{"type": "config", "setting": "recordingsDir"}] * 2
-
-
 def launch_phases(sent: list[tuple[str, Any]]) -> list[str]:
     return [payload["launch"]["phase"] for _, payload in sent if payload.get("launch")]
 

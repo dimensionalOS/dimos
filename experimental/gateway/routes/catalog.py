@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -171,6 +172,13 @@ async def blueprint(state: GatewayState, name: str, fields: str | None = None) -
     return picked(found, fields)
 
 
+@router.get("/blueprints/{name}/source", response_model=responses.SourceFile)
+async def blueprint_source(state: GatewayState, name: str) -> dict[str, Any]:
+    await check_blueprint(state, name)
+    found = await from_run_checkout(state, ["blueprint", name], await has_locally(state, name))
+    return await read_source(state, found, name, found)
+
+
 @router.get(
     "/blueprints/{name}/config",
     response_model=responses.BlueprintSchema,
@@ -222,7 +230,7 @@ async def global_config() -> dict[str, Any]:
     return {
         "schema": schema,
         "defaults": defaults,
-        "secrets": sorted({key for key in names if launches.is_secret_name(key)}),
+        "secrets": sorted({key for key in names if introspect.is_secret_name(key)}),
     }
 
 
@@ -253,6 +261,43 @@ async def module(state: GatewayState, name: str) -> dict[str, Any]:
 async def module_config(state: GatewayState, name: str) -> Any:
     found = await importable_module(state, name)
     return await state.introspected(["module_config", found["class"]])
+
+
+@router.get("/modules/{name}/source", response_model=responses.SourceFile)
+async def module_source(
+    state: GatewayState, name: str, blueprint: str | None = None
+) -> dict[str, Any]:
+    """With `blueprint`, the module as that blueprint runs it: from the checkout its live run came from."""
+    if blueprint is None:
+        found = await importable_module(state, name)
+        detail = await state.introspected(["module", found["class"]])
+        return await read_source(state, {"checkout": None}, name, detail)
+    await check_blueprint(state, blueprint)
+    found = await from_run_checkout(
+        state, ["blueprint", blueprint], await has_locally(state, blueprint)
+    )
+    module = next(
+        (entry for entry in found.get("modules") or [] if name in (entry["name"], entry["class"])),
+        None,
+    )
+    if module is None:
+        raise ApiError(404, f"no module {name} in {blueprint}")
+    return await read_source(state, found, name, module)
+
+
+async def read_source(
+    state: State, read: dict[str, Any], name: str, where: dict[str, Any]
+) -> dict[str, Any]:
+    """`where`'s file, from the checkout `read` came from (the gateway's when it says none): only a .py inside it."""
+    root = Path(read["checkout"] or state.dimos_dir).resolve()
+    file = where.get("file")
+    path = (root / file).resolve() if file else None
+    if path is None or path.suffix != ".py" or not path.is_relative_to(root):
+        raise ApiError(404, f"{name} has no .py file in the dimos checkout ({file})")
+    if not path.is_file():
+        raise ApiError(404, f"no such file: {file}")
+    text = await asyncio.to_thread(path.read_text, "utf-8", "replace")
+    return {"name": name, "file": file, "line": where.get("line"), "text": text}
 
 
 @router.get("/rpcs", response_model=responses.CatalogRpcs)

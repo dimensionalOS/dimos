@@ -74,11 +74,6 @@ def gateway_build() -> dict[str, Any]:
     return {"gatewayDir": str(own), "gatewayCommit": build["commit"], "gatewayTag": build["tag"]}
 
 
-@router.get("/config", response_model=responses.SharedConfig)
-async def config() -> dict[str, Any]:
-    return store.shared_settings()
-
-
 @router.post("/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
     state.uploads.shutdown()

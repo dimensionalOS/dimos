@@ -57,20 +57,6 @@ def recordings_dir(dimos_dir: Path | None = None) -> Path:
     return dimos_dir / "recordings" if (dimos_dir / ".git").exists() else STATE_DIR / "recordings"
 
 
-def shared_settings() -> dict[str, Any]:
-    """`GET /config` and the `config` event: the settings, read again when config.yaml changes (socket and namespace are fixed at start: `GET /info`)."""
-    config = shared_config.shared_config()
-    return {
-        "path": str(config.home / "config.yaml"),
-        "recordingsDir": str(recordings_dir()),
-        "blueprintView": {
-            "ratesPollS": config.view_rates_poll_s,
-            "pollWithoutEventsS": config.view_poll_without_events_s,
-            "logMaxRecords": config.view_log_max_records,
-        },
-    }
-
-
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)

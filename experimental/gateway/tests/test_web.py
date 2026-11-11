@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import Any
 
 from fastapi.testclient import TestClient
 import pytest
@@ -25,8 +26,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.deno import ensure_deno
-from experimental.gateway import launches, web_view
-from experimental.gateway.routes import web as web_routes
+from experimental.gateway import launches
+from experimental.gateway.routes import catalog as catalog_routes
 from experimental.gateway.state import State
 
 ROUND_TRIP = """
@@ -41,61 +42,73 @@ console.log(JSON.stringify({
 """
 
 
-def test_blueprint_view_and_its_files(
-    client: TestClient, state: State, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def fake_introspection(
+    state: State, monkeypatch: pytest.MonkeyPatch, blueprint_file: str = "bp.py"
 ) -> None:
-    # a wheel's shape: a built dist and no sources, so nothing builds
-    (tmp_path / "dist" / "blueprint_view").mkdir(parents=True)
-    (tmp_path / "dist" / "index.html").write_text("<html></html>")
-    (tmp_path / "dist" / "blueprint_view" / "index-Ab_1.js").write_text("export {}")
-    monkeypatch.setattr(web_view, "app_dir", lambda: tmp_path)
+    async def fake(args: list[str], stdin: Any = None, source: Any = None) -> Any:
+        if args[0] == "module":
+            return {"rpcs": [], "file": "mapper.py", "line": 5}
+        module = {"name": "mapper", "class": "x.Mapper", "file": "mapper.py", "line": 5}
+        return {"name": args[1], "file": blueprint_file, "line": 3, "modules": [module]}
+
     state.listed = [{"name": "demo", "kind": "builtin"}]
-    page = client.get("/blueprint_view?name=demo")
-    assert page.status_code == 200 and "<html" in page.text.lower()
-    assert client.get("/blueprint_view?name=nope").status_code == 404
-    assert client.get("/blueprint_view?name=demo&view=x").status_code == 400
-    script = client.get("/blueprint_view/index-Ab_1.js")
-    assert script.headers["content-type"].startswith("text/javascript")
-    assert client.get("/blueprint_view/..%2Fmsgs.py").status_code == 404
+    monkeypatch.setattr(state, "introspected", fake)
 
 
-def test_the_blueprint_view_builds_when_its_sources_change(tmp_path: Path) -> None:
-    app = tmp_path / "blueprint_view"
-    (app / "src").mkdir(parents=True)
-    (app / "deno.json").write_text("{}")
-    (app / "src" / "main.tsx").write_text("1")
-    before = web_view.stamp(app)
-    (app / "src" / "main.test.ts").write_text("tests don't count")
-    (app / "dist").mkdir()
-    (app / "dist" / "index.html").write_text("built output doesn't count")
-    assert web_view.stamp(app) == before
-    (app / "src" / "main.tsx").write_text("2")
-    assert web_view.stamp(app) != before
-    (app / "deno.lock").write_text("{}")
-    assert web_view.stamp(app) != before
+def test_a_blueprints_and_its_modules_source(
+    client: TestClient, state: State, checkout: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (checkout / "bp.py").write_text("demo = 1\n")
+    (checkout / "mapper.py").write_text("class Mapper: ...\n")
+    fake_introspection(state, monkeypatch)
+    assert client.get("/catalog/blueprints/demo/source").json() == {
+        "name": "demo",
+        "file": "bp.py",
+        "line": 3,
+        "text": "demo = 1\n",
+    }
+    found = client.get("/catalog/modules/mapper/source?blueprint=demo").json()
+    assert (found["file"], found["line"], found["text"]) == ("mapper.py", 5, "class Mapper: ...\n")
+    assert client.get("/catalog/modules/x.Mapper/source?blueprint=demo").status_code == 200
+    assert client.get("/catalog/modules/other/source?blueprint=demo").status_code == 404
+    assert client.get("/catalog/blueprints/nope/source").status_code == 404
+    picked = client.get("/catalog/blueprints/demo?fields=modules.name").json()
+    assert picked["modules"] == [{"name": "mapper"}]
+
+    async def importable(state: State, name: str) -> dict[str, Any]:
+        return {"name": name, "class": "x.Mapper"}
+
+    monkeypatch.setattr(catalog_routes, "importable_module", importable)
+    assert client.get("/catalog/modules/mapper/source").json()["text"] == "class Mapper: ...\n"
 
 
-def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: Path) -> None:
-    (checkout / "mod.py").write_text("x = 1\n")
-    assert client.get("/source?file=mod.py").json() == {"file": "mod.py", "text": "x = 1\n"}
-    assert client.get("/source?file=pyproject.toml").status_code == 400
-    assert client.get("/source?file=../outside.py").status_code == 400
-    assert client.get("/source?file=gone.py").status_code == 404
+@pytest.mark.parametrize("file", ["pyproject.toml", "../outside.py", "gone.py", None])
+def test_source_reads_only_python_in_the_checkout(
+    client: TestClient, state: State, checkout: Path, monkeypatch: pytest.MonkeyPatch, file: Any
+) -> None:
+    (checkout / "pyproject.toml").write_text("")
+    (checkout.parent / "outside.py").write_text("")
+    fake_introspection(state, monkeypatch, file)
+    assert client.get("/catalog/blueprints/demo/source").status_code == 404
 
 
 def test_source_of_a_blueprint_live_from_another_checkout_reads_that_checkout(
-    client: TestClient, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    state: State,
+    checkout: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    (checkout / "mod.py").write_text("x = 1\n")
+    (checkout / "mapper.py").write_text("x = 1\n")
     other = tmp_path / "branch"
     other.mkdir()
-    (other / "mod.py").write_text("x = 2\n")
+    (other / "mapper.py").write_text("x = 2\n")
     found = launches.RunSource(checkout=other, python=sys.executable, run_id="r1")
     monkeypatch.setattr(
-        web_routes, "running_source", lambda state, name: found if name == "b" else None
+        catalog_routes, "running_source", lambda state, name: found if name == "demo" else None
     )
-    assert client.get("/source?file=mod.py&blueprint=b").json()["text"] == "x = 2\n"
-    assert client.get("/source?file=mod.py&blueprint=other").json()["text"] == "x = 1\n"
+    fake_introspection(state, monkeypatch)
+    assert client.get("/catalog/modules/mapper/source?blueprint=demo").json()["text"] == "x = 2\n"
 
 
 def test_login_page_calls_only_gateway_routes(client: TestClient) -> None:

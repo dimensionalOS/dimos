@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from experimental.gateway import responses
@@ -33,14 +33,14 @@ class UploadRequest(BaseModel):
 
 
 @router.get("/cloud/account", response_model=responses.Account)
-async def account(
-    state: GatewayState,
-    fresh: FreshQuery = False,
-    login_not: Annotated[str | None, Query(alias="loginNot")] = None,
-) -> responses.Account:
-    """`?loginNot=` answers only once the login's state isn't that one (the login page waits on it instead of polling)."""
-    login = await state.uploads.next_login(login_not) if login_not else state.uploads.login_state()
-    return {**await state.uploads.account(fresh), "login": login}
+async def account(state: GatewayState, fresh: FreshQuery = False) -> responses.Account:
+    return {**await state.uploads.account(fresh), "login": state.uploads.login_state()}
+
+
+@router.get("/cloud/login", response_model=responses.Login)
+async def login(state: GatewayState, after: str | None = None) -> responses.Login:
+    """`?after=` (a login state) answers only once the login's state isn't that one, so a page waits instead of polling."""
+    return await state.uploads.next_login(after) if after else state.uploads.login_state()
 
 
 @router.post("/cloud/login", response_model=responses.Login)

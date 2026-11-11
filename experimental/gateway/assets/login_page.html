@@ -84,7 +84,7 @@
             <p id="error" class="bad" hidden></p>
         </div>
         <script>
-            // a plain page without dim-app's zenoh client, so it can't hear cloud-login events: GET /cloud/account?loginNot= answers when the login moves on
+            // a plain page without dim-app's zenoh client, so it can't hear cloud-login events: GET /cloud/login?after= answers when the login moves on
             const LIGHT_SKIN = "research"
             const DARK_SKIN = "portal"
 
@@ -183,7 +183,9 @@
                 while (watching === state) {
                     let account
                     try {
-                        account = await call("GET", `/account?loginNot=${encodeURIComponent(state)}`)
+                        const login = await call("GET", `/login?after=${encodeURIComponent(state)}`)
+                        // only a login back to idle (cancelled elsewhere) shows the account
+                        account = login.state === "idle" ? await call("GET", "/account") : { login }
                     } catch (error) {
                         stopWatching()
                         failWith(error)

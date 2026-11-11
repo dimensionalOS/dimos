@@ -12,7 +12,7 @@ provides:
     title: dimos gateway
     # the gateway API's version (Desktop's contract; its implementation and metadata stay experimental): what
     # Desktop's `requires: dimos` range and the desktop-gateway-v tags go by. `version:` above is dimos's own.
-    version: 8.6.0
+    version: 9.0.0
     description: >-
       The stable API for building apps on top of dimos: the catalog of blueprints, modules, RPCs, robots and config schemas; the running blueprint (launch,
       stop, its module instances, RPCs and streams); past runs (logs, recordings); and recording uploads to the Dimensional cloud. It saves no config: each launch
@@ -24,12 +24,6 @@ provides:
           Whether dimos is found and installed, its version, the gateway API version, the checkout's commit and desktop-gateway
           tag, its python, its checkout, runs, log and recordings directories, and this process (with its own code's directory,
           commit and tag: a copy apart from the checkout it serves when Desktop runs one)
-    /config:
-      get:
-        description: >-
-          The shared config.yaml's settings as this gateway reads them (its path, the recordings directory, and
-          blueprintView: the blueprint view's ratesPollS, pollWithoutEventsS and logMaxRecords from config.yaml's
-          `blueprint-view:`): the one answer to re-read after a `config` event on zenoh, so nothing has to read the file on a hot path
     /server/stop:
       post:
         summary: Stop this gateway (a running blueprint keeps running)
@@ -47,6 +41,15 @@ provides:
         description: >-
           A blueprint, plus its file and line and its modules' streams and RPCs; while it runs from another checkout, read
           from that one (`checkout`, `checkoutError`). (slow: imports python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/blueprints/{name}/source:
+      get:
+        summary: '{name, file, line, text}: the blueprint''s .py file, from the checkout its live run came from (slow: imports python)'
         parameters:
           - name: name
             in: path
@@ -74,6 +77,15 @@ provides:
         description: >-
           A module, the blueprints using it, and its RPCs (`name` is its registry name or class). (slow: imports
           python)
+        parameters:
+          - name: name
+            in: path
+            required: true
+            schema:
+              type: string
+    /catalog/modules/{name}/source:
+      get:
+        summary: '{name, file, line, text}: the module''s .py file; ?blueprint= reads it as that blueprint runs it, from its live run''s checkout (slow: imports python)'
         parameters:
           - name: name
             in: path
@@ -279,9 +291,10 @@ provides:
     /cloud/account:
       get:
         description: >-
-          The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks;
-          ?loginNot= (a login state) answers only once the login's state isn't that one, so a page waits instead of polling
+          The Dimensional cloud account (loggedIn, email, source) and the device login in progress; ?fresh= rechecks
     /cloud/login:
+      get:
+        summary: The device login in progress; ?after= (a login state) answers only once its state isn't that one, so a page waits instead of polling
       post:
         summary: 'Start a device login: open the answer''s url and enter its code (cloud-login events follow it)'
       delete:
@@ -317,41 +330,12 @@ provides:
     /docs/search:
       get:
         summary: Redirects to the docs site with its search open on ?q= (for a new tab or an iframe)
-    /blueprint_view:
-      get:
-        summary: The blueprint view page (?name=, view=, run=); Desktop's Details shows it
-    /blueprint_view/{file}:
-      get:
-        summary: The blueprint view's assets
-        parameters:
-          - name: file
-            in: path
-            required: true
-            schema:
-              type: string
-    /source:
-      get:
-        summary: A source file the blueprint view links to (?file=; ?blueprint= reads it from that blueprint's live run's checkout)
     /msgs.js:
       get:
         summary: The LCM message decoders for the browser
     /cloud/login/page:
       get:
         summary: The cloud login page apps embed
-# What the gateway's own pages (the blueprint view) call outside it.
-uses:
-  "@desktop-gateway":
-    - GET /topics/rates
-    # dimos-react's zenoh connection, for the launch events
-    - GET /management/gateways/zenoh
-  # Desktop's built-in Launcher: the config it saves for every launch, and launching with it
-  "@launcher":
-    - GET config/global
-    - PUT config/global
-    - GET config/blueprints/{name}
-    - PUT config/blueprints/{name}
-    - POST launch
-    - POST relaunch
 # Run in the copy of this tag Desktop keeps for itself (~/.dimos/desktop/dimos-gateway), apart from the user's checkout:
 # `setup:` makes the copy's own .venv with only what the gateway imports (dimos's base dependencies and the web extra,
 # not dimos itself nor the heavy extras), and `start:` serves DIMOS_DIR, the user's checkout, whose blueprints, venv and

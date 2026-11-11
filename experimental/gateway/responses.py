@@ -66,22 +66,6 @@ class Info(Body):
     server: ServerInfo
 
 
-class BlueprintViewConfig(Body):
-    """The blueprint view's timers, from config.yaml's `blueprint-view:` (rates-poll-s, poll-without-events-s, log-max-records)."""
-
-    ratesPollS: float
-    pollWithoutEventsS: float
-    logMaxRecords: int
-
-
-class SharedConfig(Body):
-    """The shared config.yaml's settings as this gateway reads them, re-read on a `config` event."""
-
-    path: str
-    recordingsDir: str
-    blueprintView: BlueprintViewConfig
-
-
 class Stopping(Body):
     stopping: bool
 
@@ -126,6 +110,8 @@ BlueprintModule = TypedDict(
         "file": str | None,
         "line": int | None,
     },
+    # ?fields= can keep only some of them
+    total=False,
 )
 with_config(CONFIG)(BlueprintModule)
 
@@ -628,7 +614,9 @@ class Uploads(Body):
 
 
 class SourceFile(Body):
-    """A .py file of the dimos checkout."""
+    """A blueprint's or module's .py file, from the checkout it's read from, and the line it starts on."""
 
+    name: str
     file: str
+    line: int | None
     text: str

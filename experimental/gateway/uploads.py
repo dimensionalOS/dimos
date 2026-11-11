@@ -295,7 +295,7 @@ class Uploads:
         # held while a login attempt checks it is still current and stores its key, and while one is cancelled
         self.login_lock = threading.RLock()
         self.login_changed = threading.Event()
-        # GET /cloud/account?loginNot= requests, each answered when the login next changes
+        # GET /cloud/login?after= requests, each answered when the login next changes
         self.login_waiters: list[asyncio.Future[None]] = []
         self.account_cache: tuple[float, Account] | None = None
         # the account lookup in flight, shared by every caller waiting on one

@@ -15,9 +15,7 @@
 import fnmatch
 import os
 from pathlib import Path
-import shutil
 import struct
-import subprocess
 import sys
 
 from pybind11.setup_helpers import Pybind11Extension, build_ext
@@ -83,10 +81,6 @@ RELAY_DIST_SOURCES = (
 )
 RELAY_DIST_TARGET = os.path.join("dimos", "web", "relay_bridge", "_relay_dist")
 
-# The gateway's blueprint view (a Vite app): a wheel ships its built dist, not its sources, so
-# experimental/gateway/web_view.py serves the dist as it is.
-BLUEPRINT_VIEW = os.path.join("experimental", "gateway", "blueprint_view")
-
 
 class build_py(_build_py):
     def find_package_modules(self, package, package_dir):
@@ -102,31 +96,6 @@ class build_py(_build_py):
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
-            self._copy_blueprint_view()
-
-    def _copy_blueprint_view(self):
-        app = Path(__file__).parent / BLUEPRINT_VIEW
-        deno = shutil.which("deno")
-        if (app / "src").is_dir() and deno:
-            # built here every time: a dist left by an older checkout would ship stale
-            subprocess.run([deno, "install", "--frozen"], cwd=app, check=True)
-            subprocess.run(
-                [deno, "run", "--frozen", "-A", "npm:vite", "build"], cwd=app, check=True
-            )
-        if not (app / "dist" / "index.html").is_file():
-            if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
-                raise RuntimeError(
-                    f"blueprint view dist missing ({app / 'dist'}); run `deno run --frozen -A npm:vite build` "
-                    f"in {app}, or set DIMOS_ALLOW_MISSING_COCKPIT=1 to build a wheel without it"
-                )
-            self.warn("blueprint view dist missing; this wheel's gateway serves no /blueprint_view")
-            return
-        for path in sorted((app / "dist").rglob("*")):
-            if path.is_dir():
-                continue
-            target = Path(self.build_lib) / BLUEPRINT_VIEW / "dist" / path.relative_to(app / "dist")
-            self.mkpath(str(target.parent))
-            self.copy_file(str(path), str(target))
 
     def _copy_relay_dist(self):
         src = Path(__file__).parent / "web"

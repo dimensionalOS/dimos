@@ -52,8 +52,3 @@ prune .vscode
 
 global-exclude test_*.py
 global-exclude conftest.py
-
-# The gateway's blueprint view: setup.py's build_py builds it from these and ships its dist.
-graft experimental/gateway/blueprint_view
-prune experimental/gateway/blueprint_view/node_modules
-prune experimental/gateway/blueprint_view/dist
