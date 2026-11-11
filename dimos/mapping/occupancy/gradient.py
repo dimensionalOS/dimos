@@ -17,9 +17,8 @@ from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 import numpy as np
 from scipy import ndimage
 
-from dimos.mapping.occupancy.operations import _grid_values, _with_grid
+from dimos.mapping.occupancy.operations import _grid_values, _GridT, _with_grid
 from dimos.message_utils.occupancy import CostValues
-from dimos_messages.nav_msgs.msg import OccupancyGrid
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -29,8 +28,8 @@ GradientStrategy: TypeAlias = Literal["gradient", "voronoi"]
 
 
 def gradient(
-    occupancy_grid: OccupancyGrid, obstacle_threshold: int = 50, max_distance: float = 2.0
-) -> OccupancyGrid:
+    occupancy_grid: _GridT, obstacle_threshold: int = 50, max_distance: float = 2.0
+) -> _GridT:
     """Create a gradient OccupancyGrid for path planning.
 
     Creates a gradient where free space has value 0 and values increase near obstacles.
@@ -86,8 +85,8 @@ def gradient(
 
 
 def voronoi_gradient(
-    occupancy_grid: OccupancyGrid, obstacle_threshold: int = 50, max_distance: float = 2.0
-) -> OccupancyGrid:
+    occupancy_grid: _GridT, obstacle_threshold: int = 50, max_distance: float = 2.0
+) -> _GridT:
     """Create a Voronoi-based gradient OccupancyGrid for path planning.
 
     Unlike the regular gradient which can result in suboptimal paths in narrow

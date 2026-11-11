@@ -15,12 +15,11 @@
 import numpy as np
 from scipy import ndimage
 
-from dimos.mapping.occupancy.operations import _grid_values, _with_grid
+from dimos.mapping.occupancy.operations import _grid_values, _GridT, _with_grid
 from dimos.message_utils.occupancy import CostValues
-from dimos_messages.nav_msgs.msg import OccupancyGrid
 
 
-def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGrid:
+def simple_inflate(occupancy_grid: _GridT, radius: float) -> _GridT:
     """Inflate obstacles by a given radius (binary inflation).
     Args:
         radius: Inflation radius in meters

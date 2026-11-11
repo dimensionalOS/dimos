@@ -19,7 +19,6 @@ import numpy as np
 
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.message_utils import image as image_utils
 from dimos.utils.data import get_data
 
 
@@ -29,4 +28,4 @@ def test_inflation(occupancy) -> None:
     og = simple_inflate(occupancy, 0.2)
 
     result = visualize_occupancy_grid(og, "rainbow")
-    np.testing.assert_array_equal(image_utils.view(result), expected)
+    np.testing.assert_array_equal(result.data, expected)
