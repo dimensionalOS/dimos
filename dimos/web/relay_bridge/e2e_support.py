@@ -48,7 +48,7 @@ def stop_module(module: RelayBridgeModule) -> None:
 async def next_control(client: RelayClient, timeout: float) -> Msg | DataFrame | None:
     try:
         return await asyncio.wait_for(client._session.control_msgs.get(), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return None
 
 
@@ -115,6 +115,6 @@ async def collect_until(
 
     try:
         await asyncio.wait_for(consume(), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
     return frames

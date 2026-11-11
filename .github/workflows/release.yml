@@ -151,7 +151,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
         include:
           - { os: ubuntu-latest,    arch: x86_64 }
           - { os: ubuntu-24.04-arm, arch: aarch64 }

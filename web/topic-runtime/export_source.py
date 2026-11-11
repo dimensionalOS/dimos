@@ -23,9 +23,9 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 
 from package_runtime import normalized
-import tomllib
 
 PROJECT = Path(__file__).resolve().parent
 ROOT = PROJECT.parents[1]

@@ -47,7 +47,6 @@ from dimos.agents.harness.runtime.constants import (
     TRACEBACK_HEADER,
 )
 from dimos.protocol.rpc.rpc_utils import RemoteError
-from dimos.utils.safe_thread_map import ExceptionGroup
 
 if TYPE_CHECKING:
     from dimos.porcelain.dimos import Dimos

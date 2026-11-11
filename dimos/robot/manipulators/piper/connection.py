@@ -22,11 +22,10 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import Any
+from typing import Any, Self
 
 from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
-from typing_extensions import Self
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.connection.connection_module import (

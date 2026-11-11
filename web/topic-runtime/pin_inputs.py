@@ -25,12 +25,12 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import subprocess
+import tomllib
 from typing import Any
 
 from packaging.markers import Marker
 from packaging.tags import compatible_tags, cpython_tags, mac_platforms
 from packaging.utils import parse_wheel_filename
-import tomllib
 
 PYTHON = "3.12.13"
 DENO = "2.9.8"

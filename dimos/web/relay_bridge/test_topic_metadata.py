@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+from asyncio import timeout
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -25,7 +26,6 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import TransportSpec
 from dimos.core.transport import LCMTransport, pZenohTransport
 from dimos.protocol.service.zenoh_wire import make_zenoh_config
-from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge.topic_catalog import TopicCatalog
 from dimos.web.relay_bridge.topic_descriptors import DescriptorPublisher, describe_stream
 from dimos.web.relay_bridge.topic_metadata import (

@@ -13,10 +13,9 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Any, ClassVar, get_type_hints
+from typing import Any, ClassVar, Self, get_type_hints
 
 from pydantic import BaseModel
-from typing_extensions import Self
 
 from dimos.core.global_config import TransportBackend
 

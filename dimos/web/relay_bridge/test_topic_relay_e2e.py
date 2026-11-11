@@ -15,6 +15,7 @@
 """Topic wire tests against a real relay; no robot or Zenoh publisher needed."""
 
 import asyncio
+from asyncio import timeout
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AsyncExitStack, asynccontextmanager
 import json
@@ -28,7 +29,6 @@ import pytest
 import zenoh
 
 from dimos.protocol.service.zenoh_wire import make_zenoh_config
-from dimos.utils.asyncio_timeout import timeout
 from dimos.utils.deno import ensure_deno
 from dimos.web.relay_bridge import topic_service, topic_transform
 from dimos.web.relay_bridge.protocol import FrameHeader, ProtocolError, encode_data_frame
@@ -96,7 +96,7 @@ def managed_child(tmp_path):
                     process.terminate()
                     try:
                         await asyncio.wait_for(process.wait(), 3)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         process.kill()
                         await process.wait()
 

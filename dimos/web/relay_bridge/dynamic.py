@@ -29,7 +29,6 @@ import hashlib
 import keyword
 import sys
 import threading
-import types
 from typing import Any, cast, get_args, get_type_hints
 
 from dimos.core.stream import In, Out
@@ -133,9 +132,7 @@ def _validate_specs(specs: tuple[DynamicPortSpec, ...]) -> None:
                 f"got {spec.direction!r}"
             )
         message_type = spec.message_type
-        # TODO(PY311): drop the GenericAlias check — on 3.10,
-        # isinstance(list[int], type) is True.
-        if not isinstance(message_type, type) or isinstance(message_type, types.GenericAlias):
+        if not isinstance(message_type, type):
             raise TypeError(
                 f"stream {stream!r}: message_type must be a class, got {message_type!r}"
             )

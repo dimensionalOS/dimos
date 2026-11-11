@@ -15,6 +15,7 @@
 """Ordered topic delivery uses real aioquic buffers/ACKs, with only UDP omitted."""
 
 import asyncio
+from asyncio import timeout
 from collections.abc import AsyncIterator, Callable
 
 from aioquic.quic.connection import QuicConnection
@@ -22,7 +23,6 @@ from aioquic.quic.packet_builder import QuicDeliveryState
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
 from dimos.web.relay_bridge.protocol import FrameHeader, decode_data_frame, encode_data_frame
 from dimos.web.relay_bridge.topic_transport import (

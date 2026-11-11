@@ -103,7 +103,6 @@ repos:
         entry: python bin/hooks/largefiles_check
         args: [--all]
         language: python
-        additional_dependencies: ['tomli']
 
       - id: branch-name
         name: Branch name

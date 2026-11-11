@@ -299,9 +299,7 @@ def web_encoder(
         params = _signature_params(func, "web encoder")
         hints = get_type_hints(func)
         message_type = hints.get(params[0].name)
-        # TODO(PY311): drop the GenericAlias checks in this module — on 3.10,
-        # isinstance(list[int], type) is True.
-        if not isinstance(message_type, type) or isinstance(message_type, types.GenericAlias):
+        if not isinstance(message_type, type):
             raise ValueError(
                 f"web encoder {_describe(func)}: the first parameter must be annotated "
                 f"with the supported message class, got {message_type!r}"

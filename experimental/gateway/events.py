@@ -107,8 +107,7 @@ async def set_on_changes(
 
 
 async def wait_or_timeout(wake: asyncio.Event, timeout_s: float) -> None:
-    # python 3.10's wait_for raises asyncio.TimeoutError, not the builtin
-    with suppress(asyncio.TimeoutError, TimeoutError):
+    with suppress(TimeoutError):
         await asyncio.wait_for(wake.wait(), timeout_s)
     wake.clear()
 

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import os
 from pathlib import Path
 import signal
@@ -327,7 +327,7 @@ def run(
         run_id=run_id,
         pid=os.getpid(),
         blueprint=blueprint_name,
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
         log_dir=str(log_dir),
         cli_args=list(blueprint_names),
         config_overrides=global_option_overrides,
@@ -418,7 +418,7 @@ def status() -> None:
 
     try:
         started = datetime.fromisoformat(entry.started_at)
-        age = datetime.now(timezone.utc) - started
+        age = datetime.now(UTC) - started
         hours, remainder = divmod(int(age.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
         uptime = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s"

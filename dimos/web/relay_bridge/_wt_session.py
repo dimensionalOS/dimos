@@ -742,7 +742,7 @@ class SessionProtocol(QuicConnectionProtocol):
         self._delivery_waiters.append(waiter)
         try:
             await asyncio.wait_for(waiter, timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         finally:
             if waiter in self._delivery_waiters:

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 import os
 from threading import RLock
@@ -227,7 +227,7 @@ def _write_debug_image(image: Image, detections: ImageDetections2D[Detection2DBB
                 (0, 255, 0),
                 2,
             )
-        ts = datetime.now(tz=timezone.utc).isoformat().replace(":", "-")
+        ts = datetime.now(tz=UTC).isoformat().replace(":", "-")
         cv2.imwrite(f"debug-{ts}.ignore.jpg", debug_img)
     except Exception:
         pass  # Ignore debug drawing errors

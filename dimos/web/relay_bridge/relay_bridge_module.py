@@ -647,7 +647,7 @@ class RelayBridgeModule(Module):
                         f"{_CONFLICT_RETRY_S:.0f} s for the stale registration to expire"
                     )
                 await asyncio.sleep(_RECONNECT_PAUSE_S)
-            except (OSError, asyncio.TimeoutError) as e:
+            except (TimeoutError, OSError) as e:
                 connection_failures += 1
                 if connection_failures >= _START_CONNECT_ATTEMPTS:
                     raise

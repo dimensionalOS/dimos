@@ -19,7 +19,8 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from typing_extensions import Self
+    from typing import Self
+
     from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs.Image import Image

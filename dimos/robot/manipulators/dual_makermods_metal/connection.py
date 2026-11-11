@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
+from typing import Self
+
 from pydantic import model_validator
-from typing_extensions import Self
 
 from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnection,

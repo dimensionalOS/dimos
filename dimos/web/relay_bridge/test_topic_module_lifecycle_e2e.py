@@ -15,6 +15,7 @@
 """A real coordinator's descriptors and CBOR data reach a topic viewer across reloads."""
 
 import asyncio
+from asyncio import timeout
 from collections.abc import Iterator
 from dataclasses import dataclass
 import socket
@@ -31,7 +32,6 @@ from dimos.core.stream import Out, TransportSpec
 from dimos.core.transport import pZenohTransport
 from dimos.protocol.encode import cbor
 from dimos.protocol.service.zenoh_wire import make_zenoh_config
-from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge.protocol import DataFrame, Msg
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.topic_descriptors import TopicMetadataModule

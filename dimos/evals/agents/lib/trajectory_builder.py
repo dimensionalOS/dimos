@@ -23,7 +23,7 @@ events in order and produces the document once at the end.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import version
 from pathlib import Path
 import time
@@ -45,7 +45,7 @@ from dimos.evals.types import (
 
 
 def _iso(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
 
 
 class TrajectoryBuilder:

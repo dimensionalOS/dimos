@@ -369,6 +369,7 @@ all_modules = {
     "rerun-web-socket-server": "dimos.visualization.rerun.websocket_server.RerunWebSocketServer",
     "rgbd-mesh": "dimos.perception.stereo.rgbd_mesh.RgbdMesh",
     "rust-recorder": "dimos.experimental.memory.rust_recorder.RustRecorder",
+    "scene-perception": "dimos.perception.memory.module.ScenePerception",
     "security-module": "dimos.experimental.security_demo.security_module.SecurityModule",
     "seeed-b601-dm-coordinator": "dimos.robot.manipulators.seeed_b601_dm.coordinator.SeeedB601DMCoordinator",
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",

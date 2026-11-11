@@ -7,8 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
-
-import tomli
+import tomllib
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--all", action="store_true", help="Check all files in repo, not just staged")
@@ -26,7 +25,7 @@ if not shutil.which("git-lfs"):
 
 # Load config
 with open("pyproject.toml", "rb") as f:
-    config = tomli.load(f).get("tool", {}).get("largefiles", {})
+    config = tomllib.load(f).get("tool", {}).get("largefiles", {})
 
 max_size_kb = config.get("max_size_kb", 50)
 max_bytes = max_size_kb * 1024

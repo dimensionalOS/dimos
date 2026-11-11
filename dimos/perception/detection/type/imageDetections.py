@@ -14,13 +14,7 @@
 
 from __future__ import annotations
 
-import sys
-from typing import TYPE_CHECKING, Generic, TypeVar
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing_extensions import Self
+from typing import TYPE_CHECKING, Generic, Self, TypeVar
 
 from dimos_lcm.vision_msgs import Detection2DArray
 

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 import subprocess
 import time
 from typing import TYPE_CHECKING
@@ -61,7 +61,7 @@ def sleeper():
 
 def _entry(run_id: str, pid: int, blueprint: str = "test", **kwargs) -> RunEntry:
     defaults = dict(
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
         log_dir="/tmp/dimos-test",
         cli_args=[blueprint],
         config_overrides={},
@@ -92,7 +92,7 @@ class TestStatusCLI:
 
     def test_status_shows_uptime_minutes(self, sleeper):
         proc = sleeper()
-        ago = (datetime.now(timezone.utc) - timedelta(minutes=7, seconds=30)).isoformat()
+        ago = (datetime.now(UTC) - timedelta(minutes=7, seconds=30)).isoformat()
         _entry("uptime-min", proc.pid, started_at=ago)
 
         result = CliRunner().invoke(main, ["status"])
@@ -100,7 +100,7 @@ class TestStatusCLI:
 
     def test_status_shows_uptime_hours(self, sleeper):
         proc = sleeper()
-        ago = (datetime.now(timezone.utc) - timedelta(hours=3, minutes=22)).isoformat()
+        ago = (datetime.now(UTC) - timedelta(hours=3, minutes=22)).isoformat()
         _entry("uptime-hrs", proc.pid, started_at=ago)
 
         result = CliRunner().invoke(main, ["status"])

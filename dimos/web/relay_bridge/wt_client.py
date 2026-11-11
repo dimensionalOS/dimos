@@ -315,7 +315,7 @@ class RelayClient:
             try:
                 await self.ping(timeout=KEEPALIVE_INTERVAL_S)
                 misses = 0
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 misses += 1
                 if misses >= KEEPALIVE_MISSES:
                     self._session.fail_session(f"{misses} keepalive pings unanswered")

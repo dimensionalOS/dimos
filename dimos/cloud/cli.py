@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import contextlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import functools
 from pathlib import Path
 import re
@@ -43,7 +43,7 @@ def local_time(ts: str, label: str | None = None) -> str:
     except ValueError:
         return ts[:16].replace("T", " ")
     if d.tzinfo is None:
-        d = d.replace(tzinfo=timezone.utc)
+        d = d.replace(tzinfo=UTC)
     d = d.astimezone()
     label = tz_label() if label is None else label
     suffix = "" if d.tzname() == label else f" {d.tzname()}"

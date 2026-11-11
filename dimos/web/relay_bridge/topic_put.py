@@ -61,7 +61,7 @@ class TopicPuts:
         )
         try:
             await asyncio.wait_for(asyncio.shield(task), remaining)
-        except asyncio.TimeoutError:  # not the builtin on Python 3.10
+        except TimeoutError:
             logger.warning("topic put exceeded receipt deadline")
             return "unknown", "topic_put_timeout"
         except zenoh.ZError:

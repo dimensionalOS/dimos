@@ -16,9 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, TypedDict
-
-from typing_extensions import NotRequired
+from typing import Literal, NotRequired, TypedDict
 
 Text = str | Mapping[str, object] | list[object]
 

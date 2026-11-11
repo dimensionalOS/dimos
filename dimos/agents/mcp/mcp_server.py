@@ -347,7 +347,7 @@ async def mcp_sse_endpoint() -> StreamingResponse:
             while True:
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_INTERVAL)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
                     continue
                 if msg is None:

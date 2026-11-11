@@ -356,7 +356,7 @@ class BrokerProvider(AsyncProviderBase):
                     headers=self._headers,
                 ) as r:
                     await r.read()
-            except (aiohttp.ClientError, asyncio.TimeoutError):
+            except (TimeoutError, aiohttp.ClientError):
                 pass
             except Exception:
                 logger.exception("Broker session DELETE failed")

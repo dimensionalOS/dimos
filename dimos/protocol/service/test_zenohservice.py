@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import json
 import os
@@ -245,8 +245,7 @@ def test_concurrent_callers_share_one_link_wait(
     assert connect_wait.entered.wait(timeout=_THREAD_TIMEOUT)
     second = pool_threads.submit(acquire_again)
     assert second_started.wait(timeout=_THREAD_TIMEOUT)
-    # Python 3.10 raises its own class here, not the builtin TimeoutError.
-    with pytest.raises(FutureTimeoutError):
+    with pytest.raises(TimeoutError):
         second.result(timeout=0.1)
 
     connect_wait.release.set()

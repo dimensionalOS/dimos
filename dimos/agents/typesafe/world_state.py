@@ -16,9 +16,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, TypedDict
-
-from typing_extensions import NotRequired
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from dimos.agents.typesafe.constants import (
     BEARING_WORDS_2D,

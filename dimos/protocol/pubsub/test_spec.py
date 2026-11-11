@@ -368,7 +368,7 @@ async def test_async_iterator(
         # Wait for the consumer to finish or timeout
         try:
             await asyncio.wait_for(consumer_task, timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             consumer_task.cancel()
             try:
                 await consumer_task

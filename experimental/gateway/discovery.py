@@ -26,8 +26,8 @@ import os
 from pathlib import Path
 import re
 import shutil
-import sys
 import time
+import tomllib
 from typing import Any
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -37,11 +37,6 @@ import yaml
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import annotations as annotation_file, constants, store
 from experimental.gateway.introspect import MARKER, child_command, kill_group
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 logger = setup_logger()
 
@@ -358,7 +353,7 @@ class Scanner:
             while True:
                 try:
                     line = await asyncio.wait_for(child.stdout.readline(), self.item_timeout_s)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     return f"no answer in {self.item_timeout_s:g} s (hung while importing)"
                 if not line:
                     await child.wait()

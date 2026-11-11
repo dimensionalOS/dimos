@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 import os
 import signal
@@ -87,12 +87,12 @@ def coordinator_2w():
 @pytest.fixture()
 def registry_entry():
     """Create and save a registry entry. Removes on teardown."""
-    run_id = f"test-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
+    run_id = f"test-{datetime.now(UTC).strftime('%H%M%S%f')}"
     entry = RunEntry(
         run_id=run_id,
         pid=os.getpid(),
         blueprint="ping-pong-test",
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
         log_dir="/tmp/dimos-e2e-test",
         cli_args=["ping-pong"],
         config_overrides={"n_workers": 1},
@@ -179,7 +179,7 @@ class TestDaemonE2E:
             run_id="stale-dead-pid",
             pid=99999999,
             blueprint="ghost",
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
             log_dir="/tmp/ghost",
             cli_args=[],
             config_overrides={},
@@ -202,12 +202,12 @@ def live_blueprint():
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
     coord = ModuleCoordinator.build(bp)
-    run_id = f"e2e-cli-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
+    run_id = f"e2e-cli-{datetime.now(UTC).strftime('%H%M%S%f')}"
     entry = RunEntry(
         run_id=run_id,
         pid=os.getpid(),
         blueprint="ping-pong",
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
         log_dir="/tmp/dimos-e2e-cli",
         cli_args=["ping-pong"],
         config_overrides={"n_workers": 1},
