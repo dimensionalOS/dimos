@@ -221,19 +221,36 @@ def test_reader_timeout_is_visible_after_native_cleanup(make_rig, boundary, monk
     readings.subscribe(block_publication)
     monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.001)
     assert entered.wait(2)
+    owner = module._reader.ident
     publications = len(readings.sent)
+    disabled: list[int] = []
+    original_disable = module._arm.disable
+
+    def tracked_disable():
+        disabled.append(threading.get_ident())
+        return original_disable()
+
+    monkeypatch.setattr(module._arm, "disable", tracked_disable)
     try:
-        with pytest.raises(RuntimeError, match="reader did not stop"):
-            module.stop()
-        assert module._arm is None
-        assert "disable" in boundary[0].events
-        assert not module.status().connected
+        # The owner is alive but blocked outside the hardware lock. Shutdown
+        # returns at its bound and reports the timeout: it neither closes on
+        # this caller nor takes the momentarily free hardware lock.
+        module.stop()
+        assert module._arm is not None
+        assert module.status().connected
+        assert disabled == []
         assert "shutdown timeout" in module.status().last_error
         assert module._reader.is_alive()
     finally:
         release.set()
         module._reader.join(timeout=2)
     assert not module._reader.is_alive()
+    # The owner that kept device ownership performs the halt and disable on
+    # its own thread once the publication returns.
+    assert disabled == [owner]
+    assert "disable" in boundary[0].events
+    assert module._arm is None
+    assert not module.status().connected
     assert len(readings.sent) == publications
     module.stop()
 

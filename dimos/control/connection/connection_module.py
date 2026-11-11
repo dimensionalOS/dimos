@@ -146,7 +146,9 @@ class ConnectionModule(Module, ABC):
         # was accepted after the one that armed it.
         self._command_seq = 0
         self._last_command_time: float | None = None
-        #: Monotonic instant of the last command that reached the hardware.
+        #: Monotonic instant at which the last command that reached the
+        #: hardware became eligible (its receipt), never the instant a slow
+        #: SDK call returned; the deadman deadline is anchored to it.
         self._last_authorized = 0.0
         self._deadman_fired = False
         self._last_rejection: str | None = None
@@ -287,12 +289,21 @@ class ConnectionModule(Module, ABC):
                 self._on_loop(self._disarm_deadman)
                 self._call_halt()
 
-    def _record_command(self) -> None:
+    def _record_command(self, *, authorized_at: float | None = None) -> None:
         """Bookkeep one command that reached the hardware: stamp it and
-        restart the deadman from that absolute instant."""
+        restart the deadman from the instant it became eligible.
+
+        ``authorized_at`` is the command's local receipt (a monotonic
+        instant), carried from the eligibility check - not the instant a
+        slow SDK call happened to return. A connection with a single I/O
+        owner passes the receipt of the target it wrote so a call that
+        completes after the authority expired cannot grant a fresh budget;
+        the default writes synchronously and passes nothing.
+        """
+        now = time.monotonic()
         with self._lock:
             self._last_command_time = time.time()
-            self._last_authorized = time.monotonic()
+            self._last_authorized = now if authorized_at is None else min(authorized_at, now)
             self._deadman_fired = False
             self._command_seq += 1
             seq = self._command_seq

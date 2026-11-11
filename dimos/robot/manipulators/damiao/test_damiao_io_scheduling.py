@@ -308,9 +308,185 @@ def test_stop_is_bounded_when_the_hardware_lock_is_held(make_rig, monkeypatch):
 
 def test_commands_after_stop_are_dropped_not_queued(make_rig, boundary):
     module, commands, _ = make_rig()
-    written = len(boundary[0].groups["left_arm"].commands)
+    arm = boundary[0].groups["left_arm"]
     module.stop()
+    # Shutdown itself halts the arm first, so the row count is taken after it.
+    written = len(arm.commands)
     commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
     time.sleep(0.05)
     assert module._pending == {}
-    assert len(boundary[0].groups["left_arm"].commands) == written
+    assert len(arm.commands) == written
+    assert all(round(row[0, 2], 4) != 0.7 for row in arm.commands)
+
+
+def _block_final_freshness_check(module, monkeypatch):
+    """Park the owner in its second (execution-boundary) ``_fresh`` call."""
+    entered, release = threading.Event(), threading.Event()
+    original = module._fresh
+    count = 0
+
+    def fresh(pending):
+        nonlocal count
+        result = original(pending)
+        count += 1
+        if count == 2:
+            entered.set()
+            assert release.wait(2)
+        return result
+
+    monkeypatch.setattr(module, "_fresh", fresh)
+    return entered, release
+
+
+def test_stop_during_final_freshness_check_never_starts_a_write(make_rig, monkeypatch):
+    module, commands, _ = make_rig()
+    entered, release = _block_final_freshness_check(module, monkeypatch)
+    calls: list[tuple[bool, dict[str, float]]] = []
+    original_command = module._arm.command
+
+    def tracked(values):
+        calls.append((module._stop_reading.is_set(), dict(values)))
+        return original_command(values)
+
+    monkeypatch.setattr(module._arm, "command", tracked)
+    commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
+    assert entered.wait(2), "owner did not reach the final freshness check"
+    stopper = threading.Thread(target=module.stop, daemon=True)
+    stopper.start()
+    try:
+        wait_until(lambda: module._stopping, timeout=2)
+    finally:
+        release.set()
+        stopper.join(3)
+    # The lifecycle snapshot is re-read after the final age check, so the
+    # stop that committed during it drops the target: no SDK write at all.
+    assert calls == []
+    assert not module.status().connected
+
+
+def test_fault_during_final_freshness_check_never_starts_a_write(make_rig, monkeypatch):
+    module, commands, _ = make_rig()
+    entered, release = _block_final_freshness_check(module, monkeypatch)
+    calls = []
+    disabled: list[int] = []
+    original_command = module._arm.command
+    original_disable = module._arm.disable
+
+    def tracked(values):
+        calls.append(dict(values))
+        return original_command(values)
+
+    def tracked_disable():
+        disabled.append(threading.get_ident())
+        return original_disable()
+
+    monkeypatch.setattr(module._arm, "command", tracked)
+    monkeypatch.setattr(module._arm, "disable", tracked_disable)
+    commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
+    assert entered.wait(2)
+    faulted = threading.Thread(
+        target=lambda: module._feedback_failed(RuntimeError("lost feedback")), daemon=True
+    )
+    faulted.start()
+    try:
+        wait_until(lambda: module._fault is not None, timeout=2)
+    finally:
+        release.set()
+        faulted.join(3)
+    wait_until(lambda: bool(disabled), timeout=2)
+    # Same boundary for a fault as for a stop: the target in hand is not
+    # written, and the disable lands on the single SDK owner.
+    assert calls == []
+    assert disabled and all(owner == module._reader.ident for owner in disabled)
+
+
+def test_long_write_completion_does_not_renew_expired_authority(make_rig, monkeypatch):
+    module, commands, _ = make_rig(command_max_age_s=0.04)
+    module.config.deadman_timeout_s = 0.05
+    entered, release = threading.Event(), threading.Event()
+    original_command = module._arm.command
+
+    def blocked(values):
+        entered.set()
+        assert release.wait(2)
+        return original_command(values)
+
+    monkeypatch.setattr(module._arm, "command", blocked)
+    admitted = time.monotonic()
+    commands.publish(JointState(name=["arm/joint1"], position=[0.1]))
+    assert entered.wait(2)
+    # Cross both the freshness and the deadman budget while the SDK call runs.
+    time.sleep(0.10)
+    release.set()
+    wait_until(lambda: module._command_seq == 1, timeout=2)
+    # Authority is anchored to the receipt, not to the slow completion, so the
+    # command cannot buy a fresh timeout after it expired in flight...
+    assert module._last_authorized <= admitted + 0.05
+    # ...and the deadman that was already due actually fires.
+    wait_until(lambda: module.status().deadman_fired, timeout=2)
+
+
+def test_stop_while_owner_publishes_leaves_close_to_the_owner(make_rig, monkeypatch):
+    module, _, _ = make_rig()
+    monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.03)
+    entered, release = threading.Event(), threading.Event()
+
+    def publish(_):
+        entered.set()
+        assert release.wait(2)
+
+    monkeypatch.setattr(module.joint_state, "publish", publish)
+    calls: list[tuple[str, int]] = []
+    original_hold = module._arm.hold
+    original_disable = module._arm.disable
+
+    def tracked_hold():
+        calls.append(("hold", threading.get_ident()))
+        return original_hold()
+
+    def tracked_disable():
+        calls.append(("disable", threading.get_ident()))
+        return original_disable()
+
+    monkeypatch.setattr(module._arm, "hold", tracked_hold)
+    monkeypatch.setattr(module._arm, "disable", tracked_disable)
+    assert entered.wait(2)
+    try:
+        # The owner is alive but blocked outside the hardware lock: the stop
+        # must return at its bound without taking over the close itself.
+        module.stop()
+    finally:
+        release.set()
+        module._reader.join(2)
+    # Halt before disable, both on the owner that retained the hardware.
+    assert [name for name, _ in calls] == ["hold", "disable"]
+    assert all(owner == module._reader.ident for _, owner in calls)
+    assert module._arm is None
+    assert not module.status().connected
+
+
+def test_all_runtime_sdk_calls_run_on_the_single_owner(make_rig, monkeypatch):
+    module, commands, _ = make_rig()
+    module.config.deadman_timeout_s = 0.05
+    calls: list[tuple[str, int]] = []
+    guard = threading.Lock()
+
+    def tracked(name, original):
+        def wrapped(*args):
+            with guard:
+                calls.append((name, threading.get_ident()))
+            return original(*args)
+
+        return wrapped
+
+    for name in ("read", "command", "hold", "disable"):
+        monkeypatch.setattr(module._arm, name, tracked(name, getattr(module._arm, name)))
+    commands.publish(JointState(name=["arm/joint1"], position=[0.2]))
+    wait_until(lambda: module.status().deadman_fired, timeout=2)
+    module.stop()
+    owner = module._reader.ident
+    names = {name for name, _ in calls}
+    # Writes, reads and both safety actions all ran on the owning thread.
+    assert {"read", "command", "hold", "disable"} <= names
+    assert all(ident == owner for _, ident in calls)
+    assert module._arm is None

@@ -199,22 +199,37 @@ class DamiaoConnection(ConnectionModule):
 
     @rpc
     def stop(self) -> None:
+        # Mark the stop before anything that can wait on the owner: every
+        # caller must be able to observe the lifecycle change immediately,
+        # even while the owner is parked inside an admission check or an SDK
+        # call. The owner itself is released by the same flag and closes the
+        # hardware once its current call returns.
         self._stop_reading.set()
-        self._invalidate_pending()
         self._owner_wake.set()
         super().stop()
 
     def _shutdown_hardware(self) -> None:
-        """Close on the SDK owner, with a bound, never under a foreign lock.
+        """Leave the close with the live SDK owner, under a bound.
 
         The owner halts and disables the hardware and then exits, so nothing
         is closed from another thread while it is inside an SDK call. If it
-        is still inside one after the join budget, the hardware lock is only
-        tried once, bounded: if the owner holds it we report and leave the
-        close to the owner (which will do it as soon as the call returns)
-        rather than block shutdown forever. If the lock is free the owner is
-        merely publishing or already gone, so the shutdown finishes here.
+        is still alive after the join budget - inside an SDK call, or merely
+        publishing - this only invalidates pending work, reports the timeout
+        and returns: the hardware lock is deliberately *not* taken here, even
+        when it happens to be free. Taking it on the stop caller would run
+        halt/disable on the wrong thread; taking it with a timeout is not a
+        bounded teardown either, because the SDK call behind it is not
+        bounded. The owner keeps device ownership and closes as soon as it
+        regains control. Only when no owner is running is this thread the
+        sole SDK user, and then it closes directly under a bounded lock.
         """
+        # Invalidate before waiting anything: everything accepted before the
+        # stop is dropped, and the generation advances so a target the owner
+        # has just taken cannot be written after this point.
+        with self._pending_lock:
+            self._pending = {}
+            self._generation += 1
+        self._owner_wake.set()
         reader = self._reader
         if reader is None or reader is threading.current_thread() or not reader.is_alive():
             self._close_bounded()
@@ -222,23 +237,14 @@ class DamiaoConnection(ConnectionModule):
                 raise self._close_error
             return
         reader.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        if not reader.is_alive():
-            if self._close_error is not None:
-                raise self._close_error
+        if reader.is_alive():
+            self._report(
+                f"{self.config.source} reader is still inside the SDK after the shutdown "
+                "timeout; leaving the close to the owner"
+            )
             return
-        error = f"{self.config.source} reader did not stop before the shutdown timeout"
-        if self._hardware_lock.acquire(timeout=DEFAULT_THREAD_JOIN_TIMEOUT):
-            try:
-                self._close_hardware()
-            except Exception as close_error:
-                self._close_error = close_error
-            finally:
-                self._hardware_lock.release()
-            self._report(error)
-            if self._close_error is not None:
-                raise self._close_error
-            raise RuntimeError(error)
-        self._report(error)
+        if self._close_error is not None:
+            raise self._close_error
 
     def _close_bounded(self) -> None:
         """Close from this thread after a bounded wait for the hardware lock."""
@@ -356,30 +362,46 @@ class DamiaoConnection(ConnectionModule):
         )
 
     def _flush_pending(self) -> None:
-        """Write the newest fresh pending target once, on the owning thread."""
+        """Write the newest fresh pending target once, on the owning thread.
+
+        Execution admission is one linearisation point: the final freshness
+        check, the invalidation generation and the lifecycle flags are all
+        read in the same ``_pending_lock`` critical section, and every
+        invalidation publishes its flag *before* it takes that lock. So a
+        stop or fault either commits before this check (everything taken is
+        dropped) or after it (the write is already admitted and, like any
+        started SDK call, is not preemptible). The lock is never held across
+        the SDK call itself, so a blocked write cannot block a stop.
+        """
         targets = self._take_fresh()
         if not targets:
             return
         generation = self._taken_generation
         with self._hardware_lock:
-            with self._pending_lock:
-                current = self._generation
-            if (
-                generation != current
-                or self._stopping
-                or self._stop_reading.is_set()
-                or self._fault is not None
-                or self._arm is None
-                or not self._connected
-            ):
+            if self._arm is None:
                 return
-            # Final age check at the execution boundary: a target that went
-            # stale between the dequeue and the SDK call is not written.
-            fresh, expired = self._fresh(targets)
+            with self._pending_lock:
+                # Final age check at the execution boundary: a target that
+                # went stale between the dequeue and the SDK call is not
+                # written.
+                fresh, expired = self._fresh(targets)
+                # Admission: the eligibility snapshot taken at dequeue must
+                # still be current, and no stop/fault/disable may have been
+                # published while this target was in hand.
+                if (
+                    not fresh
+                    or generation != self._generation
+                    or self._stopping
+                    or self._stop_reading.is_set()
+                    or self._fault is not None
+                    or not self._connected
+                ):
+                    if expired:
+                        self._report_expiry(expired)
+                    return
             if expired:
                 self._report_expiry(expired)
-            if not fresh:
-                return
+            authorized_at = max(receipt for _, receipt, _ in fresh.values())
             try:
                 self.write({key: value for key, (value, _, _) in fresh.items()})
             except Exception as error:
@@ -388,8 +410,15 @@ class DamiaoConnection(ConnectionModule):
                 self._call_halt()
             else:
                 # The target reached the hardware: only now does it authorise
-                # the deadman, anchored to this absolute instant.
-                self._record_command()
+                # the deadman, and with the instant it became eligible (its
+                # receipt), not the instant this slow call returned. A write
+                # that completes after that authority expired must not grant
+                # a fresh timeout. A stop that landed during the call owns the
+                # lifecycle now, so do not resurrect authority after it.
+                with self._pending_lock:
+                    stopped = self._stopping or self._stop_reading.is_set()
+                if not stopped:
+                    self._record_command(authorized_at=authorized_at)
 
     def _invalidate_pending(self) -> None:
         """Drop every pending target and wake the owner, so nothing accepted
@@ -454,19 +483,23 @@ class DamiaoConnection(ConnectionModule):
             self._report(f"{self._fault}; disable failed: {disable_error}")
 
     def _close_hardware(self) -> None:
-        """Halt and de-energize once. The caller holds the hardware lock."""
+        """Halt and de-energize once, in that order. The caller holds the lock."""
         if self._hardware_closed:
             return
         self._hardware_closed = True
-        arm, self._arm = self._arm, None
+        arm = self._arm
         try:
             try:
+                # Halt while the arm is still installed: clearing ``_arm``
+                # first would make ``halt()`` a no-op and skip the hold that
+                # shutdown promises before de-energising.
                 if self._connected:
                     self._call_halt()
             finally:
                 if arm is not None:
                     arm.disable()
         finally:
+            self._arm = None
             self._connected = False
             self._fault = None
 
