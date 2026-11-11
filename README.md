@@ -5,10 +5,10 @@
 <h2>The Agentive Operating System for Physical Space</h2>
 
 [![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/dimos)
-[![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
+[![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos)
 [![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
 [![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
-[![Docs](https://img.shields.io/badge/Docs-docs.dimensionalos.com-1682a3?style=flat-square&logo=readthedocs&logoColor=white)](https://docs.dimensionalos.com)
+[![Docs](https://img.shields.io/badge/Docs-docs.dimensional.org-1682a3?style=flat-square&logo=readthedocs&logoColor=white)](https://docs.dimensional.org)
 ![Nix](https://img.shields.io/badge/Nix-flakes-5277C3?style=flat-square&logo=NixOS&logoColor=white)
 ![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?style=flat-square&logo=NixOS&logoColor=white)
 ![CUDA](https://img.shields.io/badge/CUDA-supported-76B900?style=flat-square&logo=nvidia&logoColor=white)
@@ -18,7 +18,7 @@
 
 <big><big>
 
-[Docs](https://docs.dimensionalos.com) •
+[Docs](https://docs.dimensional.org) •
 [Hardware](#hardware) •
 [Installation](#installation) •
 [Agent CLI & MCP](#agent-cli-and-mcp) •
@@ -26,36 +26,31 @@
 [dimTELE: Remote Teleop](#dimtele-remote-teleop) •
 [Development](#development)
 
-⚠️ **Pre-Release Beta** ⚠️
-
 </big></big>
 
 </div>
 
 # About
 
-Dimensional is the modern operating system for generalist robotics. We are setting the next-generation SDK standard, integrating with the majority of robot manufacturers.
+Dimensional is the open-source operating system for general robotics. We are a runtime, SDK, and operating system that natively supports robotics primitives like navigation, manipulation, perception, spatial memory, and agentic control across all types of hardware (humanoids, drones, manipulators, quadrupeds). With Dimensional, your agent can control robots by tool calling our primitives for classical use cases in real time while using a model (VLA, LLM, frontier robotics models, etc) for learned policies. Dimensional also offers teleoperation and data management tools as hosted services or locally to help developers collect data and train policies.
 
-With a simple install and no ROS required, build physical applications entirely in python that run on any humanoid, quadruped, or drone.
-
-Dimensional is agent native -- "vibecode" your robots in natural language and build (local & hosted) multi-agent systems that work seamlessly with your hardware. Agents run as native modules — subscribing to any embedded stream, from perception (lidar, camera) and spatial memory down to control loops and motor drivers.
 <table>
   <tr>
     <td align="center" width="50%">
       <a href="docs/capabilities/navigation/index.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <img src="assets/readme/perception.png" alt="Perception" width="100%">
+      <a href="docs/capabilities/manipulation/agentic.md"><img src="assets/readme/agentic_manipulation.gif" alt="Agentive Manipulation" width="100%"></a>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/navigation/index.md">Navigation and Mapping</a></h3>
-      SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
+      <a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
-      <h3>Perception</h3>
-      Detectors, 3d projections, VLMs, Audio processing
+      <h3><a href="docs/capabilities/manipulation/agentic.md">Agentive Manipulation</a></h3>
+      <a href="https://x.com/stash_pomichter/status/2036244936027414711">Watch video</a>
     </td>
   </tr>
   <tr>
@@ -69,11 +64,28 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/agents/index.md">Agentive Control, MCP</a></h3>
-      "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
+      <a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3>Spatial Memory</h3>
-      Spatio-temporal RAG, Dynamic memory, Object localization and permanence<br><a href="https://x.com/stash_pomichter/status/1980741077205414328">Watch video</a>
+      <a href="https://x.com/stash_pomichter/status/1980741077205414328">Watch video</a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://x.com/stash_pomichter/status/2064831743195295759"><img src="assets/readme/drone_swarm.gif" alt="Drone Swarm" width="100%"></a>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/readme/perception.png" alt="Perception" width="100%">
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <h3>Agentive Control, Drone Swarm</h3>
+      <a href="https://x.com/stash_pomichter/status/2064831743195295759">Watch video</a>
+    </td>
+    <td align="center" width="50%">
+      <h3>Perception</h3>
     </td>
   </tr>
 </table>
@@ -83,56 +95,62 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 <table>
   <tr>
-    <td align="center" width="20%">
-      <h3>Quadruped</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Humanoid</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Arm</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Drone</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
-    </td>
-    <td align="center" width="20%">
-      <h3>Misc</h3>
-      <img width="245" height="1" src="assets/readme/spacer.png">
+    <td><b>Quadrupeds</b></td>
+    <td>
+      <a href="docs/platforms/quadruped/go2/index.md"><img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable">&nbsp;Unitree&nbsp;Go2&nbsp;pro/&#8288;air</a>&nbsp;·
+      <a href="dimos/robot/deeprobotics/m20/deploy/README.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Deep&nbsp;Robotics&nbsp;Lynx&nbsp;M20</a>&nbsp;·
+      <a href="docs/platforms/quadruped/spot/index.md"><img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental">&nbsp;Boston&nbsp;Dynamics&nbsp;Spot</a>
     </td>
   </tr>
-
   <tr>
-    <td align="center" width="20%">
-      🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
+    <td><b>Humanoids</b></td>
+    <td>
+      <a href="docs/platforms/humanoid/g1/index.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Unitree&nbsp;G1</a>&nbsp;·
+      <a href="dimos/robot/galaxea/r1pro/README.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Galaxea&nbsp;R1&nbsp;Pro</a>
     </td>
-    <td align="center" width="20%">
-      🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
+  </tr>
+  <tr>
+    <td><b>Arms</b></td>
+    <td>
+      <a href="docs/capabilities/manipulation/index.md"><img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable">&nbsp;UFactory&nbsp;xArm&nbsp;6/&#8288;7,&nbsp;Lite6</a>&nbsp;·
+      <a href="docs/capabilities/manipulation/piper_integration.md"><img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable">&nbsp;AgileX&nbsp;Piper</a>&nbsp;·
+      <a href="docs/capabilities/manipulation/openyam_integration.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;OpenYAM</a>&nbsp;·
+      <a href="docs/capabilities/manipulation/openarm_integration.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;OpenArm</a><br>
+      <a href="docs/capabilities/manipulation/a1z.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Galaxea&nbsp;A1Z</a>&nbsp;·
+      <a href="docs/capabilities/manipulation/makermods_metal_integration.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;MakerMods&nbsp;Metal</a>&nbsp;·
+      <a href="docs/capabilities/manipulation/seeed_b601_dm_integration.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;Seeed&nbsp;reBot&nbsp;B601-&#8288;DM</a>&nbsp;·
+      <a href="docs/capabilities/manipulation/a750.md"><img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental">&nbsp;A-&#8288;750</a>
     </td>
-    <td align="center" width="20%">
-      🟨 <a href="docs/capabilities/manipulation/index.md">Xarm</a><br>
-      🟨 <a href="docs/capabilities/manipulation/index.md">AgileX Piper</a><br>
+  </tr>
+  <tr>
+    <td><b>Drones</b></td>
+    <td>
+      <a href="dimos/robot/drone/README.md"><img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha">&nbsp;DJI&nbsp;(via&nbsp;RosettaDrone&nbsp;/&nbsp;MAVLink)</a>
     </td>
-    <td align="center" width="20%">
-      🟧 <a href="dimos/robot/drone/README.md">MAVLink</a><br>
-      🟧 <a href="dimos/robot/drone/README.md">DJI Mavic</a><br>
-    </td>
-    <td align="center" width="20%">
-      🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
+  </tr>
+  <tr>
+    <td><b>Sensors&nbsp;&amp;&nbsp;teleop</b></td>
+    <td>
+      <a href="dimos/hardware/sensors/lidar/livox"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Livox&nbsp;Mid-&#8288;360</a>&nbsp;·
+      <a href="dimos/hardware/sensors/camera/realsense/README.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Intel&nbsp;RealSense</a>&nbsp;·
+      <a href="dimos/teleop/README.md"><img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta">&nbsp;Meta&nbsp;Quest&nbsp;/&nbsp;PICO</a>&nbsp;·
+      <a href="https://github.com/dimensionalOS/openFT-sensor"><img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental">&nbsp;Force&nbsp;Torque&nbsp;Sensor</a>
     </td>
   </tr>
 </table>
 <br>
 <div align="right">
-🟩 stable 🟨 beta 🟧 alpha 🟥 experimental
+<img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> stable <img src="assets/readme/tier-beta.svg" width="14" height="14" alt="beta"> beta <img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha"> alpha <img src="assets/readme/tier-experimental.svg" width="14" height="14" alt="experimental"> experimental
 
 </div>
 
-> [!IMPORTANT]
-> 🤖 Direct your favorite Agent (OpenClaw, Claude Code, etc.) to [AGENTS.md](AGENTS.md) and our [CLI and MCP](#agent-cli-and-mcp) interfaces to start building powerful Dimensional applications.
+# Try DimOS
+
+Paste this into Claude Code, Cursor or Codex. It installs DimOS and plays back a recorded robot session.
+
+```text
+Install DimOS from https://github.com/dimensionalOS/dimos and run the Go2 replay demo.
+```
 
 # Installation
 
@@ -148,9 +166,9 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 See [installer options](docs/installation/index.md), or platform notes:
 
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
+- <img src="assets/readme/tier-stable.svg" width="14" height="14" alt="stable"> [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
-- 🟧 [macOS](docs/installation/osx.md)
+- <img src="assets/readme/tier-alpha.svg" width="14" height="14" alt="alpha"> [macOS](docs/installation/osx.md)
 
 > Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
@@ -246,11 +264,12 @@ See below a simple robot connection module that sends streams of continuous `cmd
 ```py skip
 import threading, time, numpy as np
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Twist
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 class RobotConnection(Module):
     cmd_vel: In[Twist]
@@ -278,10 +297,12 @@ class Listener(Module):
         self.color_image.subscribe(lambda img: print(f"image {img.width}x{img.height}"))
 
 if __name__ == "__main__":
-    autoconnect(
-        RobotConnection.blueprint(),
-        Listener.blueprint(),
-    ).build().loop()
+    ModuleCoordinator.build(
+        autoconnect(
+            RobotConnection.blueprint(),
+            Listener.blueprint(),
+        )
+    ).loop()
 ```
 
 ## Blueprints
@@ -294,21 +315,24 @@ Blueprints can be composed, remapped, and have transports overridden if `autocon
 A blueprint example that connects the image stream from a robot to an MCP-backed LLM agent for reasoning and action execution.
 ```py skip
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
-from dimos.robot.unitree.go2.connection import go2_connection
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.transport_factory import make_transport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.skills.observe_skill import ObserveSkill
 
 blueprint = autoconnect(
-    go2_connection(),
+    GO2Connection.blueprint(),
+    ObserveSkill.blueprint(),
     McpServer.blueprint(),
-    McpClient.blueprint(),
-).transports({("color_image", Image): LCMTransport("/color_image", Image)})
+    Agent.blueprint(),
+).transports({("color_image", Image): make_transport("go2/color_image", Image)})
 
 # Run the blueprint
 if __name__ == "__main__":
-    blueprint.build().loop()
+    ModuleCoordinator.build(blueprint).loop()
 ```
 
 ## Library API

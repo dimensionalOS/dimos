@@ -850,6 +850,24 @@ def test_arm_gripper_gate_uses_the_classified_grip_bit(
         module.stop()
 
 
+def test_arm_teleop_logs_each_hand_engaging_and_disengaging(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = ArmTeleopModule()
+    try:
+        logger = mocker.patch("dimos.teleop.webxr.extensions.logger")
+        held = WebXRControllerState(is_left=False, grip=1.0)
+
+        module._publish_button_state(None, held)
+        module._publish_button_state(None, held)
+        module._publish_button_state(None, WebXRControllerState(is_left=False, grip=0.0))
+
+        logged = [call.args[0] for call in logger.info.call_args_list]
+        assert logged == ["RIGHT engaged.", "RIGHT disengaged."]
+    finally:
+        module.stop()
+
+
 def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture) -> None:
     module = HandTeleopModule()
     try:

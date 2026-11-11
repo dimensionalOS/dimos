@@ -2,6 +2,8 @@
 
 Install dimOS with the [official installer](/docs/installation/index.md). It provisions Python and system dependencies for the supported installation paths.
 
+Supported Python versions are 3.10 (3.10.12 or newer), 3.11 (3.11.4 or newer), and 3.12.
+
 ## Hardware
 
 | Component | Minimum | Recommended |
