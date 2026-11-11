@@ -431,13 +431,11 @@ def test_the_coordinator_takes_the_arm_and_gripper_messages_as_one_robot(
     rig: Callable[..., Rig], tmp_path: Path
 ) -> None:
     r = rig(gripper="xarm")
-    names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "drive_joint"]
     model = xarm_like_model(tmp_path, 7, gripper=True)
     seen = ConnectionSource(
-        "arm",
+        XArmConfig(arm="xarm7", ip=IP, gripper="xarm", model=model),
         ["position_command", "velocity_command"],
         ["joint_state"],
-        model.with_renamed_joints({joint: f"arm/{joint}" for joint in names}),
         reading_timeout_s=1.0,
     )
     wait_until(lambda: any(m.name == ["arm/drive_joint"] for m in r.readings()), timeout=2.0)

@@ -70,8 +70,9 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
     tasks=[
         TaskConfig(
             name="vel_base",
-            type="velocity",
+            type="twist_velocity",
             joint_names=_base_joints,
+            params={"axes": ["linear.x", "linear.y", "angular.z"]},
             priority=10,
         ),
     ],
@@ -83,8 +84,9 @@ coordinator_flowbase = ControlCoordinator.blueprint(
     tasks=[
         TaskConfig(
             name="vel_base",
-            type="velocity",
+            type="twist_velocity",
             joint_names=_base_joints,
+            params={"axes": ["linear.x", "linear.y", "angular.z"]},
             priority=10,
         ),
     ],
@@ -97,8 +99,9 @@ coordinator_flowbase_keyboard_teleop = autoconnect(
         tasks=[
             TaskConfig(
                 name="vel_base",
-                type="velocity",
+                type="twist_velocity",
                 joint_names=_base_joints,
+                params={"axes": ["linear.x", "linear.y", "angular.z"]},
                 priority=10,
             ),
         ],
@@ -120,8 +123,9 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
         joint_trajectory_task(_mock_arm_hw.joints),
         TaskConfig(
             name="vel_base",
-            type="velocity",
+            type="twist_velocity",
             joint_names=_base_joints,
+            params={"axes": ["linear.x", "linear.y", "angular.z"]},
             priority=10,
         ),
     ],
