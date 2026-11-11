@@ -1,0 +1,136 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import pytest
+
+pytest.importorskip("cel_expr_python")
+
+from dimos.orchestration.expressions import (
+    NUMBER,
+    UNKNOWN,
+    Compiler,
+    ExpressionError,
+    Plain,
+    Wanted,
+    evaluate,
+    evaluate_bool,
+)
+
+STAMP: Plain = {"sec": 0, "nsec": 0}
+SHAPES = {
+    "estop_button": False,
+    "battery": UNKNOWN,
+    "battery_pct": 0.0,
+    "low_battery": 20.0,
+    "patrol.index": 0,
+    "route": ["lobby"],
+    "dock": {"x": 0.0, "y": 0.0},
+    "nav_status": {"status": 0, "text": "", "goal_id": {"stamp": STAMP, "id": ""}},
+    "nav.goal": STAMP,
+    "cfg.patrol": None,
+    "untyped_result": UNKNOWN,
+    "untyped_flag": UNKNOWN,
+}
+BOARD: dict[str, Plain] = {
+    "estop_button": True,
+    "low_battery": 20.0,
+    "patrol.index": 1,
+    "route": ["lobby", "lab", "kitchen"],
+    "dock": {"x": 1.0, "y": 2.0},
+    "nav_status": {"status": 3, "text": "", "goal_id": {"stamp": {"sec": 5, "nsec": 7}, "id": "a"}},
+    "nav.goal": {"sec": 5, "nsec": 7},
+    "cfg.patrol": None,
+    "untyped_result": {"anything": 4},
+    "untyped_flag": True,
+}
+UNSET = object()
+ERROR = object()
+
+REJECTED: list[tuple[str, Wanted, str]] = [
+    ("typo_key < 3", UNKNOWN, "undeclared reference to 'typo_key'"),
+    ("nav_status.goalid == 1", UNKNOWN, "cannot be the operand of a select"),
+    ("nav_status.goal_id.stamp.secs == 1", UNKNOWN, "cannot be the operand of a select"),
+    ("patrol.index + 1.5", UNKNOWN, r"'_\+_' applied to '\(int, double\)'"),
+    ("battery_pct < 20", UNKNOWN, r"'_<_' applied to '\(double, int\)'"),
+    ("nav_status.text < 1", UNKNOWN, r"'_<_' applied to '\(string, int\)'"),
+    ("patrol.index + 1", True, "gives INT, and BOOL is needed"),
+    ("route[patrol.index]", NUMBER, "gives STRING, and INT or DOUBLE is needed"),
+    ("route[nav_status.text]", UNKNOWN, r"'_\[_\]' applied to '\(list\(string\), string\)'"),
+    ("nav.goal == dock", UNKNOWN, "'_==_' applied to"),
+    ("nav.goal == 5", UNKNOWN, "'_==_' applied to"),
+    ("battery_pct + 1.0", 0, "gives DOUBLE, and INT is needed"),
+    ("dock[route[0]]", UNKNOWN, r"'_\[_\]' applied to"),
+]
+
+EVALUATED: list[tuple[str, Wanted, dict[str, object], object]] = [
+    ("battery_pct < 20.0", True, {}, False),
+    ("estop_button || battery_pct < 20.0", True, {}, True),
+    ("battery_pct < 20.0 || estop_button", True, {}, True),
+    ("battery_pct < 20.0 && !estop_button", True, {}, False),
+    ("!(battery_pct > 5.0)", True, {}, False),
+    ("battery_pct < low_battery", True, {"battery_pct": 19.5}, True),
+    ("nav_status.goal_id.stamp == nav.goal", True, {}, True),
+    ("nav_status.goal_id.stamp == nav.goal", True, {"nav.goal": UNSET}, False),
+    ("dock", {"x": 0.0, "y": 0.0}, {}, {"x": 1.0, "y": 2.0}),
+    ("route[patrol.index]", "", {}, "lab"),
+    ("patrol.index < size(route)", True, {}, True),
+    ("cfg.patrol == null", True, {}, True),
+    ("untyped_result.anything + 1 == 5", True, {}, True),
+    ("untyped_result.nothing == 5", True, {}, ERROR),
+    ("untyped_flag", True, {}, True),
+    ("untyped_flag", True, {"untyped_flag": "false"}, ERROR),
+    ("untyped_result", STAMP, {}, {"anything": 4}),
+    ("patrol.index + 1", 0, {}, 2),
+    ("[]", ["lobby"], {}, []),
+    ("route[5]", UNKNOWN, {}, ERROR),
+    ("low_battery > 1.0 && route[5] == 'lab'", True, {}, ERROR),
+]
+
+
+@pytest.fixture(scope="module")
+def compiler() -> Compiler:
+    return Compiler(SHAPES)
+
+
+def test_compile_gives_the_result_type_and_the_keys_read(compiler: Compiler) -> None:
+    source = "nav_status.goal_id.stamp.sec == nav.goal.sec && battery_pct < low_battery"
+    expression = compiler.compile(source, True)
+    assert expression.result == "BOOL"
+    assert set(expression.reads) == {
+        "nav_status.goal_id.stamp.sec",
+        "nav.goal.sec",
+        "battery_pct",
+        "low_battery",
+    }
+    assert evaluate_bool(expression, {**BOARD, "battery_pct": 19.5}) is True
+
+
+@pytest.mark.parametrize(("source", "gives", "reason"), REJECTED)
+def test_compile_rejects(compiler: Compiler, source: str, gives: Wanted, reason: str) -> None:
+    with pytest.raises(ExpressionError, match=reason):
+        compiler.compile(source, gives)
+
+
+@pytest.mark.parametrize(("source", "gives", "changes", "expected"), EVALUATED)
+def test_evaluate(
+    compiler: Compiler, source: str, gives: Wanted, changes: dict[str, object], expected: object
+) -> None:
+    board = {key: value for key, value in {**BOARD, **changes}.items() if value is not UNSET}
+    expression = compiler.compile(source, gives)
+    run = evaluate_bool if gives is True else evaluate
+    if expected is ERROR:
+        with pytest.raises(ExpressionError):
+            run(expression, board)
+    else:
+        assert run(expression, board) == expected

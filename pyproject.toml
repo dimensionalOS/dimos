@@ -121,6 +121,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "pydantic-core", # blueprint_config, sensor_msgs/CameraInfo
+    "cel-expr-python==0.1.3; python_version >= '3.11'", # Orchestrator expressions (orchestration/expressions.py)
     "cbor2>=6.1.5,<7", # RPC and worker-pipe serialization (protocol/encode/cbor.py)
     "python-dotenv",
     "packaging>=24.0",
@@ -754,6 +755,8 @@ module = [
     "bosdyn",
     "bosdyn.*",
     "builtin_interfaces.*",
+    "cel_expr_python",
+    "cel_expr_python.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
