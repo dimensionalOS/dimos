@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 @pytest.fixture

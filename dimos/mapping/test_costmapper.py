@@ -20,7 +20,7 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.mapping.costmapper import Config, CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig, general_occupancy
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 
 def test_general_algorithm_accepts_base_config_dict() -> None:

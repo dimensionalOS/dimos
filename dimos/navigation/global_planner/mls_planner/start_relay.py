@@ -22,8 +22,8 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.tf2_msgs.msg import TFMessage
 
 
 class StartRelayConfig(ModuleConfig):

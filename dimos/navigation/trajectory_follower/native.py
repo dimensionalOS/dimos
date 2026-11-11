@@ -20,10 +20,10 @@ from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos_messages.geometry_msgs.msg import Twist
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.std_msgs.msg import Bool
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.navigation import spec
 from dimos.navigation.embodiment.base import Embodiment
 
@@ -55,6 +55,7 @@ class TrajectoryFollowerNative(NativeModule, spec.TrajectoryFollower):
 
     path: In[Path]
     tf: IO[TFMessage]  # IO, not In: see planner_native.py
+    tf_static: In[TFMessage]
 
     nav_cmd_vel: Out[Twist]
     goal_reached: Out[Bool]

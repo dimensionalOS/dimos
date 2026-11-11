@@ -16,13 +16,15 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 
 import numpy as np
 
 from dimos.mapping.relocalization.go2.relocalize import Target, prepare, relocalize, wall_fitness
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -34,7 +36,7 @@ class PremapMatcher:
     def __init__(
         self, premap: PointCloud2, *, min_points: int = 20_000, fitness_threshold: float = 0.45
     ) -> None:
-        self._premap = premap.pointcloud
+        self._premap = pointcloud.xyz(premap)
         self._target: Target | None = None
         self._min_points = min_points
         self._threshold = fitness_threshold
@@ -46,15 +48,16 @@ class PremapMatcher:
             del self._premap  # the target holds everything matching needs
         return self._target
 
-    def attempt(self, window: PointCloud2) -> tuple[Transform, float] | None:
+    def attempt(self, window: PointCloud2) -> tuple[TransformStamped, float] | None:
         """The ``world -> map`` fix for this window and its fitness, or None below the threshold."""
-        if len(window) < self._min_points:
-            logger.info(f"relocalize: waiting for points n_pts={len(window)} < {self._min_points}")
+        points = pointcloud.xyz(window)
+        if len(points) < self._min_points:
+            logger.info(f"relocalize: waiting for points n_pts={len(points)} < {self._min_points}")
             return None
-        logger.info(f"relocalize: attempt started n_pts={len(window)}")
+        logger.info(f"relocalize: attempt started n_pts={len(points)}")
         t0 = time.monotonic()
         try:
-            placement, fitness = relocalize(self._prepared(), window.pointcloud)
+            placement, fitness = relocalize(self._prepared(), points)
         except Exception:
             logger.exception("relocalize() failed")
             return None
@@ -64,26 +67,30 @@ class PremapMatcher:
                 f"relocalize: refused fitness={fitness:.3f} < {self._threshold} took {dt:.1f}s"
             )
             return None
-        fix = Transform.from_matrix(
-            np.linalg.inv(placement), frame_id="world", child_frame_id="map", ts=window.ts
+        fix = TransformStamped(
+            header=deepcopy(window.header),
+            child_frame_id="map",
+            transform=geometry.transform_from_matrix(np.linalg.inv(placement)),
         )
-        t = fix.translation
+        t = fix.transform.translation
         logger.info(
             f"relocalize: fix fitness={fitness:.3f} took {dt:.1f}s "
             f"t=({t.x:.2f}, {t.y:.2f}, {t.z:.2f})"
         )
         return fix, fitness
 
-    def score(self, window: PointCloud2, placement: Transform) -> float:
+    def score(self, window: PointCloud2, placement: TransformStamped) -> float:
         """How well ``window`` fits the premap with ``world -> map`` at ``placement``, as `attempt` scores."""
         return wall_fitness(
-            self._prepared(), window.pointcloud, np.linalg.inv(placement.to_matrix())
+            self._prepared(),
+            pointcloud.xyz(window),
+            np.linalg.inv(geometry.transform_matrix(placement.transform)),
         )
 
 
 def attempt_fix(
-    matcher: PremapMatcher, window: PointCloud2, current: Transform | None
-) -> tuple[Transform, float, float | None] | None:
+    matcher: PremapMatcher, window: PointCloud2, current: TransformStamped | None
+) -> tuple[TransformStamped, float, float | None] | None:
     """A fix for ``window``, its fitness, and the current placement's on the same window."""
     found = matcher.attempt(window)
     if found is None:
