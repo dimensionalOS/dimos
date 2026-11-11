@@ -71,6 +71,9 @@ def test_a_blueprints_and_its_modules_source(
     assert (found["file"], found["line"], found["text"]) == ("mapper.py", 5, "class Mapper: ...\n")
     assert client.get("/catalog/modules/x.Mapper/source?blueprint=demo").status_code == 200
     assert client.get("/catalog/modules/other/source?blueprint=demo").status_code == 404
+    listed = [{"name": "the-mapper", "class": "x.Mapper"}]
+    monkeypatch.setattr(catalog_routes.catalog, "modules", lambda cache, notes=None: listed)
+    assert client.get("/catalog/modules/the-mapper/source?blueprint=demo").status_code == 200
     assert client.get("/catalog/blueprints/nope/source").status_code == 404
     picked = client.get("/catalog/blueprints/demo?fields=modules.name").json()
     assert picked["modules"] == [{"name": "mapper"}]
@@ -167,7 +170,8 @@ def test_msgs_js_is_cached_and_decodes_what_python_encodes(
     assert out["twist"] == twist.lcm_encode().hex()
     typed = tmp_path / "typed.ts"
     typed.write_text(
-        f'// @ts-types="{types.as_uri()}"\nimport {{ geometry_msgs }} from "{built.as_uri()}"\n'
+        f'// @ts-types="{types.as_uri()}"\nimport {{ createRegistry, geometry_msgs }} from "{built.as_uri()}"\n'
+        "const names: string[] = createRegistry({}, {}, {}).getTypeNames()\n"
         "const twist: geometry_msgs.Twist = geometry_msgs.Twist.decode(new Uint8Array())\n"
         "const wrong: string = twist.linear.x\n"
     )

@@ -146,6 +146,28 @@ export interface MsgType<T = Record<string, unknown>> {{
     zenohKey(topic: string): string
     lcmChannel(topic: string): string
 }}
+export type LcmField = [name: string, type: string, dims: (number | string)[] | null]
+export interface Registry {{
+    decode(bytes: Uint8Array): unknown
+    decodeChannel(channel: string, bytes: Uint8Array): unknown
+    decodeMessage(message: {{ key: string; bytes: Uint8Array; kind?: string }}): unknown
+    typeOfChannel(channel: string): string | undefined
+    lookup(name: string): MsgType<unknown>
+    register<T = unknown>(
+        name: string,
+        fingerprint: string | null,
+        decodeFn: (bytes: Uint8Array) => T,
+        encodeFn?: (value: unknown) => Uint8Array,
+    ): MsgType<T>
+    getTypeNames(): string[]
+    getMissingTypes(): Record<string, string>
+}}
+/** a registry of its own: `structs` holds each struct's fields, `types` each type's fingerprint, `missing` why a type has none */
+export function createRegistry(
+    structs: Record<string, LcmField[]>,
+    types: Record<string, string>,
+    missing: Record<string, string>,
+): Registry
 export function decode(bytes: Uint8Array): unknown
 export function decodeChannel(channel: string, bytes: Uint8Array): unknown
 export function decodeMessage(message: {{ key: string; bytes: Uint8Array; kind?: string }}): unknown

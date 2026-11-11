@@ -276,8 +276,11 @@ async def module_source(
     found = await from_run_checkout(
         state, ["blueprint", blueprint], await has_locally(state, blueprint)
     )
+    # the catalog's name for it (go2-connection) as well as its name in the blueprint (go2connection) or its class
+    listed = next((c for c in catalog.modules(state.scanner.cache()) if c["name"] == name), None)
+    names = {name, listed["class"]} if listed else {name}
     module = next(
-        (entry for entry in found.get("modules") or [] if name in (entry["name"], entry["class"])),
+        (entry for entry in found.get("modules") or [] if names & {entry["name"], entry["class"]}),
         None,
     )
     if module is None:
