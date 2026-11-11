@@ -52,6 +52,11 @@ DUAL_OPENYAM_COLLISION_EXCLUSIONS = [
     for a, b in ((1, 3), (2, 4))
 ]
 
+# The workcell model's finger joints: the planner's grasp contact check slides them;
+# the connection and the map's self filter hold them fixed.
+DUAL_OPENYAM_FINGER_JOINTS = [
+    f"{side}_finger_{jaw}_joint" for side in DUAL_OPENYAM_SIDES for jaw in ("left", "right")
+]
 # Finger joint position (metres) at fully open; zero is closed with the pads touching.
 # Calipers on the rig's printed fingers: 98 mm between the nose faces at full open, so
 # 49 mm of travel per finger (the i2rt travel of 46.95 mm gave 93.9 mm).
@@ -76,9 +81,7 @@ def dual_openyam_gripper_config() -> GripperConfig:
             f"{side}_tip_{jaw}" for side in DUAL_OPENYAM_SIDES for jaw in ("left", "right")
         ),
         finger_joints={
-            f"{side}_finger_{jaw}_joint": (DUAL_OPENYAM_FINGER_OPEN, 0.0)
-            for side in DUAL_OPENYAM_SIDES
-            for jaw in ("left", "right")
+            joint: (DUAL_OPENYAM_FINGER_OPEN, 0.0) for joint in DUAL_OPENYAM_FINGER_JOINTS
         },
     )
 
@@ -125,20 +128,24 @@ def dual_openyam_control_model(*, robot: str | None = None) -> RobotModel:
         robot: Name the moving joints under this robot, e.g. "arm" gives
             "arm/left_joint1" and "arm/left_gripper".
     """
-    model = dual_openyam_model_config().model.with_added_joints(
-        *[
-            JointDescription(
-                name=name,
-                type="revolute",
-                parent_link="dual_openyam_base",
-                child_link=f"{name}_control_link",
-                lower=0.0,
-                upper=1.0,
-                velocity=0.0,
-                effort=0.0,
-            )
-            for name in DUAL_OPENYAM_GRIPPER_JOINTS
-        ]
+    model = (
+        dual_openyam_model_config()
+        .model.with_fixed_joints(*DUAL_OPENYAM_FINGER_JOINTS)
+        .with_added_joints(
+            *[
+                JointDescription(
+                    name=name,
+                    type="revolute",
+                    parent_link="dual_openyam_base",
+                    child_link=f"{name}_control_link",
+                    lower=0.0,
+                    upper=1.0,
+                    velocity=0.0,
+                    effort=0.0,
+                )
+                for name in DUAL_OPENYAM_GRIPPER_JOINTS
+            ]
+        )
     )
     if robot is None:
         return model

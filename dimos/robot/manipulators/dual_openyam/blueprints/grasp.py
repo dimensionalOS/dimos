@@ -51,6 +51,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import DUAL_OPENYAM_PINK
 from dimos.robot.manipulators.dual_openyam.config import (
+    DUAL_OPENYAM_FINGER_JOINTS,
     DUAL_OPENYAM_SIDES,
     dual_openyam_model_config,
 )
@@ -180,7 +181,7 @@ def dual_openyam_self_filter_model() -> RobotModel:
     carries no finger positions.
     """
     return dual_openyam_model_config(robot="arm").model.with_fixed_joints(
-        *(f"{arm}_finger_{jaw}_joint" for arm in DUAL_OPENYAM_SIDES for jaw in ("left", "right"))
+        *DUAL_OPENYAM_FINGER_JOINTS
     )
 
 
