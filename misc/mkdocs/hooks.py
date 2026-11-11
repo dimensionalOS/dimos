@@ -55,7 +55,7 @@ SOURCE_ROOTS = (
 
 
 _FENCE = re.compile(r"^(?P<indent>[ \t]*)(?P<ticks>```+|~~~+)(?P<info>[^\n]*)$")
-_LINK = re.compile(r"\]\((?P<target>/[^)\s]+)(?P<title>\s+\"[^\"]*\")?\)")
+_LINK = re.compile(r"\]\((?P<target>/[^)\n]+?)(?P<title>\s+\"[^\"]*\")?\)")
 
 
 def _normalize_fences(markdown: str) -> str:

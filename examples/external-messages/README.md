@@ -1,28 +1,20 @@
 # External message package example
 
-This package defines one message (`demo_msgs/msg/Reading`) that reuses the
-built-in `std_msgs/Header` by version dependency instead of redeclaring it.
-That keeps a single `Header` identity at runtime.
-
-`pyproject.toml` is an ordinary setuptools project file. It depends on
-`dimos>=0.0.15`, so `pip install .` resolves any compatible DimOS release and
-the built wheel requires the same minimum (`Requires-Dist: dimos>=0.0.15`).
-
-The `dimos_messages` entry under `[tool.dimos.messages.dependencies]` is not a
-pip requirement: `dimos-cdrgen` matches it against the installed message
-manifest and requires the manifest's exact version string, so it names the
-built-in message package this example is generated against.
+`demo_msgs/msg/Reading` reuses the built-in `std_msgs/Header` from an installed
+dimOS instead of redeclaring it, so one `Header` identity exists at runtime.
+`pyproject.toml` and `setup.py` are the ordinary setuptools files for a package
+that defines messages.
 
 ```sh
 pip install .
 python demo_external.py
 ```
 
-`pip install .` builds the package and its generated message artifacts from
-the committed `interfaces/` definitions.
+`pip install .` builds the package and its generated message artifacts from the
+committed `interfaces/` definitions.
 
-Against a DimOS checkout that is not published yet, use the local install so
-the build cannot download a different PyPI release:
+Against a DimOS checkout that is not published yet, use the local install so the
+build cannot download a different PyPI release:
 
 ```sh
 pip install --no-build-isolation --no-deps .
@@ -38,3 +30,8 @@ Expected final output:
 Reused built-in schemas from: <installed dimos_messages_schemas package>
 PASS: external Reading message shares the installed dimos_messages Header identity
 ```
+
+To build your own package with these files, follow
+[Add a message in your own project](/docs/use dimos as a library/external-message.md).
+It also explains the exact message-version entry that `dimos-cdrgen` checks
+against the installed manifest.

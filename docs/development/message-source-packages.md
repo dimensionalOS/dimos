@@ -7,6 +7,9 @@ per-file hashes). `setup.py` generates Python messages from those files through
 `dimos-cdrgen==0.1.2`; builds never download definitions or prepare schema
 archives.
 
+To add your own message, start with [Use dimOS as a library](/docs/use dimos as a library/README.md).
+The rest of this page covers the built-in sources, packaging and verification.
+
 The wheel contains the generated `dimos_messages` package, the
 `dimos_messages_schemas` resources (schemas, C++/Rust build inputs and
 metadata), and the upstream licenses. The main `dimos` distribution owns the
@@ -76,23 +79,12 @@ retain Rust build artifacts. Cold builds download pinned dependencies;
 
 ### External message package
 
-`examples/external-messages` shows a package that defines one message and reuses
-the installed built-in `Header` by version dependency instead of redeclaring it:
-
-```sh skip
-cd examples/external-messages
-pip install .
-python demo_external.py
-```
-
-`pyproject.toml` is an ordinary setuptools project file: it declares
-`dimos>=0.0.15`, so the build resolves any compatible DimOS release and the
-built wheel carries the same minimum. The `dimos_messages` entry under
-`[tool.dimos.messages.dependencies]` is a message identity, not a pip
-requirement. `dimos-cdrgen` matches it against the installed message manifest
-and requires that manifest's exact version string. Against an unpublished
-checkout, build with `pip install --no-build-isolation --no-deps .` so the
-local DimOS is used instead of a PyPI release.
+[Add a message in your own project](/docs/use dimos as a library/external-message.md)
+walks through `examples/external-messages`: the committed `.msg` definition, the
+plain `pyproject.toml`, the wheel build, and a roundtrip that checks the nested
+`Header` identity. It also explains the exact message-version entry that
+`dimos-cdrgen` matches against the installed manifest, which is separate from
+the pip minimum in `dependencies`.
 
 ### What installation does
 

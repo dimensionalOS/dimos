@@ -9,3 +9,6 @@
 Follow the [example tutorial](/docs/development/message-source-packages.md#run-the-built-in-examples)
 for install commands, expected output, and generated-file locations.
 The examples do not need an external message project or a robot.
+
+To add a message to the built-in package, follow
+[Add a message inside the DimOS repository](/docs/use dimos as a library/internal-message.md).

@@ -4,6 +4,7 @@
 nav:
   - index.md
   - quickstart.md
+  - "use dimos as a library"
   - requirements.md
   - installation
   - usage
