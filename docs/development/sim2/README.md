@@ -85,10 +85,13 @@ the running stack loads the prepared files. The camera and lidar create private
 geometry copies with independent bodies driven by `WorldState` poses; neither
 sensor steps physics. This prototype tests rigid bodies and scalar joints.
 
-SimModule.simulation_config() still shares the run ID and configured gravity using
-Jeff's startup hook. The policy receives the ID and the IMU receives gravity before
-start. Asset composition does not use that hook. Gravity is fixed for the run and
-is absent from WorldState.
+`SimModule.simulation_config()` supplies the run ID and configured gravity through
+an ordinary RPC during build. The policy receives the ID and the IMU receives
+gravity before start. Gravity is fixed for the run and is absent from WorldState.
+
+UsdManager uses Jeff's `JointTf` helper when its input is joint state. When connected
+to simulation observations, it publishes the complete TF tree from body poses at
+their acquisition time instead; the joint-state publisher stays off for that run.
 
 `start()` opens the physics owner thread and one publisher thread. The owner calls
 `_apply_commands()`, `_sample_truth()` and `_step()`; `_inspect()` constructs a
@@ -231,7 +234,7 @@ Pim's nine PRs build directly on Jeff's asset-serving layers:
 main
   -> Jeff: #5102 USD conversion and file serving
   -> Jeff: #5105 namespaces and mounts
-  -> Jeff: #5109 Mid360 USD description
+  -> Jeff: #5109 empty bridge (Mid360 moved to the lidar layer)
   -> Jeff: #5111 UsdManager rename
   -> Pim: #5033 messages -> #5034 models -> #5035 physics
   -> Pim: #5036 IMU -> #5037 encoders -> #5038 camera -> #5039 lidar
@@ -241,6 +244,10 @@ main
 No shared-configuration hook or coordinator change is required. Modules use the
 existing build/start lifecycle and explicit RPC dependencies. Jeff's Sim2 branches
 #4908-#4915 and #5126 are not dependencies.
+
+#5039 carries Jeff's unchanged `mid360_usd()` provider and `Mid360.get_usd()` RPC,
+which he moved from #5109 to his lidar PR. It shares that device description with
+the real driver without importing Jeff's Sim2 implementation.
 
 The integration keeps Pim's `SimModule`, `PhysicsBackend`, `WorldState`,
 `ActionCommand` and independent sensor modules. Jeff's asset serving and composition

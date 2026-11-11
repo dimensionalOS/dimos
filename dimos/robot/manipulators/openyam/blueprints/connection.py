@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""OpenYAM trajectory and gripper control through its connection."""
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -28,12 +29,14 @@ _GRIPPER_JOINTS = [OPENYAM_GRIPPER_JOINT]
 
 
 def openyam_connection_control_blueprint() -> Blueprint:
+    """Trajectories and the gripper, with the robot model served to clients."""
     return autoconnect(
         OpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             model=_MODEL.model,
             tasks=[
                 joint_trajectory_task([*_MODEL.joint_names, *_GRIPPER_JOINTS]),
+                # joint7 is open at its lower end.
                 TaskConfig(
                     name="arm_gripper",
                     type="gripper",
