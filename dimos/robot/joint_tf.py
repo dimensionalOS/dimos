@@ -127,6 +127,10 @@ class JointTf:
             raise ValueError("JointTf has nowhere to publish: give it a tf buffer or stream")
         if self._thread is not None:
             return
+        if self._joint_state is None and not self.static_transforms():
+            # No stream to hear from and no edge that stands on its own: there is nothing a loop
+            # here could ever publish, so it does not get one.
+            return
         self._stop.clear()
         if self._joint_state is not None:
             self._unsubscribe = self._joint_state.subscribe(self._received)
