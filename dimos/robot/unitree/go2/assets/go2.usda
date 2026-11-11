@@ -1,0 +1,2540 @@
+#usda 1.0
+(
+    customLayerData = {
+        string creator = "MuJoCo USD Converter v0.9.0"
+    }
+    defaultPrim = "go2"
+    doc = """Generated from Composed Stage of root layer /tmp/claude-1000/-home-dimos/ff9ad774-151d-43c4-9774-fa96d8ad90f5/scratchpad/go2usd/converted/go2.usda
+"""
+    kilogramsPerUnit = 1
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+over "Flattened_Prototype_1"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_1.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_1.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_1.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_1.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_1.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_1.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_1.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_1.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_2"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_2.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_2.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_2.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_2.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_2.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_2.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_2.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_2.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_3"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_3.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_3.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_3.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_3.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_3.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_3.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_3.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_3.inputs:roughness>
+        token outputs:out
+    }
+}
+
+over "Flattened_Prototype_4"
+{
+    def Shader "PreviewSurface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </Flattened_Prototype_4.inputs:color>
+        float inputs:metallic.connect = </Flattened_Prototype_4.inputs:metallic>
+        float inputs:opacity.connect = </Flattened_Prototype_4.inputs:opacity>
+        float inputs:roughness.connect = </Flattened_Prototype_4.inputs:roughness>
+        token outputs:surface
+    }
+
+    def Shader "OpenPBR"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </Flattened_Prototype_4.inputs:color>
+        float inputs:base_metalness.connect = </Flattened_Prototype_4.inputs:metallic>
+        float inputs:geometry_opacity.connect = </Flattened_Prototype_4.inputs:opacity>
+        float inputs:specular_roughness.connect = </Flattened_Prototype_4.inputs:roughness>
+        token outputs:out
+    }
+}
+
+def Xform "go2" (
+    apiSchemas = ["GeomModelAPI"]
+    assetInfo = {
+        string name = "go2"
+    }
+    kind = "component"
+)
+{
+    float3[] extentsHint = [(-0.24186657, -0.162013, -0.0039150002), (0.331958, 0.162013, 0.533834), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (3.4028235e38, 3.4028235e38, 3.4028235e38), (-3.4028235e38, -3.4028235e38, -3.4028235e38), (-0.2394, -0.164, -0.0029999998), (0.34, 0.164, 0.502)]
+
+    def Scope "Geometry"
+    {
+        def Xform "base" (
+            apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
+        )
+        {
+            uniform bool newton:jointsAddMobility = 1
+            point3f physics:centerOfMass = (0.021112, 0, -0.005366)
+            float3 physics:diagonalInertia = (0.107027, 0.0980771, 0.0244531)
+            float physics:mass = 6.921
+            quatf physics:principalAxes = (-0.0005434711, 0.71343505, -0.0017376901, 0.70071906)
+            quatf xformOp:orient = (1, 0, 0, 0)
+            float3 xformOp:scale = (1, 1, 1)
+            double3 xformOp:translate = (0, 0, 0.445)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+            def Mesh "base_0" (
+                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                assetInfo = {
+                    asset identifier = @meshes/base_0.obj@
+                    string version = "sha256:8cdc53719002a5ee737d867904e534a6d6fa930b616bdcc1b3131e577d4e46c0"
+                }
+                prepend references = @meshes/base_0.usdc@
+            )
+            {
+                rel material:binding = </go2/Materials/black>
+                uniform int mjc:group = 2
+                uniform token orientation = "rightHanded"
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-1.66533e-15, 1.51788e-18, 3.40006e-16)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "base_1" (
+                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                assetInfo = {
+                    asset identifier = @meshes/base_1.obj@
+                    string version = "sha256:39d2f4724ff64dd5a0640c308fd98902a2946660a8d033ec8dbf368fd5af0dd6"
+                }
+                prepend references = @meshes/base_1.usdc@
+            )
+            {
+                rel material:binding = </go2/Materials/black>
+                uniform int mjc:group = 2
+                uniform token orientation = "rightHanded"
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-1.66533e-15, 1.21973e-18, 3.40006e-16)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "base_2" (
+                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                assetInfo = {
+                    asset identifier = @meshes/base_2.obj@
+                    string version = "sha256:29cae463f95d678e4ede863c36c9b19b0d356b8340412add10670d70bdcc3095"
+                }
+                prepend references = @meshes/base_2.usdc@
+            )
+            {
+                rel material:binding = </go2/Materials/black>
+                uniform int mjc:group = 2
+                uniform token orientation = "rightHanded"
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "base_3" (
+                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                assetInfo = {
+                    asset identifier = @meshes/base_3.obj@
+                    string version = "sha256:f51ba43bf300e68957a0c1aa83eaf3e4926f4ac7e64a0d6c33ae5d21fcbcf5f6"
+                }
+                prepend references = @meshes/base_3.usdc@
+            )
+            {
+                rel material:binding = </go2/Materials/white>
+                uniform int mjc:group = 2
+                uniform token orientation = "rightHanded"
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-4.92661e-16, -6.59195e-17, -2.70617e-16)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Mesh "base_4" (
+                apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                assetInfo = {
+                    asset identifier = @meshes/base_4.obj@
+                    string version = "sha256:49ddec0129546e5dd2075d5beacf7f207baa2860aeff7626818e64d2efbf3821"
+                }
+                prepend references = @meshes/base_4.usdc@
+            )
+            {
+                rel material:binding = </go2/Materials/gray>
+                uniform int mjc:group = 2
+                uniform token orientation = "rightHanded"
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                uniform token subdivisionScheme = "none"
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-7.49401e-16, 5.85469e-18, 7.69784e-18)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Cube "Box" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+            )
+            {
+                float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                uniform int mjc:condim = 1
+                uniform int mjc:group = 3
+                uniform double[] mjc:solref = [0.02, 1]
+                float newton:contactGap = 0
+                float newton:contactMargin = 0.001
+                float physics:density = 1000
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                uniform token purpose = "guide"
+                double size = 2
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (0.1881, 0.04675, 0.057)
+                double3 xformOp:translate = (0, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Cylinder "Cylinder" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+            )
+            {
+                uniform token axis = "Z"
+                float3[] extent = [(-0.05, -0.05, -0.045), (0.05, 0.05, 0.045)]
+                double height = 0.09
+                rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                uniform int mjc:condim = 1
+                uniform int mjc:group = 3
+                uniform double[] mjc:solref = [0.02, 1]
+                float newton:contactGap = 0
+                float newton:contactMargin = 0.001
+                float physics:density = 1000
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                uniform token purpose = "guide"
+                double radius = 0.05
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.285, 0, 0.01)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Sphere "Sphere" (
+                apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+            )
+            {
+                float3[] extent = [(-0.047, -0.047, -0.047), (0.047, 0.047, 0.047)]
+                rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                uniform int mjc:condim = 1
+                uniform int mjc:group = 3
+                uniform double[] mjc:solref = [0.02, 1]
+                float newton:contactGap = 0
+                float newton:contactMargin = 0.001
+                float physics:density = 1000
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                uniform token purpose = "guide"
+                double radius = 0.047
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.293, 0, -0.06)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Sphere "imu" (
+                apiSchemas = ["MjcSiteAPI", "NewtonSiteAPI"]
+            )
+            {
+                float3[] extent = [(-0.005, -0.005, -0.005), (0.005, 0.005, 0.005)]
+                color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayColor:indices = None
+                float[] primvars:displayOpacity = [1] (
+                    interpolation = "constant"
+                )
+                int[] primvars:displayOpacity:indices = None
+                uniform token purpose = "guide"
+                double radius = 0.005
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-0.02557, 0, 0.04232)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+            }
+
+            def Xform "FL_hip" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (-0.0054, 0.00194, -0.000105)
+                float3 physics:diagonalInertia = (0.00088403, 0.000596003, 0.000479967)
+                float physics:mass = 0.678
+                quatf physics:principalAxes = (0.49701393, 0.49924493, 0.50546193, 0.49823695)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.1934, 0.0465, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "hip_0" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_0.obj@
+                        string version = "sha256:cc29932ab4d251ce3f72389ec4c1f757e44eee138b87e772b648c2bc76b506cd"
+                    }
+                    prepend references = @meshes/hip_0.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/metal>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Mesh "hip_1" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_1.obj@
+                        string version = "sha256:3fd5bd9b2ef6abe622c0739d3c67eaa1679b19b47132951972c4892a779ea7cf"
+                    }
+                    prepend references = @meshes/hip_1.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/gray>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.046, -0.046, -0.02), (0.046, 0.046, 0.02)]
+                    double height = 0.04
+                    rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                    uniform int mjc:condim = 1
+                    uniform int mjc:group = 3
+                    uniform double[] mjc:solref = [0.02, 1]
+                    float newton:contactGap = 0
+                    float newton:contactMargin = 0.001
+                    float physics:density = 1000
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    uniform token purpose = "guide"
+                    double radius = 0.046
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0.08, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "FL_thigh" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.00374, -0.0223, -0.0327)
+                    float3 physics:diagonalInertia = (0.00594973, 0.00584149, 0.000878787)
+                    float physics:mass = 1.152
+                    quatf physics:principalAxes = (0.82953286, 0.08476349, -0.020063197, 0.5516229)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0.0955, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "thigh_0" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_0.obj@
+                            string version = "sha256:bb3edfe6a7b04f4f4dff1ce7b05d426ddce941e276cc6372fb542055893c71ec"
+                        }
+                        prepend references = @meshes/thigh_0.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/metal>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Mesh "thigh_1" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_1.obj@
+                            string version = "sha256:3a631822f9f7d2114b1b79dcdff5abf95103630abb7d91d1f3b8b18117132ed2"
+                        }
+                        prepend references = @meshes/thigh_1.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/gray>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                        uniform int mjc:condim = 1
+                        uniform int mjc:group = 3
+                        uniform double[] mjc:solref = [0.02, 1]
+                        float newton:contactGap = 0
+                        float newton:contactMargin = 0.001
+                        float physics:density = 1000
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        uniform token purpose = "guide"
+                        double size = 2
+                        quatf xformOp:orient = (0.7071068, 0, 0.7071067, 0)
+                        float3 xformOp:scale = (0.1065, 0.01225, 0.017)
+                        double3 xformOp:translate = (0, 0, -0.1065)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "FL_calf" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.00629595, -0.000622121, -0.141417)
+                        float3 physics:diagonalInertia = (0.0014901, 0.00146356, 0.0000531397)
+                        float physics:mass = 0.241352
+                        quatf physics:principalAxes = (0.7106718, 0.0015409894, -0.0045008687, 0.7035078)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, -0.213)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "calf_0" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_0.obj@
+                                string version = "sha256:4a818cd563c5b7e2a271504442d05fd777d38cbaa028d4a10ad29c9f87bb355e"
+                            }
+                            prepend references = @meshes/calf_0.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/gray>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-1.99493e-17, 2.30393e-19, 3.33067e-16)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "calf_1" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_1.obj@
+                                string version = "sha256:51950c3a153ae3208592df86ea11c9d6756f8f645ebca5caf6910c61aeb03817"
+                            }
+                            prepend references = @meshes/calf_1.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (4.94396e-17, -1.78893e-18, 1.94289e-15)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.012, -0.012, -0.06), (0.012, 0.012, 0.06)]
+                            double height = 0.12
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.012
+                            quatf xformOp:orient = (0.99449265, 0, -0.10480634, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.008, 0, -0.06)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder_1" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                            displayName = "Cylinder"
+                            uiHints = {
+                                string displayName = "Cylinder"
+                            }
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.011, -0.011, -0.0325), (0.011, 0.011, 0.0325)]
+                            double height = 0.065
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.011
+                            quatf xformOp:orient = (0.99968755, 0, 0.02499595, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.02, 0, -0.148)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "foot" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/foot.obj@
+                                string version = "sha256:df9e78a7c0110d02557439010f2a5f11f0ec4fd907b32704145dbd6aa7affc0b"
+                            }
+                            prepend references = @meshes/foot.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Sphere "FL" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-0.022, -0.022, -0.022), (0.022, 0.022, 0.022)]
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial_1>
+                            uniform int mjc:condim = 6
+                            uniform int mjc:group = 3
+                            uniform int mjc:priority = 1
+                            uniform double[] mjc:solimp = [0.015, 1, 0.022, 0.5, 2]
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.022
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-0.002, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def PhysicsRevoluteJoint "FL_calf_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                        )
+                        {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
+                            float newton:armature = 0.01
+                            float newton:damping = 0.034906585
+                            float newton:friction = 0.2
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </go2/Geometry/base/FL_hip/FL_thigh>
+                            rel physics:body1 = </go2/Geometry/base/FL_hip/FL_thigh/FL_calf>
+                            point3f physics:localPos0 = (0, 0, -0.213)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (1, 0, 0, 0)
+                            quatf physics:localRot1 = (1, 0, 0, 0)
+                            float physics:lowerLimit = -155.99922
+                            float physics:upperLimit = -48.00011
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "FL_thigh_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                    )
+                    {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
+                        float newton:armature = 0.01
+                        float newton:damping = 0.034906585
+                        float newton:friction = 0.2
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </go2/Geometry/base/FL_hip>
+                        rel physics:body1 = </go2/Geometry/base/FL_hip/FL_thigh>
+                        point3f physics:localPos0 = (0, 0.0955, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (1, 0, 0, 0)
+                        quatf physics:localRot1 = (1, 0, 0, 0)
+                        float physics:lowerLimit = -90.00021
+                        float physics:upperLimit = 200.00238
+                    }
+                }
+
+                def PhysicsRevoluteJoint "FL_hip_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                )
+                {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
+                    float newton:armature = 0.01
+                    float newton:damping = 0.034906585
+                    float newton:friction = 0.2
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </go2/Geometry/base>
+                    rel physics:body1 = </go2/Geometry/base/FL_hip>
+                    point3f physics:localPos0 = (0.1934, 0.0465, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (1, 0, 0, 0)
+                    quatf physics:localRot1 = (1, 0, 0, 0)
+                    float physics:lowerLimit = -60.00014
+                    float physics:upperLimit = 60.00014
+                }
+            }
+
+            def Xform "FR_hip" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (-0.0054, -0.00194, -0.000105)
+                float3 physics:diagonalInertia = (0.00088403, 0.000596003, 0.000479967)
+                float physics:mass = 0.678
+                quatf physics:principalAxes = (0.49823695, 0.50546193, 0.49924493, 0.49701393)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (0.1934, -0.0465, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "hip_0" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_0.obj@
+                        string version = "sha256:cc29932ab4d251ce3f72389ec4c1f757e44eee138b87e772b648c2bc76b506cd"
+                    }
+                    prepend references = @meshes/hip_0.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/metal>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (0.0000463268, 1, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Mesh "hip_1" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_1.obj@
+                        string version = "sha256:3fd5bd9b2ef6abe622c0739d3c67eaa1679b19b47132951972c4892a779ea7cf"
+                    }
+                    prepend references = @meshes/hip_1.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/gray>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (0.0000463268, 1, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.046, -0.046, -0.02), (0.046, 0.046, 0.02)]
+                    double height = 0.04
+                    rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                    uniform int mjc:condim = 1
+                    uniform int mjc:group = 3
+                    uniform double[] mjc:solref = [0.02, 1]
+                    float newton:contactGap = 0
+                    float newton:contactMargin = 0.001
+                    float physics:density = 1000
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    uniform token purpose = "guide"
+                    double radius = 0.046
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, -0.08, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "FR_thigh" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.00374, 0.0223, -0.0327)
+                    float3 physics:diagonalInertia = (0.00594973, 0.00584149, 0.000878787)
+                    float physics:mass = 1.152
+                    quatf physics:principalAxes = (0.5516229, -0.020063197, 0.08476349, 0.82953286)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, -0.0955, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "thigh_mirror_0" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_mirror_0.obj@
+                            string version = "sha256:07abaedce761f1dd48647384ac14ba1959276bc78d5a2a62051e8f1c6093933b"
+                        }
+                        prepend references = @meshes/thigh_mirror_0.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/metal>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Mesh "thigh_mirror_1" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_mirror_1.obj@
+                            string version = "sha256:db984a3e983eabbc9b38183427cca9ab0bb3bdb049f9eab030e06edda36579d6"
+                        }
+                        prepend references = @meshes/thigh_mirror_1.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/gray>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                        uniform int mjc:condim = 1
+                        uniform int mjc:group = 3
+                        uniform double[] mjc:solref = [0.02, 1]
+                        float newton:contactGap = 0
+                        float newton:contactMargin = 0.001
+                        float physics:density = 1000
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        uniform token purpose = "guide"
+                        double size = 2
+                        quatf xformOp:orient = (0.7071068, 0, 0.7071067, 0)
+                        float3 xformOp:scale = (0.1065, 0.01225, 0.017)
+                        double3 xformOp:translate = (0, 0, -0.1065)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "FR_calf" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.00629595, 0.000622121, -0.141417)
+                        float3 physics:diagonalInertia = (0.0014901, 0.00146356, 0.0000531397)
+                        float physics:mass = 0.241352
+                        quatf physics:principalAxes = (0.70350766, -0.004500868, 0.0015409893, 0.71067166)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, -0.213)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "calf_mirror_0" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_mirror_0.obj@
+                                string version = "sha256:6dc0406207a1c08a5953fd5962aca1a270fd06593d30d100205e05c1b32d4af2"
+                            }
+                            prepend references = @meshes/calf_mirror_0.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/gray>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-1.64799e-17, -1.89735e-19, 2.77556e-16)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "calf_mirror_1" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_mirror_1.obj@
+                                string version = "sha256:f84f5af90b914633165beb3a5493ee499169144c5797dcf04c6eb5842f74b31a"
+                            }
+                            prepend references = @meshes/calf_mirror_1.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (4.94396e-17, 1.78893e-18, 1.94289e-15)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.013, -0.013, -0.06), (0.013, 0.013, 0.06)]
+                            double height = 0.12
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.013
+                            quatf xformOp:orient = (0.9950042, 0, -0.0998333, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.01, 0, -0.06)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder_1" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                            displayName = "Cylinder"
+                            uiHints = {
+                                string displayName = "Cylinder"
+                            }
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.011, -0.011, -0.0325), (0.011, 0.011, 0.0325)]
+                            double height = 0.065
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.011
+                            quatf xformOp:orient = (0.99968755, 0, 0.02499595, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.02, 0, -0.148)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "foot" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/foot.obj@
+                                string version = "sha256:df9e78a7c0110d02557439010f2a5f11f0ec4fd907b32704145dbd6aa7affc0b"
+                            }
+                            prepend references = @meshes/foot.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Sphere "FR" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-0.022, -0.022, -0.022), (0.022, 0.022, 0.022)]
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial_1>
+                            uniform int mjc:condim = 6
+                            uniform int mjc:group = 3
+                            uniform int mjc:priority = 1
+                            uniform double[] mjc:solimp = [0.015, 1, 0.022, 0.5, 2]
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.022
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-0.002, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def PhysicsRevoluteJoint "FR_calf_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                        )
+                        {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
+                            float newton:armature = 0.01
+                            float newton:damping = 0.034906585
+                            float newton:friction = 0.2
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </go2/Geometry/base/FR_hip/FR_thigh>
+                            rel physics:body1 = </go2/Geometry/base/FR_hip/FR_thigh/FR_calf>
+                            point3f physics:localPos0 = (0, 0, -0.213)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (1, 0, 0, 0)
+                            quatf physics:localRot1 = (1, 0, 0, 0)
+                            float physics:lowerLimit = -155.99922
+                            float physics:upperLimit = -48.00011
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "FR_thigh_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                    )
+                    {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
+                        float newton:armature = 0.01
+                        float newton:damping = 0.034906585
+                        float newton:friction = 0.2
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </go2/Geometry/base/FR_hip>
+                        rel physics:body1 = </go2/Geometry/base/FR_hip/FR_thigh>
+                        point3f physics:localPos0 = (0, -0.0955, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (1, 0, 0, 0)
+                        quatf physics:localRot1 = (1, 0, 0, 0)
+                        float physics:lowerLimit = -90.00021
+                        float physics:upperLimit = 200.00238
+                    }
+                }
+
+                def PhysicsRevoluteJoint "FR_hip_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                )
+                {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
+                    float newton:armature = 0.01
+                    float newton:damping = 0.034906585
+                    float newton:friction = 0.2
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </go2/Geometry/base>
+                    rel physics:body1 = </go2/Geometry/base/FR_hip>
+                    point3f physics:localPos0 = (0.1934, -0.0465, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (1, 0, 0, 0)
+                    quatf physics:localRot1 = (1, 0, 0, 0)
+                    float physics:lowerLimit = -60.00014
+                    float physics:upperLimit = 60.00014
+                }
+            }
+
+            def Xform "RL_hip" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (0.0054, 0.00194, -0.000105)
+                float3 physics:diagonalInertia = (0.00088403, 0.000596003, 0.000479967)
+                float physics:mass = 0.678
+                quatf physics:principalAxes = (0.5054619, 0.4982369, 0.49701387, 0.49924487)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-0.1934, 0.0465, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "hip_0" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_0.obj@
+                        string version = "sha256:cc29932ab4d251ce3f72389ec4c1f757e44eee138b87e772b648c2bc76b506cd"
+                    }
+                    prepend references = @meshes/hip_0.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/metal>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (0.0000463268, 0, 1, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Mesh "hip_1" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_1.obj@
+                        string version = "sha256:3fd5bd9b2ef6abe622c0739d3c67eaa1679b19b47132951972c4892a779ea7cf"
+                    }
+                    prepend references = @meshes/hip_1.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/gray>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (0.0000463268, 0, 1, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.046, -0.046, -0.02), (0.046, 0.046, 0.02)]
+                    double height = 0.04
+                    rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                    uniform int mjc:condim = 1
+                    uniform int mjc:group = 3
+                    uniform double[] mjc:solref = [0.02, 1]
+                    float newton:contactGap = 0
+                    float newton:contactMargin = 0.001
+                    float physics:density = 1000
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    uniform token purpose = "guide"
+                    double radius = 0.046
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0.08, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "RL_thigh" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.00374, -0.0223, -0.0327)
+                    float3 physics:diagonalInertia = (0.00594973, 0.00584149, 0.000878787)
+                    float physics:mass = 1.152
+                    quatf physics:principalAxes = (0.82953286, 0.08476349, -0.020063197, 0.5516229)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0.0955, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "thigh_0" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_0.obj@
+                            string version = "sha256:bb3edfe6a7b04f4f4dff1ce7b05d426ddce941e276cc6372fb542055893c71ec"
+                        }
+                        prepend references = @meshes/thigh_0.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/metal>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Mesh "thigh_1" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_1.obj@
+                            string version = "sha256:3a631822f9f7d2114b1b79dcdff5abf95103630abb7d91d1f3b8b18117132ed2"
+                        }
+                        prepend references = @meshes/thigh_1.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/gray>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                        uniform int mjc:condim = 1
+                        uniform int mjc:group = 3
+                        uniform double[] mjc:solref = [0.02, 1]
+                        float newton:contactGap = 0
+                        float newton:contactMargin = 0.001
+                        float physics:density = 1000
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        uniform token purpose = "guide"
+                        double size = 2
+                        quatf xformOp:orient = (0.7071068, 0, 0.7071067, 0)
+                        float3 xformOp:scale = (0.1065, 0.01225, 0.017)
+                        double3 xformOp:translate = (0, 0, -0.1065)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "RL_calf" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.00629595, -0.000622121, -0.141417)
+                        float3 physics:diagonalInertia = (0.0014901, 0.00146356, 0.0000531397)
+                        float physics:mass = 0.241352
+                        quatf physics:principalAxes = (0.7106718, 0.0015409894, -0.0045008687, 0.7035078)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, -0.213)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "calf_0" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_0.obj@
+                                string version = "sha256:4a818cd563c5b7e2a271504442d05fd777d38cbaa028d4a10ad29c9f87bb355e"
+                            }
+                            prepend references = @meshes/calf_0.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/gray>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-1.99493e-17, 2.30393e-19, 3.33067e-16)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "calf_1" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_1.obj@
+                                string version = "sha256:51950c3a153ae3208592df86ea11c9d6756f8f645ebca5caf6910c61aeb03817"
+                            }
+                            prepend references = @meshes/calf_1.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (4.94396e-17, -1.78893e-18, 1.94289e-15)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.013, -0.013, -0.06), (0.013, 0.013, 0.06)]
+                            double height = 0.12
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.013
+                            quatf xformOp:orient = (0.9950042, 0, -0.0998333, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.01, 0, -0.06)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder_1" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                            displayName = "Cylinder"
+                            uiHints = {
+                                string displayName = "Cylinder"
+                            }
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.011, -0.011, -0.0325), (0.011, 0.011, 0.0325)]
+                            double height = 0.065
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.011
+                            quatf xformOp:orient = (0.99968755, 0, 0.02499595, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.02, 0, -0.148)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "foot" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/foot.obj@
+                                string version = "sha256:df9e78a7c0110d02557439010f2a5f11f0ec4fd907b32704145dbd6aa7affc0b"
+                            }
+                            prepend references = @meshes/foot.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Sphere "RL" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-0.022, -0.022, -0.022), (0.022, 0.022, 0.022)]
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial_1>
+                            uniform int mjc:condim = 6
+                            uniform int mjc:group = 3
+                            uniform int mjc:priority = 1
+                            uniform double[] mjc:solimp = [0.015, 1, 0.022, 0.5, 2]
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.022
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-0.002, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def PhysicsRevoluteJoint "RL_calf_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                        )
+                        {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
+                            float newton:armature = 0.01
+                            float newton:damping = 0.034906585
+                            float newton:friction = 0.2
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </go2/Geometry/base/RL_hip/RL_thigh>
+                            rel physics:body1 = </go2/Geometry/base/RL_hip/RL_thigh/RL_calf>
+                            point3f physics:localPos0 = (0, 0, -0.213)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (1, 0, 0, 0)
+                            quatf physics:localRot1 = (1, 0, 0, 0)
+                            float physics:lowerLimit = -155.99922
+                            float physics:upperLimit = -48.00011
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "RL_thigh_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                    )
+                    {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
+                        float newton:armature = 0.01
+                        float newton:damping = 0.034906585
+                        float newton:friction = 0.2
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </go2/Geometry/base/RL_hip>
+                        rel physics:body1 = </go2/Geometry/base/RL_hip/RL_thigh>
+                        point3f physics:localPos0 = (0, 0.0955, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (1, 0, 0, 0)
+                        quatf physics:localRot1 = (1, 0, 0, 0)
+                        float physics:lowerLimit = -30.00007
+                        float physics:upperLimit = 260.00253
+                    }
+                }
+
+                def PhysicsRevoluteJoint "RL_hip_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                )
+                {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
+                    float newton:armature = 0.01
+                    float newton:damping = 0.034906585
+                    float newton:friction = 0.2
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </go2/Geometry/base>
+                    rel physics:body1 = </go2/Geometry/base/RL_hip>
+                    point3f physics:localPos0 = (-0.1934, 0.0465, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (1, 0, 0, 0)
+                    quatf physics:localRot1 = (1, 0, 0, 0)
+                    float physics:lowerLimit = -60.00014
+                    float physics:upperLimit = 60.00014
+                }
+            }
+
+            def Xform "RR_hip" (
+                apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+            )
+            {
+                point3f physics:centerOfMass = (0.0054, -0.00194, -0.000105)
+                float3 physics:diagonalInertia = (0.00088403, 0.000596003, 0.000479967)
+                float physics:mass = 0.678
+                quatf physics:principalAxes = (0.49924493, 0.49701393, 0.49823695, 0.50546193)
+                quatf xformOp:orient = (1, 0, 0, 0)
+                float3 xformOp:scale = (1, 1, 1)
+                double3 xformOp:translate = (-0.1934, -0.0465, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                def Mesh "hip_0" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_0.obj@
+                        string version = "sha256:cc29932ab4d251ce3f72389ec4c1f757e44eee138b87e772b648c2bc76b506cd"
+                    }
+                    prepend references = @meshes/hip_0.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/metal>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (-2.1461701e-9, -0.0000463268, -0.0000463268, 1)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Mesh "hip_1" (
+                    apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                    assetInfo = {
+                        asset identifier = @meshes/hip_1.obj@
+                        string version = "sha256:3fd5bd9b2ef6abe622c0739d3c67eaa1679b19b47132951972c4892a779ea7cf"
+                    }
+                    prepend references = @meshes/hip_1.usdc@
+                )
+                {
+                    rel material:binding = </go2/Materials/gray>
+                    uniform int mjc:group = 2
+                    uniform token orientation = "rightHanded"
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    uniform token subdivisionScheme = "none"
+                    quatf xformOp:orient = (-2.1461701e-9, -0.0000463268, -0.0000463268, 1)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, 0, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Cylinder "Cylinder" (
+                    apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                )
+                {
+                    uniform token axis = "Z"
+                    float3[] extent = [(-0.046, -0.046, -0.02), (0.046, 0.046, 0.02)]
+                    double height = 0.04
+                    rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                    uniform int mjc:condim = 1
+                    uniform int mjc:group = 3
+                    uniform double[] mjc:solref = [0.02, 1]
+                    float newton:contactGap = 0
+                    float newton:contactMargin = 0.001
+                    float physics:density = 1000
+                    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayColor:indices = None
+                    float[] primvars:displayOpacity = [1] (
+                        interpolation = "constant"
+                    )
+                    int[] primvars:displayOpacity:indices = None
+                    uniform token purpose = "guide"
+                    double radius = 0.046
+                    quatf xformOp:orient = (0.7071068, 0.7071067, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, -0.08, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                }
+
+                def Xform "RR_thigh" (
+                    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                )
+                {
+                    point3f physics:centerOfMass = (-0.00374, 0.0223, -0.0327)
+                    float3 physics:diagonalInertia = (0.00594973, 0.00584149, 0.000878787)
+                    float physics:mass = 1.152
+                    quatf physics:principalAxes = (0.5516229, -0.020063197, 0.08476349, 0.82953286)
+                    quatf xformOp:orient = (1, 0, 0, 0)
+                    float3 xformOp:scale = (1, 1, 1)
+                    double3 xformOp:translate = (0, -0.0955, 0)
+                    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                    def Mesh "thigh_mirror_0" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_mirror_0.obj@
+                            string version = "sha256:07abaedce761f1dd48647384ac14ba1959276bc78d5a2a62051e8f1c6093933b"
+                        }
+                        prepend references = @meshes/thigh_mirror_0.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/metal>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Mesh "thigh_mirror_1" (
+                        apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                        assetInfo = {
+                            asset identifier = @meshes/thigh_mirror_1.obj@
+                            string version = "sha256:db984a3e983eabbc9b38183427cca9ab0bb3bdb049f9eab030e06edda36579d6"
+                        }
+                        prepend references = @meshes/thigh_mirror_1.usdc@
+                    )
+                    {
+                        rel material:binding = </go2/Materials/gray>
+                        uniform int mjc:group = 2
+                        uniform token orientation = "rightHanded"
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        uniform token subdivisionScheme = "none"
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, 0)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Cube "Box" (
+                        apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                    )
+                    {
+                        float3[] extent = [(-1, -1, -1), (1, 1, 1)]
+                        rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                        uniform int mjc:condim = 1
+                        uniform int mjc:group = 3
+                        uniform double[] mjc:solref = [0.02, 1]
+                        float newton:contactGap = 0
+                        float newton:contactMargin = 0.001
+                        float physics:density = 1000
+                        color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayColor:indices = None
+                        float[] primvars:displayOpacity = [1] (
+                            interpolation = "constant"
+                        )
+                        int[] primvars:displayOpacity:indices = None
+                        uniform token purpose = "guide"
+                        double size = 2
+                        quatf xformOp:orient = (0.7071068, 0, 0.7071067, 0)
+                        float3 xformOp:scale = (0.1065, 0.01225, 0.017)
+                        double3 xformOp:translate = (0, 0, -0.1065)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                    }
+
+                    def Xform "RR_calf" (
+                        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+                    )
+                    {
+                        point3f physics:centerOfMass = (0.00629595, 0.000622121, -0.141417)
+                        float3 physics:diagonalInertia = (0.0014901, 0.00146356, 0.0000531397)
+                        float physics:mass = 0.241352
+                        quatf physics:principalAxes = (0.70350766, -0.004500868, 0.0015409893, 0.71067166)
+                        quatf xformOp:orient = (1, 0, 0, 0)
+                        float3 xformOp:scale = (1, 1, 1)
+                        double3 xformOp:translate = (0, 0, -0.213)
+                        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+                        def Mesh "calf_mirror_0" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_mirror_0.obj@
+                                string version = "sha256:6dc0406207a1c08a5953fd5962aca1a270fd06593d30d100205e05c1b32d4af2"
+                            }
+                            prepend references = @meshes/calf_mirror_0.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/gray>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-1.64799e-17, -1.89735e-19, 2.77556e-16)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "calf_mirror_1" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/calf_mirror_1.obj@
+                                string version = "sha256:f84f5af90b914633165beb3a5493ee499169144c5797dcf04c6eb5842f74b31a"
+                            }
+                            prepend references = @meshes/calf_mirror_1.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (4.94396e-17, 1.78893e-18, 1.94289e-15)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.013, -0.013, -0.06), (0.013, 0.013, 0.06)]
+                            double height = 0.12
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.013
+                            quatf xformOp:orient = (0.9950042, 0, -0.0998333, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.01, 0, -0.06)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Cylinder "Cylinder_1" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                            displayName = "Cylinder"
+                            uiHints = {
+                                string displayName = "Cylinder"
+                            }
+                        )
+                        {
+                            uniform token axis = "Z"
+                            float3[] extent = [(-0.011, -0.011, -0.0325), (0.011, 0.011, 0.0325)]
+                            double height = 0.065
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial>
+                            uniform int mjc:condim = 1
+                            uniform int mjc:group = 3
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.011
+                            quatf xformOp:orient = (0.99968755, 0, 0.02499595, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0.02, 0, -0.148)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Mesh "foot" (
+                            apiSchemas = ["MaterialBindingAPI", "MjcImageableAPI"]
+                            assetInfo = {
+                                asset identifier = @meshes/foot.obj@
+                                string version = "sha256:df9e78a7c0110d02557439010f2a5f11f0ec4fd907b32704145dbd6aa7affc0b"
+                            }
+                            prepend references = @meshes/foot.usdc@
+                        )
+                        {
+                            rel material:binding = </go2/Materials/black>
+                            uniform int mjc:group = 2
+                            uniform token orientation = "rightHanded"
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            uniform token subdivisionScheme = "none"
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (0, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def Sphere "RR" (
+                            apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI", "MjcCollisionAPI", "PhysicsMassAPI", "MaterialBindingAPI"]
+                        )
+                        {
+                            float3[] extent = [(-0.022, -0.022, -0.022), (0.022, 0.022, 0.022)]
+                            rel material:binding:physics = </go2/Physics/PhysicsMaterial_1>
+                            uniform int mjc:condim = 6
+                            uniform int mjc:group = 3
+                            uniform int mjc:priority = 1
+                            uniform double[] mjc:solimp = [0.015, 1, 0.022, 0.5, 2]
+                            uniform double[] mjc:solref = [0.02, 1]
+                            float newton:contactGap = 0
+                            float newton:contactMargin = 0.001
+                            float physics:density = 1000
+                            color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayColor:indices = None
+                            float[] primvars:displayOpacity = [1] (
+                                interpolation = "constant"
+                            )
+                            int[] primvars:displayOpacity:indices = None
+                            uniform token purpose = "guide"
+                            double radius = 0.022
+                            quatf xformOp:orient = (1, 0, 0, 0)
+                            float3 xformOp:scale = (1, 1, 1)
+                            double3 xformOp:translate = (-0.002, 0, -0.213)
+                            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+                        }
+
+                        def PhysicsRevoluteJoint "RR_calf_joint" (
+                            apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                        )
+                        {
+                            float drive:angular:physics:damping = 0.5
+                            float drive:angular:physics:stiffness = 20
+                            float drive:angular:physics:targetPosition = -1.5
+                            float newton:armature = 0.01
+                            float newton:damping = 0.034906585
+                            float newton:friction = 0.2
+                            uniform token physics:axis = "Y"
+                            rel physics:body0 = </go2/Geometry/base/RR_hip/RR_thigh>
+                            rel physics:body1 = </go2/Geometry/base/RR_hip/RR_thigh/RR_calf>
+                            point3f physics:localPos0 = (0, 0, -0.213)
+                            point3f physics:localPos1 = (0, 0, 0)
+                            quatf physics:localRot0 = (1, 0, 0, 0)
+                            quatf physics:localRot1 = (1, 0, 0, 0)
+                            float physics:lowerLimit = -155.99922
+                            float physics:upperLimit = -48.00011
+                        }
+                    }
+
+                    def PhysicsRevoluteJoint "RR_thigh_joint" (
+                        apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                    )
+                    {
+                        float drive:angular:physics:damping = 0.5
+                        float drive:angular:physics:stiffness = 20
+                        float drive:angular:physics:targetPosition = 0.8
+                        float newton:armature = 0.01
+                        float newton:damping = 0.034906585
+                        float newton:friction = 0.2
+                        uniform token physics:axis = "Y"
+                        rel physics:body0 = </go2/Geometry/base/RR_hip>
+                        rel physics:body1 = </go2/Geometry/base/RR_hip/RR_thigh>
+                        point3f physics:localPos0 = (0, -0.0955, 0)
+                        point3f physics:localPos1 = (0, 0, 0)
+                        quatf physics:localRot0 = (1, 0, 0, 0)
+                        quatf physics:localRot1 = (1, 0, 0, 0)
+                        float physics:lowerLimit = -30.00007
+                        float physics:upperLimit = 260.00253
+                    }
+                }
+
+                def PhysicsRevoluteJoint "RR_hip_joint" (
+                    apiSchemas = ["MjcJointAPI", "NewtonJointAPI", "PhysicsDriveAPI:angular"]
+                )
+                {
+                    float drive:angular:physics:damping = 0.5
+                    float drive:angular:physics:stiffness = 20
+                    float drive:angular:physics:targetPosition = 0
+                    float newton:armature = 0.01
+                    float newton:damping = 0.034906585
+                    float newton:friction = 0.2
+                    uniform token physics:axis = "X"
+                    rel physics:body0 = </go2/Geometry/base>
+                    rel physics:body1 = </go2/Geometry/base/RR_hip>
+                    point3f physics:localPos0 = (-0.1934, -0.0465, 0)
+                    point3f physics:localPos1 = (0, 0, 0)
+                    quatf physics:localRot0 = (1, 0, 0, 0)
+                    quatf physics:localRot1 = (1, 0, 0, 0)
+                    float physics:lowerLimit = -60.00014
+                    float physics:upperLimit = 60.00014
+                }
+            }
+        }
+    }
+
+    def Scope "Materials"
+    {
+        def Material "black" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_3>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0, 0, 0) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </go2/Materials/black/OpenPBR.outputs:out>
+            token outputs:surface.connect = </go2/Materials/black/PreviewSurface.outputs:surface>
+        }
+
+        def Material "white" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_1>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0.99999994, 1, 0.9999999) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </go2/Materials/white/OpenPBR.outputs:out>
+            token outputs:surface.connect = </go2/Materials/white/PreviewSurface.outputs:surface>
+        }
+
+        def Material "gray" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_4>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0.40874615, 0.43727827, 0.5611312) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </go2/Materials/gray/OpenPBR.outputs:out>
+            token outputs:surface.connect = </go2/Materials/gray/PreviewSurface.outputs:surface>
+        }
+
+        def Material "metal" (
+            apiSchemas = ["MaterialXConfigAPI"]
+            instanceable = true
+            add references = </Flattened_Prototype_2>
+        )
+        {
+            string config:mtlx:version = "1.39"
+            color3f inputs:color = (0.7874123, 0.8900055, 0.8900054) (
+                limits = {
+                    dictionary hard = {
+                        float3 maximum = (1, 1, 1)
+                        float3 minimum = (0, 0, 0)
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1, 1, 1"
+                    string uimin = "0, 0, 0"
+                }
+            )
+            float inputs:metallic = 0 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:opacity = 1 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            float inputs:roughness = 0.5 (
+                limits = {
+                    dictionary hard = {
+                        float maximum = 1
+                        float minimum = 0
+                    }
+                }
+                sdrMetadata = {
+                    string uimax = "1"
+                    string uimin = "0"
+                }
+            )
+            token outputs:mtlx:surface.connect = </go2/Materials/metal/OpenPBR.outputs:out>
+            token outputs:surface.connect = </go2/Materials/metal/PreviewSurface.outputs:surface>
+        }
+    }
+
+    def Scope "Physics"
+    {
+        def Material "PhysicsMaterial" (
+            apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+        )
+        {
+            float newton:contactDamping = 100
+            float newton:contactStiffness = 2500
+            float newton:rollingFriction = 0.0001
+            float newton:torsionalFriction = 0.005
+            float physics:dynamicFriction = 0.6
+            float physics:staticFriction = 0.6
+        }
+
+        def Material "PhysicsMaterial_1" (
+            apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]
+        )
+        {
+            float newton:contactDamping = 100
+            float newton:contactStiffness = 2500
+            float newton:rollingFriction = 0.01
+            float newton:torsionalFriction = 0.02
+            float physics:dynamicFriction = 0.8
+            float physics:staticFriction = 0.8
+        }
+
+        def MjcActuator "FL_hip"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/FL_hip/FL_hip_joint>
+        }
+
+        def MjcActuator "FL_thigh"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/FL_hip/FL_thigh/FL_thigh_joint>
+        }
+
+        def MjcActuator "FL_calf"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 45.43
+            uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/FL_hip/FL_thigh/FL_calf/FL_calf_joint>
+        }
+
+        def MjcActuator "FR_hip"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/FR_hip/FR_hip_joint>
+        }
+
+        def MjcActuator "FR_thigh"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/FR_hip/FR_thigh/FR_thigh_joint>
+        }
+
+        def MjcActuator "FR_calf"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 45.43
+            uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/FR_hip/FR_thigh/FR_calf/FR_calf_joint>
+        }
+
+        def MjcActuator "RL_hip"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/RL_hip/RL_hip_joint>
+        }
+
+        def MjcActuator "RL_thigh"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/RL_hip/RL_thigh/RL_thigh_joint>
+        }
+
+        def MjcActuator "RL_calf"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 45.43
+            uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/RL_hip/RL_thigh/RL_calf/RL_calf_joint>
+        }
+
+        def MjcActuator "RR_hip"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/RR_hip/RR_hip_joint>
+        }
+
+        def MjcActuator "RR_thigh"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 23.7
+            uniform double mjc:ctrlRange:min = -23.7
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 23.7
+            uniform double mjc:forceRange:min = -23.7
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/RR_hip/RR_thigh/RR_thigh_joint>
+        }
+
+        def MjcActuator "RR_calf"
+        {
+            uniform double[] mjc:biasPrm = [0, -20, -0.5, 0, 0, 0, 0, 0, 0, 0]
+            uniform token mjc:biasType = "affine"
+            uniform token mjc:ctrlLimited = "false"
+            uniform double mjc:ctrlRange:max = 45.43
+            uniform double mjc:ctrlRange:min = -45.43
+            uniform token mjc:forceLimited = "true"
+            uniform double mjc:forceRange:max = 45.43
+            uniform double mjc:forceRange:min = -45.43
+            uniform double[] mjc:gainPrm = [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            rel mjc:target = </go2/Geometry/base/RR_hip/RR_thigh/RR_calf/RR_calf_joint>
+        }
+    }
+}
+
+def PhysicsScene "PhysicsScene" (
+    apiSchemas = ["NewtonSceneAPI", "MjcSceneAPI"]
+)
+{
+    uniform token mjc:compiler:angle = "radian"
+    uniform token mjc:option:cone = "elliptic"
+    uniform double mjc:option:impratio = 100
+    uniform int newton:maxSolverIterations = 100
+    uniform int newton:timeStepsPerSecond = 500
+    vector3f physics:gravityDirection = (0, 0, -1)
+    float physics:gravityMagnitude = 9.81
+}
