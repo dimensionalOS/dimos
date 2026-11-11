@@ -13,62 +13,36 @@
 # limitations under the License.
 
 from copy import deepcopy
-from typing import TypeVar
 
-from dimos_messages.geometry_msgs.msg import Point
-from dimos_messages.nav_msgs.msg import OccupancyGrid
 import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
 from dimos.message_utils import occupancy as occupancy_utils
 from dimos.message_utils.occupancy import CostValues
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyOccupancyGrid
-
-# The grid algorithms below run on both generated CDR messages and the legacy
-# ``dimos.msgs`` values while consumers migrate layer by layer. These helpers
-# keep the caller's own grid family: a legacy caller receives a legacy grid, a
-# generated caller a generated one.
-_GridT = TypeVar("_GridT", LegacyOccupancyGrid, OccupancyGrid)
+from dimos_messages.geometry_msgs.msg import Point, Vector3
+from dimos_messages.nav_msgs.msg import OccupancyGrid
 
 
-def _grid_values(message: LegacyOccupancyGrid | OccupancyGrid) -> NDArray[np.int8]:
-    if isinstance(message, LegacyOccupancyGrid):
-        return message.grid
+def _grid_values(message: OccupancyGrid) -> NDArray[np.int8]:
     return occupancy_utils.view(message)
 
 
-def _grid_coordinates(
-    message: LegacyOccupancyGrid | OccupancyGrid, point: Point | Vector3
-) -> tuple[float, float]:
-    if isinstance(message, LegacyOccupancyGrid):
-        result = message.world_to_grid((point.x, point.y, point.z))
-        return result.x, result.y
+def _grid_coordinates(message: OccupancyGrid, point: Point | Vector3) -> tuple[float, float]:
     return occupancy_utils.world_to_grid(message, Point(x=point.x, y=point.y, z=point.z))
 
 
-def _with_grid(message: _GridT, cells: NDArray[np.int8]) -> _GridT:
-    if isinstance(message, LegacyOccupancyGrid):
-        return _legacy_with_grid(message, cells)  # type: ignore[return-value]
+def _with_grid(message: OccupancyGrid, cells: NDArray[np.int8]) -> OccupancyGrid:
     if cells.shape != (message.info.height, message.info.width):
         raise ValueError("Replacement occupancy cells must retain map dimensions")
     result = deepcopy(message)
     result.data = np.array(cells, dtype=np.int8, copy=True).reshape(-1)
-    return result  # type: ignore[return-value]
+    return result
 
 
-def _legacy_with_grid(message: LegacyOccupancyGrid, cells: NDArray[np.int8]) -> LegacyOccupancyGrid:
-    return LegacyOccupancyGrid(
-        grid=np.array(cells, dtype=np.int8, copy=True),
-        resolution=message.resolution,
-        origin=message.origin,
-        frame_id=message.frame_id,
-        ts=message.ts,
-    )
-
-
-def smooth_occupied(occupancy_grid: _GridT, min_neighbor_fraction: float = 0.4) -> _GridT:
+def smooth_occupied(
+    occupancy_grid: OccupancyGrid, min_neighbor_fraction: float = 0.4
+) -> OccupancyGrid:
     """Smooth occupied zones by removing unsupported protrusions.
 
     Removes occupied cells that don't have sufficient neighboring occupied
@@ -100,7 +74,7 @@ def smooth_occupied(occupancy_grid: _GridT, min_neighbor_fraction: float = 0.4) 
     return _with_grid(occupancy_grid, result_grid)
 
 
-def overlay_occupied(base: _GridT, overlay: _GridT) -> _GridT:
+def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGrid:
     """Overlay occupied zones from one grid onto another.
 
     Marks cells as occupied in the base grid wherever they are occupied

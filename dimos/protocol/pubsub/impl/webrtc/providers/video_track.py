@@ -16,10 +16,6 @@
 
 Kept separate from ``broker.py`` so the broker-handshake file stays focused
 on session lifecycle rather than media plumbing.
-
-Both image families are accepted while consumers migrate opt-in: legacy
-``dimos.msgs.sensor_msgs.Image`` (``format``/``to_rgb()``) and generated
-``dimos_messages.sensor_msgs.msg.Image`` (``encoding``/``message_utils``).
 """
 
 from __future__ import annotations
@@ -34,7 +30,7 @@ import av
 import numpy as np
 
 from dimos.message_utils import image
-from dimos.msgs.sensor_msgs.Image import Image as LegacyImage, ImageFormat
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -45,14 +41,6 @@ _AV_FORMAT_MAP = {
     "bgra8": "bgra",
     "rgba8": "rgba",
     "mono8": "gray",
-}
-
-_LEGACY_AV_FORMAT_MAP = {
-    ImageFormat.BGR: "bgr24",
-    ImageFormat.RGB: "rgb24",
-    ImageFormat.BGRA: "bgra",
-    ImageFormat.RGBA: "rgba",
-    ImageFormat.GRAY: "gray",
 }
 
 
@@ -85,13 +73,13 @@ class CameraVideoTrack(VideoStreamTrack):
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         super().__init__()
         self._loop: asyncio.AbstractEventLoop = loop
-        self._latest: Any = None
+        self._latest: Image | None = None
         self._frame_seq = 0
         self._consumed_seq = 0
         self._armed = False
         self._first_mono: float | None = None
         self._new_frame = asyncio.Event()
-        self._dropped: set[Any] = set()
+        self._dropped: set[str] = set()
 
     def arm(self) -> None:
         """Discard buffered frames; start delivering from now.
@@ -102,7 +90,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self._consumed_seq = self._frame_seq
         self._armed = True
 
-    def set_latest(self, img: Any) -> None:
+    def set_latest(self, img: Image) -> None:
         """Publish the latest frame. Called from the producer (stream) thread.
 
         aiortc / asyncio.Event aren't thread-safe, so marshal the swap +
@@ -119,12 +107,10 @@ class CameraVideoTrack(VideoStreamTrack):
         except RuntimeError:
             return
 
-    def _to_av(self, img: Any) -> av.VideoFrame | None:
+    def _to_av(self, img: Image) -> av.VideoFrame | None:
         """None, logged once per source format, for what neither to_rgb() nor
         av takes (DEPTH float32, a malformed array). Never raises: recv() runs
         in aiortc's sender task, which ends the track on an exception."""
-        if isinstance(img, LegacyImage):
-            return self._legacy_to_av(img)
         try:
             if img.encoding in ("mono16", "16UC1"):
                 gray = (image.view(img) / 256).astype(np.uint8)
@@ -138,35 +124,20 @@ class CameraVideoTrack(VideoStreamTrack):
                     else image.from_array(image.to_rgb(img), encoding="rgb8", header=img.header)
                 )
             data = image.view(frame)
-            return self._frame(data, _AV_FORMAT_MAP[frame.encoding])
+            h, w = data.shape[:2]
+            if h % 2 or w % 2:
+                # libx264 takes yuv420p, whose chroma planes are half-size: an
+                # odd width or height fails avcodec_open2 in aiortc's sender
+                # task, past this guard. The last row/column is cropped.
+                data = np.ascontiguousarray(data[: h - h % 2, : w - w % 2])
+            return av.VideoFrame.from_ndarray(data, format=_AV_FORMAT_MAP[frame.encoding])
         except Exception as e:
-            self._drop(img.encoding, img.data.dtype, e)
+            if img.encoding not in self._dropped:
+                self._dropped.add(img.encoding)
+                logger.warning(
+                    "video track: dropping %s/%s frames: %s", img.encoding, img.data.dtype, e
+                )
             return None
-
-    def _legacy_to_av(self, img: LegacyImage) -> av.VideoFrame | None:
-        try:
-            frame = img if img.format in _LEGACY_AV_FORMAT_MAP else img.to_rgb()
-            return self._frame(frame.data, _LEGACY_AV_FORMAT_MAP[frame.format])
-        except Exception as e:
-            self._drop(img.format, img.data.dtype, e)
-            return None
-
-    @staticmethod
-    def _frame(data: Any, format: str) -> av.VideoFrame:
-        h, w = data.shape[:2]
-        if h % 2 or w % 2:
-            # libx264 takes yuv420p, whose chroma planes are half-size: an
-            # odd width or height fails avcodec_open2 in aiortc's sender
-            # task, past this guard. The last row/column is cropped.
-            data = np.ascontiguousarray(data[: h - h % 2, : w - w % 2])
-        return av.VideoFrame.from_ndarray(data, format=format)
-
-    def _drop(self, source_format: Any, dtype: Any, error: Exception) -> None:
-        if source_format in self._dropped:
-            return
-        self._dropped.add(source_format)
-        name = getattr(source_format, "value", source_format)
-        logger.warning("video track: dropping %s/%s frames: %s", name, dtype, error)
 
     async def recv(self) -> av.VideoFrame:
         # Wait (no busy-poll) for a fresh, post-arm frame that converts.

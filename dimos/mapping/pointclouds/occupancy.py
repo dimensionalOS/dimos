@@ -18,23 +18,17 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
-from dimos_messages.nav_msgs.msg import OccupancyGrid
-from dimos_messages.sensor_msgs.msg import PointCloud2
 import numpy as np
 from numpy.typing import NDArray
 from scipy import ndimage
 
 from dimos.message_utils import occupancy as occupancy_utils, pointcloud
-from dimos.msgs.geometry_msgs.Pose import Pose as LegacyPose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyOccupancyGrid
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyPointCloud2
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-GridT = OccupancyGrid | LegacyOccupancyGrid
-CloudT = PointCloud2 | LegacyPointCloud2
 
 
 @dataclass(frozen=True)
@@ -45,30 +39,17 @@ class OccupancyConfig:
     frame_id: str | None = None
 
 
-def _cloud_points(cloud: CloudT) -> NDArray[np.float64]:
-    if isinstance(cloud, LegacyPointCloud2):
-        points, _ = cloud.as_numpy()
-        return points.astype(np.float64)
+def _cloud_points(cloud: PointCloud2) -> NDArray[np.float64]:
     points = pointcloud.xyz(cloud)
     return points[np.isfinite(points).all(axis=1)]
 
 
 def _grid_message(
-    cloud: CloudT,
+    cloud: PointCloud2,
     config: OccupancyConfig,
     cells: NDArray[np.int8],
     origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
-) -> GridT:
-    # Keep the caller's grid family: legacy clouds yield legacy grids until the
-    # owning mapping layer migrates, generated clouds yield generated grids.
-    if isinstance(cloud, LegacyPointCloud2):
-        return LegacyOccupancyGrid(
-            grid=np.array(cells, dtype=np.int8, copy=True),
-            resolution=config.resolution,
-            origin=LegacyPose(*origin),
-            frame_id=config.frame_id or cloud.frame_id,
-            ts=cloud.ts if cloud.ts is not None else 0.0,
-        )
+) -> OccupancyGrid:
     header = deepcopy(cloud.header)
     header.frame_id = config.frame_id or header.frame_id
     return occupancy_utils.from_array(
@@ -95,11 +76,11 @@ class OccupancyFn(Protocol[ConfigT]):
     @property
     def config_class(self) -> type[ConfigT]: ...
 
-    def __call__(self, cloud: CloudT, **kwargs: Any) -> GridT: ...
+    def __call__(self, cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid: ...
 
 
 # Populated after function definitions below
-OCCUPANCY_ALGOS: dict[str, Callable[..., GridT]] = {}
+OCCUPANCY_ALGOS: dict[str, Callable[..., OccupancyGrid]] = {}
 
 
 @dataclass(frozen=True)
@@ -112,7 +93,7 @@ class HeightCostConfig(OccupancyConfig):
     smoothing: float = 1.0
 
 
-def height_cost_occupancy(cloud: CloudT, **kwargs: Any) -> GridT:
+def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create a costmap based on terrain slope (rate of change of height).
 
     Costs are assigned based on the gradient magnitude of the terrain height.
@@ -250,7 +231,7 @@ class GeneralOccupancyConfig(OccupancyConfig):
     mark_free_radius: float = 0.4
 
 
-def general_occupancy(cloud: CloudT, **kwargs: Any) -> GridT:
+def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create an OccupancyGrid from a PointCloud2 message.
 
     Args:
@@ -363,7 +344,7 @@ class SimpleOccupancyConfig(OccupancyConfig):
     smoothing: float = 1.0
 
 
-def simple_occupancy(cloud: CloudT, **kwargs: Any) -> GridT:
+def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     """Create a simple occupancy grid with morphological closing.
 
     Args:

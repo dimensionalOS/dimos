@@ -16,38 +16,27 @@ from copy import deepcopy
 from functools import lru_cache
 from typing import Literal, TypeAlias
 
-from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
-from dimos_messages.sensor_msgs.msg import Image
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.mapping.occupancy.operations import _grid_coordinates, _grid_values
 from dimos.message_utils import image
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyOccupancyGrid
-from dimos.msgs.sensor_msgs.Image import Image as LegacyImage, ImageFormat
+from dimos_messages.nav_msgs.msg import OccupancyGrid, Path
+from dimos_messages.sensor_msgs.msg import Image
 
 Palette: TypeAlias = Literal["rainbow", "turbo"]
 
 
-def _map_image(
-    grid: OccupancyGrid | LegacyOccupancyGrid, pixels: NDArray[np.uint8]
-) -> Image | LegacyImage:
-    if isinstance(grid, LegacyOccupancyGrid):
-        return LegacyImage(
-            data=pixels,
-            format=ImageFormat.BGR,
-            frame_id=grid.frame_id,
-            ts=grid.ts,
-        )
+def _map_image(grid: OccupancyGrid, pixels: NDArray[np.uint8]) -> Image:
     return image.from_array(pixels, encoding="bgr8", header=deepcopy(grid.header))
 
 
 def visualize_occupancy_grid(
-    occupancy_grid: OccupancyGrid | LegacyOccupancyGrid,
+    occupancy_grid: OccupancyGrid,
     palette: Palette,
     path: Path | None = None,
-) -> Image | LegacyImage:
+) -> Image:
     match palette:
         case "rainbow":
             bgr_image = rainbow_image(_grid_values(occupancy_grid))
@@ -63,7 +52,7 @@ def visualize_occupancy_grid(
 
 
 def _draw_path(
-    occupancy_grid: OccupancyGrid | LegacyOccupancyGrid,
+    occupancy_grid: OccupancyGrid,
     bgr_image: NDArray[np.uint8],
     path: Path,
 ) -> None:
@@ -71,8 +60,7 @@ def _draw_path(
 
     points = []
     for pose in path.poses:
-        stamped = getattr(pose, "pose", pose)
-        position = stamped.position
+        position = pose.pose.position
         x, y = _grid_coordinates(occupancy_grid, position)
         pixel_x = int(x)
         pixel_y = int(y)

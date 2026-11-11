@@ -45,9 +45,14 @@ def resolve_legacy_message_type(name: str) -> type | None:
 
     Channel strings that embed a type suffix (``topic#pkg.Type``) or a key
     expression segment are only produced by legacy publishers, whose payload
-    is LCM; the legacy class must win there.
+    is LCM; the legacy class must win there. The legacy wrapper package is
+    retired at the final migration layer, so a missing package simply means
+    no legacy spelling can be resolved (return ``None`` rather than raising).
     """
-    from dimos.msgs.helpers import resolve_msg_type
+    try:
+        from dimos.msgs.helpers import resolve_msg_type
+    except ImportError:
+        return None
 
     return resolve_msg_type(name)
 
