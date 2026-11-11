@@ -251,6 +251,10 @@ robots:
           title: G1 agent in simulation
           description: 'The G1 agent against a simulated G1: no robot needed.'
           recommended_config: []
+        unitree-g1-sim2:
+          title: G1 GR00T in sim2
+          description: A G1 beside a desk with independent sensors and a truth-registered point cloud.
+          recommended_config: []
         unitree-g1-sim:
           title: G1 perception in simulation
           description: G1 perception and memory against a simulated G1.
