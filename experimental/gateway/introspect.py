@@ -195,21 +195,8 @@ def source_of(target: Any) -> dict[str, Any]:
     return {"file": relative_to_checkout(file) if file else None, "line": line if file else None}
 
 
-def file_without_importing(path: str, line: re.Pattern[str]) -> dict[str, Any] | None:
-    """Where `path`'s .py file is, found without running it (only its parent packages get imported)."""
-    try:
-        spec = importlib.util.find_spec(path)
-    except Exception:  # a parent package's __init__ can raise anything
-        return None
-    if spec is None or not spec.origin or not spec.origin.endswith(".py"):
-        return None
-    lines = Path(spec.origin).read_text("utf-8", "replace").splitlines()
-    found = next((number for number, text in enumerate(lines, 1) if line.match(text)), 1)
-    return {"file": relative_to_checkout(spec.origin), "line": found}
-
-
 def blueprint_source(name: str) -> dict[str, Any]:
-    """A blueprint's (or registered module's) file and line, read without importing it when it's named in all_blueprints."""
+    """A blueprint's (or registered module's) file and line, found without importing it (only its parent packages)."""
     from dimos.robot.all_blueprints import all_blueprints, all_modules
 
     if name in all_modules:
@@ -218,21 +205,15 @@ def blueprint_source(name: str) -> dict[str, Any]:
     else:
         path, _, attribute = all_blueprints.get(name, "").partition(":")
         line = re.compile(rf"{re.escape(attribute)}\s*(:|=(?!=))")
-    found = file_without_importing(path, line) if path else None
-    if found is not None:
-        return found
     try:
-        if name in all_modules:
-            path, _, attribute = all_modules[name].rpartition(".")
-            return source_of(getattr(importlib.import_module(path), attribute))
-        path, _, attribute = all_blueprints[name].partition(":")
-        module = importlib.import_module(path)
-        lines = inspect.getsource(module).splitlines()
-    except Exception:  # importing a blueprint runs its code, which can raise anything
+        spec = importlib.util.find_spec(path) if path else None
+    except Exception:  # a parent package's __init__ can raise anything
+        spec = None
+    if spec is None or not spec.origin or not spec.origin.endswith(".py"):
         return {"file": None, "line": None}
-    assignment = re.compile(rf"{re.escape(attribute)}\s*(:|=(?!=))")
-    line = next((number for number, text in enumerate(lines, 1) if assignment.match(text)), 1)
-    return {"file": relative_to_checkout(inspect.getfile(module)), "line": line}
+    lines = Path(spec.origin).read_text("utf-8", "replace").splitlines()
+    found = next((number for number, text in enumerate(lines, 1) if line.match(text)), 1)
+    return {"file": relative_to_checkout(spec.origin), "line": found}
 
 
 def params(function: Any) -> list[dict[str, Any]]:
