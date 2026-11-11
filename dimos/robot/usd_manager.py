@@ -62,6 +62,7 @@ logger = setup_logger()
 
 SUBTREE_RPC = "get_usd"
 SCENE_RPC = "get_scene"
+ASSET_RPC = "get_asset"
 
 
 WORLD_LINK = "world"
