@@ -228,29 +228,44 @@ class PIDController:
 
 ## Connection wire and Twist inputs
 
-Shared `ConnectionModule` declarations describe named model joints and their
-supported interfaces. Planar virtual joints are ordinary joints: positions and
-velocities travel on `joint_state`, and commands on `position_command` or
-`velocity_command`, all `JointState`. IMU telemetry has its own stream. A concrete
-connection converts vendor odometry/body velocities and commands internally;
-`ConnectionSource` does not own a chassis protocol or frame rotation.
+Shared `ConnectionModule` declarations describe named control resources and their
+supported interfaces. Commands and actuator-state feedback use `JointState` on
+independent `position_command` / `velocity_command` and `joint_state` ports.
+For a mobile base, `<robot>/base_forward`, `<robot>/base_lateral`, and
+`<robot>/base_turn` are velocity-only **BODY-frame** action axes, not odometry
+x/y/yaw coordinates. Native measured body rates may be published as velocity-only
+`JointState` feedback for these resources; leave positions empty, never fabricate
+positions or combine body rates with world positions under the same joint names.
+This is actuator-state feedback, not pose telemetry.
+
+Pose/world x/y/yaw and pose/twist telemetry belong on an independent `Odometry`
+stream. Ordinary body velocity control does not require odometry or measured yaw.
+`ConnectionSource` and the coordinator do not interpret base axes, Twist, yaw, or
+odometry and perform no frame conversion. Existing startup/readiness contracts
+are unchanged: a velocity-only joint-state reading can establish actuator readiness.
+Do not wire optional pose telemetry as a required control reading.
+`PlanarBaseDefinition` / `RobotModel.with_planar_base` still describe geometric
+x/y/yaw position coordinates for planning and limits; they do not define body
+velocity as the derivative of odometry q. Control-only axis declarations must be
+explicit and must not be used as a world-pose kinematic model.
 
 For a body-frame Twist input, explicitly configure its consuming task:
 
 ```python
 TaskConfig(
     name="drive", type="twist_velocity",
-    joint_names=["r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"],
-    params={"axes": ["linear.x", "linear.y", "angular.z"],
-            "yaw_joint": "r1pro/base_yaw"},
+    joint_names=["r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn"],
+    params={"axes": ["linear.x", "linear.y", "angular.z"]},
 )
 ```
 
-`yaw_joint` selects measured yaw for body-to-world rotation on **every tick**.
-Without it, the configured axes are aligned with the input (as in the existing
-body-axis adapters). Neither joint names nor hardware type imply a mapping.
-The task keeps input receipt time unchanged while rotating; timeout emits zero,
-and E-stop clears intent so only fresh post-clear input can restart motion.
+`TwistVelocityTask` simply maps configured components in joint order, in the
+same declared frame. Neither joint names nor hardware type imply a mapping.
+There is no `yaw_joint` parameter or implicit rotation. World-frame-consuming
+controllers must explicitly use transform helpers at their own boundary; the
+default body action path must not make a body→world→body round trip.
+Timeout emits zero without refreshing the input receipt clock, and E-stop clears
+intent so only fresh post-clear input can restart motion.
 Like `JointVelocityTask`, ordinary `stop()` only deactivates output; it does not
 latch input rejection or discard intent. New input reactivates the stream, and
 `start()` can resume an unexpired command. Use `clear()` to discard cached intent;

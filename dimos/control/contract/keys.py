@@ -19,7 +19,7 @@ part::
 
     arm/joint1/position         where the arm's first joint is
     g1/left_hip_pitch/kp        how stiffly that hip is held
-    r1pro/base_x/velocity      how fast the planar x joint moves
+    r1pro/base_forward/velocity  measured/commanded BODY forward speed
 
 The first two parts together, e.g. ``arm/joint1``, name the part itself. That
 is what something asks to take control of. The third part picks one number

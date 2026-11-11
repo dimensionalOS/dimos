@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import math
+import os
 from pathlib import Path
 import threading
 import time
@@ -44,7 +45,6 @@ from dimos.control._control_test_helpers import (
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.connection.connection_module import ConnectionConfig, ConnectionModule
 from dimos.control.contract.convert import (
-    joint_state_from_values,
     joint_state_to_values,
     motor_joints,
 )
@@ -77,40 +77,49 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.testing.waiting import wait_until
-from dimos.utils.transform_utils import (
-    pose_from_values,
-    pose_to_values,
-    twist_from_values,
-    twist_to_values,
-)
 
 #: The fake arm's joints as the coordinator names them: "mock/joint1" and so on.
 MOCK_JOINTS = motor_joints(fake_arm_model(), "mock")
 AT_REST = [0.0] * len(MOCK_JOINTS)
 
 
-BASE_JOINTS = ("base_x", "base_y", "base_yaw")
-BASE_MODEL = fake_arm_model().with_planar_base(
-    PlanarBaseDefinition(
-        joint_names=BASE_JOINTS,
-        velocity_limits=(1.0, 0.5, 2.0),
-        acceleration_limits=(1.0, 1.0, 2.0),
+BASE_JOINTS = ("base_forward", "base_lateral", "base_turn")
+# Control-only limit declarations: not an odometry/kinematics model.
+BASE_MODEL = fake_arm_model().with_added_joints(
+    *(
+        JointDescription(
+            name=name,
+            type=kind,
+            parent_link="link0",
+            child_link=f"{name}_resource",
+            velocity=limit,
+            acceleration=acceleration,
+        )
+        for name, kind, limit, acceleration in zip(
+            BASE_JOINTS,
+            ("prismatic", "prismatic", "continuous"),
+            (1.0, 0.5, 2.0),
+            (1.0, 1.0, 2.0),
+            strict=True,
+        )
     )
 )
 
 
 class FakeBaseConfig(ConnectionConfig):
-    """Fake robot's canonical planar joints; SDK geometry stays inside FakeBase."""
+    """Fake robot's velocity-only body action resources."""
 
     source: str = "go2"
     model: RobotModel | None = BASE_MODEL
@@ -118,26 +127,23 @@ class FakeBaseConfig(ConnectionConfig):
         name: (Interface.VELOCITY,) for name in BASE_JOINTS
     }
     state_rate_hz: float = 100.0
-    odometry_timeout_s: float = 0.2
     initial_yaw: float = 0.0
 
 
 class FakeBase(ConnectionModule):
-    """Canonical wire with a pretend body-Twist/odometry SDK behind it."""
+    """Native body-rate feedback with independent simulated pose telemetry."""
 
     config: FakeBaseConfig
     velocity_command: In[JointState]
     joint_state: Out[JointState]
+    odometry: Out[Odometry]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         source = self.config.source
-        self._base = (f"{source}/base_x", f"{source}/base_y", f"{source}/base_yaw")
+        self._base = (f"{source}/base_forward", f"{source}/base_lateral", f"{source}/base_turn")
         self._stop_reading = threading.Event()
         self._reader: threading.Thread | None = None
-        self._feedback_lock = threading.Lock()
-        self._feedback_at: float | None = None
-        self._measured_yaw: float | None = None
         self.hardware_messages: list[Twist] = []
 
     @rpc
@@ -164,87 +170,82 @@ class FakeBase(ConnectionModule):
         pass
 
     def write(self, values: dict[str, float]) -> None:
-        with self._feedback_lock:
-            if (
-                self._feedback_at is None
-                or time.monotonic() - self._feedback_at > self.config.odometry_timeout_s
-            ):
-                raise ValueError("body command requires fresh odometry")
-            assert self._measured_yaw is not None
-            self.hardware_messages.append(
-                twist_from_values(values, self._base, yaw=self._measured_yaw)
+        self.hardware_messages.append(
+            Twist(
+                linear=[
+                    values[f"{self._base[0]}/velocity"],
+                    values[f"{self._base[1]}/velocity"],
+                    0.0,
+                ],
+                angular=[0.0, 0.0, values[f"{self._base[2]}/velocity"]],
             )
+        )
 
     def halt(self) -> None:
         self.hardware_messages.append(Twist())
 
-    def on_vendor_feedback(self, pose: PoseStamped, body_velocity: Twist) -> None:
-        with self._feedback_lock:
-            # Malformed feedback must not authorize another hardware command.
-            self._feedback_at = None
-            values = pose_to_values(pose, self._base)
-            yaw = values[f"{self._base[2]}/position"]
-            values.update(twist_to_values(body_velocity, self._base, yaw=yaw))
-            self._measured_yaw = yaw
-            self._feedback_at = time.monotonic()
-        self.joint_state.publish(joint_state_from_values(values, self._base, ts=time.time()))
+    def on_vendor_feedback(self, body_velocity: Twist, pose: PoseStamped | None = None) -> None:
+        self.joint_state.publish(
+            JointState(
+                ts=time.time(),
+                frame_id=self.frame("base_link"),
+                name=list(self._base),
+                velocity=[body_velocity.linear.x, body_velocity.linear.y, body_velocity.angular.z],
+            )
+        )
+        if pose is not None:
+            self.odometry.publish(
+                Odometry(
+                    ts=pose.ts,
+                    frame_id=pose.frame_id,
+                    child_frame_id=self.frame("base_link"),
+                    pose=Pose(position=pose.position, orientation=pose.orientation),
+                    twist=body_velocity,
+                )
+            )
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz
-        origin = dict(
-            zip(
-                (f"{name}/position" for name in self._base),
-                (0.0, 0.0, self.config.initial_yaw),
-                strict=True,
-            )
-        )
         while not self._stop_reading.wait(period):
             self.on_vendor_feedback(
-                pose_from_values(origin, self._base, ts=time.time(), frame_id=self.frame("odom")),
                 Twist(),
+                PoseStamped(
+                    ts=time.time(),
+                    frame_id=self.frame("odom"),
+                    orientation=Quaternion.from_euler(Vector3(0.0, 0.0, self.config.initial_yaw)),
+                ),
             )
 
 
-@pytest.mark.parametrize("bad_feedback", ["stale", "quaternion", "position", "velocity"])
-def test_fake_base_owns_frame_conversion_and_rejects_bad_feedback(
-    mocker: Any, bad_feedback: str, request: pytest.FixtureRequest
+def test_native_body_feedback_and_commands_are_independent_of_odometry(
+    mocker: Any,
+    request: pytest.FixtureRequest,
 ) -> None:
-    clock = [1000.0]
-    mocker.patch.object(time, "monotonic", side_effect=lambda: clock[0])
     base = FakeBase()
     request.addfinalizer(base.stop)
     published = mocker.patch.object(base.joint_state, "publish")
-    values = dict(zip((f"{name}/velocity" for name in GO2_BASE_AXES), (0.0, 0.4, 0.3), strict=True))
-    with pytest.raises(ValueError, match="fresh odometry"):
-        base.write(values)
+    odometry = mocker.patch.object(base.odometry, "publish")
+    rates = (0.4, -0.2, 0.3)
+    values = dict(zip((f"{name}/velocity" for name in GO2_BASE_AXES), rates, strict=True))
+    base.write(values)  # No yaw or odometry receipt required.
+    body = base.hardware_messages[-1]
+    assert (body.linear.x, body.linear.y, body.angular.z) == rates
+    base.on_vendor_feedback(body)
+    feedback = published.call_args.args[0]
+    assert feedback.name == GO2_BASE_AXES
+    assert feedback.position == []
+    assert feedback.velocity == list(rates)
+    odometry.assert_not_called()
     pose = PoseStamped(
         position=Vector3(1.0, -2.0, 0.0),
         orientation=Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2)),
     )
-    base.on_vendor_feedback(pose, Twist(linear=[0.4, 0.0, 0.0], angular=[0.0, 0.0, 0.3]))
-    feedback = published.call_args.args[0]
-    assert feedback.name == GO2_BASE_AXES
-    assert feedback.position == pytest.approx([1.0, -2.0, math.pi / 2])
-    assert feedback.velocity == pytest.approx([0.0, 0.4, 0.3])
-    base.write(values)
-    body = base.hardware_messages[-1]
-    assert (body.linear.x, body.linear.y, body.angular.z) == pytest.approx((0.4, 0.0, 0.3))
-    if bad_feedback == "stale":
-        clock[0] += 1.0
-    else:
-        velocity = Twist()
-        if bad_feedback == "quaternion":
-            pose.orientation = Quaternion(0.0, 0.0, 0.0, 0.0)
-        elif bad_feedback == "position":
-            pose.position.x = math.nan
-        else:
-            velocity.linear.x = math.nan
-        with pytest.raises(ValueError):
-            base.on_vendor_feedback(pose, velocity)
-    with pytest.raises(ValueError, match="fresh odometry"):
-        base.write(values)
-    assert len(base.hardware_messages) == 1
-    assert published.call_count == 1
+    base.on_vendor_feedback(body, pose)
+    assert published.call_args.args[0].velocity == list(rates)
+    telemetry = odometry.call_args.args[0]
+    assert telemetry.position == pose.position
+    assert telemetry.orientation == pose.orientation
+    assert telemetry.linear_velocity == body.linear
 
 
 class ArmCoordinator(ControlCoordinator):
@@ -358,7 +359,7 @@ class StopsOnEstop(SendsPositions):
 
 
 #: The fake base's axes, as a task claims them.
-GO2_BASE_AXES = ["go2/base_x", "go2/base_y", "go2/base_yaw"]
+GO2_BASE_AXES = ["go2/base_forward", "go2/base_lateral", "go2/base_turn"]
 
 
 def velocity_task(joints: list[str], timeout: float = 0.2) -> JointVelocityTask:
@@ -413,9 +414,9 @@ class Rig:
         self.readings[port].publish(msg)
 
     def report_base(self, robot: str = "go2") -> None:
-        """The fake base, standing at the origin."""
-        names = (f"{robot}/base_x", f"{robot}/base_y", f"{robot}/base_yaw")
-        self.report(f"{robot}_joint_state", JointState(name=list(names), position=[0.0, 0.0, 0.0]))
+        """The fake base reporting native body rates while stationary."""
+        names = (f"{robot}/base_forward", f"{robot}/base_lateral", f"{robot}/base_turn")
+        self.report(f"{robot}_joint_state", JointState(name=list(names), velocity=[0.0, 0.0, 0.0]))
 
     def report_arm(self, *positions: float) -> None:
         """The fake arm's joint positions, joint1 first, standing still."""
@@ -490,8 +491,9 @@ def test_aggregate_state_waits_for_complete_initial_readings(rig: Callable[..., 
     r.tick()
 
     assert len(published) == 1
-    assert published[0][1].name == [*MOCK_JOINTS, *GO2_BASE_AXES]
-    assert published[0][1].position == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2)), 0.0, 0.0, 0.0]
+    # The existing aggregate is position-oriented: body axes have no q to publish.
+    assert published[0][1].name == MOCK_JOINTS
+    assert published[0][1].position == [0.1, 0.2, *([0.3] * (len(MOCK_JOINTS) - 2))]
     assert r.positions_sent()[-1] == published[0][1].position[: len(MOCK_JOINTS)]
 
 
@@ -542,7 +544,7 @@ def test_every_robot_that_has_reported_gets_a_complete_command_each_tick(
     assert r.positions_sent() == [AT_REST, AT_REST]
     twist = r.sent[-1][1]
     assert tuple(twist.velocity) == (0.0, 0.0, 0.0)
-    assert r.coordinator.get_joint_positions() == dict.fromkeys([*MOCK_JOINTS, *GO2_BASE_AXES], 0.0)
+    assert r.coordinator.get_joint_positions() == dict.fromkeys(MOCK_JOINTS, 0.0)
 
 
 def test_tasks_drive_connection_joints_and_see_their_sensors(rig: Callable[..., Rig]) -> None:
@@ -609,7 +611,11 @@ def test_the_gripper_task_opens_and_closes_a_connection_robots_gripper_within_it
 def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], target: str) -> None:
     r = rig(ArmCoordinator if target == "unsupported" else WholeRobot)
     r.coordinator.add_task(SendsPositions({"mock/joint1": 0.5}))
-    names = ["mock/base_x", "mock/base_y", "mock/base_yaw"] if target == "base" else ["mock/joint2"]
+    names = (
+        ["mock/base_forward", "mock/base_lateral", "mock/base_turn"]
+        if target == "base"
+        else ["mock/joint2"]
+    )
     task = velocity_task(names)
     r.coordinator.add_task(task, task_type="velocity")
     r.report_arm(*AT_REST)
@@ -639,9 +645,9 @@ def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], targe
     else:
         assert list(commands["mock_velocity_command"].name) == [
             *names,
-            "mock/base_x",
-            "mock/base_y",
-            "mock/base_yaw",
+            "mock/base_forward",
+            "mock/base_lateral",
+            "mock/base_turn",
         ]
         assert list(commands["mock_velocity_command"].velocity) == [0.4, 0.0, 0.0, 0.0]
 
@@ -655,7 +661,7 @@ def test_position_hold_scope_preserves_velocity_joint_feedback(rig: Callable[...
     hold.request("manual")
     r.tick()
     assert hold.claim().joints == frozenset(MOCK_JOINTS)
-    assert r.coordinator.get_joint_positions()["mock/base_x"] == 0.0
+    assert "mock/base_forward" not in r.coordinator.get_joint_positions()
     assert r.positions_sent()[-1] == AT_REST
 
 
@@ -930,7 +936,11 @@ def system(request: pytest.FixtureRequest) -> Iterator[ModuleCoordinator]:
             (FakeBase, "joint_state", "go2_joint_state"),
         ]
     )
-    parsed = BlueprintConfigParser(blueprint).parse(environ={}, overrides={"g": {"viewer": "none"}})
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={},
+        overrides={"g": {"viewer": "none"}},
+        global_overrides={"zenoh_scout_addr": os.environ["ZENOH_SCOUT_ADDR"]},
+    )
     built = ModuleCoordinator.build(blueprint, parsed)
     yield built
     built.stop()
@@ -973,7 +983,7 @@ def test_a_trajectory_reaches_the_fake_arm_and_the_base_is_told_to_stand_still(
     assert arm.last_rejection is None
     assert arm.last_error is None
     seen = system.get_instance(Robots).get_joint_positions()
-    assert seen["go2/base_yaw"] == pytest.approx(math.pi / 2)
+    assert not set(GO2_BASE_AXES) & seen.keys()
     base = system.get_instance(FakeBase).status()
     assert base.last_command_time is not None
     assert base.last_rejection is None
