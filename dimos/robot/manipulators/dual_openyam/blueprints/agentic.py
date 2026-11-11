@@ -70,15 +70,18 @@ def _place_args(side: str, pose: tuple[float, float, float]) -> str:
     return " ".join(str(v) for v in pose) + f" {side}_manipulator"
 
 
-# Assigned through autoconnect so the registry generator sees it.
+# Assigned through autoconnect so the registry generator sees it. The stack already
+# carries a detector, a segmenter and the grasp generator; adding the agent on top
+# packs them into one worker, where the MCP server's skill discovery waits on their
+# warm-up past its timeout, so give them room.
 dual_openyam_grasp_agent = autoconnect(
     dual_openyam_grasp,
     McpServer.blueprint(),
     Agent.blueprint(system_prompt=dual_openyam_agent_prompt()),
-)
+).global_config(n_workers=6)
 
 dual_openyam_grasp_graspgenx_agent = autoconnect(
     dual_openyam_grasp_graspgenx,
     McpServer.blueprint(),
     Agent.blueprint(system_prompt=dual_openyam_agent_prompt()),
-)
+).global_config(n_workers=6)
