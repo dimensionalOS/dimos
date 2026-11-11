@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""costmap.zlib.v1 golden vectors: the encoder pinned byte-exact.
+
+The mirror of the cockpit's decoders.test.ts vectors block: pytest re-encodes
+each vector, vitest inflates it, so drift on either side fails a suite.
+"""
 
 import base64
 import json
@@ -33,6 +38,10 @@ with open(find_web_dir() / "shared" / "fixtures" / "costmap_frames.json") as f:
 
 @pytest.mark.parametrize("vec", VECTORS, ids=lambda v: v["name"])
 def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
+    """Compressed-byte equality pins CPython's bundled zlib (RLE, level 1). If a
+    future CPython legitimately shifts those bytes, regenerate the fixture
+    (gen_costmap_fixtures) - the decoded-grid assertions on both sides are
+    the actual wire contract."""
     meta = vec["meta"]
     cells = np.frombuffer(base64.b64decode(vec["grid_b64"]), dtype=np.uint8)
     rows = cells.view(np.int8).reshape(meta["h"], meta["w"])
@@ -49,6 +58,9 @@ def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
 
 
 def test_encoder_handles_wire_decoded_grid() -> None:
+    """The bridge encodes grids that arrived over LCM; the decoded origin must
+    still expose .yaw (regression: the raw wire pose did not, and every
+    global_costmap frame failed to encode)."""
     msg = grid_msg([[0, 100], [-1, 50]], 0.05, -1.25, 2.5, 0.5)
     decoded = OccupancyGrid.lcm_decode(msg.lcm_encode())
     encoded = encode_costmap(decoded)
@@ -64,8 +76,8 @@ def test_empty_grid_encodes_to_none() -> None:
 
 def test_oversized_grid_is_downsampled_within_budget() -> None:
     rows = np.zeros((4096, 4096), dtype=np.int8)
-    rows[0, 1] = 100
-    rows[2:4, 2:4] = -1
+    rows[0, 1] = 100  # lone obstacle: the block max must keep it
+    rows[2:4, 2:4] = -1  # a fully unknown block stays unknown
     msg = OccupancyGrid(grid=rows, resolution=0.05, origin=Pose(1.0, 2.0, 0.0), ts=1.0)
     encoded = encode_costmap(msg)
     assert encoded is not None

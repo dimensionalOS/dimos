@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MuJoCo simulation ``WholeBodyAdapter`` for the Unitree G1.
+
+Pairs with ``MujocoSimModule`` (in-process MuJoCo engine + SHM publisher).
+The blueprint composes both modules; they share the same ``MujocoEngine``
+indirectly via SHM keyed on the MJCF path.
+
+The adapter conforms to the same ``WholeBodyAdapter`` Protocol the real-hw
+DDS adapter implements, so ControlCoordinator (and the GR00T WBC task on
+top of it) can't tell sim from real.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +52,17 @@ _ATTACH_RETRY_POLL_S = 0.2
 
 
 class SimMujocoG1WholeBodyAdapter:
+    """G1 ``WholeBodyAdapter`` that proxies to a ``MujocoSimModule`` via SHM.
+
+    The sim module owns the engine and publishes joint state + IMU into
+    SHM each step; this adapter reads them and forwards per-joint
+    (q, kp, kd, tau) commands back into SHM for the engine's pre-step
+    PD-with-feedforward hook to apply.
+
+    ``address`` (the MJCF XML path) is the discovery key - both sides
+    derive the same SHM names from it via ``shm_key_from_path``.
+    """
+
     def __init__(
         self,
         address: str | Path | None = None,
@@ -58,6 +79,7 @@ class SimMujocoG1WholeBodyAdapter:
         self._shm: ManipShmReader | None = None
         self._connected = False
 
+    # Lifecycle
     def connect(self) -> bool:
         self._shm = ManipShmReader.wait_for_live(
             self._shm_key,
@@ -82,6 +104,8 @@ class SimMujocoG1WholeBodyAdapter:
 
     def disconnect(self) -> None:
         if self._shm is not None:
+            # ManipShmReader.cleanup() is already best-effort: it closes each
+            # SHM buffer and swallows FileNotFoundError/OSError internally.
             self._shm.cleanup()
         self._shm = None
         self._connected = False
@@ -89,6 +113,7 @@ class SimMujocoG1WholeBodyAdapter:
     def is_connected(self) -> bool:
         return self._live_shm() is not None
 
+    # IO (WholeBodyAdapter protocol)
     def read_motor_states(self) -> list[MotorState]:
         if not self.has_motor_states():
             return [MotorState()] * _NUM_MOTORS
@@ -101,6 +126,9 @@ class SimMujocoG1WholeBodyAdapter:
         ]
 
     def has_motor_states(self) -> bool:
+        # Sim ground truth is available the moment SHM attaches.
+        # No ramp-up window like real DDS adapters need before the
+        # first state msg arrives.
         return self._live_shm() is not None
 
     def motor_states_ts(self) -> float | None:
@@ -111,6 +139,9 @@ class SimMujocoG1WholeBodyAdapter:
             return IMUState()
         assert self._shm is not None
         quat, gyro, accel = self._shm.read_imu()
+        # rpy is left at its zero default to match the real G1 adapter
+        # (TransportWholeBodyAdapter._on_imu). The WBC task's observation
+        # uses only quaternion + gyroscope, so euler is never read downstream.
         return IMUState(
             quaternion=quat,
             gyroscope=gyro,
@@ -118,6 +149,7 @@ class SimMujocoG1WholeBodyAdapter:
         )
 
     def get_limits(self) -> JointLimits | None:
+        """Return no adapter-specific limits for the simulated G1."""
         return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
@@ -129,6 +161,9 @@ class SimMujocoG1WholeBodyAdapter:
                 f"SimMujocoG1WholeBodyAdapter: expected {_NUM_MOTORS} commands, got {len(commands)}"
             )
             return False
+        # Flatten the per-motor command into per-joint arrays.  POS_STOP
+        # ("no command") is replaced with 0.0 - the engine's PD only
+        # acts when kp > 0 anyway, so a zeroed q is harmless.
         q = [cmd.q if cmd.q != POS_STOP else 0.0 for cmd in commands]
         kp = [cmd.kp for cmd in commands]
         kd = [cmd.kd for cmd in commands]
