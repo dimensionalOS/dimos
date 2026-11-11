@@ -24,7 +24,7 @@ from dimos.robot.manipulators.damiao.damiao_blueprint import (
 )
 from dimos.robot.manipulators.makermods_metal.config import make_metal_model_config
 from dimos.robot.manipulators.makermods_metal.connection import MetalConnection
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 
 _MODEL = make_metal_model_config(robot="arm")
 
@@ -49,7 +49,7 @@ def makermods_metal_connection_control_blueprint() -> Blueprint:
             zero_stiffness_joints=[],
         ),
         arm_connection(MetalConnection),
-        UrdfManager.blueprint(model=_MODEL.model),
+        UsdManager.blueprint(model=_MODEL.model),
     ).remappings(arm_remaps(MetalConnection, DamiaoCoordinator))
 
 

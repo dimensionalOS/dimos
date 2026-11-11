@@ -76,7 +76,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
 )
-from dimos.robot.urdf_manager import UrdfManager
+from dimos.robot.usd_manager import UsdManager
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -148,6 +148,8 @@ class HybridTeleopCoordinator(OperatorHoldCoordinator, ArmTwistCoordinator):
     A TwistStamped on ``ee_twist_command`` moves the gripper tip at that
     velocity (m/s, rad/s, world frame); a zero twist, or none for 0.3 s, stops it.
     """
+
+    pass
 
 
 # The planner publishes these links on tf at the arm's real mount; the Desktop
@@ -250,8 +252,8 @@ hybrid_teleop_sim = autoconnect(
         cls=HybridTeleopCoordinator,
         instance_name="ControlCoordinator",
     ),
-    # Serves the URDF and its meshes; the planner already puts the links on tf.
-    UrdfManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
+    # Serves the USD and its meshes; the planner already puts the links on tf.
+    UsdManager.blueprint(model=_xarm7_sim_model.model, publish_joint_tf=False),
     RerunBridgeModule.blueprint(),
 ).remappings([(PickAndPlaceModule, "_grasp_generator", GraspGenXModule)])
 
