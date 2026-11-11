@@ -75,8 +75,8 @@ class Tree:
         self.definition = definition
         self.nodes = {node.name: node for node in definition.nodes}
         self.activities = {activity.name: activity for activity in definition.activities}
-        self.events = {event.name for event in definition.events}
-        self.triggers = self.events | {signal.name for signal in definition.signals}
+        self.events = {event.name: event.when for event in definition.events}
+        self.triggers = {*self.events, *(signal.name for signal in definition.signals)}
         self.parent = {
             inner: self.nodes[node.name] for node in definition.nodes for inner in node.inside
         }
