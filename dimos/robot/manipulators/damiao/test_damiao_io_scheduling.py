@@ -490,3 +490,83 @@ def test_all_runtime_sdk_calls_run_on_the_single_owner(make_rig, monkeypatch):
     assert {"read", "command", "hold", "disable"} <= names
     assert all(ident == owner for _, ident in calls)
     assert module._arm is None
+
+
+def test_stop_timeout_then_start_is_refused_and_owner_still_closes(make_rig, monkeypatch):
+    module, _, _ = make_rig()
+    monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.03)
+    entered, release = threading.Event(), threading.Event()
+
+    def publish(_):
+        entered.set()
+        assert release.wait(2)
+
+    monkeypatch.setattr(module.joint_state, "publish", publish)
+    assert entered.wait(2)
+    old_owner, old_arm = module._reader, module._arm
+    # The stop caller is bounded and leaves the device with the live owner.
+    module.stop()
+    assert old_owner.is_alive()
+    assert module._arm is old_arm
+    assert module.status().connected
+    assert "shutdown timeout" in module.status().last_error
+    # Re-entry is refused before any state reset or hardware open, while
+    # the old owner is alive and after its deferred close too: one Module
+    # lifecycle per instance, so no second SDK owner is ever created.
+    with pytest.raises(RuntimeError, match="not restartable"):
+        module.start()
+    assert module._arm is old_arm
+    release.set()
+    old_owner.join(2)
+    assert not old_owner.is_alive()
+    wait_until(lambda: module._arm is None, timeout=2)
+    with pytest.raises(RuntimeError, match="not restartable"):
+        module.start()
+    # The deferred close finished on the owner, and the refused re-entry
+    # cleared neither the device bookkeeping nor the reported error.
+    assert module._close_error is None
+    assert not module.status().connected
+    assert "shutdown timeout" in module.status().last_error
+
+
+def test_stop_with_blocking_disable_returns_bounded_and_owner_finishes(make_rig, monkeypatch):
+    module, _, _ = make_rig()
+    monkeypatch.setattr(common, "DEFAULT_THREAD_JOIN_TIMEOUT", 0.03)
+    disable_entered, release_disable = threading.Event(), threading.Event()
+    calls: list[tuple[str, int]] = []
+    original_hold = module._arm.hold
+    original_disable = module._arm.disable
+
+    def tracked_hold():
+        calls.append(("hold", threading.get_ident()))
+        return original_hold()
+
+    def blocked_disable():
+        calls.append(("disable", threading.get_ident()))
+        disable_entered.set()
+        assert release_disable.wait(2)
+        return original_disable()
+
+    monkeypatch.setattr(module._arm, "hold", tracked_hold)
+    monkeypatch.setattr(module._arm, "disable", blocked_disable)
+    caller = threading.get_ident()
+    # The stop caller returns at its bound even with the owner parked
+    # inside a blocking SDK disable.
+    module.stop()
+    assert disable_entered.wait(2)
+    assert module._reader.is_alive()
+    # No SDK close ran on the stop caller; the live owner retains the
+    # device, and re-entry is refused until its cleanup is done.
+    assert module._arm is not None
+    assert all(ident != caller for _, ident in calls)
+    with pytest.raises(RuntimeError, match="not restartable"):
+        module.start()
+    release_disable.set()
+    module._reader.join(2)
+    assert not module._reader.is_alive()
+    # Halt ran before disable, both on the owning thread, and the
+    # deferred cleanup completed.
+    assert [name for name, _ in calls] == ["hold", "disable"]
+    assert all(ident == module._reader.ident for _, ident in calls)
+    assert module._arm is None
+    assert not module.status().connected

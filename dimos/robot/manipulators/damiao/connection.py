@@ -153,6 +153,27 @@ class DamiaoConnection(ConnectionModule):
 
     @rpc
     def start(self) -> None:
+        # One instance, one life. The inherited Module lifecycle disposes
+        # the event loop, RPC and transports in stop(), so a started
+        # connection is never started again: deploy a new module instance
+        # instead. The guard runs before Module.start, any state/session
+        # reset or any hardware open, so a re-entry while a previous SDK
+        # owner is still alive - or after it, with cleanup done - can
+        # neither reset the bookkeeping that owner relies on, nor open a
+        # second device behind its back, nor replay old targets. The
+        # previous owner keeps the hardware, the error status stays, and
+        # its deferred close still finishes on its own thread. A bare
+        # connect() before the first start stays legal.
+        reader = self._reader
+        if self._module_closed or reader is not None:
+            detail = (
+                "the previous SDK owner is still alive"
+                if reader is not None and reader.is_alive()
+                else "this instance was already started"
+            )
+            raise RuntimeError(
+                f"{type(self).__name__} is not restartable ({detail}); deploy a new module instance"
+            )
         try:
             Module.start(self)
             self._session_id = uuid.uuid4().hex
@@ -204,6 +225,16 @@ class DamiaoConnection(ConnectionModule):
         # even while the owner is parked inside an admission check or an SDK
         # call. The owner itself is released by the same flag and closes the
         # hardware once its current call returns.
+        #
+        # Contract: a normal return means the stop was *requested* and
+        # bounded, not that the hardware is already halted and closed. When
+        # the SDK owner was still busy (in a call, a publish or a disable)
+        # past the join budget, this returns with the device still owned by
+        # that thread: ``status().connected`` stays True and
+        # ``status().last_error`` reports the incomplete cleanup until the
+        # owner finishes closing. The instance is then disposed - ``start``
+        # raises RuntimeError - so no second SDK owner can ever be created
+        # on it; deploy a new module instance for a fresh connection.
         self._stop_reading.set()
         self._owner_wake.set()
         super().stop()
