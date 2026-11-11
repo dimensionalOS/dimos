@@ -26,12 +26,11 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos_messages.dimos_msgs.msg import Contact, Contacts, LineSegments3D
+from dimos_messages.geometry_msgs.msg import PoseStamped, Twist
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import String
 from dimos.simulation.go2_legged.policy import OnnxGo2Policy
 from dimos.simulation.go2_legged.robot import CONTROL_DT, LeggedGo2
 from dimos.simulation.go2_sim.world import GO2, MID360, MOUNT_R, SHAPE, SimGo2World
@@ -213,24 +212,34 @@ def test_reset_pose_moves_the_robot_and_the_contacts_keep_their_heartbeat(scene:
         deadline = time.monotonic() + 10.0
         while len(poses) < 5 and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert poses[-1].position.x == pytest.approx(scene.start[0], abs=0.1)
+        assert poses[-1].pose.position.x == pytest.approx(scene.start[0], abs=0.1)
         time.sleep(2.5)
-        assert heard[-1].ts - heard[-2].ts == pytest.approx(CONTACTS_HEARTBEAT_DT, abs=0.1)
+        assert message_time.to_seconds(heard[-1].header.stamp) - message_time.to_seconds(
+            heard[-2].header.stamp
+        ) == pytest.approx(CONTACTS_HEARTBEAT_DT, abs=0.1)
         assert heard[-1].contacts == [Contact("foot", "floor")]
         world.reset_pose(3.0, 2.0, scene.params["z0"], 1.0)
         # the bundled policy lurches a few decimeters as it is set down, so take the first pose there
-        moved = [p for p in poses if abs(p.position.x - 3.0) < 0.5]
+        moved = [p for p in poses if abs(p.pose.position.x - 3.0) < 0.5]
         while not moved and time.monotonic() < deadline:
             time.sleep(0.02)
-            moved = [p for p in poses if abs(p.position.x - 3.0) < 0.5]
+            moved = [p for p in poses if abs(p.pose.position.x - 3.0) < 0.5]
         first = moved[0]
-        assert (first.position.x, first.position.y) == pytest.approx((3.0, 2.0), abs=0.15)
-        assert first.orientation.to_euler().z == pytest.approx(1.0, abs=0.2)
-        assert first.ts > poses[0].ts
-        while not any(c.ts >= first.ts for c in heard) and time.monotonic() < deadline:
+        first_stamp = message_time.to_seconds(first.header.stamp)
+        assert (first.pose.position.x, first.pose.position.y) == pytest.approx((3.0, 2.0), abs=0.15)
+        assert geometry.yaw(first.pose.orientation) == pytest.approx(1.0, abs=0.2)
+        assert first_stamp > message_time.to_seconds(poses[0].header.stamp)
+        while (
+            not any(message_time.to_seconds(c.header.stamp) >= first_stamp for c in heard)
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.05)
-        after = min(c.ts for c in heard if c.ts >= first.ts)
-        assert after - first.ts < CONTACTS_HEARTBEAT_DT + 0.5
+        after = min(
+            message_time.to_seconds(c.header.stamp)
+            for c in heard
+            if message_time.to_seconds(c.header.stamp) >= first_stamp
+        )
+        assert after - first_stamp < CONTACTS_HEARTBEAT_DT + 0.5
     finally:
         world.stop()
 
@@ -268,8 +277,8 @@ def test_the_world_publishes_its_premap_and_exports_its_robot(
     walk = np.array([[x - 2.0, y, z0], [x - 1.0, y, z0]])
     for objects, seen in ((True, scene), (False, without_objects(scene))):
         count = waiting_world.publish_premap(walk, objects)
-        assert maps[-1].frame_id == "odom" and len(maps[-1].points_f32()) == count
-        assert np.array_equal(maps[-1].points_f32(), premap_cloud(seen, GO2, walk))
+        assert maps[-1].header.frame_id == "odom" and len(pointcloud.xyz(maps[-1])) == count
+        assert np.array_equal(pointcloud.xyz(maps[-1]), premap_cloud(seen, GO2, walk))
     robot = tmp_path / "robot.xml"
     waiting_world.export_model(robot)
     assert robot.read_text() == display_xml(GO2)

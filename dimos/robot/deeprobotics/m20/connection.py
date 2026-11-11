@@ -31,13 +31,10 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs.Bool import Bool
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos.message_utils import geometry, time as message_time
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, PoseStamped, Twist, Vector3
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.std_msgs.msg import Bool, Int32, UInt32
 from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_CHARGING,
     CHARGE_COMMAND_START,
@@ -289,7 +286,7 @@ class M20Connection(Module):
         elif self._charge_busy():
             logger.info("M20 stop_movement left the robot to the vendor's dock control")
         else:
-            self.cmd_vel.publish(Twist.zero())
+            self.cmd_vel.publish(Twist(Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 0.0)))
 
     @rpc
     def standup(self) -> bool:
@@ -639,7 +636,12 @@ class M20Connection(Module):
             return self._fresh_charge_status() is not None
 
     def _cancel_nav_goal(self) -> None:
-        self.goal.publish(PointStamped(math.nan, math.nan, math.nan, frame_id=WORLD_FRAME))
+        self.goal.publish(
+            PointStamped(
+                header=message_time.header_now(WORLD_FRAME),
+                point=Point(math.nan, math.nan, math.nan),
+            )
+        )
 
     def _on_basic_server_report(self) -> None:
         with self._state_condition:
@@ -674,7 +676,7 @@ class M20Connection(Module):
             self._state_condition.notify_all()
 
     def _on_odometry(self, odometry: Odometry) -> None:
-        self.odom.publish(odometry.to_pose_stamped())
+        self.odom.publish(geometry.pose_from_transform(geometry.transform_from_odometry(odometry)))
 
     def _ensure_rl_control(self) -> bool:
         with self._lock:

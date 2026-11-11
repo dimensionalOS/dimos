@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 import pytest
 from pytest import MonkeyPatch
 
+from dimos.message_utils import pointcloud, time as message_time
 from dimos.robot.unitree import mujoco_connection
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.simulation.mujoco.config import MujocoConfig
@@ -250,8 +251,8 @@ def test_get_lidar_message_builds_a_point_cloud_once_per_frame(
 
     message = quiet_connection.get_lidar_message()
     assert message is not None
-    assert message.frame_id == "world"
-    assert message.ts == 3.5
-    np.testing.assert_allclose(message.points_f32(), points)
+    assert message.header.frame_id == "world"
+    assert message_time.to_seconds(message.header.stamp) == 3.5
+    np.testing.assert_allclose(pointcloud.xyz(message), points)
 
     assert quiet_connection.get_lidar_message() is None  # same frame again

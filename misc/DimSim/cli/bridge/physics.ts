@@ -12,7 +12,8 @@
  * position updates and moves the visual avatar.
  */
 
-import { geometry_msgs, std_msgs } from "@dimos/msgs";
+import { channel, decodeCdr, encodeCdr, headerNow } from "./cdr.ts";
+import { decodePacket } from "../vendor/lcm/transport.ts";
 
 import type { LCM } from "../vendor/lcm/lcm.ts";
 
@@ -117,8 +118,8 @@ function resolveMotionModel(embodiment?: EmbodimentConfig): string {
   return "holonomic";
 }
 
-const CH_ODOM = "/odom#geometry_msgs.PoseStamped";
-const CH_CMD_VEL = "/cmd_vel#geometry_msgs.Twist";
+const CH_ODOM = channel("/odom", "geometry_msgs/msg/PoseStamped");
+const CH_CMD_VEL = channel("/cmd_vel", "geometry_msgs/msg/Twist");
 const CMD_VEL_TIMEOUT_MS = 500;
 
 // -- ServerPhysics ------------------------------------------------------------
@@ -333,8 +334,15 @@ export class ServerPhysics {
 
   /** Subscribe to cmd_vel on LCM. */
   subscribeCmdVel(): void {
-    this.lcm.subscribe(CH_CMD_VEL, geometry_msgs.Twist, (msg: any) => {
-      this.handleCmdVel(msg.data);
+    // Twist fits a short packet; retain the existing raw LCM transport unchanged.
+    this.lcm.subscribePacket((packet: Uint8Array) => {
+      const message = decodePacket(packet);
+      if (message?.type !== "small" || message.channel !== CH_CMD_VEL) return;
+      try {
+        this.handleCmdVel(decodeCdr("geometry_msgs/msg/Twist", message.data));
+      } catch (error) {
+        console.warn("[physics] invalid CDR cmd_vel:", error);
+      }
     });
     // quiet
   }
@@ -476,32 +484,18 @@ export class ServerPhysics {
     const qw = Math.cos(this.yaw / 2);
     const qRosZ = Math.sin(this.yaw / 2); // rotation about ROS Z
 
-    const now = Date.now();
-
-    const header = new std_msgs.Header({
-      seq: this.seq++,
-      stamp: new std_msgs.Time({ sec: Math.floor(now / 1000), nsec: (now % 1000) * 1_000_000 }),
-      frame_id: "world",
-    });
-
-    const pose = new geometry_msgs.Pose();
-    pose.position = new geometry_msgs.Point();
-    pose.position.x = rosX;
-    pose.position.y = rosY;
-    pose.position.z = rosZ;
-    pose.orientation = new geometry_msgs.Quaternion();
-    pose.orientation.x = 0;
-    pose.orientation.y = 0;
-    pose.orientation.z = qRosZ;
-    pose.orientation.w = qw;
-
-    const odom = new geometry_msgs.PoseStamped();
-    odom.header = header;
-    odom.pose = pose;
+    this.seq++;
+    const odom = {
+      header: headerNow("world"),
+      pose: {
+        position: { x: rosX, y: rosY, z: rosZ },
+        orientation: { x: 0, y: 0, z: qRosZ, w: qw },
+      },
+    };
 
     try {
       this.sentSeqs.add(this.lcm.getNextSeq());
-      this.lcm.publishRaw(CH_ODOM, odom.encode()).catch(() => {});
+      this.lcm.publishRaw(CH_ODOM, encodeCdr("geometry_msgs/msg/PoseStamped", odom)).catch(() => {});
     } catch (e: unknown) {
       if (this.seq <= 3) console.warn("[physics] odom publish error:", e);
     }

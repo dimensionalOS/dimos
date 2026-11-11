@@ -61,7 +61,7 @@ def grade_rooms(visit_radius_m: float = 1.5) -> Callable[[Outcome], float]:
             count = 0.0
         store = recording(o)
         try:
-            path = [(p.data.position.x, p.data.position.y) for p in store.streams.odom]
+            path = [(p.data.pose.position.x, p.data.pose.position.y) for p in store.streams.odom]
         finally:
             store.stop()
         visited = sum(

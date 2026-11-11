@@ -21,6 +21,7 @@ in FRAMES. These pin the composed result, which is what nav actually uses.
 
 import math
 
+from dimos.message_utils import geometry
 from dimos.protocol.tf.tf import MultiTBuffer
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     MID360_PITCH_DOWN,
@@ -42,16 +43,16 @@ def test_mount_height_survives_the_inversion() -> None:
     """The lidar sits MOUNT_Z above base_link, the offset every ground projection uses."""
     leg = _buffer().get("mid360_link", "base_link")
     assert leg is not None
-    base_to_sensor = -leg
-    assert abs(base_to_sensor.translation.z - MOUNT_Z) < 1e-6
-    assert abs(base_to_sensor.translation.x - MOUNT_X) < 1e-6
+    base_to_sensor = geometry.inverse_transform(leg)
+    assert abs(base_to_sensor.transform.translation.z - MOUNT_Z) < 1e-6
+    assert abs(base_to_sensor.transform.translation.x - MOUNT_X) < 1e-6
 
 
 def test_mount_pitch_survives_the_inversion() -> None:
     """A sign flip here steers the follower off-heading rather than failing loudly."""
     leg = _buffer().get("mid360_link", "base_link")
     assert leg is not None
-    pitch = (-leg).rotation.euler.y
+    pitch = geometry.quaternion_euler(geometry.inverse_transform(leg).transform.rotation)[1]
     assert abs(pitch - MID360_PITCH_DOWN) < 1e-6
     assert abs(math.degrees(pitch) - 60.0) < 1e-6
 
@@ -60,5 +61,5 @@ def test_camera_optical_hangs_off_base_link() -> None:
     """The tree is rooted at mid360_link, so the camera edge is reachable by composition."""
     optical = _buffer().get("base_link", "camera_optical")
     assert optical is not None
-    assert abs(optical.translation.x - 0.32715) < 1e-6
-    assert abs(optical.translation.z - 0.04297) < 1e-6
+    assert abs(optical.transform.translation.x - 0.32715) < 1e-6
+    assert abs(optical.transform.translation.z - 0.04297) < 1e-6

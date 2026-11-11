@@ -15,15 +15,17 @@
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.message_utils import time as message_time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Float32
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoTeleopCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
@@ -74,14 +76,26 @@ def test_mock_webxr_grip_engages_only_its_own_arm(
         DualOpenYamPinkPoseTargetSolver,
         "frame_poses",
         return_value={
-            "left_grasp_frame": PoseStamped(position=[0.5, 0.2, 0.4]),
-            "right_grasp_frame": PoseStamped(position=[0.5, -0.2, 0.4]),
+            "left_grasp_frame": PoseStamped(
+                message_time.header_now("world"),
+                Pose(Point(*[0.5, 0.2, 0.4]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
+            "right_grasp_frame": PoseStamped(
+                message_time.header_now("world"),
+                Pose(Point(*[0.5, -0.2, 0.4]), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         },
     )
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
         "step",
-        side_effect=lambda targets, seed, dt: JointState(name=seed.name, position=[0.01] * 6),
+        side_effect=lambda targets, seed, dt: JointState(
+            header=message_time.header_now(),
+            name=seed.name,
+            position=np.asarray([0.01] * 6, dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        ),
     )
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
     mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
@@ -100,11 +114,17 @@ def test_mock_webxr_grip_engages_only_its_own_arm(
         rig.inputs["right_gripper_command"].broadcast(None, Float32(data=0.25))
         rig.inputs["left_cartesian_command"].broadcast(
             None,
-            PoseStamped(position=[1.0, 0.0, 0.0]),
+            PoseStamped(
+                message_time.header_now(),
+                Pose(Point(1.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         )
         rig.inputs["right_cartesian_command"].broadcast(
             None,
-            PoseStamped(position=[-1.0, 0.0, 0.0]),
+            PoseStamped(
+                message_time.header_now(),
+                Pose(Point(-1.0, 0.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+            ),
         )
         rig.tick()
 

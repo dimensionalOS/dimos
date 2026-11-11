@@ -9,11 +9,11 @@ cmake_args=(
   -B "$bridge_dir/build"
   -DCMAKE_BUILD_TYPE=Release
 )
-if [[ -n "${DIMOS_LCM_DIR:-}" ]]; then
-  cmake_args+=("-DDIMOS_LCM_DIR=${DIMOS_LCM_DIR}")
-elif [[ -d /tmp/dimos-lcm ]]; then
-  cmake_args+=("-DDIMOS_LCM_DIR=/tmp/dimos-lcm")
+if [[ -z "${DIMOS_CDR_TOOLCHAIN:-}" ]]; then
+  echo "Set DIMOS_CDR_TOOLCHAIN to the prepared generated-message toolchain.cmake" >&2
+  exit 1
 fi
+cmake_args+=("-DCMAKE_TOOLCHAIN_FILE=${DIMOS_CDR_TOOLCHAIN}")
 
 cmake "${cmake_args[@]}"
 cmake --build "$bridge_dir/build" --parallel "${M20_BUILD_JOBS:-4}"
