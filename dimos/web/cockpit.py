@@ -46,14 +46,13 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from dimos_lcm.std_msgs import Bool
-
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos_messages.geometry_msgs.msg import PointStamped
+from dimos_messages.nav_msgs.msg import Path
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Bool
 from dimos.web.cdr_codec import export_schema as export_cdr_schema
-from dimos.web.codecs import is_generic_cdr_encoding, is_generic_lcm_encoding
-from dimos.web.lcm_codec import default_encoding, export_schema, schema_class_for
+from dimos.web.codecs import default_encoding, is_generic_cdr_encoding, is_generic_lcm_encoding
+from dimos.web.lcm_codec import export_schema, schema_class_for
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
     MAX_MANIFEST_ID_LEN,
@@ -177,7 +176,8 @@ class Channel:
     JSON-shaped types and dataclasses (rx) / JSON scalars, lists and dicts
     (tx decode), or `<msg_name>.lcm.v1` for rx DimOS messages with a
     dimos_lcm schema (the frame is `lcm_encode()`, the schema rides
-    params["lcm"]). None picks the default: `<msg_name>.lcm.v1` for rx
+    params["lcm"]), or explicit `<package>/msg/<Type>.cdr.v1` for installed
+    generated values (complete ROS2 schemas ride params["cdr"]). None picks the default: `<msg_name>.lcm.v1` for rx
     DimOS messages, "json.v1" otherwise.
 
     A dir="tx" channel is a generic browser publish input: it must declare

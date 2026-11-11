@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared mesh rendering works without importing the mapping implementation."""
 
-from dimos_messages.dimos_msgs.msg import TriangleMesh
 import numpy as np
 
 from dimos.message_utils import mesh as mesh_utils, time as message_time
+from dimos_messages.dimos_msgs.msg import TriangleMesh
 
 
 def test_colours_recolour_every_chunk_once_the_range_moves() -> None:

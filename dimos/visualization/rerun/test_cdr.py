@@ -18,6 +18,12 @@ import json
 from unittest.mock import Mock
 
 from dimos_cdrgen.registry import decode, encode
+import numpy as np
+import pytest
+import rerun as rr
+
+from dimos.core.global_config import GlobalConfig
+from dimos.core.transport import ZenohTransport
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos_messages.geometry_msgs.msg import (
@@ -41,12 +47,6 @@ from dimos_messages.sensor_msgs.msg import (
 )
 from dimos_messages.std_msgs.msg import Header
 from dimos_messages.tf2_msgs.msg import TFMessage
-import numpy as np
-import pytest
-import rerun as rr
-
-from dimos.core.global_config import GlobalConfig
-from dimos.core.transport import ZenohTransport
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.visualization.rerun.bridge import Config, RerunBridgeModule, _resolve_pubsubs
 from dimos.visualization.rerun.cdr import (

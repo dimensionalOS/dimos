@@ -14,19 +14,27 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
+from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
+from dimos_messages.nav_msgs.msg import OccupancyGrid
+from dimos_messages.sensor_msgs.msg import PointCloud2
 import numpy as np
+from numpy.typing import NDArray
 from scipy import ndimage
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.message_utils import occupancy as occupancy_utils, pointcloud
+from dimos.msgs.geometry_msgs.Pose import Pose as LegacyPose
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid as LegacyOccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as LegacyPointCloud2
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+GridT = OccupancyGrid | LegacyOccupancyGrid
+CloudT = PointCloud2 | LegacyPointCloud2
 
 
 @dataclass(frozen=True)
@@ -35,6 +43,43 @@ class OccupancyConfig:
 
     resolution: float = 0.05
     frame_id: str | None = None
+
+
+def _cloud_points(cloud: CloudT) -> NDArray[np.float64]:
+    if isinstance(cloud, LegacyPointCloud2):
+        points, _ = cloud.as_numpy()
+        return points.astype(np.float64)
+    points = pointcloud.xyz(cloud)
+    return points[np.isfinite(points).all(axis=1)]
+
+
+def _grid_message(
+    cloud: CloudT,
+    config: OccupancyConfig,
+    cells: NDArray[np.int8],
+    origin: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> GridT:
+    # Keep the caller's grid family: legacy clouds yield legacy grids until the
+    # owning mapping layer migrates, generated clouds yield generated grids.
+    if isinstance(cloud, LegacyPointCloud2):
+        return LegacyOccupancyGrid(
+            grid=np.array(cells, dtype=np.int8, copy=True),
+            resolution=config.resolution,
+            origin=LegacyPose(*origin),
+            frame_id=config.frame_id or cloud.frame_id,
+            ts=cloud.ts if cloud.ts is not None else 0.0,
+        )
+    header = deepcopy(cloud.header)
+    header.frame_id = config.frame_id or header.frame_id
+    return occupancy_utils.from_array(
+        cells,
+        header=header,
+        resolution=config.resolution,
+        origin=Pose(
+            position=Point(x=origin[0], y=origin[1], z=origin[2]),
+            orientation=Quaternion(w=1, x=0, y=0, z=0),
+        ),
+    )
 
 
 ConfigT = TypeVar("ConfigT", bound=OccupancyConfig, covariant=True)
@@ -50,11 +95,11 @@ class OccupancyFn(Protocol[ConfigT]):
     @property
     def config_class(self) -> type[ConfigT]: ...
 
-    def __call__(self, cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid: ...
+    def __call__(self, cloud: CloudT, **kwargs: Any) -> GridT: ...
 
 
 # Populated after function definitions below
-OCCUPANCY_ALGOS: dict[str, Callable[..., OccupancyGrid]] = {}
+OCCUPANCY_ALGOS: dict[str, Callable[..., GridT]] = {}
 
 
 @dataclass(frozen=True)
@@ -67,7 +112,7 @@ class HeightCostConfig(OccupancyConfig):
     smoothing: float = 1.0
 
 
-def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
+def height_cost_occupancy(cloud: CloudT, **kwargs: Any) -> GridT:
     """Create a costmap based on terrain slope (rate of change of height).
 
     Costs are assigned based on the gradient magnitude of the terrain height.
@@ -83,17 +128,10 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with costs 0-100 based on terrain slope, -1 for unknown
     """
     cfg = HeightCostConfig(**kwargs)
-    points, _ = cloud.as_numpy()
-    points = points.astype(np.float64)  # Upcast to avoid float32 rounding
-    ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
+    points = _cloud_points(cloud)
 
     if len(points) == 0:
-        return OccupancyGrid(
-            width=1,
-            height=1,
-            resolution=cfg.resolution,
-            frame_id=cfg.frame_id or cloud.frame_id,
-        )
+        return _grid_message(cloud, cfg, np.full((1, 1), -1, dtype=np.int8))
 
     # Find bounds of the point cloud in X-Y plane (use all points)
     min_x = np.min(points[:, 0])
@@ -113,11 +151,7 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose
-    origin = Pose()
-    origin.position.x = min_x
-    origin.position.y = min_y
-    origin.position.z = 0.0
-    origin.orientation.w = 1.0
+    origin = (float(min_x), float(min_y), 0.0)
 
     # Step 1: Build min and max height maps for each cell
     # Initialize with NaN to track which cells have observations
@@ -204,13 +238,7 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     else:
         cost = np.full((height, width), -1, dtype=np.int8)
 
-    return OccupancyGrid(
-        grid=cost,
-        resolution=cfg.resolution,
-        origin=origin,
-        frame_id=cfg.frame_id or cloud.frame_id,
-        ts=ts,
-    )
+    return _grid_message(cloud, cfg, cost, origin)
 
 
 @dataclass(frozen=True)
@@ -222,7 +250,7 @@ class GeneralOccupancyConfig(OccupancyConfig):
     mark_free_radius: float = 0.4
 
 
-def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
+def general_occupancy(cloud: CloudT, **kwargs: Any) -> GridT:
     """Create an OccupancyGrid from a PointCloud2 message.
 
     Args:
@@ -234,16 +262,10 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with occupied cells where points were projected
     """
     cfg = GeneralOccupancyConfig(**kwargs)
-    points, _ = cloud.as_numpy()
-    points = points.astype(np.float64)  # Upcast to avoid float32 rounding
+    points = _cloud_points(cloud)
 
     if len(points) == 0:
-        return OccupancyGrid(
-            width=1,
-            height=1,
-            resolution=cfg.resolution,
-            frame_id=cfg.frame_id or cloud.frame_id,
-        )
+        return _grid_message(cloud, cfg, np.full((1, 1), -1, dtype=np.int8))
 
     # Filter points by height for obstacles
     obstacle_mask = (points[:, 2] >= cfg.min_height) & (points[:, 2] <= cfg.max_height)
@@ -271,11 +293,7 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose (bottom-left corner of the grid)
-    origin = Pose()
-    origin.position.x = min_x
-    origin.position.y = min_y
-    origin.position.z = 0.0
-    origin.orientation.w = 1.0  # No rotation
+    origin = (float(min_x), float(min_y), 0.0)
 
     # Initialize grid (all unknown)
     grid = np.full((height, width), -1, dtype=np.int8)
@@ -327,15 +345,8 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
 
     # Create and return OccupancyGrid
     # Get timestamp from cloud if available
-    ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
 
-    return OccupancyGrid(
-        grid=grid,
-        resolution=cfg.resolution,
-        origin=origin,
-        frame_id=cfg.frame_id or cloud.frame_id,
-        ts=ts,
-    )
+    return _grid_message(cloud, cfg, grid, origin)
 
 
 @dataclass(frozen=True)
@@ -352,7 +363,7 @@ class SimpleOccupancyConfig(OccupancyConfig):
     smoothing: float = 1.0
 
 
-def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
+def simple_occupancy(cloud: CloudT, **kwargs: Any) -> GridT:
     """Create a simple occupancy grid with morphological closing.
 
     Args:
@@ -364,16 +375,10 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with occupied/free cells
     """
     cfg = SimpleOccupancyConfig(**kwargs)
-    points, _ = cloud.as_numpy()
-    points = points.astype(np.float64)  # Upcast to avoid float32 rounding
+    points = _cloud_points(cloud)
 
     if len(points) == 0:
-        return OccupancyGrid(
-            width=1,
-            height=1,
-            resolution=cfg.resolution,
-            frame_id=cfg.frame_id or cloud.frame_id,
-        )
+        return _grid_message(cloud, cfg, np.full((1, 1), -1, dtype=np.int8))
 
     # Find bounds of the point cloud in X-Y plane
     min_x = float(np.min(points[:, 0])) - 1.0
@@ -386,11 +391,7 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     height = int(np.ceil((max_y - min_y) / cfg.resolution))
 
     # Create origin pose (bottom-left corner of the grid)
-    origin = Pose()
-    origin.position.x = min_x
-    origin.position.y = min_y
-    origin.position.z = 0.0
-    origin.orientation.w = 1.0
+    origin = (float(min_x), float(min_y), 0.0)
 
     # Initialize grid (all unknown)
     grid = np.full((height, width), -1, dtype=np.int8)
@@ -410,15 +411,7 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         cfg.max_height,
     )
 
-    ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
-
-    return OccupancyGrid(
-        grid=grid,
-        resolution=cfg.resolution,
-        origin=origin,
-        frame_id=cfg.frame_id or cloud.frame_id,
-        ts=ts,
-    )
+    return _grid_message(cloud, cfg, grid, origin)
 
 
 # Populate algorithm registry

@@ -487,12 +487,7 @@ def resolve_encoder(encoding: str, message_type: type[Any]) -> EncoderDef:
             encoding, message_type, encode_lcm_v1, takes_params=True, check_params=check_lcm_params
         )
     if encoding == "json.v1":
-        # DimosMsg detection by attribute: legacy poetry messages expose
-        # lcm_encode(), installed generated messages expose __msgtype__. Some
-        # wire messages (Image) are dataclasses too - the marker must win.
-        is_dimos_msg = callable(getattr(message_type, "lcm_encode", None)) or isinstance(
-            getattr(message_type, "__msgtype__", None), str
-        )
+        is_dimos_msg = isinstance(getattr(message_type, "__msgtype__", None), str)
         plain_dataclass = dataclasses.is_dataclass(message_type) and not is_dimos_msg
         if message_type not in _JSON_V1_TYPES and not plain_dataclass:
             raise ValueError(
