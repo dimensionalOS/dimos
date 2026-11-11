@@ -113,13 +113,42 @@ with CdrMcapStore(path="/path/from/log/memory.mcap") as store:
     print(observation.ts, observation.data)  # frame_id='map', moving x/y
 ```
 
-## Replay
+## Record and view live
 
-Replay republishes every recorded stream over the same transport with the
-recorded type and schema:
+The `pose-view` blueprint composes the same `MovingPose` sample with the
+standard Rerun viewer bridge (`vis_module(global_config.viewer)`), so one
+process records with the Rust recorder and renders the stream at the same
+time. `--viewer rerun` adds the bridge; the environment keeps the viewer
+headless and saves the rendered stream next to the MCAP:
 
 ```bash
-.venv-cdr-recording/bin/dimos --transport zenoh --viewer none \
+RERUNBRIDGEMODULE__RERUN_OPEN=none RERUNBRIDGEMODULE__RERUN_SAVE=true \
+RERUNBRIDGEMODULE__HOST=127.0.0.1 \
+.venv-cdr-recording/bin/dimos --transport zenoh --viewer rerun --n-workers 1 \
+  --record mcap --record-engine rust --record-topics pose \
+  --record-executable "$PWD/build/cdr-recorder/debug/dimos-memory-recorder" \
+  run dimos-cdr-recording-example.pose-view
+```
+
+Stop with **Ctrl+C** as above. The run directory now contains both
+`memory.mcap` (the Rust recording) and `rerun.rrd` (what the viewer rendered):
+
+```text
+Rerun bridge starting
+Saving the Rerun stream path=.../recordings/<timestamp>-...-pose-view/rerun.rrd
+memory recorder flushed ... encode_errors=0 received=<N> written=<N>
+```
+
+## Replay and view
+
+Replay republishes every recorded stream over the same transport with the
+recorded type and schema. Adding `--viewer rerun` connects the replayed stream
+to the same Rerun bridge, so the recorded data renders while it replays:
+
+```bash
+RERUNBRIDGEMODULE__RERUN_OPEN=none RERUNBRIDGEMODULE__RERUN_SAVE=true \
+RERUNBRIDGEMODULE__HOST=127.0.0.1 \
+.venv-cdr-recording/bin/dimos --transport zenoh --viewer rerun \
   --zenoh-domain cdr-replay --replay-db "$PWD/recordings/<run>/memory.mcap" \
   run replay
 ```
@@ -128,11 +157,30 @@ Expected log:
 
 ```text
 Replaying pose -> Out pose[geometry_msgs__msg__PoseStamped] @ Replay via ZenohTransport(dimos-domains/cdr-replay/pose)
+Rerun bridge starting
+Saving the Rerun stream path=.../recordings/<timestamp>-...-replay/rerun.rrd
 ```
 
-Stop it with **Ctrl+C**. To observe the replayed values, run a subscriber or a
-second recording with `--record-topics pose` in another terminal. Use an
-isolated `--zenoh-domain` when replaying next to other processes.
+Stop it with **Ctrl+C**. Use an isolated `--zenoh-domain` when replaying next
+to other processes.
+
+## Watch the rendered stream
+
+Serve either saved `rerun.rrd` with the Rerun CLI from the same environment
+(the flags keep it on loopback only):
+
+```bash
+.venv-cdr-recording/bin/rerun --serve-web --bind 127.0.0.1 \
+  --port 9191 --web-viewer-port 9190 "$PWD/recordings/<run>/rerun.rrd"
+```
+
+Open
+`http://127.0.0.1:9190/?url=rerun%2Bhttp%3A%2F%2F127.0.0.1%3A9191%2Fproxy` in a
+browser. The 3D view shows `/world/pose` moving around the one-metre circle in
+the `map` frame — the same values the Rust recorder wrote (check with
+`rerun rrd print --entity /world/pose <rrd>`). If the machine has a display,
+drop `RERUNBRIDGEMODULE__RERUN_OPEN=none` and the bridge opens a native viewer
+window instead.
 
 ## Repeat
 
@@ -140,9 +188,13 @@ Record again with the same command; every run gets a new timestamped directory
 under `recordings/`. Replay the new file the same way. Nothing outside
 `recordings/` and `build/` is modified.
 
-## View live
+## Renderer demos (separate producers)
 
-The support layer also ships two no-hardware viewer entrypoints (see
+The commands above are the connected workflow: the CLI sample, its recording
+and its replay all render through the standard Rerun bridge. The support layer
+also ships two standalone renderer demos that publish their **own** generated
+messages (16 topics / browser fixture) — they exercise the viewer paths without
+the recorder and are not the workflow above (see
 [CDR messages](/docs/usage/cdr.md) and [Bridge](/docs/web/bridge.md)):
 
 ```bash
@@ -162,7 +214,7 @@ Open the URL printed by the demo
 (`http://127.0.0.1:5174/demo_cdr.html?live=1&relay=...`). The page should report
 `Live relay: connected. Received 8/8 channels.` and show decoded pose, image and
 custom values. These demos publish their own generated messages; they prove the
-viewer path, while the CLI commands above prove the recorder path.
+viewer paths only — the recorder workflow is the one above.
 
 ## Troubleshooting
 
@@ -179,8 +231,9 @@ viewer path, while the CLI commands above prove the recorder path.
 
 ## Files
 
-- `cdr_recording_example.py` — the `MovingPose` module and
-  `dimos-cdr-recording-example.pose` blueprint.
+- `cdr_recording_example.py` — the `MovingPose` module, the
+  `dimos-cdr-recording-example.pose` blueprint and the `pose-view` composition
+  with the standard viewer.
 - `pyproject.toml` — example package and `dimos.blueprints` entry point.
 - `../../dimos/experimental/memory/rust` — the Rust recorder crate.
 - `../../dimos/memory/store/cdr_mcap.py` — Python `CdrMcapStore` reader.

@@ -10,6 +10,7 @@ dependencies = ["dimos", "mcap>=1.2"]
 
 [project.entry-points."dimos.blueprints"]
 pose = "cdr_recording_example:MovingPose"
+pose-view = "cdr_recording_example:pose_view"
 
 [tool.setuptools]
 py-modules = ["cdr_recording_example"]
