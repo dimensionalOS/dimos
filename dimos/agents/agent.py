@@ -293,6 +293,12 @@ class Agent(BaseAgent):
                 model = MockModel(json_path=self.config.model_fixture)
             else:
                 model = init_model(self.config.model, trace_dir=self.config.trace_dir)
+            logger.info(
+                "Agent model ready.",
+                model=self.config.model_fixture or self.config.model,
+                backend=type(model).__name__,
+                trace_dir=str(self.config.trace_dir) if self.config.trace_dir else None,
+            )
             self._state_graph = create_agent(
                 model=model,
                 tools=self._agent_tools or [],
