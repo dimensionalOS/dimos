@@ -147,7 +147,10 @@ class EvdevJoyConBackend:
             if side in self._fds:
                 continue
             wanted = self._config.joystick_name(side)
-            path = next((p for name, p in paths.items() if wanted in name), None)
+            # The driver also registers a root-only "(IMU)" device per Joy-Con.
+            path = next(
+                (p for name, p in paths.items() if wanted in name and "(IMU)" not in name), None
+            )
             if path is None:
                 continue
             try:

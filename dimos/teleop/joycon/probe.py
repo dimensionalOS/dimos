@@ -33,13 +33,22 @@ from dimos.teleop.joycon.joycon_module import _EVENT_FORMAT, _EVENT_SIZE, input_
 
 
 def main(seconds: float) -> None:
-    devices = {name: path for name, path in input_device_paths().items() if "Joy-Con" in name}
+    # The driver's IMU device is root-only and carries no buttons.
+    devices = {
+        name: path
+        for name, path in input_device_paths().items()
+        if "Joy-Con" in name and "(IMU)" not in name
+    }
     if not devices:
         print("no Joy-Con input devices; pair over Bluetooth (hold SYNC on the rail) and retry")
         return
     fds = {}
     for name, path in devices.items():
-        fds[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = name
+        try:
+            fds[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = name
+        except OSError as exc:
+            print(f"{path}: {name}: cannot open ({exc})")
+            continue
         print(f"{path}: {name}")
     print("press buttons and move sticks; Ctrl-C to stop")
     deadline = time.monotonic() + seconds
