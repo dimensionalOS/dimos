@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import JointDescription, PlanarBaseDefinition, RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.galaxea.r1pro.joints import (
     CONTROL_PASSIVE_JOINTS,
@@ -116,14 +116,37 @@ R1PRO_MODEL = (
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
-R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
+# Velocity-only actuator resources, not generalized planar coordinates.
+R1PRO_BODY_AXES = ("r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn")
 R1PRO_CONTROL_MODEL = _with_contract_grippers(
     RobotModel.from_file(R1PRO_MODEL_PATH, package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT})
     .with_default_joint_acceleration_limit(2.0)
     .with_fixed_joints(*CONTROL_PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS}),
     prefix="r1pro/",
-).with_planar_base(R1PRO_PLANAR_BASE)
+).with_added_joints(
+    *(
+        JointDescription(
+            name=name,
+            type="continuous" if i == 2 else "prismatic",
+            parent_link="base_link",
+            child_link=f"r1pro_body_control_{i}",
+            axis=axis,
+            velocity=velocity,
+            acceleration=acceleration,
+        )
+        for i, (name, axis, velocity, acceleration) in enumerate(
+            zip(
+                R1PRO_BODY_AXES,
+                ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+                R1PRO_PLANAR_BASE.velocity_limits,
+                R1PRO_PLANAR_BASE.acceleration_limits,
+                strict=True,
+            )
+        )
+    )
+)
+R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
 R1PRO_UPPER_BODY_PLANNING_JOINTS = tuple(coordinator_name(joint) for joint in UPPER_BODY_JOINTS)
 R1PRO_PLANNING_JOINTS = (
     *R1PRO_PLANAR_BASE.joint_names,

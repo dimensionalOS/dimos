@@ -53,7 +53,6 @@ _manipulation_tasks = [
         type="twist_velocity",
         params={
             "axes": ["linear.x", "linear.y", "angular.z"],
-            "yaw_joint": R1PRO_BASE_JOINTS[2],
             "timeout": 0.2,
         },
         joint_names=R1PRO_BASE_JOINTS,

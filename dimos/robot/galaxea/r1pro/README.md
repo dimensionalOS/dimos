@@ -125,35 +125,32 @@ E-stop hardware for a real emergency stop.
 directly, with no transport adapters in between. `position_command` carries
 all 18 upper-body joints' targets (rad, `r1pro/<joint>`, positions only;
 the vendor tracker's speed is a tracking-speed cap, not a velocity command),
-`velocity_command` carries a `JointState` for ordinary model joints
-`r1pro/base_x`, `r1pro/base_y`, `r1pro/base_yaw` (world derivatives,
-bounded by ±1/±1 m/s and ±2 rad/s, rejected rather than clipped), and
-feedback goes out on `joint_state`. Every command is checked against the
-URDF limits first; an out-of-range command is refused whole.
+`velocity_command` carries a velocity-only `JointState` for body resources
+`r1pro/base_forward`, `r1pro/base_lateral`, `r1pro/base_turn` (bounded by
+±1/±1 m/s and ±2 rad/s, rejected rather than clipped). These are actuator
+rates, not planar generalized coordinates. Upper-body planning and the
+geometric `R1PRO_PLANAR_BASE` helper retain their ordinary position semantics.
 
-Chassis speeds flow `/cmd_vel` bus → the coordinator's `twist_command` →
-the registered `twist_velocity` task `vel_chassis` → ordinary joint arbitration
-→ `r1pro_velocity_command`. Its explicit axes are `linear.x`, `linear.y`,
-`angular.z`; measured `r1pro/base_yaw` rotates raw body intent each compute,
-without refreshing its 0.2 s input timeout. Teleop and nav publishers are unchanged.
+Chassis speeds flow `/cmd_vel` → coordinator `twist_command` → the registered
+`twist_velocity` task `vel_chassis` → ordinary joint arbitration →
+`r1pro_velocity_command`. Explicit axes are `linear.x`, `linear.y`, `angular.z`.
+The native body command reaches the SDK unchanged, with no yaw read, frame
+roundtrip, or odometry prerequisite. The 0.2 s operator-input timeout remains.
 
-**Measured planar feedback.** The unchanged vendor ROS input is
-`/motion_control/chassis_speed` (`geometry_msgs/TwistStamped`), not a new
-`/odom` subscription. Measured body vx/vy/wz are integrated into local wheel
-odometry, as in the original driver. The first valid sample defines the local
-origin `(x, y, yaw) = (0, 0, 0)` and anchors time; only a subsequent valid
-interval publishes planar positions and world-frame joint velocities and
-authorizes nonzero commands. This is relative dead reckoning, not absolute
-map localization. Commands are never integrated as feedback.
+**Measured feedback.** The deployed `/motion_control/chassis_speed`
+(`geometry_msgs/TwistStamped`) input is unchanged. Every valid measured sample,
+including the first, publishes native body rates on `joint_state` in `base_link`,
+with no positions. Only valid subsequent intervals integrate local wheel
+odometry on the separate `odometry` (`nav_msgs/Odometry`) port. Its pose is in
+`odom`, its twist in `base_link`; pose, twist and optional `odom`/TF outputs
+retain the actual sample timestamp. This is relative dead reckoning, not map
+localization, and never integrates commands.
 
-Nonzero chassis output requires finite feedback-derived yaw and both source
-timestamp and independent receipt less than 0.2 s old. Arm/IMU traffic and the
-joint publish timer cannot renew that authority. Invalid data, backwards or
-duplicate timestamps, and gaps over 1 s revoke authority without resetting the
-accumulated pose or inventing motion across the gap. Fresh measured intervals
-are required to recover. Missing/invalid/stale feedback rejects a mixed batch
-before arm targets are sent; halt and zero velocity still work without it.
-Hardware timing and dead-reckoning accuracy have not been validated here.
+Source timestamp validation (0.2 s age limit) remains. Invalid samples clear
+the integration time anchor; backwards/duplicate timestamps and gaps over 1 s
+rebase it without inventing motion or resetting accumulated pose. These
+odometry checks do not gate native body writes. Arms, sensors and deadman
+lifecycle remain unchanged. Hardware timing/accuracy are not validated here.
 
 **Deadman.** While the coordinator runs it sends a complete command every
 tick, so the deadman stays quiet. When commands stop, estop, or the

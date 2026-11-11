@@ -63,10 +63,8 @@ from dimos.teleop.webxr.extensions import ArmTeleopModule
 R1PRO_VR_TASK_NAME = "teleop_r1pro_vr"
 R1PRO_VR_CHASSIS_TASK_NAME = "vel_chassis"
 
-#: The torso joints the IK may steer: the waist's top pitch and its yaw. The
-#: two pitch joints below them stay outside the controlled set, so an operator
-#: leaning forward never folds the whole waist. Pass ``full_torso=True`` to
-#: ``make_r1pro_vr_teleop`` to hand all four back to the solver.
+#: The torso joints the IK may steer: the waist's top pitch and yaw. Lower
+#: pitch joints 1/2 belong to the independent joystick height task, not IK.
 R1PRO_VR_STEERED_TORSO_JOINTS = ("r1pro/torso_joint3", "r1pro/torso_joint4")
 
 #: Posture the fake stack starts in (and therefore the IK's first seed): the

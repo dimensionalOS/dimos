@@ -45,7 +45,7 @@ def test_go2_shipped_connections_and_tasks(name):
     assert ("velocity_command", "go2_velocity_command") in pairs
     assert ("go2_joint_state", "joint_state") in pairs
     for cfg in config.tasks:
-        assert cfg.params["yaw_joint"] == GO2_BASE_JOINTS[2]
+        assert "yaw_joint" not in cfg.params
         task = control_task_registry.create(cfg.type, cfg, connections={"go2": source})
         assert task.claim().joints == frozenset(GO2_BASE_JOINTS)
 
@@ -92,38 +92,29 @@ def test_g1_shipped_basic_and_groot_backends(simulation, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["rpp_path_follower", "holonomic_pose_follower"])
-def test_calibrated_followers_emit_world_joint_velocities(kind):
+def test_calibrated_followers_use_independent_pose_and_emit_body_rates(kind):
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.nav_msgs.Odometry import Odometry
+
     names = list(GO2_BASE_JOINTS)
-
-    def make(params):
-        return control_task_registry.create(
-            kind,
-            TaskConfig(
-                name="follow",
-                type=kind,
-                joint_names=names,
-                params=params,
-            ),
-        )
-
-    body = make({})
-    world = make({"yaw_joint": names[2]})
+    task = control_task_registry.create(
+        kind,
+        TaskConfig(
+            name="follow",
+            type=kind,
+            joint_names=names,
+        ),
+    )
     q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
     path = Path(poses=[PoseStamped(position=[0.0, y, 0.0], orientation=q) for y in [0.0, 1.0, 2.0]])
-    for task in (body, world):
-        task.on_path(path, 1.0)
+    task.on_path(path, 1.0)
     for t in [1.0, 1.1, 1.2]:
-        state = CoordinatorState(
-            joints=JointStateSnapshot(
-                joint_positions=dict(zip(names, [0.0, 0.0, math.pi / 2], strict=True)),
-            ),
-            t_now=t,
-            dt=0.1,
-        )
-        b, w = body.compute(state), world.compute(state)
-        assert b is not None and w is not None
-        vx, vy, wz = b.velocities
-        assert w.velocities == pytest.approx([-vy, vx, wz])
-    assert abs(vx) > 0.0
-    state.joints.joint_positions.pop(names[2])
-    assert world.compute(state) is None
+        task.on_odometry(Odometry(ts=t, pose=Pose(orientation=q)), t)
+        state = CoordinatorState(joints=JointStateSnapshot(), t_now=t, dt=0.1)
+        command = task.compute(state)
+        assert command is not None
+        vx, vy, wz = command.velocities
+        assert vx >= 0.0  # First holonomic tick has dt=0.
+        assert abs(vy) < 1e-6
+    assert vx > 0.0  # world +y at yaw pi/2 is body forward, not lateral.
+    assert "odometry" in {b.stream for b in control_task_registry.bindings_for(kind).consumes}

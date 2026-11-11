@@ -84,7 +84,6 @@ class Rig:
         self.ports["position_command"].publish(msg)
 
     def drive(self, vx: float, vy: float, wz: float) -> None:
-        feed_chassis_interval(self.fake)
         self.ports["velocity_command"].publish(
             JointState(name=R1PRO_BASE_JOINTS, velocity=[vx, vy, wz])
         )
@@ -194,39 +193,48 @@ def test_nothing_is_published_until_every_segment_has_reported(
 
 
 @pytest.mark.parametrize("publish_tf", [True, False])
-def test_measured_speed_integrates_local_pose_and_world_joint_velocities(
+def test_measured_body_rates_and_independent_odometry(
     rig: Callable[..., Rig], publish_tf: bool
 ) -> None:
     r = rig(publish_odom_tf=publish_tf)
     assert CHASSIS_FEEDBACK_TOPIC in r.fake.control.subs
     assert "/odom" not in r.fake.control.subs
+    first_ts = time.time()
+    r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.4, 0.1, 0.0, first_ts))
+    first = [s for s in r.readings() if list(s.name) == R1PRO_BASE_JOINTS][-1]
+    assert first.ts == first_ts and list(first.position) == []
+    assert list(first.velocity) == pytest.approx([0.4, 0.1, 0.0])
+    assert r.ports["odometry"].sent == []
     feed_chassis_interval(r.fake, turn=math.pi / 2)
     ts = time.time()
     previous = r.module._odom_last_ts
     assert previous is not None
     r.fake.control.feed(CHASSIS_FEEDBACK_TOPIC, chassis_speed(0.4, 0.1, 0.0, ts))
     base = [s for s in r.readings() if list(s.name) == R1PRO_BASE_JOINTS][-1]
-    assert list(base.position) == pytest.approx(
-        [-0.1 * (ts - previous), 0.4 * (ts - previous), math.pi / 2]
-    )
-    assert list(base.velocity) == pytest.approx([-0.1, 0.4, 0.0])
+    assert list(base.position) == []
+    assert base.frame_id == "base_link"
+    assert base.ts == ts
+    assert list(base.velocity) == pytest.approx([0.4, 0.1, 0.0])
     r.ports["velocity_command"].publish(
         JointState(name=R1PRO_BASE_JOINTS, velocity=[0.2, 0.5, 0.7])
     )
     sent = r.speeds()[-1].twist
-    assert (sent.linear.x, sent.linear.y, sent.angular.z) == pytest.approx((0.5, -0.2, 0.7))
+    assert (sent.linear.x, sent.linear.y, sent.angular.z) == pytest.approx((0.2, 0.5, 0.7))
 
     wait_until(lambda: bool(r.ports["odometry"].sent), timeout=5.0)
     odom = r.ports["odometry"].sent[-1]
     assert odom.frame_id == "odom"
     assert odom.child_frame_id == "base_link"
-    assert odom.pose.position.x == pytest.approx(base.position[0])
+    assert odom.ts == ts
+    assert odom.pose.position.x == pytest.approx(-0.1 * (ts - previous))
     assert odom.twist.linear.x == pytest.approx(0.4)
     # The pose and tf share the same gate.
     assert bool(r.ports["odom"].sent) is publish_tf
     assert bool(r.ports["tf"].sent) is publish_tf
     if publish_tf:
-        assert r.ports["odom"].sent[-1].position.x == pytest.approx(base.position[0])
+        assert r.ports["odom"].sent[-1].position.x == pytest.approx(odom.pose.position.x)
+        assert r.ports["odom"].sent[-1].ts == ts
+        assert r.ports["tf"].sent[-1].transforms[0].ts == ts
 
 
 def test_gripper_units_readback_and_dedup(rig: Callable[..., Rig]) -> None:
@@ -278,19 +286,14 @@ def test_gripper_invalid_feedback_blocks_without_replay(rig, monkeypatch):
     assert list(r.jaws("left")[-1].position) == [95.0]
 
 
-def test_stale_feedback_rejects_mixed_commands_but_allows_halt(rig, monkeypatch):
+def test_body_write_needs_no_odometry_and_halt_holds_measured_arms(rig):
     r = rig(start=False)
     r.module.connect()
     r.feed()
-    feed_chassis_interval(r.fake)
-    received = r.module._odom_received_mono
-    monkeypatch.setattr(connection_module.time, "monotonic", lambda: received + 10.0)
     batch = {f"{j}/position": 0.05 for j in R1PRO_UPPER_BODY_JOINTS}
     batch[f"{R1PRO_BASE_JOINTS[0]}/velocity"] = 0.2
-    before = list(r.fake.control.published)
-    with pytest.raises(ValueError, match="fresh measured odometry"):
-        r.module.write(batch)
-    assert r.fake.control.published == before
+    r.module.write(batch)
+    assert r.speeds()[-1].twist.linear.x == 0.2
     r.module.halt()
     stopped = r.speeds()[-1].twist
     assert (stopped.linear.x, stopped.linear.y, stopped.angular.z) == (0.0, 0.0, 0.0)
@@ -298,3 +301,34 @@ def test_stale_feedback_rejects_mixed_commands_but_allows_halt(rig, monkeypatch)
         (TORSO_TOPIC, LEFT_TOPIC, RIGHT_TOPIC), (TORSO_Q, LEFT_Q, RIGHT_Q), strict=True
     ):
         assert list(r.joint_targets()[topic].position) == pytest.approx(q)
+
+
+@pytest.mark.parametrize("name", ["coordinator", "manipulation"])
+def test_physical_assembly_parses_body_resources_without_hardware(name, monkeypatch):
+    import importlib
+
+    from dimos.control.connection_source import ConnectionSource
+    from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+
+    def no_hardware(*args, **kwargs):
+        raise AssertionError("configuration parsing must not initialize hardware")
+
+    monkeypatch.setattr(R1ProConnection, "connect", no_hardware)
+    monkeypatch.setattr(R1ProConnection, "build", no_hardware)
+    category = "basic" if name == "coordinator" else "manipulation"
+    module = importlib.import_module(
+        f"dimos.robot.galaxea.r1pro.blueprints.{category}.r1pro_{name}"
+    )
+    blueprint = getattr(module, f"r1pro_{name}")
+    parsed = BlueprintConfigParser(blueprint).parse([], environ={})
+    atom = next(a for a in blueprint.blueprints if issubclass(a.module, ControlCoordinator))
+    config = ControlCoordinatorConfig(**parsed.module_kwargs(atom.name))
+    declaration = next(c for c in config.connections if c.source == "r1pro")
+    source = ConnectionSource(
+        declaration, ["position_command", "velocity_command"], ["joint_state"], 0.2
+    )
+    assert set(R1PRO_BASE_JOINTS) <= set(source.joint_names)
+    assert not {"r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"} & set(source.joint_names)
+    for task in config.tasks:
+        assert "yaw_joint" not in task.params

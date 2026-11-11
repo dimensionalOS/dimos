@@ -14,14 +14,12 @@
 
 import math
 
-import pytest
-
 from dimos.control.task import ControlMode, CoordinatorState, JointStateSnapshot
 from dimos.control.tasks.velocity_task.twist_velocity_task import TwistVelocityTask
 from dimos.control.tasks.velocity_task.velocity_task import JointVelocityTaskConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 
-JOINTS = ["robot/base_x", "robot/base_y", "robot/base_yaw"]
+JOINTS = ["robot/base_forward", "robot/base_lateral", "robot/base_turn"]
 
 
 def task() -> TwistVelocityTask:
@@ -29,33 +27,30 @@ def task() -> TwistVelocityTask:
         "input",
         JointVelocityTaskConfig(JOINTS),
         ["linear.x", "linear.y", "angular.z"],
-        yaw_joint=JOINTS[2],
     )
 
 
-def state(t: float, yaw: float | None) -> CoordinatorState:
-    positions = {} if yaw is None else {JOINTS[2]: yaw}
-    return CoordinatorState(joints=JointStateSnapshot(joint_positions=positions), t_now=t)
+def state(t: float) -> CoordinatorState:
+    return CoordinatorState(joints=JointStateSnapshot(), t_now=t)
 
 
-def test_body_intent_rotates_each_tick_without_refreshing_input_timeout() -> None:
+def test_body_axes_need_no_pose_and_do_not_refresh_input_timeout() -> None:
     t = task()
     assert t.claim().joints == frozenset(JOINTS)
     assert t.claim().mode == ControlMode.VELOCITY
-    assert t.on_twist_command(Twist(linear=[0.4, 0.0, 0.0], angular=[0.0, 0.0, 0.3]), 1.0)
-    out = t.compute(state(1.0, 0.0))
-    assert out is not None and out.velocities == [0.4, 0.0, 0.3]
-    out = t.compute(state(1.1, math.pi / 2))
-    assert out is not None and out.velocities == pytest.approx([0.0, 0.4, 0.3])
-    out = t.compute(state(1.3, math.pi / 2))
+    assert t.on_twist_command(Twist(linear=[0.4, -0.2, 0.0], angular=[0.0, 0.0, 0.3]), 1.0)
+    for now in (1.0, 1.1):
+        out = t.compute(state(now))
+        assert out is not None and out.velocities == [0.4, -0.2, 0.3]
+    out = t.compute(state(1.3))
     assert out is not None and out.velocities == [0.0, 0.0, 0.0]
 
 
-@pytest.mark.parametrize("yaw", [None, math.nan, math.inf])
-def test_missing_or_invalid_measured_yaw_fails_closed(yaw: float | None) -> None:
-    t = task()
-    t.on_twist_command(Twist(linear=[0.4, 0.0, 0.0]), 1.0)
-    assert t.compute(state(1.0, yaw)) is None
+def test_explicit_mapping_can_select_other_axes_in_joint_order() -> None:
+    t = TwistVelocityTask("input", JointVelocityTaskConfig(JOINTS[:2]), ["angular.x", "linear.z"])
+    assert t.on_twist_command(Twist(linear=[0.0, 0.0, 0.2], angular=[-0.3, 0.0, 0.0]), 1.0)
+    out = t.compute(state(1.0))
+    assert out is not None and out.velocities == [-0.3, 0.2]
 
 
 def test_estop_clears_raw_intent_and_requires_fresh_post_clear_input() -> None:
@@ -66,12 +61,12 @@ def test_estop_clears_raw_intent_and_requires_fresh_post_clear_input() -> None:
     assert not t.on_twist_command(msg, 1.1)
     t.set_estop(False)
     t.start()
-    assert t.compute(state(1.1, 0.0)) is None
+    assert t.compute(state(1.1)) is None
     assert t.on_twist_command(msg, 1.2)
-    assert t.compute(state(1.2, 0.0)) is not None
+    assert t.compute(state(1.2)) is not None
     t.clear()
     t.start()
-    assert t.compute(state(1.2, 0.0)) is None
+    assert t.compute(state(1.2)) is None
 
 
 def test_nonfinite_input_never_activates_task() -> None:
