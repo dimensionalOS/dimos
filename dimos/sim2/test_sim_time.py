@@ -62,7 +62,20 @@ RATES = {
 }
 
 
-SCENE_MANAGER = f"scene/{UsdManager.name}"
+# The scene manager and the world are named for this run alone. A zenoh domain is not enough: it
+# prefixes key expressions, so it keeps the streams apart, while an RPC goes out on the *instance
+# name*. `scene/usdmanager` and an unnamespaced `sim_module()` are exactly what three-g1-office-555
+# calls its own, so with that sim up the two worlds answered each other: this test's sensors asked
+# the office's manager for a scene, the office's world asked this one, and since the two publish
+# different asset names the live world died on a get_asset KeyError. Its teardown then stopped the
+# office's world module too, which is the same name. The sensors need no such treatment -- every
+# one of them is inside a robot's namespace over there.
+def _names() -> tuple[str, str]:
+    """A unique scene namespace for this run, and the name its manager answers RPCs on."""
+    scene = f"scene{uuid.uuid4().hex[:8]}"
+    return scene, f"{scene}/{UsdManager.name}"
+
+
 FRAMES = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
 
 
@@ -147,31 +160,34 @@ def _run(
     speed: float = 1.0,
     **dog: Any,
 ) -> dict[str, Any]:
+    run = uuid.uuid4().hex[:8]
+    scene, scene_manager = _names()
     blueprint = autoconnect(
         sim_module(
-            scene_manager=SCENE_MANAGER,
+            scene_manager=scene_manager,
             speed=speed,
             robots=[SimulatedRobot("dog", robot_model, control_period=dog.get("control_period"))],
+            instance_name=f"sim{run}",
         ),
         _Dog.blueprint(**dog),
         UsdManager.blueprint(
             model=composed, frame_id_prefix="", tf_renames={"logistics": "world"}
-        ).namespace("scene", expose={"render_file_request", "file_info", "tf"}),
+        ).namespace(scene, expose={"render_file_request", "file_info", "tf"}),
         SimCamera.blueprint(
             frame_id="eye",
             width=64,
             height=48,
             rate_hz=RATES["color_image"],
-            scene_manager=SCENE_MANAGER,
+            scene_manager=scene_manager,
         ),
-        SimImu.blueprint(frame_id="imu_link", rate_hz=RATES["imu"], scene_manager=SCENE_MANAGER),
+        SimImu.blueprint(frame_id="imu_link", rate_hz=RATES["imu"], scene_manager=scene_manager),
         LivoxSim.blueprint(
             frame_id="livox",
             rate_hz=RATES["lidar"],
             imu_rate_hz=RATES["livox_imu"],
-            scene_manager=SCENE_MANAGER,
+            scene_manager=scene_manager,
         ).remappings([(LivoxSim, "imu", "livox_imu")]),
-        SimL1.blueprint(frame_id="l1", period=L1_PERIOD, scene_manager=SCENE_MANAGER).remappings(
+        SimL1.blueprint(frame_id="l1", period=L1_PERIOD, scene_manager=scene_manager).remappings(
             [(SimL1, "lidar", "l1_lidar")]
         ),
         _Readings.blueprint(),
