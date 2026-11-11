@@ -282,10 +282,10 @@ dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 
 ![dimos spy](../assets/lcmspy.png)
 
-`dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
+`dimos topic echo /topic` finds the typed channel for a topic name and decodes automatically. On Zenoh the channel is a key like `dimos/topic/pkg.Msg`. On LCM it is `/topic#pkg.Msg`. The full channel is also accepted in place of the name.
 
 ```sh skip
-Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
+Listening on /camera/rgb (inferring from typed Zenoh keys like 'dimos/camera/rgb/pkg.Msg')... (Ctrl+C to stop)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
 ```
 

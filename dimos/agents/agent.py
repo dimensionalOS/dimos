@@ -35,17 +35,17 @@ from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 import requests
 
+from dimos.agents.base_agent import BaseAgent
 from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.mcp.spec import McpServerSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import RPCClient
-from dimos.core.stream import In, Out
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -89,20 +89,17 @@ def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     )
 
 
-class McpClientConfig(ModuleConfig):
+class AgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
-    # None: the McpServer in this blueprint, or the default endpoint without one.
+    # None: the McpServer in this blueprint; without one the agent has no tools.
     mcp_server_url: str | None = None
     trace_dir: Path | None = None
 
 
-class McpClient(Module):
-    config: McpClientConfig
-    agent: Out[BaseMessage]
-    human_input: In[str]
-    agent_idle: Out[bool]
+class Agent(BaseAgent):
+    config: AgentConfig
 
     # Injected when the blueprint has an McpServer.
     _mcp_server: McpServerSpec | None = None
@@ -137,17 +134,15 @@ class McpClient(Module):
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
         self._mcp_url: str | None = None
-        Thread(target=_preload_agent_deps, name="McpClient-preload", daemon=True).start()
+        Thread(target=_preload_agent_deps, name="Agent-preload", daemon=True).start()
 
-    def _server_url(self) -> str:
-        """The MCP endpoint: configured, else the blueprint's McpServer, else the default."""
+    def _server_url(self) -> str | None:
+        """The MCP endpoint: configured, else the blueprint's McpServer, else none."""
         if self._mcp_url is None:
             if self.config.mcp_server_url is not None:
                 self._mcp_url = self.config.mcp_server_url
             elif self._mcp_server is not None:
                 self._mcp_url = str(self._mcp_server.mcp_url())
-            else:
-                self._mcp_url = DEFAULT_MCP_URL
         return self._mcp_url
 
     def _mcp_request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -159,7 +154,10 @@ class McpClient(Module):
         if params is not None:
             body["params"] = params
 
-        resp = self._http_client.post(self._server_url(), json=body, timeout=120.0)
+        url = self._server_url()
+        if url is None:
+            raise RuntimeError("Agent has no MCP server")
+        resp = self._http_client.post(url, json=body, timeout=120.0)
         resp.raise_for_status()
         data = resp.json()
 
@@ -273,7 +271,11 @@ class McpClient(Module):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
-        self._agent_tools = self._fetch_tools()
+        if self._server_url() is None:
+            logger.info("No MCP server; the agent runs without tools.")
+            self._agent_tools = []
+        else:
+            self._agent_tools = self._fetch_tools()
         self._rebuild_agent()
         with self._lock:
             if not self._thread.is_alive():
@@ -291,6 +293,12 @@ class McpClient(Module):
                 model = MockModel(json_path=self.config.model_fixture)
             else:
                 model = init_model(self.config.model, trace_dir=self.config.trace_dir)
+            logger.info(
+                "Agent model ready.",
+                model=self.config.model_fixture or self.config.model,
+                backend=type(model).__name__,
+                trace_dir=str(self.config.trace_dir) if self.config.trace_dir else None,
+            )
             self._state_graph = create_agent(
                 model=model,
                 tools=self._agent_tools or [],
@@ -457,11 +465,9 @@ def _unanswered_tool_calls(messages: list[BaseMessage]) -> Iterator[str]:
                 yield call_id
 
 
-def _append_image_to_history(
-    mcp_client: McpClient, func_name: str, uuid_: str, result: Any
-) -> None:
+def _append_image_to_history(agent: Agent, func_name: str, uuid_: str, result: Any) -> None:
     # Tagged with its tool, or chat UIs would show this user turn as typed input.
-    mcp_client.add_message(
+    agent.add_message(
         HumanMessage(
             content=[
                 {

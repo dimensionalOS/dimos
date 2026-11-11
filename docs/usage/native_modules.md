@@ -74,7 +74,7 @@ mylidar.start()
 
 Topic strings use the format `/<name>#<msg_type>`, which is the LCM channel name that Python `LCMTransport` subscribers use. The native binary publishes on these exact channels.
 
-When `stop()` is called, the process receives SIGTERM. If it doesn't exit within `shutdown_timeout` seconds (default 10), it gets SIGKILL.
+When `stop()` is called, the process receives SIGTERM. If it doesn't exit within `shutdown_timeout` seconds (default 2), it gets SIGKILL.
 
 ## Config
 
@@ -87,8 +87,8 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
 | `extra_env`        | `dict[str, str]` | `{}`          | Extra environment variables for the subprocess              |
-| `shutdown_timeout` | `float`          | `10.0`        | Seconds to wait for SIGTERM before SIGKILL                  |
-| `log_format`       | `LogFormat`      | `TEXT`        | How to parse subprocess output (`TEXT` or `JSON`)           |
+| `shutdown_timeout` | `float`          | `2.0`         | Seconds to wait for SIGTERM before SIGKILL                  |
+| `log_format`       | `LogFormat`      | `JSON`        | How to parse subprocess output (`TEXT` or `JSON`)           |
 | `cli_exclude`      | `frozenset[str]` | `frozenset()` | Config fields to skip when generating CLI args              |
 
 ### Auto CLI arg generation
@@ -165,7 +165,7 @@ NativeModule pipes subprocess stdout and stderr through structlog:
 
 ### JSON log format
 
-If your native binary outputs structured JSON lines, set `log_format=LogFormat.JSON`:
+`log_format` defaults to `LogFormat.JSON`, for binaries that output structured JSON lines. Set `LogFormat.TEXT` for plain-text output:
 
 ```python skip
 class MyConfig(NativeModuleConfig):
@@ -338,3 +338,7 @@ locally to skip cold compiles when the cache has them:
 extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
+
+The cache holds the native modules that ship in the `dimos` package, the ones
+`bin/native-modules --build` builds. CI does not publish the examples under
+[/examples/native-modules/](/examples/native-modules/), so their first run compiles them.

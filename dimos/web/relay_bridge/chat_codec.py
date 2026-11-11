@@ -34,7 +34,7 @@ from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY
 from dimos.web.codecs import web_encoder
 
 # Tool progress rides /agent as HumanMessage("[tool:NAME] text")
-# (mcp_client._on_tool_stream_message) and a tool's image artefact as a
+# (Agent._on_tool_stream_message) and a tool's image artefact as a
 # HumanMessage tagged TOOL_ORIGIN_KEY; same parse as humancli.
 _TOOL_MSG_PREFIX = "[tool:"
 # A tool result can be megabytes and the cockpit's JSON decoder drops payloads
@@ -63,7 +63,7 @@ def chat_lines(msg: BaseMessage, ts: float) -> list[dict[str, Any]]:
     elif isinstance(msg, AIMessage):
         lines = [{"role": "ai", "text": text}]
         for call in msg.tool_calls:
-            args = json.dumps(call["args"], separators=(",", ":"))
+            args = json.dumps(call["args"], separators=(",", ":"), ensure_ascii=False)
             lines.append({"role": "ai", "tool": call["name"], "text": f"{call['name']}({args})"})
     elif isinstance(msg, ToolMessage):
         lines = [{"role": "tool", "tool": msg.name or "tool", "text": text}]

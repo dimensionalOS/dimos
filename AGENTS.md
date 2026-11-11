@@ -39,7 +39,7 @@ dimos restart          # stop + re-run with same original args
 
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
-| `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
+| `unitree-go2-agentic` | Go2 | real | via Agent | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | gpt-5.6-luna (G1 prompt) | ✓ | Full agentic sim, no real robot needed |
 | `xarm-grasp-agent` | xArm | real | gpt-5.6-luna | ✓ | Manipulation + perception + agent |
 | `xarm-perception-sim-agent` | xArm | sim | gpt-5.6-luna | ✓ | Manipulation + perception + agent, sim |
@@ -53,7 +53,7 @@ Run `dimos list` for the full list.
 
 ## Tools available to you (MCP)
 
-**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `McpClient`. E.g.: `unitree-go2-agentic`.
+**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `Agent`. E.g.: `unitree-go2-agentic`.
 
 ```bash
 # Start the MCP-enabled blueprint first:
@@ -74,16 +74,16 @@ The MCP server runs at `http://localhost:9990/mcp` (`McpServerConfig.port`).
 
 ### Adding McpServer to a blueprint
 
-Use **both** `McpServer.blueprint()` and `McpClient.blueprint()`.
+Use **both** `McpServer.blueprint()` and `Agent.blueprint()`.
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 
 unitree_go2_agentic = autoconnect(
     unitree_go2_spatial,   # robot stack
     McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
-    McpClient.blueprint(), # LLM agent — fetches tools from McpServer
+    Agent.blueprint(), # LLM agent — fetches tools from McpServer
     _common_agentic,       # skill containers
 )
 ```
@@ -123,7 +123,9 @@ dimos/
 ├── agents/
 │   ├── system_prompt.py     # Default Go2 system prompt
 │   ├── annotation.py        # @skill decorator
-│   ├── mcp/                 # McpServer, McpClient, McpAdapter (the LangGraph agent lives here)
+│   ├── agent.py             # Agent, the LangGraph LLM agent module
+│   ├── base_agent.py        # BaseAgent, the chat streams
+│   ├── mcp/                 # McpServer, McpAdapter
 │   └── skills/              # NavigationSkillContainer, SpeakSkill, etc.
 ├── navigation/              # Path planning, frontier exploration
 ├── perception/              # Object detection, tracking, memory
@@ -144,6 +146,8 @@ docs/
 ## For Coding Agents
 
 If you are a coding agent working on this dimos codebase, our coding agent focused docs are at `docs/coding-agents/index.md`
+
+Adding a robot arm: follow `docs/capabilities/manipulation/adding_a_custom_arm.md`.
 
 ---
 
@@ -231,10 +235,10 @@ Every `GlobalConfig` field is a CLI flag: `--robot-ip`, `--simulation [mujoco|di
 | `dimos mcp list-tools / call / status / modules` | MCP tools (requires McpServer in blueprint) |
 | `dimos agent-send "<text>"` | Send text to the running agent via MCP (requires McpServer in blueprint) |
 | `dimos lcmspy / agentspy / humancli / top` | Debug/diagnostic tools |
-| `dimos topic echo <topic> / send <topic> <expr>` | Topic pub/sub on the active transport (Zenoh by default) |
+| `dimos topic echo <topic> / send <topic> <expr>` | Topic pub/sub on the active transport |
 | `dimos rerun-bridge` | Launch Rerun visualization standalone |
 
-Log files: `<repo>/logs/<run-id>/main.jsonl` in a git checkout, `~/.local/state/dimos/logs/<run-id>/main.jsonl` for an installed package
+Log files: `logs/<run-id>/main.jsonl` under the checkout when running from a Git clone, `~/.local/state/dimos/logs/<run-id>/main.jsonl` for an installed package
 Run registry: `~/.local/state/dimos/runs/<run-id>.json`
 
 ---
@@ -295,7 +299,7 @@ my_skill_container = MySkillContainer.blueprint()
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
 | G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
+Pass the robot-specific prompt: `Agent.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
 
 ### RPC Wiring
 
