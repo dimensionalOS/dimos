@@ -57,7 +57,7 @@ def test_profile_records_three_images_and_the_coordinator_joints_by_name() -> No
     assert state.names == [f"arm/{name}" for name in DUAL_OPENYAM.joint_names]
     (action,) = profile.actions.values()
     assert (action.stream, action.source_kind) == (
-        "coordinator_joint_command",
+        "arm_position_command",
         "joint_position_updates",
     )
     assert (action.shape, action.names) == (state.shape, state.names)

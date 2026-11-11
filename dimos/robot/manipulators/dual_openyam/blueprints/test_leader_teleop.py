@@ -112,6 +112,7 @@ def test_teleop_blueprint_gives_the_leader_its_own_lane_above_the_planner() -> N
     leader_module = _atom(blueprint, LeaderTeleopModule)
     assert leader_module.kwargs["mappings"] == leader_teleop.MAPPINGS
     assert leader_module.kwargs["command_filter_cutoff_hz"] == pytest.approx(6.0)
+    assert leader_module.kwargs["tick_period_s"] == pytest.approx(0.01)
     assert "reader" not in leader_module.kwargs
     assert _atom(blueprint, ManipulationModule).kwargs["visualization"].backend == "viser"
 

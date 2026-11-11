@@ -49,7 +49,10 @@ DUAL_OPENYAM_LEADER_TRIGGER_TRAVEL_RADIANS = 1.5
 DUAL_OPENYAM_LEADER_VELOCITY_RAD_S = 3.0
 DUAL_OPENYAM_LEADER_WRIST_VELOCITY_RAD_S = 4.0
 DUAL_OPENYAM_WRIST_JOINTS = ("joint4", "joint5", "joint6")
+# Measured on the OpenArm leaders: a 6 Hz low-pass halves wrist roughness for
+# about 10 ms of lag, and a target every coordinator tick halves each ramp.
 DUAL_OPENYAM_LEADER_FILTER_CUTOFF_HZ = 6.0
+DUAL_OPENYAM_LEADER_TICK_PERIOD_S = 0.01
 DUAL_OPENYAM_GRIPPER_TASKS = {
     "left_manipulator": "left_arm_gripper",
     "right_manipulator": "right_arm_gripper",
@@ -97,13 +100,16 @@ def dual_openyam_leader_module() -> Blueprint:
         return LeaderTeleopModule.blueprint(
             mappings=MAPPINGS,
             command_filter_cutoff_hz=DUAL_OPENYAM_LEADER_FILTER_CUTOFF_HZ,
+            tick_period_s=DUAL_OPENYAM_LEADER_TICK_PERIOD_S,
             reader="mock",
             mock_positions=dict(
                 zip(DUAL_OPENYAM_LEADER_MOTORS, DUAL_OPENYAM_HOME_PER_ARM, strict=True)
             ),
         )
     return LeaderTeleopModule.blueprint(
-        mappings=MAPPINGS, command_filter_cutoff_hz=DUAL_OPENYAM_LEADER_FILTER_CUTOFF_HZ
+        mappings=MAPPINGS,
+        command_filter_cutoff_hz=DUAL_OPENYAM_LEADER_FILTER_CUTOFF_HZ,
+        tick_period_s=DUAL_OPENYAM_LEADER_TICK_PERIOD_S,
     )
 
 

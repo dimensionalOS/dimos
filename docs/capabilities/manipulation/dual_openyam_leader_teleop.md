@@ -74,6 +74,17 @@ dimos run learning-collect-leader-dual-openyam --config workcell.json \
   --left-can-port follower_l --right-can-port follower_r
 ```
 
-The leaders have no buttons, so mark episodes from a second terminal with
-`dimos imitation control`, then build the LeRobot dataset with
-`dimos imitation prepare ~/recordings/leader_001 --output ~/datasets/leader_001`.
+The recorder refuses an existing recording directory, so give every run a
+new name. `observation.state` is the coordinator's measured joint state and
+`action` is `arm_position_command`, the coordinator's command stream to the
+connection (the coordinator publishes no `coordinator_joint_command` for
+connection robots). The leaders have no buttons, so mark episodes from a
+second terminal with `dimos imitation control`, then build the LeRobot
+dataset with `dimos imitation prepare ~/recordings/leader_001 --output
+~/datasets/leader_001`.
+
+Preparation runs the schema saved with the recording. Its default quality mode
+is `strict`, which rejects an episode on a single dropped camera frame; the
+three D405s on shared USB hubs do drop frames. If `dimos imitation inspect`
+shows rejected episodes, set `quality.mode` to `fill` in the recording's
+`schema.json` and prepare again.

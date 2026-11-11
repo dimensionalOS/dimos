@@ -78,7 +78,9 @@ def dual_openyam_leader_collection_profile() -> CollectionProfile:
         actions={
             "action": state.model_copy(
                 update={
-                    "stream": "coordinator_joint_command",
+                    # The coordinator's command port to the connection; it does
+                    # not publish coordinator_joint_command for connection robots.
+                    "stream": "arm_position_command",
                     "source_kind": "joint_position_updates",
                 },
                 deep=True,
