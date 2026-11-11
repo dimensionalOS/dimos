@@ -26,7 +26,6 @@ from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.memory.utils.validation import validate_identifier
-from dimos.robot.manipulators.damiao.damiao_blueprint import DamiaoCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.agentic import (
     dual_openyam_agent_prompt,
     dual_openyam_grasp_agent,
@@ -39,6 +38,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     dual_openyam_grasp_graspgenx,
     dual_openyam_grasp_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.coordinator import DualOpenYamCoordinator
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
@@ -79,7 +79,7 @@ def test_tcp_is_the_grasp_frame_turned_to_point_down_the_fingers() -> None:
 
 
 def test_each_planning_group_is_bound_to_its_own_gripper_task() -> None:
-    tasks: list[TaskConfig] = _atom(dual_openyam_grasp, DamiaoCoordinator).kwargs["tasks"]
+    tasks: list[TaskConfig] = _atom(dual_openyam_grasp, DualOpenYamCoordinator).kwargs["tasks"]
     grippers = {task.name: task.joint_names for task in tasks if task.type == "gripper"}
     assert grippers == {
         "left_arm_gripper": ["arm/left_gripper"],
