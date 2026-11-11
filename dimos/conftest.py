@@ -57,8 +57,6 @@ def _lcm_bucket(seed: str) -> int:
 
 
 _run_id = os.environ[DIMOS_PYTEST_RUN_ID_ENV]
-
-
 if _worker:
     _BUCKET = _lcm_bucket(f"{_run_id}:{_worker}")
     os.environ["LCM_DEFAULT_URL"] = f"udpm://239.255.76.67:{7700 + _BUCKET}?ttl=0"
