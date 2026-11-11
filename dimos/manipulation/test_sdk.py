@@ -323,7 +323,7 @@ def test_transport_timeout_is_preserved_without_retry(arm, rpc):
     rpc.cancel.assert_not_called()
 
 
-@pytest.mark.parametrize("options,checked", [({}, False), ({"check_collision": True}, True)])
+@pytest.mark.parametrize("options,checked", [({}, True), ({"check_collision": False}, False)])
 def test_linear_delegates_directly_and_preserves_collision_default(arm, rpc, options, checked):
     result = arm.move_linear(dz=0.01, speed_scale=0.2, timeout=10.0, **options)
 

@@ -26,7 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -72,6 +72,10 @@ def inside_boxes(
     return inside
 
 
+class PointCloudBoxFilterConfig(ModuleConfig):
+    max_box_edge_m: float | None = None
+
+
 class PointCloudBoxFilter(Module):
     """Pass a point cloud on with the points inside named boxes left out.
 
@@ -79,6 +83,8 @@ class PointCloudBoxFilter(Module):
     Changing the boxes re-sends the last cloud at once, so a consumer sees
     the change before the next cloud arrives.
     """
+
+    config: PointCloudBoxFilterConfig
 
     cloud: In[PointCloud2]
     tf: In[TFMessage]
@@ -112,6 +118,12 @@ class PointCloudBoxFilter(Module):
             raise ValueError("Box name must not be empty")
         if any(edge <= 0.0 or not math.isfinite(edge) for edge in size.to_tuple()):
             raise ValueError("Box size must have three positive, finite edges")
+        limit = self.config.max_box_edge_m
+        if limit is not None and max(size.to_tuple()) > limit:
+            raise ValueError(
+                f"Box edges {size.to_tuple()} exceed the {limit} m limit: leave out one object, "
+                "with a small margin, not a region"
+            )
         with self._lock:
             self._boxes[name] = Box(pose, size, frame_id)
             self._resend()

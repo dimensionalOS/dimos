@@ -95,3 +95,17 @@ def test_a_box_on_a_moving_frame_follows_it(
     _place_tool(module, Vector3(2.0, 0.0, 0.0), math.pi / 2, ts=2.0)
     _feed(module, cloud)
     np.testing.assert_allclose(sent[-1].points_f32(), [[1.0, 0.2, 0.0], [1.2, 0.0, 0.0]])
+
+
+def test_a_box_over_the_size_cap_is_refused() -> None:
+    capped = PointCloudBoxFilter(max_box_edge_m=0.15)
+    try:
+        assert capped.set_box(
+            "block", Pose(position=Vector3(1.0, 0.0, 0.0)), Vector3(0.14, 0.05, 0.05)
+        )
+        with pytest.raises(ValueError, match="limit"):
+            capped.set_box(
+                "region", Pose(position=Vector3(1.0, 0.0, 0.0)), Vector3(0.13, 0.065, 0.24)
+            )
+    finally:
+        capped.dispose()
