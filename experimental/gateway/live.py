@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import importlib
 import inspect
 import threading
 from typing import Any
@@ -82,21 +83,10 @@ def connect_dimos() -> Any:
     return Dimos.connect()
 
 
-def class_named(name: str) -> type:
-    """A stand-in for a module class, for Dimos.restart and Dimos.unload (which only read a remote one's __name__).
-    The gateway's own copy of the class can be missing or older than the run's checkout."""
-    return type(name, (), {})
-
-
-def rpc_method(handle: Any, name: str) -> Any:
-    """`name` on a module handle, called by name even when the gateway's own copy of the class lacks it (an RPC added
-    in the run's checkout). The caller has already checked `name` against the RPCs the running instance lists."""
-    from dimos.core.rpc_client import RpcCall, RPCClient
-
-    # TODO(core): RemoteModuleSource.get_module could take the coordinator's rpc_names over the importable class's
-    if isinstance(handle, RPCClient) and name not in handle.rpcs:
-        return RpcCall(None, handle.rpc, name, handle.remote_name, [])
-    return getattr(handle, name)
+def load_class(path: str) -> Any:
+    """A module class from its class path (what Dimos.restart and Dimos.unload take)."""
+    module, name = path.rsplit(".", 1)
+    return getattr(importlib.import_module(module), name)
 
 
 def live_run_id() -> str | None:
@@ -212,7 +202,7 @@ class Live:
             module_id.replace(":", "/") if ":" in module_id else module["class"]
         )
         try:
-            result = rpc_method(handle, name)(*args, **kwargs)
+            result = getattr(handle, name)(*args, **kwargs)
         except TimeoutError:
             raise ApiError(500, f"{module_id}/{name} didn't answer in time")
         except Exception as error:
@@ -235,7 +225,7 @@ class Live:
     def _try(self, action: Callable[[Any, Any], None], module_id: str) -> dict[str, Any]:
         module = self.module(None, module_id)
         try:
-            action(self.app(), class_named(module["class"]))
+            action(self.app(), load_class(module["catalogId"]))
         except Exception as error:
             return {"ok": False, "error": f"{type(error).__name__}: {error}"}
         return {"ok": True, "error": None}
