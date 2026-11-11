@@ -31,9 +31,9 @@ use tracing::{debug, info};
 use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
 
+pub mod cdr;
 mod decoding;
 mod encoding;
-pub mod cdr;
 pub mod store;
 
 const TF_PAYLOAD_TYPE: &str = "dimos.msgs.tf2_msgs.TFMessage.TFMessage";
@@ -526,6 +526,8 @@ mod tests {
             codec,
             timestamp_field: None,
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: false,
         })
     }
 
@@ -537,6 +539,8 @@ mod tests {
             codec,
             timestamp_field: None,
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: false,
         })
     }
 
@@ -617,6 +621,8 @@ mod tests {
             codec: Codec::Lcm,
             timestamp_field: None,
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: false,
         });
 
         let observations = decoding::decode(&stream, &message.encode(), 100.0).unwrap();
@@ -872,6 +878,8 @@ mod tests {
             codec: Codec::Json,
             timestamp_field: Some("sent".into()),
             json_schema: Some(schema.clone()),
+            cdr_schema: None,
+            source_timestamp: false,
         });
         let mut encoded = process(&stream, &message.encode(), 13.0).unwrap();
         let stored = encoded.pop().unwrap();

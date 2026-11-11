@@ -154,6 +154,8 @@ mod tests {
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: false,
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
@@ -199,6 +201,8 @@ mod tests {
             codec: Codec::Json,
             timestamp_field: Some("ts".into()),
             json_schema: None,
+            cdr_schema: None,
+            source_timestamp: false,
         });
         let mut store =
             McapRecordingStore::open(file.path().to_str().unwrap(), &[(*stream).clone()], 1)
