@@ -83,6 +83,8 @@ def get_project_root() -> Path:
     with FileLock(data_dir / "repo.lock"):
         # Clone if not already cloned
         if not (repo_dir / ".git").exists():
+            logger.info("Cloning the DimOS repository for its data files", path=str(repo_dir))
+            started = time.monotonic()
             try:
                 env = os.environ.copy()
                 env["GIT_LFS_SKIP_SMUDGE"] = "1"
@@ -107,6 +109,9 @@ def get_project_root() -> Path:
                     f"Failed to clone dimos repository: {e.stderr}\n"
                     f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
                 )
+            logger.info(
+                "Cloned the DimOS repository", duration=f"{time.monotonic() - started:.1f}s"
+            )
 
     return repo_dir
 
