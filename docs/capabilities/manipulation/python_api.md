@@ -229,42 +229,23 @@ finally:
 
 Disconnecting does not stop the remote blueprint or cancel its motion.
 
-## Collision-safe tabletop work
+## Intended contact
 
-When the blueprint maps the workspace (it publishes a `voxel_map` stream), the
-planner treats everything the camera has seen as an obstacle, checked against the
-whole arm and gripper at the pose and wrist angle you ask for. A refused plan means
-the robot would have hit something; nothing moved. Change the approach, the wrist
-angle or the target instead of turning the check off.
+The planner treats every mapped point as an obstacle, including the object you
+pick or place onto. Leave a box around it out of the map, and clear it afterwards:
 
-1. **Contact you intend has to be allowed.** The block you pick, and the block you
-   place onto, are mapped too, so a checked descent onto them is refused. Leave a
-   box around them out of the map, with a little margin, and clear it afterwards:
+```python skip
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-   ```python skip
-   from dimos.msgs.geometry_msgs.Pose import Pose
-   from dimos.msgs.geometry_msgs.Vector3 import Vector3
+boxes = app.PointCloudBoxFilter
+boxes.set_box("target", Pose(Vector3(0.40, 0.05, 0.10)), Vector3(0.08, 0.08, 0.08), "world")
+...
+boxes.clear_box("target")
+```
 
-   boxes = app.PointCloudBoxFilter
-   boxes.set_box("target", Pose(Vector3(0.40, 0.05, 0.10)), Vector3(0.08, 0.08, 0.08), "world")
-   ...
-   boxes.clear_box("target")
-   ```
-
-   Keep the box tight: whatever is inside it is not checked, neighbours included.
-   A blueprint may cap the box size and refuse unchecked straight-line moves
-   (`check_collision=False`); then a small box plus a checked move is the way in.
-
-2. **A held object rides with the gripper.** Once it is grasped, set its box in the
-   tool frame so it moves with the gripper and stops blocking every plan; clear it
-   after releasing:
-
-   ```python skip
-   boxes.set_box("held", Pose(Vector3(0.0, 0.0, -0.02)), Vector3(0.06, 0.06, 0.06), "link_tcp")
-   ```
-
-   The planner checks the arm and gripper, not what they hold, so leave room for it:
-   lift the object clear of everything before moving sideways.
-
-3. **The map only knows what the camera has seen.** Look at an area before planning
-   into it, and again after anything there moved.
+Keep the box tight: nothing inside it is checked. A blueprint may cap the box size
+and refuse unchecked straight-line moves (`check_collision=False`). The planner
+checks the arm and gripper, not a held object, so lift it clear before moving
+sideways. [Voxel map obstacles](/docs/capabilities/manipulation/xarm-grasp.md#voxel-map-obstacles)
+explains the map and the box for a held object.

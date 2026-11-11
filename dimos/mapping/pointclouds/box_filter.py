@@ -73,8 +73,6 @@ def inside_boxes(
 
 
 class PointCloudBoxFilterConfig(ModuleConfig):
-    # The longest edge set_box accepts, metres; None accepts any. Everything inside a box
-    # escapes collision checking, so a cap keeps a box to one object rather than a region.
     max_box_edge_m: float | None = None
 
 

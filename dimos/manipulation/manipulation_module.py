@@ -158,11 +158,7 @@ class ManipulationModuleConfig(ModuleConfig):
     voxel_map_resolution: float = Field(default=0.05, gt=0.0)
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
-    # What move_linear does when the caller leaves check_collision out. On, a straight
-    # line through mapped geometry is refused before the arm moves.
     linear_check_collision: bool = False
-    # Refuse move_linear(check_collision=False): on a robot that maps its workspace, an
-    # unchecked line is how it drives into what it has seen.
     require_linear_collision_check: bool = False
     execution_timeout: float = Field(default=60.0, gt=0.0)
     # Coordinator joint name -> model joint name, so a twist base's odometry
@@ -962,10 +958,7 @@ class ManipulationModule(Module):
         blocking: bool = True,
         timeout: float | None = None,
     ) -> MoveResult:
-        """Move one end effector by a world-frame translation.
-
-        ``check_collision`` None takes the module's ``linear_check_collision``.
-        """
+        """Move one end effector by a world-frame translation."""
         if check_collision is None:
             check_collision = self.config.linear_check_collision
         delta = (float(dx), float(dy), float(dz))
