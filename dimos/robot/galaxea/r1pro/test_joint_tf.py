@@ -30,6 +30,7 @@ def fk() -> UsdManager:
 
 
 def joint_state(**positions: float) -> JointState:
+    """motor_states as the connection publishes it, with named joints bent."""
     values = dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, 0.0)
     for joint, angle in positions.items():
         values[f"r1pro/{joint}"] = angle
@@ -42,6 +43,7 @@ def joint_state(**positions: float) -> JointState:
 
 
 def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
+    """Compose the published edges from the root down to `link`."""
     edges = {transform.child_frame_id: transform for transform in transforms}
     position, rotation = np.zeros(3), Rotation.identity()
     while link in edges:
@@ -62,6 +64,7 @@ def test_motor_states_joint_names_all_exist_in_the_model(fk: UsdManager) -> None
 
 
 def test_head_camera_moves_when_the_torso_bends(fk: UsdManager) -> None:
+    """The head sits past four revolute torso joints, so it cannot be static."""
     upright, _ = pose_in_root(fk.joint_transforms(joint_state()), HEAD)
     bent, _ = pose_in_root(fk.joint_transforms(joint_state(torso_joint2=0.5)), HEAD)
 
@@ -70,6 +73,8 @@ def test_head_camera_moves_when_the_torso_bends(fk: UsdManager) -> None:
 
 
 def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UsdManager) -> None:
+    """Only joint edges change with the torso; head_link -> camera stays a fixed mount."""
+
     def edges(state: JointState) -> dict[str, tuple[float, ...]]:
         return {
             transform.child_frame_id: (
