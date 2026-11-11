@@ -29,17 +29,24 @@ from dimos.control.tasks.path_follower_task.path_follower_task import (
     PathFollowerTaskConfig,
 )
 from dimos.core.global_config import global_config as _gc
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 _JOINTS = ["go2/vx", "go2/vy", "go2/wz"]
 
 
-def _state(x: float, y: float, yaw: float, t: float = 0.0) -> CoordinatorState:
+def _state(task, x: float, y: float, yaw: float, t: float = 0.0) -> CoordinatorState:
+    task.on_odometry(
+        Odometry(
+            ts=t + 1.0, pose=Pose(Vector3(x, y, 0.0), Quaternion.from_euler(Vector3(0.0, 0.0, yaw)))
+        ),
+        t,
+    )
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={_JOINTS[0]: x, _JOINTS[1]: y, _JOINTS[2]: yaw},
             joint_velocities={_JOINTS[0]: 0.0, _JOINTS[1]: 0.0, _JOINTS[2]: 0.0},
         ),
         t_now=t,
@@ -71,12 +78,12 @@ def test_adaptive_lookahead_grows_from_min_with_speed():
     _start_aligned(task, path)
 
     # Tick 0: v_cur == 0 -> L pinned to lookahead_min.
-    task.compute(_state(0.0, 0.0, 0.0))
+    task.compute(_state(task, 0.0, 0.0, 0.0))
     assert math.isclose(task._distancer._lookahead_dist, 0.3, abs_tol=1e-9)
 
     # Subsequent ticks: L == clip(scale * v_cur, min, max). With FF off, the
     # pursuit speed on a straight aligned path is the config speed (0.6).
-    task.compute(_state(0.0, 0.0, 0.0))
+    task.compute(_state(task, 0.0, 0.0, 0.0))
     assert math.isclose(task._distancer._lookahead_dist, 0.6, abs_tol=1e-6)
     assert 0.3 <= task._distancer._lookahead_dist <= 0.9
 
@@ -86,7 +93,7 @@ def test_adaptive_lookahead_clamped_to_max():
     path = straight_line(length=5.0)
     _start_aligned(task, path)
     for _ in range(3):
-        task.compute(_state(0.0, 0.0, 0.0))
+        task.compute(_state(task, 0.0, 0.0, 0.0))
     assert math.isclose(task._distancer._lookahead_dist, 0.7, abs_tol=1e-9)
 
 
@@ -96,7 +103,7 @@ def test_fixed_lookahead_when_scale_zero():
     path = straight_line(length=5.0)
     _start_aligned(task, path)
     for _ in range(4):
-        task.compute(_state(0.0, 0.0, 0.0))
+        task.compute(_state(task, 0.0, 0.0, 0.0))
         assert math.isclose(task._distancer._lookahead_dist, 0.5, abs_tol=1e-9)
 
 
@@ -111,7 +118,7 @@ def test_max_yaw_rate_clamps_commanded_wz():
     _start_aligned(task, path)
     saw_cap = False
     for k in range(15):
-        out = task.compute(_state(0.0, 0.0, 0.0, t=k * 0.1))
+        out = task.compute(_state(task, 0.0, 0.0, 0.0, t=k * 0.1))
         if out is not None:
             wz = out.velocities[2]
             assert abs(wz) <= cap + 1e-9
@@ -128,7 +135,7 @@ def test_no_yaw_clamp_when_none():
     # |wz| can exceed the 0.25 a clamp would have imposed.
     peak = 0.0
     for k in range(15):
-        out = task.compute(_state(0.0, 0.0, 0.0, t=k * 0.1))
+        out = task.compute(_state(task, 0.0, 0.0, 0.0, t=k * 0.1))
         if out is not None:
             peak = max(peak, abs(out.velocities[2]))
     assert peak > 0.25
@@ -150,7 +157,7 @@ def test_forward_only_holds_over_a_run():
     path = circle(radius=1.0)
     _start_aligned(task, path)
     for k in range(30):
-        out = task.compute(_state(0.0, 0.0, 0.0, t=k * 0.1))
+        out = task.compute(_state(task, 0.0, 0.0, 0.0, t=k * 0.1))
         if out is None:
             continue
         vx, vy, wz = out.velocities

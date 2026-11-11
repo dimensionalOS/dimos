@@ -42,10 +42,12 @@ from dimos.control.tasks.holonomic_pose_follower_task.holonomic_pose_follower_ta
     DEFAULT_ARTIFACT_PATH,
     create_task,
 )
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.utils.trigonometry import angle_diff
@@ -61,10 +63,15 @@ def _pose(x=0.0, y=0.0, yaw=0.0):
     )
 
 
-def _state(x, y, yaw, t):
+def _state(task, x, y, yaw, t):
+    task.on_odometry(
+        Odometry(
+            ts=t + 1.0, pose=Pose(Vector3(x, y, 0.0), Quaternion.from_euler(Vector3(0.0, 0.0, yaw)))
+        ),
+        t,
+    )
     return CoordinatorState(
         joints=JointStateSnapshot(
-            joint_positions={_JOINTS[0]: x, _JOINTS[1]: y, _JOINTS[2]: yaw},
             joint_velocities=dict.fromkeys(_JOINTS, 0.0),
         ),
         t_now=t,
@@ -100,7 +107,7 @@ def _run_closed_loop(task, path, max_ticks=2400, on_tick=None):
     assert task.start_path(path, _pose(plant.x, plant.y, plant.yaw))
     ticks = []
     for k in range(max_ticks):
-        out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * _DT))
+        out = task.compute(_state(task, plant.x, plant.y, plant.yaw, t=k * _DT))
         vx, vy, wz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         ticks.append(
             TrajectoryTick(
@@ -145,7 +152,7 @@ def test_streamed_path_arms_on_the_first_tick_with_a_pose():
     assert task.get_state() == "idle"  # latched, not armed
     task.compute(CoordinatorState(joints=JointStateSnapshot(), t_now=0.0, dt=_DT))
     assert task.get_state() == "idle"  # still no pose available
-    task.compute(_state(0.0, 0.0, 0.0, t=_DT))
+    task.compute(_state(task, 0.0, 0.0, 0.0, t=_DT))
     assert task.get_state() == "tracking"
 
 
@@ -278,7 +285,7 @@ def test_stops_inside_the_goal_when_the_plant_runs_hot():
     path = straight_rotate(length=5.0, yaw_end=0.0)
     assert task.start_path(path, _pose())
     for k in range(1200):
-        out = task.compute(_state(hot.x, hot.y, hot.yaw, t=k * _DT))
+        out = task.compute(_state(task, hot.x, hot.y, hot.yaw, t=k * _DT))
         vx, vy, wz = out.velocities if out is not None else (0.0, 0.0, 0.0)
         if task.get_state() == "arrived":
             break
@@ -299,7 +306,7 @@ def test_replan_reprojects_without_reramp():
     path_a = strafe_line(length=2.0)
     assert task.start_path(path_a, _pose(0, 0, 0))
     for k in range(30):
-        out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * _DT))
+        out = task.compute(_state(task, plant.x, plant.y, plant.yaw, t=k * _DT))
         plant.step(*out.velocities, _DT)
     speed_before = math.hypot(plant.vx, plant.vy)
     assert speed_before > 0.3
@@ -309,7 +316,7 @@ def test_replan_reprojects_without_reramp():
     task.start_path(path_b, _pose(plant.x, plant.y, plant.yaw))
     speeds = []
     for k in range(30, 40):
-        out = task.compute(_state(plant.x, plant.y, plant.yaw, t=k * _DT))
+        out = task.compute(_state(task, plant.x, plant.y, plant.yaw, t=k * _DT))
         speeds.append(math.hypot(out.velocities[0], out.velocities[1]))
         plant.step(*out.velocities, _DT)
     assert min(speeds) > 0.3, f"re-ramped from rest after replan: {speeds}"
@@ -322,7 +329,7 @@ def test_reference_waits_for_a_stalled_robot():
     task.start_path(straight_rotate(length=3.0), _pose())
     cmds = []
     for k in range(100):
-        out = task.compute(_state(0.0, 0.0, 0.0, t=k * _DT))  # robot never moves
+        out = task.compute(_state(task, 0.0, 0.0, 0.0, t=k * _DT))  # robot never moves
         cmds.append(out.velocities)
     vx_final = [c[0] for c in cmds[50:]]
     # Bounded: cruise + feedback clamp, gain-inverted — not growing with time.

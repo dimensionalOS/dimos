@@ -23,7 +23,8 @@ TORSO_JOINTS = tuple(f"torso_joint{i}" for i in range(1, 5))
 LEFT_ARM_JOINTS = tuple(f"left_arm_joint{i}" for i in range(1, 8))
 RIGHT_ARM_JOINTS = tuple(f"right_arm_joint{i}" for i in range(1, 8))
 
-# Order matches the flat 18-element MotorCommandArray the vendor stack speaks.
+# Order matches the flat 18-element command layout the vendor stack speaks:
+# torso, then left arm, then right arm.
 UPPER_BODY_JOINTS = (*TORSO_JOINTS, *LEFT_ARM_JOINTS, *RIGHT_ARM_JOINTS)
 
 # Driven by the chassis velocity task or the gripper adapter, never planned, so
