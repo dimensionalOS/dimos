@@ -54,12 +54,10 @@ m20 = (
         UrdfManager.blueprint(model=M20_MODEL),
         M20StandingJointState.blueprint(),
         m20_nav_stack().remappings([(MovementManager, "cmd_vel", "requested_cmd_vel")]),
-        # loaded_map is a never-drop channel under zenoh, so no republish
         LocalMapRelocalization.blueprint(
             world_frame=WORLD_FRAME,
             map_frame="premap",
             relocalize=MID360_NAV,
-            republish_loaded_map=0.0,
             new_map=True,
             tf_interval=1.0,
             # pre_trace_subsample=5 leaves a carved local map of ~12k points, under the 20k default
