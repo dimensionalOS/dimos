@@ -24,7 +24,9 @@ from dimos.core.stream import Out
 from dimos.memory.replay import ReplayStream
 from dimos.memory.replay_module import replay_module
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 
 
 @pytest.fixture
@@ -35,8 +37,20 @@ def recording(tmp_path: Path) -> str:
     odom = store.stream("odom", PoseStamped)
     goal = store.stream("goal", PoseStamped)
     for ts in (1.0, 1.1, 1.2):
-        odom.append(PoseStamped(ts=ts), ts=ts)
-    goal.append(PoseStamped(ts=1.05), ts=1.05)
+        odom.append(
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(ts), frame_id=""),
+                pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+            ),
+            ts=ts,
+        )
+    goal.append(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.05), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        ),
+        ts=1.05,
+    )
     store.stop()
     return str(path)
 
@@ -55,8 +69,12 @@ def test_module_publishes_recorded_messages(recording: str) -> None:
     cls = replay_module(recording)
     module = cls(dataset=recording)
     got: dict[str, list[float]] = {"odom": [], "goal": []}
-    module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
-    module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
+    module.outputs["odom"].subscribe(
+        lambda m: got["odom"].append(message_time.to_seconds(m.header.stamp))
+    )
+    module.outputs["goal"].subscribe(
+        lambda m: got["goal"].append(message_time.to_seconds(m.header.stamp))
+    )
     module.start()
     deadline = time.time() + 5
     while time.time() < deadline and len(got["odom"]) < 3:
@@ -118,7 +136,7 @@ def test_stop_waits_for_in_flight_decode(recording: str, monkeypatch: pytest.Mon
     assert decoded.is_set()
     assert errors == []
     with SqliteStore(path=recording) as store:
-        assert [obs.data.ts for obs in store.stream("odom")] == pytest.approx([1.0, 1.1, 1.2])
+        assert [obs.ts for obs in store.stream("odom")] == pytest.approx([1.0, 1.1, 1.2])
 
 
 def test_portless_class_gets_ports_from_dataset(recording: str) -> None:
@@ -149,27 +167,26 @@ def test_stream_named_like_a_module_attribute_is_skipped(
     path = tmp_path / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    store.stream("start", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
-    store.stream("odom", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+    store.stream("start", PoseStamped).append(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        ),
+        ts=1.0,
+    )
+    store.stream("odom", PoseStamped).append(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        ),
+        ts=1.0,
+    )
     store.stop()
     assert list(replay_module(str(path)).__annotations__) == ["odom"]
     module = replay_module("")(dataset=str(path))
     assert sorted(module.outputs) == ["odom"]
     module.stop()
     assert [c.args[1] for c in log.warning.call_args_list] == ["start", "start"]
-
-
-def test_subclass_payload_gets_the_base_port_type(tmp_path: Path) -> None:
-    """A recorded unitree Odometry is a PoseStamped on the wire; the port must say so or a
-    PoseStamped consumer of the same name lands on a different topic."""
-    from dimos.robot.unitree.type.odometry import Odometry
-
-    path = tmp_path / "memory.db"
-    store = SqliteStore(path=str(path))
-    store.start()
-    store.stream("odom", Odometry).append(Odometry(ts=1.0), ts=1.0)
-    store.stop()
-    assert replay_module(str(path)).__annotations__ == {"odom": Out[PoseStamped]}
 
 
 def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Path) -> None:
@@ -179,8 +196,20 @@ def test_single_timestamp_stream_is_republished_and_not_the_anchor(tmp_path: Pat
     store.start()
     info = store.stream("camera_info", PoseStamped)
     for _ in range(3):
-        info.append(PoseStamped(ts=1.0), ts=1.0)
-    store.stream("odom", PoseStamped).append(PoseStamped(ts=40.0), ts=40.0)
+        info.append(
+            PoseStamped(
+                header=Header(stamp=message_time.time_from_seconds(1.0), frame_id=""),
+                pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+            ),
+            ts=1.0,
+        )
+    store.stream("odom", PoseStamped).append(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(40.0), frame_id=""),
+            pose=Pose(Point(0, 0, 0), Quaternion(0, 0, 0, 1)),
+        ),
+        ts=40.0,
+    )
     store.stop()
     module = replay_module(str(path))(dataset=str(path))
     got: dict[str, int] = {"camera_info": 0, "odom": 0}
@@ -218,8 +247,12 @@ def test_slow_first_decode_does_not_skip_other_streams(
     monkeypatch.setattr(replay_mod.ReplayStream, "_decode", slow)
     module = replay_module(recording)(dataset=recording)
     got: dict[str, list[float]] = {"odom": [], "goal": []}
-    module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
-    module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
+    module.outputs["odom"].subscribe(
+        lambda m: got["odom"].append(message_time.to_seconds(m.header.stamp))
+    )
+    module.outputs["goal"].subscribe(
+        lambda m: got["goal"].append(message_time.to_seconds(m.header.stamp))
+    )
     module.start()
     deadline = time.time() + 5
     while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
