@@ -215,7 +215,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
   const chatScroll = new ScrollView(transcript, { follow: "end", primary: true });
   const editor = new PromptEditor(
     tui,
-    commands.map((command) => command.name),
+    [...commands.map((command) => command.name), ...ui.gateway.skills.value.map((skill) => `skill:${skill.name}`)],
     cwd(),
   );
   const login = new LoginPanel(tui, ui);
@@ -805,7 +805,8 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
         .catch(note);
       return;
     }
-    if (value.startsWith("/")) {
+    const isSkill = value.startsWith("/skill:");
+    if (value.startsWith("/") && !isSkill) {
       editor.addToHistory(value);
       editor.setValue("");
       runCommand(value);

@@ -1,15 +1,12 @@
 import type { Extension } from "@earendil-works/pi-durable";
 import { defineExtension, section } from "@earendil-works/pi-durable";
-import { join } from "node:path";
+import type { LoadedSkill, SkillSummary } from "#dimos/agents/shared/protocol/skills.ts";
+import { dirname, join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { readFile, readdir } from "node:fs/promises";
 
-type SkillInfo = {
-  /** From the SKILL.md frontmatter. */
-  readonly name: string;
-  /** From the SKILL.md frontmatter, on one line. */
-  readonly description: string;
-  /** Absolute path of the SKILL.md; the model loads it with `read`. */
+export type SkillInfo = SkillSummary & {
+  /** Absolute path of the SKILL.md; loaded by the harness for explicit invocations. */
   readonly path: string;
 };
 
@@ -49,6 +46,39 @@ export async function loadSkills(
   return [...skills.values()];
 }
 
+export type SkillResolution =
+  | { readonly kind: "none" }
+  | { readonly kind: "loaded"; readonly skill: LoadedSkill }
+  | { readonly kind: "invalid"; readonly problem: string };
+
+/** Resolve and snapshot a leading explicit skill reference before the input can start a model turn. */
+export async function resolveSkill(text: string, skills: readonly SkillInfo[]): Promise<SkillResolution> {
+  if (!text.startsWith("/skill:")) return { kind: "none" };
+  const name = text.slice("/skill:".length).split(/\s/, 1)[0];
+  const skill = skills.find((candidate) => candidate.name === name);
+  if (skill === undefined) return { kind: "invalid", problem: `Unknown skill ${JSON.stringify(name)}.` };
+  let content: string;
+  try {
+    content = await readFile(skill.path, "utf8");
+  } catch (error) {
+    return {
+      kind: "invalid",
+      problem: `Cannot load skill ${JSON.stringify(name)} from ${skill.path}: ${String(error)}`,
+    };
+  }
+  return { kind: "loaded", skill: { name: skill.name, path: skill.path, content } };
+}
+
+/** Model-only instructions accompany the original command, outside its input text limit. */
+export function loadedSkillMessage(skill: LoadedSkill): string {
+  return [
+    `The user explicitly selected skill ${JSON.stringify(skill.name)}. Its full instructions are already loaded below. Follow them for the user's request.`,
+    `Skill file: ${JSON.stringify(skill.path)}`,
+    `Base directory for relative script, reference, and asset paths: ${JSON.stringify(dirname(skill.path))}`,
+    skill.content,
+  ].join("\n\n");
+}
+
 /**
  * The `skills` section: one line per skill with its path. The agent loads a skill by reading that file, so skills
  * need no tool of their own and the tool list stays exactly the plan's table.
@@ -61,7 +91,7 @@ export function skillsExtension(skills: readonly SkillInfo[]): Extension {
         skills.length === 0
           ? undefined
           : [
-              "Read a skill's file before a task it covers:",
+              "Unless its full instructions are already supplied, read a skill's file before a task it covers:",
               ...skills.map((skill) => `- ${skill.name}: ${skill.description} (${skill.path})`),
             ].join("\n"),
       ),

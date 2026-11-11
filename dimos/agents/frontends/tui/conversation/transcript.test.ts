@@ -239,3 +239,61 @@ test("tool previews retain selected tab clicks and partially scrolled Kitty imag
   transcript.reset();
   assert.equal(transcript.latestGallery, null);
 });
+
+test("loaded skills keep the command and show one expandable snapshot", (t) => {
+  const skill = {
+    name: "guide",
+    path: "/skills/guide/SKILL.md",
+    content: "# Guide\nExact instructions.\nEND OF SKILL",
+  };
+  const input = {
+    source: { kind: "user" as const, request: REQUEST },
+    text: "/skill:guide build it",
+    change: null,
+    render: null,
+    limit: null,
+    skill,
+  };
+  const { transcript, update } = view([itemRow({ kind: "input", entry: ENTRY, input, images: [] })]);
+  t.after(() => transcript.dispose());
+  const collapsed = plain(transcript.render(80)).join("\n");
+  assert.ok(collapsed.includes("/skill:guide build it"));
+  assert.equal(collapsed.split("Loaded skill guide").length - 1, 1);
+  assert.ok(!collapsed.includes("Exact instructions."));
+  transcript.setExpanded(true);
+  const expanded = plain(transcript.render(80)).join("\n");
+  assert.ok(expanded.includes(skill.path));
+  assert.ok(expanded.includes("Exact instructions."));
+  assert.ok(expanded.includes("END OF SKILL"));
+  assert.ok(transcript.render(24).every((line) => visibleWidth(line) <= 24));
+  transcript.select(`e${ENTRY}`);
+  assert.ok(transcript.render(24).every((line) => visibleWidth(line) <= 24));
+  transcript.select(null);
+  transcript.setExpanded(false);
+  assert.ok(!plain(transcript.render(80)).join("\n").includes("END OF SKILL"));
+  const rendered = transcript.render(80);
+  const y = plain(rendered).findIndex((line) => line.includes("Loaded skill guide"));
+  assert.equal(
+    transcript.handleMouse({
+      type: "press",
+      button: "left",
+      x: 3,
+      y,
+      screenX: 3,
+      screenY: y,
+      width: 80,
+      height: rendered.length,
+      shift: false,
+      alt: false,
+      ctrl: false,
+    })?.handled,
+    true,
+  );
+  assert.ok(plain(transcript.render(80)).join("\n").includes("END OF SKILL"));
+  const { skill: _skill, ...oldInput } = input;
+  update([itemRow({ kind: "input", entry: Value.Parse(EntryIdSchema, 2), input: oldInput, images: [] })]);
+  transcript.setExpanded(true);
+  const old = plain(transcript.render(80)).join("\n");
+  assert.ok(old.includes("/skill:guide build it"));
+  assert.ok(!old.includes("Loaded skill"));
+});

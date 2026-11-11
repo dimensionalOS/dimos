@@ -90,6 +90,20 @@ While calls run in the background, one line under the editor shows the newest wi
 | Up | With an empty editor, bring your queued messages back for editing |
 | Ctrl-C | Clear the editor. With an empty editor, detach; the conversation keeps running |
 
+## Use a skill
+
+Type `/skill:NAME [REQUEST]` to load a skill before the agent starts your request. For example:
+
+```text
+/skill:dimensional build a perception blueprint
+```
+
+Slash completion lists available skills alongside terminal commands. The harness reads the full `SKILL.md` and supplies its instructions and base directory with your request before calling the model. Your message keeps the slash text in the conversation history, followed by one loaded-skill entry. Click that entry or use `/expand` to see its contents. Unknown or unreadable skills report an error without starting a model turn.
+
+Bundled skills live in `dimos/agents/harness/skills/`. Add your own at `~/.config/dimos/agent/skills/NAME/SKILL.md`, with `name` and `description` in YAML frontmatter. A skill directory can also contain `scripts/`, `references/`, and `assets/`; the agent resolves their relative paths from that directory. Your skill replaces a bundled skill with the same name.
+
+The gateway loads the skill catalog at startup. Restart it after adding skills or changing their catalog metadata. Skill contents are read for each new explicit invocation. To restart, run `dimos agent stop`, then `dimos agent`, or restart `dimos-agent.service` if you use the service.
+
 ## Run the gateway as a service
 
 On a robot, run the gateway as the systemd user service `dimos-agent.service`, so it starts without a terminal and restarts when it fails:

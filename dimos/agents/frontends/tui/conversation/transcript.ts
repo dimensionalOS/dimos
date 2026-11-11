@@ -1,3 +1,4 @@
+import type { LoadedSkill } from "#dimos/agents/shared/protocol/skills.ts";
 import type { AssistantMessage, ToolCall, UserMessage } from "@earendil-works/pi-ai";
 import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { DimosInput } from "#dimos/agents/shared/protocol/conversation/input.ts";
@@ -106,6 +107,44 @@ class ToolBlock extends Container {
   override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
     if (event.x < 2 || event.x >= event.width - 2) return undefined;
     return super.handleMouse({ ...event, x: event.x - 2, width: Math.max(1, event.width - 4) });
+  }
+}
+
+class LoadedSkillView implements Component {
+  private readonly block = new Container();
+  private readonly skill: LoadedSkill;
+  private readonly requestRender: () => void;
+  private expanded = false;
+
+  constructor(skill: LoadedSkill, requestRender: () => void) {
+    this.skill = skill;
+    this.requestRender = requestRender;
+    this.setExpanded(false);
+  }
+
+  setExpanded(expanded: boolean): void {
+    this.expanded = expanded;
+    this.block.clear();
+    this.block.addChild(line(muted(`${expanded ? "▾" : "▸"} Loaded skill ${clean(this.skill.name)}`)));
+    if (expanded) {
+      this.block.addChild(line(muted(clean(this.skill.path))));
+      this.block.addChild(line(cleanMultiline(this.skill.content)));
+    }
+  }
+
+  render(width: number): string[] {
+    return this.block.render(width);
+  }
+
+  invalidate(): void {
+    this.block.invalidate();
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== "press" || event.button !== "left" || event.y !== 0) return undefined;
+    this.setExpanded(!this.expanded);
+    this.requestRender();
+    return { handled: true };
   }
 }
 
@@ -406,6 +445,7 @@ export class TranscriptView implements Component {
     const block = new Container();
     const cards: ToolCard[] = [];
     const galleries: Gallery[] = [];
+    let skill: LoadedSkillView | undefined;
     switch (item.kind) {
       case "input":
         this.input(
@@ -414,6 +454,13 @@ export class TranscriptView implements Component {
           item.images.map((image) => image.mimeType),
           galleries,
         );
+        if (item.input.skill !== undefined) {
+          skill = new LoadedSkillView(item.input.skill, () => this.tui.requestRender());
+          skill.setExpanded(this.expanded);
+          const loaded = new ToolBlock();
+          loaded.addChild(skill);
+          block.addChild(loaded);
+        }
         break;
       case "user":
         block.addChild(userBlock(userText(item.message)));
@@ -469,6 +516,7 @@ export class TranscriptView implements Component {
       },
       setExpanded: (expanded) => {
         for (const card of cards) card.setExpanded(expanded);
+        skill?.setExpanded(expanded);
       },
       dispose: () => {
         for (const card of cards) card.dispose();

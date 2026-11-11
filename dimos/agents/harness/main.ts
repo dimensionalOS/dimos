@@ -7,6 +7,7 @@ import type { ImageProcessor } from "@earendil-works/pi-durable/tools";
 import type { JobFiringDeps } from "#dimos/agents/harness/jobs/fire.ts";
 import type { Models } from "@earendil-works/pi-ai";
 import type { RuntimeToolSchemas } from "#dimos/agents/harness/tools/runtime-catalog.ts";
+import type { SkillSummary } from "#dimos/agents/shared/protocol/skills.ts";
 import type { Storage } from "@earendil-works/pi-durable";
 import { ContextBudget } from "#dimos/agents/harness/limit/budget.ts";
 import { ConversationHistory } from "#dimos/agents/harness/history/forks.ts";
@@ -74,6 +75,7 @@ export type Agent = {
   /** The store's scan of a conversation's submissions, settled ones included, which the harness does not offer. */
   readonly storage: Pick<Storage, "scanSubmissions">;
   readonly inputs: InputGate;
+  readonly skills: readonly SkillSummary[];
   readonly conversations: Conversations;
   readonly history: ConversationHistory;
   readonly runtime: RuntimeClient;
@@ -155,7 +157,8 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
     timeoutMs: 3_000,
     report,
   });
-  const inputs = new InputGate({ harness, observer, limiter });
+  const skills = await loadSkills(options.skillRoots, report);
+  const inputs = new InputGate({ harness, observer, limiter, skills });
   const detacher = new Detacher(inputs, report);
   const firing: JobFiringDeps = { inputs, connection, skillTimeoutMs: 120_000 };
   const jobTask = createJobTask(firing);
@@ -180,7 +183,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
     registry.install(toolsExtension(table, limiter, detacher));
   };
   registry.install(promptExtension(install));
-  registry.install(skillsExtension(await loadSkills(options.skillRoots, report)));
+  registry.install(skillsExtension(skills));
   registry.install(contextExtension({ inputs, mayChangeSystem: (name) => mayChangeSystem(table)(name) }));
   catalog.schemas.subscribe(installTools);
   registry.install(budget.extension());
@@ -241,6 +244,7 @@ export async function openAgent(options: AgentOptions, context: Context): Promis
     harness,
     storage,
     inputs,
+    skills: skills.map(({ name, description }) => ({ name, description })),
     conversations,
     history,
     runtime,

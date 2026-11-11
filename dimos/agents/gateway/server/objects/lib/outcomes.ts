@@ -45,6 +45,8 @@ export function fromSubmit(
       return refused({ code: "not_found", what: "conversation", name: String(conversation) });
     case "busy":
       return refused({ code: "running", conversation });
+    case "invalid":
+      return refused({ code: "invalid", field: "text", problem: result.problem });
     case "nothing_to_say":
       return refused({ code: "invalid", field: "text", problem: "there is nothing to send" });
   }
@@ -65,6 +67,8 @@ export function fromBranch(
         what: branch.what,
         name: branch.what === "conversation" ? String(source) : String(message),
       });
+    case "invalid":
+      return refused({ code: "invalid", field: "text", problem: branch.problem });
     case "not_a_user_message":
       return refused({ code: "not_a_user_message", conversation: source, entry: message });
     case "nothing_before":
