@@ -18,6 +18,8 @@ import pytest
 
 from dimos.sim2.geometry.poses import poses_by_id
 
+pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
+
 
 def test_targets_push_box_and_do_not_move_other_robot(backend, poses, motor_commands):
     backend.apply_action(motor_commands(positions=(0.65,)), [])

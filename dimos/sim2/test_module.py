@@ -24,7 +24,7 @@ from dimos.sim2.geometry.poses import poses_by_id
 from dimos.sim2.physics.mujoco import MujocoBackend
 from dimos.utils.testing.waiting import wait_until
 
-pytestmark = pytest.mark.native_e2e
+pytestmark = pytest.mark.self_hosted
 
 
 def test_physics_advances_without_any_controller(make_sim):
@@ -90,12 +90,21 @@ def test_future_action_waits_for_its_time_without_stalling_physics(make_sim, com
 def test_command_expiry_holds_motor_while_physics_continues(make_sim, command):
     sim = make_sim(joint_ids=("left/slide_x",))
     action = command(sim.inspect().header, positions=(0.6,), ttl=0.1)
+    # Give RPC delivery time without changing the 100 ms active command window.
+    action.apply_at_ns += 500_000_000
+    action.valid_until_ns += 500_000_000
     sim.submit(action)
     wait_until(lambda: sim.status()["expired_targets"] == 1, timeout=3)
-    wait_until(lambda: sim.status()["time_ns"] >= action.valid_until_ns + 300_000_000, timeout=3)
+    # Holding changes the PD target, not the joint's instantaneous velocity.
+    # Observe a settled hold over a simulation-time interval, independent of RPC latency.
+    wait_until(lambda: sim.status()["time_ns"] >= action.valid_until_ns + 1_000_000_000, timeout=3)
     state = sim.inspect()
     assert 0 < state.joint_truth.position[0] < 0.55
     assert abs(state.joint_truth.velocity[0]) < 0.05
+    wait_until(lambda: sim.status()["time_ns"] >= state.header.time_ns + 200_000_000, timeout=3)
+    held = sim.inspect()
+    assert held.joint_truth.position == pytest.approx(state.joint_truth.position, abs=0.005)
+    assert abs(held.joint_truth.velocity[0]) < 0.05
     assert sim.status()["status"] == "running"
 
 
