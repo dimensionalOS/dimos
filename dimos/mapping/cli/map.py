@@ -691,6 +691,7 @@ def main(
         marker_size=marker_size,
         bottom_cutoff=bottom_cutoff,
     )
+    rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")

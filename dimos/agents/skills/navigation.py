@@ -225,7 +225,8 @@ class NavigationSkillContainer(Module):
             if odom is None:
                 where = "robot position unknown"
             else:
-                distance = goal.position.distance(odom.position)
+                # In the plane: a semantic map goal is at z=0, odometry is at body height.
+                distance = goal.position.to_2d().distance(odom.position.to_2d())
                 where = (
                     f"robot at ({odom.position.x:.2f}, {odom.position.y:.2f}), "
                     f"{distance:.2f} m from it"
