@@ -93,6 +93,14 @@ class Node(_Struct):
             raise ValueError("a node has at most one of `children` and `parallel`")
         return self
 
+    @property
+    def inside(self) -> tuple[str, ...]:
+        return (*self.children, *self.parallel)
+
+    @property
+    def is_switch(self) -> bool:
+        return any(t.trigger is None and t.after is None for t in self.transitions)
+
 
 class OrchestratorDefinition(_Struct):
     """A whole orchestrator file. `root` names one of `nodes`."""

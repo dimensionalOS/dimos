@@ -40,6 +40,7 @@ class CheckedDefinition:
     definition: OrchestratorDefinition
     problems: tuple[str, ...]
     expressions: Mapping[str, Expression]
+    tree: "Tree"
 
 
 def check(
@@ -51,8 +52,8 @@ def check(
     """
     problems = [*_name_problems(definition), *_nesting_problems(definition)]
     expressions: dict[str, Expression] = {}
+    tree = Tree(definition)
     if not problems:
-        tree = _Tree(definition)
         expressions, problems = _compile(definition, shapes or {})
         problems += [
             *_node_problems(tree),
@@ -60,23 +61,15 @@ def check(
             *_fallback_problems(tree),
             *_resource_problems(tree),
         ]
-    return CheckedDefinition(definition, tuple(dict.fromkeys(problems)), expressions)
-
-
-def _inside(node: Node) -> tuple[str, ...]:
-    return (*node.children, *node.parallel)
-
-
-def _is_switch(node: Node) -> bool:
-    return any(t.trigger is None and t.after is None for t in node.transitions)
+    return CheckedDefinition(definition, tuple(dict.fromkeys(problems)), expressions, tree)
 
 
 def _listed(names: Iterable[str]) -> str:
     return " and ".join(f"`{name}`" for name in sorted(names))
 
 
-class _Tree:
-    """A definition whose names and nesting are sound, indexed by name."""
+class Tree:
+    """A definition indexed by name. It is sound only when names and nesting have no problems."""
 
     def __init__(self, definition: OrchestratorDefinition) -> None:
         self.definition = definition
@@ -85,7 +78,7 @@ class _Tree:
         self.events = {event.name for event in definition.events}
         self.triggers = self.events | {signal.name for signal in definition.signals}
         self.parent = {
-            inner: self.nodes[node.name] for node in definition.nodes for inner in _inside(node)
+            inner: self.nodes[node.name] for node in definition.nodes for inner in node.inside
         }
 
     def ancestors(self, node: Node) -> Iterator[Node]:
@@ -134,7 +127,7 @@ def _nesting_problems(definition: OrchestratorDefinition) -> Iterator[str]:
     if definition.root not in holders:
         yield f"`root` names `{definition.root}`, which is not a node"
     for node in definition.nodes:
-        for inner in _inside(node):
+        for inner in node.inside:
             if inner in holders:
                 holders[inner].append(node.name)
             else:
@@ -152,7 +145,7 @@ def _nesting_problems(definition: OrchestratorDefinition) -> Iterator[str]:
             yield f"node `{name}` is inside itself"
 
 
-def _node_problems(tree: _Tree) -> Iterator[str]:
+def _node_problems(tree: Tree) -> Iterator[str]:
     resources = tree.definition.resources
     for activity in tree.definition.activities:
         for resource in activity.uses:
@@ -173,17 +166,17 @@ def _node_problems(tree: _Tree) -> Iterator[str]:
             yield f"{where} has `initial`, and no children"
         if node.wind_down is not None:
             yield f"{where} sets `wind_down`, and wind-down nodes are not supported"
-        if node.outcomes and not _inside(node):
+        if node.outcomes and not node.inside:
             yield f"{where} has `outcomes`, and no nodes inside"
 
 
-def _transition_problems(tree: _Tree) -> Iterator[str]:
+def _transition_problems(tree: Tree) -> Iterator[str]:
     for node in tree.definition.nodes:
         where = f"node `{node.name}`"
         parent = tree.parent.get(node.name)
         above = list(tree.ancestors(node))
-        if _is_switch(node):
-            if node.activity is not None or _inside(node):
+        if node.is_switch:
+            if node.activity is not None or node.inside:
                 yield f"{where} is a switch node, and it has an activity or nodes inside"
             if any(t.trigger is not None or t.after is not None for t in node.transitions):
                 yield f"{where} is a switch node, and a transition has a `trigger` or an `after`"
@@ -191,16 +184,14 @@ def _transition_problems(tree: _Tree) -> Iterator[str]:
                 yield f"{where} is a switch node, and its last transition has an `if`"
         if parent is not None and not any(n.transitions for n in (node, *above)):
             yield f"{where} has no way out through its own transitions or an ancestor's"
-        ended = any(
-            t.goto == "done" for name in _inside(node) for t in tree.nodes[name].transitions
-        )
+        ended = any(t.goto == "done" for name in node.inside for t in tree.nodes[name].transitions)
         if parent is not None and ended and all(t.trigger != "done" for t in node.transitions):
             yield f"{where} can be ended with `done`, and it has no transition on `done`"
         for transition in node.transitions:
             trigger, goto = transition.trigger, transition.goto
             if trigger is not None and trigger not in tree.triggers and trigger not in RESERVED:
                 yield f"{where}: trigger `{trigger}` is not a signal or an event"
-            if trigger == "succeeded" and _inside(node):
+            if trigger == "succeeded" and node.inside:
                 yield f"{where} has nodes inside, and a transition on `succeeded`"
             if parent is not None and parent.parallel:
                 if goto not in parent.outcomes:
@@ -239,7 +230,7 @@ def _transition_problems(tree: _Tree) -> Iterator[str]:
                         )
 
 
-def _started_on_entering(tree: _Tree, name: str, seen: set[str]) -> set[str]:
+def _started_on_entering(tree: Tree, name: str, seen: set[str]) -> set[str]:
     """The activities that can start in the step that enters a node."""
     node = tree.nodes.get(name)
     if node is None or name in seen:
@@ -247,7 +238,7 @@ def _started_on_entering(tree: _Tree, name: str, seen: set[str]) -> set[str]:
     seen.add(name)
     if node.activity is not None:
         return {node.activity} & tree.activities.keys()
-    if _is_switch(node):
+    if node.is_switch:
         following = [transition.goto for transition in node.transitions]
     elif node.children:
         following = [node.initial] if node.initial is not None else []
@@ -256,7 +247,7 @@ def _started_on_entering(tree: _Tree, name: str, seen: set[str]) -> set[str]:
     return {activity for inner in following for activity in _started_on_entering(tree, inner, seen)}
 
 
-def _fallback_problems(tree: _Tree) -> Iterator[str]:
+def _fallback_problems(tree: Tree) -> Iterator[str]:
     for node in tree.definition.nodes:
         for fallback in (c.fallback for c in (*node.requires, *node.ensures)):
             if fallback is not None and fallback not in tree.siblings(node):
@@ -278,23 +269,23 @@ def _fallback_problems(tree: _Tree) -> Iterator[str]:
             reported |= reached
 
 
-def _activity_needs(tree: _Tree, node: Node) -> set[str]:
+def _activity_needs(tree: Tree, node: Node) -> set[str]:
     activity = tree.activity(node)
     if activity is None:
         return set()
     return {*activity.uses, *([activity.cancel] if activity.cancel is not None else [])}
 
 
-def _needs(tree: _Tree, name: str) -> set[str]:
+def _needs(tree: Tree, name: str) -> set[str]:
     """Every resource a node and the nodes inside it could need."""
     node = tree.nodes[name]
     needs = {*node.claims, *_activity_needs(tree, node)}
-    for inner in _inside(node):
+    for inner in node.inside:
         needs |= _needs(tree, inner)
     return needs
 
 
-def _resource_problems(tree: _Tree) -> Iterator[str]:
+def _resource_problems(tree: Tree) -> Iterator[str]:
     for node in tree.definition.nodes:
         for index, first in enumerate(node.parallel):
             for second in node.parallel[index + 1 :]:
@@ -304,7 +295,7 @@ def _resource_problems(tree: _Tree) -> Iterator[str]:
                         f"`{first}` and `{second}`, inside the parallel node `{node.name}`, "
                         f"can both need {_listed(shared)}"
                     )
-        inner = {need for name in _inside(node) for need in _needs(tree, name)}
+        inner = {need for name in node.inside for need in _needs(tree, name)}
         shared = _activity_needs(tree, node) & inner
         if shared:
             yield f"node `{node.name}`: its activity shares {_listed(shared)} with a node inside it"
