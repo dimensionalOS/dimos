@@ -23,6 +23,7 @@ joints it names and releases them shortly after the leader stops.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from typing import ClassVar
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
@@ -41,6 +42,11 @@ GRIPPER_TASK_PRIORITY = 20
 
 class LeaderCoordinator(DamiaoCoordinator):
     """A Damiao deployment whose coordinator also reads the leader's joint targets."""
+
+    # The 100 Hz tick loop must not share a Python process with cameras, Viser
+    # and recorders: on a Jetson that cost a quarter of its ticks and the arm
+    # moved in steps.
+    dedicated_worker: ClassVar[bool] = True
 
     leader_joint_command: In[JointState]
 
