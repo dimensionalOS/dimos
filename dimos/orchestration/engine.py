@@ -241,7 +241,15 @@ class _Step:
         return runtime, self.effects
 
     def fault(self, fault: _FaultError, event: str) -> None:
-        self.effects += [ClearTimer(timer) for timer in self.timers]
+        """Stop everything. Starts and timers this step was about to send are dropped."""
+        fresh = {e.timer for e in self.effects if isinstance(e, SetTimer)} & set(self.timers)
+        self.effects = [
+            effect
+            for effect in self.effects
+            if not isinstance(effect, SendStart)
+            and not (isinstance(effect, SetTimer) and effect.timer in fresh)
+        ]
+        self.effects += [ClearTimer(timer) for timer in self.timers if timer not in fresh]
         self.active.clear()
         self.calls.clear()
         self.timers.clear()
