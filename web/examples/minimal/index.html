@@ -7,10 +7,10 @@
     <meta charset="utf-8" />
     <title>DimOS minimal SDK page</title>
     <style>
-      body {
-        font-family: monospace;
-        margin: 1rem;
-      }
+    body {
+      font-family: monospace;
+      margin: 1rem;
+    }
     </style>
   </head>
   <body>
@@ -18,26 +18,22 @@
     <div id="status">status: connecting</div>
     <pre id="odom">odom: (no data)</pre>
     <script type="module">
-      import { connect } from "/sdk.js";
+    import { connect } from "/sdk.js";
 
-      const statusEl = document.querySelector("#status");
-      const odomEl = document.querySelector("#odom");
+    const statusEl = document.querySelector("#status");
+    const odomEl = document.querySelector("#odom");
 
-      const session = connect();
+    const session = connect();
 
-      session.status.subscribe(() => {
-        const status = session.status.get();
-        const robots = status.robots.map((r) => `${r.name} (${r.id})`).join(", ");
-        statusEl.textContent = `status: ${status.transport.phase}, robots: ${
-          robots || "(none)"
-        }`;
-      });
+    session.status.subscribe(() => {
+      const status = session.status.get();
+      const robots = status.robots.map((r) => `${r.name} (${r.id})`).join(", ");
+      statusEl.textContent = `status: ${status.transport.phase}, robots: ${robots || "(none)"}`;
+    });
 
-      session.subscribe("odom", (snapshot) => {
-        odomEl.textContent = `odom: ${
-          JSON.stringify(snapshot.slot?.value ?? null, null, 2)
-        }`;
-      });
+    session.subscribe("odom", (snapshot) => {
+      odomEl.textContent = `odom: ${JSON.stringify(snapshot.slot?.value ?? null, null, 2)}`;
+    });
     </script>
   </body>
 </html>

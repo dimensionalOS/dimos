@@ -288,6 +288,12 @@ robots:
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
+        unitree-g1-replay-mesh:
+          title: G1 RGB-D mesh replay
+          description: 'Replays a G1 recording and reconstructs a colored 3D triangle mesh from its RealSense RGB-D stream: no robot needed.'
+          recommended_config:
+          - <<: *recording
+            streams: [[color_image], [realsense_depth_image], [realsense_camera_info], [tf]]
         unitree-g1-teleop:
           title: G1 VR teleop + recording
           description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
@@ -378,14 +384,24 @@ robots:
       manufacturer: DeepRobotics
       dirs: [dimos/robot/deeprobotics/m20]
       blueprints:
-        deeprobotics-m20-kronknav-control:
-          title: M20 3D navigation
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower.'
+        m20:
+          title: 'M20: navigation'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower, plus named map locations kept under the premap frame by the relocalizer.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
+          - module: localmaprelocalization
+            field: map_file
+            label: Premap (.db/.mcap)
+        m20-sim-nav:
+          title: 'M20 in simulation (navigation)'
+          description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        m20-sim-nav-episode:
+          title: 'M20 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated M20 navigation stack. Run by dimos nav-bench.'
+          hidden: true
     alfred:
       name: Alfred
       description: A DIY mobile base with a Mid-360 and a RealSense mast.
@@ -435,6 +451,10 @@ robots:
           title: xArm pick and place
           description: Perception, grasping and pick-and-place on a real xArm with a RealSense.
           starter: 18
+          recommended_config: &xarm7_connection_config
+          - *robot_or_simulator
+          - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+            when: {simulation: ''}
         keyboard-teleop-xarm7:
           title: xArm7 keyboard driving
           description: Move an xArm7 with this computer's keyboard.
@@ -476,21 +496,43 @@ robots:
           title: xArm pick and place with operator hold (sim)
           description: 'Simulated xArm7 pick and place that an operator can hold, jog by hand, release and e-stop: no robot needed.'
           recommended_config: []
+        hybrid-teleop-sim-collect:
+          title: xArm pick and place with operator hold, recording (sim)
+          description: The simulated xArm7 operator-hold stack that also records the wrist camera and joint positions into episodes.
+          recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
           description: Pick-and-place on a real xArm plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_connection_config
         xarm-grasp-graspgenx:
           title: xArm pick and place (GraspGenX)
           description: The xArm grasping stack with GraspGenX grasp generation.
+          recommended_config: *xarm7_connection_config
         xarm-grasp-graspgenx-agent:
           title: xArm GraspGenX agent
           description: GraspGenX grasping plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_connection_config
+        xarm6-grasp:
+          title: xArm6 pick and place
+          description: Perception, grasping and pick-and-place on a real xArm6 with a RealSense.
+          recommended_config: &xarm6_connection_config
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-grasp-graspgenx:
+          title: xArm6 pick and place (GraspGenX)
+          description: The xArm6 grasping stack with GraspGenX grasp generation.
+          recommended_config: *xarm6_connection_config
         xarm7-planner-coordinator:
           title: xArm7 motion planning
           description: Motion planning and execution for an xArm7.
+          recommended_config: &xarm7_hardware_config [*xarm7_connection_ip]
         xarm7-planner-coordinator-agent:
           title: xArm7 planning agent
           description: xArm7 motion planning plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_hardware_config
+        xarm6-planner-coordinator:
+          title: xArm6 motion planning
+          description: Motion planning and execution for an xArm6.
+          recommended_config: *xarm6_connection_config
         lite6-planner-coordinator:
           title: Lite6 motion planning
           description: Motion planning and execution for a Lite6.
@@ -614,6 +656,11 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+        piper-teleop:
+          title: Piper teleop
+          description: Move a real Piper's end and its gripper from the Desktop Manipulation app, through PiperConnection.
+          recommended_config:
+          - {module: piperconnection, field: can_port, label: CAN port, placeholder: can0, required: true}
     makermods_metal:
       name: MakerMods Metal
       description: The six-joint Metal arm and gripper, over CAN.
@@ -622,11 +669,14 @@ robots:
       dirs: [dimos/robot/manipulators/makermods_metal]
       defaults:
         recommended_config:
-        - {module: ControlCoordinator, field: can_port, label: CAN port or USB serial}
+        - {module: metalconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        makermods-metal-connection-control:
+          title: Metal connection control
+          description: Direct CAN connection and joint trajectory control for a Metal arm; requires a CAN selector; use simulation for a mock connection.
         coordinator-makermods-metal:
           title: Metal coordinator
-          description: A Metal arm behind a ControlCoordinator.
+          description: Metal trajectory and gripper control through its connection module.
         makermods-metal-planner-coordinator:
           title: Metal motion planning
           description: Motion planning, execution, and Viser for a Metal arm.
@@ -638,8 +688,8 @@ robots:
       dirs: [dimos/robot/manipulators/dual_makermods_metal]
       defaults:
         recommended_config:
-        - {module: ControlCoordinator, field: left_can_port, label: Left CAN port or USB serial}
-        - {module: ControlCoordinator, field: right_can_port, label: Right CAN port or USB serial}
+        - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
+        - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
       blueprints:
         dual-makermods-metal-planner-coordinator:
           title: Dual Metal motion planning
@@ -651,11 +701,23 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/openyam]
       defaults:
-        recommended_config: *can_arm_config
+        recommended_config:
+        - *robot_or_simulator
+        - {module: openyamconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openyam-connection-control:
+          title: OpenYAM connection control
+          description: Direct CAN connection and joint trajectory control for an OpenYAM arm; requires a CAN selector; use simulation for a mock connection.
         openyam-teach-collection:
           title: OpenYAM hand-guided recording
           description: Guide an OpenYAM arm by hand and record demonstrations.
+          recommended_config:
+          - *robot_or_simulator
+          - module: openyamteachconnection
+            field: can_port
+            label: CAN port or USB serial
+            placeholder: can0
+            when: {simulation: ''}
         openyam-lerobot-rollout:
           title: OpenYAM policy rollout
           description: Run a trained LeRobot policy on an OpenYAM arm.
@@ -687,6 +749,9 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/dual_openyam]
       blueprints:
+        dual-openyam-quest-collection:
+          title: Dual OpenYAM demonstration recording
+          description: Teleoperate two OpenYAM arms in VR and record demonstrations.
         dual-openyam-planner-coordinator:
           title: Dual OpenYAM motion planning
           description: Motion planning for the two-arm OpenYAM.
@@ -702,7 +767,15 @@ robots:
       type: arm
       manufacturer: null
       dirs: [dimos/robot/manipulators/openarm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
+        - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openarm-connection-control:
+          title: OpenArm connection control
+          description: Direct CAN connections and joint trajectory control for OpenArm; requires both CAN selectors; use simulation for a mock connection.
         openarm-planner-coordinator:
           title: OpenArm motion planning
           description: Motion planning and execution for the bimanual OpenArm.
@@ -711,7 +784,7 @@ robots:
           description: The OpenArm behind a ControlCoordinator (a building block).
         teleop-webxr-openarm:
           title: OpenArm VR teleop
-          description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+          description: Both VR controllers drive the bimanual OpenArm; requires both CAN selectors, or simulation for a mock connection.
     seeed_b601_dm:
       name: Seeed reBot B601-DM
       description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
@@ -721,7 +794,7 @@ robots:
       defaults:
         recommended_config:
         - *robot_or_simulator
-        - module: controlcoordinator
+        - module: b601dmconnection
           field: can_port
           label: CAN port
           placeholder: /dev/ttyACM0

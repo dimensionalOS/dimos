@@ -27,6 +27,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -42,10 +43,13 @@ from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.mapping.pointclouds.box_filter_spec import PointCloudBoxFilterSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -140,6 +144,8 @@ class PickAndPlaceModule(Module):
         self._holding_object = False
         # The grasp contact check, by planning group, built on first use.
         self._contact_checkers: dict[PlanningGroupID, GraspContactChecker] = {}
+        # The running grasp generators, by module name.
+        self._grasp_generators: dict[str, RPCClient] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -173,19 +179,79 @@ class PickAndPlaceModule(Module):
     def get_object(self, object_id: str) -> dict[str, Any] | None:
         return self._objects.get(object_id)
 
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        """Keep the stack's grasp generators: the modules that answer propose_grasps_for."""
+        self._grasp_generators = {
+            module.remote_name: module for module in modules if "propose_grasps_for" in module.rpcs
+        }
+
+    @skill
+    def propose_grasps(
+        self,
+        object_id: str,
+        generator: str,
+        approach: list[float] | None = None,
+        max_angle_deg: float = 30.0,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Ask one grasp generator for grasps on a scanned object, coming in from about one direction.
+
+        Choose the generator for the object. GraspGenXModule is a learned model:
+        grasps on any shape from many directions, such as mugs, tools and side
+        grasps, in about a second on a GPU. HeuristicGraspModule makes one
+        straight-down grasp, instantly, for boxes, cans and other upright
+        objects. A name that is not running gets an error naming the ones that
+        are. The grasps are not checked for reach or collisions. Pass one entry
+        of ``grasps`` to pick_object as ``grasp``.
+
+        Args:
+            object_id: ID from the latest scan_objects call.
+            generator: Name of the grasp generator to ask, such as GraspGenXModule.
+            approach: Unit vector [x, y, z] in the arm's base frame: the direction
+                the gripper moves in, from the operator's hand into the object.
+                [0, 0, -1] is straight down. None accepts any direction.
+            max_angle_deg: Half-angle of the cone around approach, degrees.
+            limit: How many grasps to return, best first.
+
+        Returns ``grasps`` (each with position, orientation, score and angle_deg),
+        ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
+        made, which says how far off approach is when ``grasps`` is empty.
+        """
+        chosen = self._grasp_generators.get(generator)
+        if chosen is None:
+            running = ", ".join(sorted(self._grasp_generators)) or "none"
+            raise ValueError(f"No grasp generator named {generator}; running: {running}")
+        answer: dict[str, Any] = chosen.propose_grasps_for(
+            object_id=object_id, approach=approach, max_angle_deg=max_angle_deg, limit=limit
+        )
+        return answer
+
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
-        self, object_id: str, planning_group: PlanningGroupID | None = None
+        self,
+        object_id: str,
+        planning_group: PlanningGroupID | None = None,
+        grasp: dict[str, Any] | None = None,
     ) -> SkillResult:
-        """Generate ranked grasps and pick one object from the latest scan.
+        """Pick one object from the latest scan.
 
-        ``contact_rejected`` in the result counts the grasps dropped because the
-        arm cannot reach them, or the robot would touch the object off its finger
-        pads or hit the scene.
+        To choose the grasp, get one from propose_grasps and pass it as
+        ``grasp``: the pick tries that grasp, exactly where it is, and no other.
+        Without ``grasp``, ranked grasps are generated and tried in order.
+
+        ``source`` in the result says where the grasps came from: the given
+        grasp's ``generator`` ("operator" when it has none), or "provider" for
+        generated ones. ``contact_rejected`` counts the grasps dropped, before
+        any move, because the arm cannot reach them, or the robot would touch
+        the object off its finger pads or hit the scene. ``no_path`` is true when
+        the planner found no path to any grasp tried.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
+            grasp: One entry of propose_grasps's ``grasps``; only ``position``
+                and ``orientation`` are needed.
         """
         if self._holding_object:
             return SkillResult(
@@ -205,8 +271,32 @@ class PickAndPlaceModule(Module):
                 f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
             )
         group = self._gripper_group(planning_group)
-        candidates = self._grasp_generator.propose_grasps(pointcloud)
-        candidates, facts = self._drop_touching(object_id, pointcloud, candidates, group)
+        if grasp is None:
+            source = "provider"
+            candidates = self._grasp_generator.propose_grasps(pointcloud)
+        else:
+            source = str(grasp.get("generator", "operator"))
+            orientation = np.asarray(grasp["orientation"], dtype=float)
+            norm = float(np.linalg.norm(orientation))
+            if orientation.shape != (4,) or not np.isfinite(norm) or norm == 0.0:
+                return SkillResult(
+                    f"The given grasp's orientation {grasp['orientation']} is not a rotation; "
+                    "expected a non-zero quaternion [x, y, z, w]. Did not start the pick.",
+                    metadata={"source": source},
+                )
+            # The pre-grasp offset is rotated by this quaternion, which must be
+            # unit length: one twice as long would put the pre-grasp 4x as far.
+            pose = Pose(Vector3(*grasp["position"]), Quaternion(*(orientation / norm)))
+            candidates = GraspCandidateArray(
+                Header(self.config.planning_frame),
+                [GraspCandidate(pose, float(grasp.get("score", 0.0)))],
+            )
+        # A chosen grasp is checked where it is, never slid to another depth.
+        depth_search = self.config.grasp_depth_search if grasp is None else 0.0
+        candidates, facts = self._drop_touching(
+            object_id, pointcloud, candidates, group, depth_search
+        )
+        facts["source"] = source
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
@@ -221,9 +311,12 @@ class PickAndPlaceModule(Module):
                     f" The contact check dropped {rejected} grasp(s) the arm cannot reach or "
                     "where the robot would touch the object off its finger pads or hit the scene."
                 )
-            return SkillResult(
-                f"Generated 0 grasp candidates for object {object_id}.{note}", metadata=facts
+            found = (
+                "Did not try the given grasp"
+                if grasp is not None
+                else "Generated 0 grasp candidates"
             )
+            return SkillResult(f"{found} for object {object_id}.{note}", metadata=facts)
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
         box = _target_box(pointcloud)
@@ -235,6 +328,8 @@ class PickAndPlaceModule(Module):
             if not self._holding_object:
                 self._clear_target_box()
         result.metadata = {**facts, **result.metadata}
+        if grasp is not None:
+            result.metadata["rank"] = grasp.get("rank", 0)
         return result
 
     def _drop_touching(
@@ -243,6 +338,7 @@ class PickAndPlaceModule(Module):
         pointcloud: PointCloud2,
         candidates: GraspCandidateArray,
         group: PlanningGroupID,
+        depth_search: float,
     ) -> tuple[GraspCandidateArray, dict[str, Any]]:
         """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
@@ -251,6 +347,8 @@ class PickAndPlaceModule(Module):
             pointcloud: The target's points, planning frame, metres.
             candidates: The provider's grasps, same frame.
             group: Planning group whose tool tip the grasps pose.
+            depth_search: How far (metres) a grasp may slide along its approach
+                to pass when none passes where it is; 0 keeps every grasp where it is.
 
         Returns the grasps that pass, and for the pick's result either
         ``contact_rejected`` (how many were dropped) or ``contact_check_skipped``
@@ -284,7 +382,7 @@ class PickAndPlaceModule(Module):
                 self.config.grasp_contact_margin,
                 self.config.grasp_obstacle_margin,
                 JointState(name=list(joints), position=list(joints.values())),
-                self.config.grasp_depth_search,
+                depth_search,
             )
         except Exception as exc:
             logger.warning("Grasp contact check failed; keeping every grasp", error=str(exc))
@@ -369,7 +467,8 @@ class PickAndPlaceModule(Module):
         attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
         return SkillResult(
             f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
-            f"for object {object_id}; last planner result {last_plan}."
+            f"for object {object_id}; last planner result {last_plan}.",
+            metadata={"no_path": True},
         )
 
     @rpc

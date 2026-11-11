@@ -202,6 +202,11 @@ class PythonWorker:
         return len(self._modules) + self._reserved
 
     @property
+    def has_exited(self) -> bool:
+        """Whether the child is confirmed dead, including an unreaped exit."""
+        return self._process is not None and self._process.exitcode is not None
+
+    @property
     def pid(self) -> int | None:
         """PID of the worker process, or ``None`` if not alive."""
         if self._process is None:
@@ -291,11 +296,18 @@ class PythonWorker:
             raise RuntimeError("Worker process not started")
 
         with self._lock:
-            _send(self._conn, UndeployModuleRequest(module_id=module_id))
-            response: WorkerResponse = _recv(self._conn)
-
-        if response.error:
-            raise RuntimeError(f"Failed to undeploy module: {response.error}")
+            # Only a confirmed exit permits removal without a teardown reply.
+            # The child may exit before or during this request.
+            if not self.has_exited:
+                try:
+                    _send(self._conn, UndeployModuleRequest(module_id=module_id))
+                    response: WorkerResponse = _recv(self._conn)
+                except (BrokenPipeError, EOFError, ConnectionResetError):
+                    if not self.has_exited:
+                        raise
+                else:
+                    if response.error:
+                        raise RuntimeError(f"Failed to undeploy module: {response.error}")
 
         self._modules.pop(module_id, None)
 
@@ -479,9 +491,10 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             return WorkerResponse(result=method(*args, **kwargs))
 
         case UndeployModuleRequest(module_id=module_id):
-            instance = state.instances.pop(module_id, None)
-            if instance is not None:
-                instance.stop()
+            stopping_instance = state.instances.get(module_id)
+            if stopping_instance is not None:
+                stopping_instance.stop()
+                del state.instances[module_id]
             return WorkerResponse(result=True)
 
         case SuppressConsoleRequest():

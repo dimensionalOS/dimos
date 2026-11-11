@@ -25,7 +25,7 @@ base router receives on its TCP link from the edge router stay far below what
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import ExitStack, suppress
 import json
 from pathlib import Path
@@ -269,10 +269,12 @@ def test_a_module_ref_calls_its_provider_on_another_host(
 
 
 @pytest.mark.skipif(sys.platform == "darwin", reason="scouts multicast on Linux loopback")
-def test_hosts_scout_each_other_and_answer_probes(tmp_path: Path) -> None:
+def test_hosts_scout_each_other_and_answer_probes(
+    tmp_path: Path, unused_udp_port_factory: Callable[[], int]
+) -> None:
     from dimos.hosted.discovery import merge, probe_all, scouted_endpoints
 
-    group = f"224.0.0.224:{_free_port()}"
+    group = f"224.0.0.224:{unused_udp_port_factory()}"
     config = HostConfig(autodiscovery=True, scout_addr=group, scout_interface="lo")
     daemons = [
         HostDaemon(

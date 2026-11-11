@@ -234,6 +234,7 @@ def main(
                 n_updates += 1
             print(f"tracks: {len(seen_tracks)} unique, {n_updates} updates")
 
+    rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")
