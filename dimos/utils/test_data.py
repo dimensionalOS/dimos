@@ -15,9 +15,11 @@
 from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
+import io
 import os
 from pathlib import Path
 import subprocess
+import tarfile
 from threading import Barrier
 from typing import Any
 from unittest.mock import call
@@ -34,6 +36,64 @@ from dimos.utils.data import LfsPath, backup_file, resolve_named_path
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
     for ts in timestamps:
         (dir_path / f"{stem}.{ts}{suffix}").write_text(ts)
+
+
+def test_decompress_archive_keeps_data_and_internal_symlinks(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    archive = tmp_path / "sample.tar.gz"
+    target = tmp_path / "data"
+    target.mkdir()
+    mocker.patch.object(data, "get_data_dir", return_value=target)
+    payload = b"robot asset\n"
+    with tarfile.open(archive, "w:gz") as tar:
+        member = tarfile.TarInfo("sample/model.txt")
+        member.size = len(payload)
+        member.mode = 0o666
+        tar.addfile(member, io.BytesIO(payload))
+        link = tarfile.TarInfo("sample/model-link.txt")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "model.txt"
+        tar.addfile(link)
+
+    result = data._decompress_archive(archive)
+
+    assert result == target / "sample"
+    assert (result / "model.txt").read_bytes() == payload
+    assert (result / "model-link.txt").is_symlink()
+    assert (result / "model-link.txt").read_bytes() == payload
+    assert (result / "model.txt").stat().st_mode & 0o777 == 0o644
+    assert list(target.iterdir()) == [result]
+
+
+@pytest.mark.parametrize(
+    ("name", "member_type", "linkname"),
+    [
+        ("../escaped", tarfile.REGTYPE, ""),
+        ("sample/link", tarfile.SYMTYPE, "../../escaped"),
+        ("sample/device", tarfile.CHRTYPE, ""),
+    ],
+)
+def test_decompress_archive_rejects_unsafe_members_and_cleans_staging(
+    mocker: MockerFixture, tmp_path: Path, name: str, member_type: bytes, linkname: str
+) -> None:
+    archive = tmp_path / "sample.tar.gz"
+    target = tmp_path / "data"
+    target.mkdir()
+    mocker.patch.object(data, "get_data_dir", return_value=target)
+    with tarfile.open(archive, "w:gz") as tar:
+        safe = tarfile.TarInfo("sample/model.txt")
+        tar.addfile(safe)
+        unsafe = tarfile.TarInfo(name)
+        unsafe.type = member_type
+        unsafe.linkname = linkname
+        tar.addfile(unsafe)
+
+    with pytest.raises(tarfile.FilterError):
+        data._decompress_archive(archive)
+
+    assert list(target.iterdir()) == []
+    assert not (tmp_path / "escaped").exists()
 
 
 def test_initialize_git_lfs_configures_only_repository(

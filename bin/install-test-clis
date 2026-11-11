@@ -10,12 +10,14 @@ packages=(@earendil-works/pi-coding-agent@0.85.1 @dimensionalos/dimcode@0.1.0-ne
 flags=(--no-fund --no-audit)
 case "$(node --version 2>/dev/null || true)" in
   v24.*) ;;
-  *)
-    packages+=(node@24)
-    # npm checks engines against the host node and warns EBADENGINE for dimcode, but
-    # the private Node 24 runs the CLIs. npm cannot silence that warning alone.
-    flags+=(--loglevel=error)
-    ;;
+  *) packages+=(node@24) ;;
+esac
+# A version-manager shim can run npm under a different node than the one on PATH.
+# Check npm's runtime before hiding engine warnings; the private Node runs the CLIs.
+npm_node_version=$(npm version --json | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).node')
+case "$npm_node_version" in
+  24.*) ;;
+  *) flags+=(--loglevel=error) ;;
 esac
 npm install --prefix "$prefix" "${flags[@]}" "${packages[@]}"
 
