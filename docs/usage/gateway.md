@@ -47,8 +47,7 @@ await post("active/modules/unitreeskillcontainer/rpcs/execute_sport_command", { 
 const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)).json() // then ?after=${page.offset}
 ```
 
-Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`
-(`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`). The types are `launch`, `blueprints`,
+Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`. The types are `launch`, `blueprints`,
 `upload`, `uploads`, `upload-removed`, `cloud-account`, `cloud-login`, `stats` and `log`.
 
 `stats` and `log` say something changed and carry no data, so a page refetches instead of polling. `stats` fires on each
@@ -59,8 +58,9 @@ leaves that state.
 Decode dimos messages in a page with `msgs.js`:
 
 ```js
-const app = new DimApp({ msgDecodeEndpoint: "../../dimos-gateway/msgs.js" }) // DimApp from ./dim-app/mod.js
-app.subscribe("odom", (odom) => console.log(odom.pose.pose.position))
+const { decodeChannel, geometry_msgs } = await import(`${gateway}/msgs.js`)
+const odom = decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes) // bytes: one message off zenoh or LCM
+const twist = geometry_msgs.Twist.encode({ linear: { x: 0.3 }, angular: { z: 0.5 } }) // a Uint8Array to publish
 ```
 
 ## Running it yourself
