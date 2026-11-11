@@ -311,10 +311,15 @@ module path; `--set field=value` sets an agent option, e.g.
 options to the constructor: `QuestionAnswer(frames_per_stream=16)`.
 CLI values are parsed as JSON when possible; quote lists as shown below.
 
-**Tools.** The case's blueprint decides the tool set:
-`DimSimEnvironment(blueprint=...)`, `HabitatEnvironment(blueprint=...)` or
-`MujocoEnvironment(blueprint=...)`
-supplies the robot stack plus `McpServer`, and its skill containers are the tools.
+**Tools.** The case's blueprint decides how the agent reaches the robot.
+`DimSimEnvironment(blueprint=...)`, `HabitatEnvironment(blueprint=...)`,
+`MujocoEnvironment(blueprint=...)` or `HardwareEnvironment(blueprint=...)` supplies
+the robot stack. When the blueprint lists `mcp-server`, its skill containers are the
+agent's MCP tools. Without it, the robot case is a Python API case: the agent gets
+`DIMOS.md`, a guide to driving the running system with `Dimos.connect()`
+(`dimos/evals/guide.py`, listed as the `robot` file), and drives the robot from Python. An agent that can only work through MCP declares `requires_mcp = True`
+(the MCP client and the dimOS agent do), and the environment then adds `mcp-server`
+to the launch. The MuJoCo manipulation suites are Python API cases.
 There is no tool filter. The agent's `modules` list is appended to the
 launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
 anything shared with the case, so `--set 'modules=["unitree-go2-agentic"]'` adds
@@ -351,7 +356,8 @@ does. Sending observations a different way means writing a new agent class.
 which starts a gateway of its own. That gateway keeps its config under
 `CONFIG_DIR / "evals"`, its `agent.sqlite` and `gateway.log` under `agent-state/` in the
 case directory, and its socket in a temporary directory, so it never attaches to your
-gateway. When the case has a robot, the gateway links to the case's `McpServer`, and
+gateway. When the case has a robot, the gateway links to the case's `McpServer`, which
+the environment adds when the blueprint has none, and
 `dimos agent load` adds `HarnessRuntime`, plus a relay bridge when there is none, to the
 system it reaches on the transport bus. Without a robot, it dials a local port that nothing
 serves. A `models.json` in its config sends every model request through
@@ -402,7 +408,8 @@ robot. `Sim` is its simulator branch: use `DimSimEnvironment` for DimSim,
 `HardwareEnvironment` runs a real robot (see Hardware below).
 
 `DimSimEnvironment` sets `GO2CONNECTION__DIMSIM__SCENE` and launches `dimos --simulation dimsim --record run
-<blueprint> <modules>`, waits for MCP, runs the case's `setup`, and hands out the
+<blueprint> <modules>`, waits until dimos answers (and its `McpServer`, when it has one),
+runs the case's `setup`, and hands out the
 recording that `--record` writes (`recordings/<run-id>/memory.db`). The run
 ends when the agent finishes or `timeout_s` hits, the environment stops, and
 `grade` reads the recording once. `recording(o)` opens it:
