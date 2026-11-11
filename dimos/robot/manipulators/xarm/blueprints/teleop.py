@@ -341,9 +341,7 @@ def _teleop(arm: XArmType) -> Blueprint:
     declaration = ConnectionConfig(
         source="arm",
         model=model,
-        joint_commands={
-            joint.name: (Interface.POSITION, Interface.VELOCITY) for joint in movable_joints(model)
-        },
+        joint_commands={joint.name: (Interface.POSITION,) for joint in movable_joints(model)},
     )
     return autoconnect(
         XArmTwistCoordinator.blueprint(

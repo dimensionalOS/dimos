@@ -42,7 +42,6 @@ from dimos.control.contract.convert import (
 )
 from dimos.control.contract.keys import SEPARATOR, Interface, Key
 from dimos.control.contract.limits import Limits, limits as limits_of
-from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -242,7 +241,6 @@ class ConnectionSource:
         self._heard: set[str] = set()
         self._received_at = 0.0
         # When the last reading arrived, by time.monotonic().
-        self._freshness = Freshness()
         self._port_receipts: dict[str, float] = {}
         # Readings came back after stopping for longer than the timeout, or
         # after drop_holds. The tick loop drops the holds when it sees this.
@@ -323,8 +321,9 @@ class ConnectionSource:
         now = time.monotonic()
         with self._lock:
             latest, reported = self._latest, self._reported
-            last = self._freshness.last_receipt
-            if self._restart or (last is not None and now - last > self._timeout):
+            if self._restart or any(
+                now - receipt > self._timeout for receipt in self._port_receipts.values()
+            ):
                 # Back after a silence, or holds dropped: wait for a whole new
                 # reading, and take the holds again from it.
                 latest, reported = {}, frozenset()
@@ -341,7 +340,6 @@ class ConnectionSource:
             self._latest, self._reported = latest, reported
             self._port_receipts[port] = now
             self._received_at = time.time()
-            self._freshness.mark(now)
 
     def drop_holds(self) -> None:
         """Send nothing until the robot reports again, then hold each joint

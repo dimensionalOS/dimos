@@ -142,9 +142,9 @@ my_robot = ControlCoordinator.blueprint(
 
 `operator_hold` (priority 100) automatically freezes every joint that accepts
 position commands at its measured position and waits for a person. Velocity-only
-joints remain visible to other tasks but are not claimed by the hold, even when
-they report positions. `joint_names` optionally restricts the eligible subset.
-It is not an e-stop: the e-stop cuts motion; the hold keeps position.
+joints are claimed at the same priority and commanded to zero speed, even when
+they report positions. `joint_names` optionally restricts both groups.
+It is not an e-stop: the e-stop cuts motion; the hold keeps commanding these targets.
 Add it with `operator_hold_task()` from
 `dimos/control/tasks/operator_hold_task/operator_hold_task.py`.
 
