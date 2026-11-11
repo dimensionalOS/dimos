@@ -22,8 +22,9 @@ decode in-viewer.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import time
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from dimos_lcm.foxglove_msgs import CompressedVideo as LCMCompressedVideo
@@ -39,6 +40,18 @@ if TYPE_CHECKING:
     from reactivex import Observable
 
     from dimos.visualization.rerun.bridge import RerunData
+
+
+VIDEO_DECODERS: Mapping[str, str] = MappingProxyType(
+    {
+        "h264": "h264",
+        "h265": "hevc",
+        "hevc": "hevc",
+        "av1": "libdav1d",
+        "vp8": "vp8",
+        "vp9": "vp9",
+    }
+)
 
 
 class CompressedVideo(Timestamped):
@@ -114,6 +127,16 @@ class CompressedVideo(Timestamped):
         )
 
 
+_PIXEL_FORMATS = {
+    ImageFormat.BGR: "bgr24",
+    ImageFormat.RGB: "rgb24",
+    ImageFormat.RGBA: "rgba",
+    ImageFormat.BGRA: "bgra",
+    ImageFormat.GRAY: "gray",
+    ImageFormat.GRAY16: "gray16",
+}
+
+
 class _FrameDecoder:
     """One subscription's decoder: packets in, the frames worth publishing out."""
 
@@ -135,9 +158,12 @@ class _FrameDecoder:
     _published_ts: float
     """Packet time of the last published frame."""
 
-    def __init__(self, keyframes_only: bool, min_interval: float) -> None:
+    def __init__(
+        self, keyframes_only: bool, min_interval: float, image_format: ImageFormat
+    ) -> None:
         self._keyframes_only = keyframes_only
         self._min_interval = min_interval
+        self._image_format = image_format
         self._context = None
         self._format = ""
         self._last_frame_id = ""
@@ -146,15 +172,7 @@ class _FrameDecoder:
     def _open(self, format: str) -> VideoCodecContext:
         import av
 
-        decoders = {
-            "h264": "h264",
-            "h265": "hevc",
-            "hevc": "hevc",
-            "av1": "libdav1d",
-            "vp8": "vp8",
-            "vp9": "vp9",
-        }
-        name = decoders.get(format.lower())
+        name = VIDEO_DECODERS.get(format.lower())
         if name is None:
             raise ValueError(f"no video decoder for format {format!r}")
         context = av.CodecContext.create(name, "r")
@@ -210,15 +228,26 @@ class _FrameDecoder:
                 continue
             self._published_ts = ts
             images.append(
-                Image.from_numpy(frame.to_ndarray(format="bgr24"), ImageFormat.BGR, frame_id, ts)
+                Image.from_numpy(
+                    frame.to_ndarray(format=_PIXEL_FORMATS[self._image_format]),
+                    self._image_format,
+                    frame_id,
+                    ts,
+                )
             )
         return images
 
 
 def decode_video(
-    *, keyframes_only: bool = False, max_hz: float | None = None
+    *,
+    keyframes_only: bool = False,
+    max_hz: float | None = None,
+    image_format: ImageFormat = ImageFormat.BGR,
 ) -> Callable[[Observable[CompressedVideo]], Observable[Image]]:
-    """Decode an ordered packet stream into BGR ``Image`` frames.
+    """Decode an ordered packet stream into ``Image`` frames.
+
+    ``image_format`` selects BGR (default), RGB, RGBA, BGRA, GRAY, or GRAY16.
+    Depth formats are not supported.
 
     Each subscription owns its decoder, opened for the codec the packets name
     and reopened when that name changes. Packets that yield no frame are
@@ -234,13 +263,15 @@ def decode_video(
     """
     if max_hz is not None and max_hz <= 0:
         raise ValueError("max_hz must be positive")
+    if image_format not in _PIXEL_FORMATS:
+        raise ValueError(f"unsupported video image format: {image_format}")
     min_interval = 0.0 if max_hz is None else 1.0 / max_hz
 
     def _operator(source: Observable[CompressedVideo]) -> Observable[Image]:
         def _subscribe(
             observer: ObserverBase[Image], scheduler: SchedulerBase | None = None
         ) -> DisposableBase:
-            decoder = _FrameDecoder(keyframes_only, min_interval)
+            decoder = _FrameDecoder(keyframes_only, min_interval, image_format)
 
             def on_next(packet: CompressedVideo) -> None:
                 try:

@@ -25,7 +25,7 @@ import rerun as rr
 
 from dimos.msgs.foxglove_msgs.CompressedVideo import CompressedVideo, _FrameDecoder, decode_video
 from dimos.msgs.helpers import resolve_msg_type
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 PACKET = b"\x00\x00\x00\x01\x65payload"
 
@@ -78,7 +78,9 @@ def _numbered_frame(number: int) -> np.ndarray:
     """A picture of ``number``: vertical band b is bright when bit b is set."""
     bands = np.array([220 if number >> b & 1 else 30 for b in range(BANDS)], np.uint8)
     row = np.repeat(bands, WIDTH // BANDS)
-    return np.broadcast_to(row[None, :, None], (HEIGHT, WIDTH, 3)).copy()
+    pixels = np.broadcast_to(row[None, :, None], (HEIGHT, WIDTH, 3)).copy()
+    pixels[:, :, 0] //= 2
+    return pixels
 
 
 def _number_of(image: Image) -> int:
@@ -136,7 +138,43 @@ def test_decode_video_image_fields() -> None:
     rx.from_iterable(_stream("h264")).pipe(decode_video()).subscribe(images.append)
 
     assert images[0].data.shape == (HEIGHT, WIDTH, 3)
+    assert images[0].format == ImageFormat.BGR
     assert images[0].frame_id == "camera_optical"
+
+
+@pytest.mark.parametrize(
+    "image_format, pixel, dtype, tolerance",
+    [
+        (ImageFormat.BGR, (15, 30, 30), "uint8", 4),
+        (ImageFormat.RGB, (30, 30, 15), "uint8", 4),
+        (ImageFormat.RGBA, (30, 30, 15, 255), "uint8", 4),
+        (ImageFormat.BGRA, (15, 30, 30, 255), "uint8", 4),
+        (ImageFormat.GRAY, 28, "uint8", 4),
+        (ImageFormat.GRAY16, 28 * 256, "uint16", 4 * 256),
+    ],
+)
+def test_decode_video_output_format(
+    image_format: ImageFormat, pixel: tuple[int, ...] | int, dtype: str, tolerance: int
+) -> None:
+    images: list[Image] = []
+    rx.from_iterable(_stream("h264", b_frames=2)).pipe(
+        decode_video(image_format=image_format)
+    ).subscribe(images.append)
+
+    assert len(images) == 24
+    assert all(image.format == image_format for image in images)
+    assert images[0].data.dtype == np.dtype(dtype)
+    expected = np.broadcast_to(pixel, (HEIGHT, WIDTH, *np.shape(pixel)))
+    np.testing.assert_allclose(images[0].data, expected, atol=tolerance)
+    assert [(image.frame_id, image.ts) for image in images] == [
+        ("camera_optical", 1000.0 + number / 32) for number in range(24)
+    ]
+
+
+@pytest.mark.parametrize("image_format", [ImageFormat.DEPTH, ImageFormat.DEPTH16])
+def test_decode_video_rejects_depth_output(image_format: ImageFormat) -> None:
+    with pytest.raises(ValueError, match="unsupported video image format"):
+        decode_video(image_format=image_format)
 
 
 def test_decode_video_joined_mid_stream_starts_at_the_next_keyframe() -> None:
