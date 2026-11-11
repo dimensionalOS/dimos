@@ -258,7 +258,7 @@ def _decompress_archive(filename: str | Path) -> Path:
     staging = Path(tempfile.mkdtemp(dir=target_dir, prefix=f".{name}."))
     try:
         with tarfile.open(filename_path, "r:gz") as tar:
-            tar.extractall(staging)
+            tar.extractall(staging, filter="data")
         (staging / name).rename(target_dir / name)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
