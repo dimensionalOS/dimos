@@ -27,6 +27,7 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_urdf_joints,
 )
 from dimos.robot.manipulators.openarm.connection import OpenArmConnection
+from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
 from dimos.teleop.leader.calibration import (
     DEFAULT_LEADER_MOTOR_NAMES,
     LEADER_GRIPPER_MOTOR_NAME,
@@ -80,7 +81,7 @@ OPENARM_ROUTER = os.environ.get("DIMOS_OPENARM_ROUTER", "tcp/127.0.0.1:7447")
 _MODEL = openarm_bimanual_model_config(robot="arm")
 
 
-def _side_mapping(side: LeaderSide) -> SideMapping:
+def _side_mapping(side: LeaderSide, *, trigger: bool = True) -> SideMapping:
     # Leader joint N drives the connection's joint N of the same side.
     return SideMapping(
         joints=tuple(
@@ -94,11 +95,17 @@ def _side_mapping(side: LeaderSide) -> SideMapping:
         ),
         gripper=GripperMapping(
             motor=LEADER_GRIPPER_MOTOR_NAME, travel_radians=_GRIPPER_TRAVEL_RADIANS
-        ),
+        )
+        if trigger
+        else None,
     )
 
 
 MAPPINGS: dict[LeaderSide, SideMapping] = {side: _side_mapping(side) for side in LEADER_SIDES}
+# Leaders whose trigger servo gave way to a Joy-Con: arm joints only.
+JOYCON_MAPPINGS: dict[LeaderSide, SideMapping] = {
+    side: _side_mapping(side, trigger=False) for side in LEADER_SIDES
+}
 
 _VELOCITY_LIMITS = {
     mapping.joint: limit
@@ -107,9 +114,9 @@ _VELOCITY_LIMITS = {
 }
 
 
-def _leader() -> Blueprint:
+def _leader(mappings: dict[LeaderSide, SideMapping] = MAPPINGS) -> Blueprint:
     return LeaderTeleopModule.blueprint(
-        mappings=MAPPINGS,
+        mappings=mappings,
         command_filter_cutoff_hz=_COMMAND_FILTER_CUTOFF_HZ,
         tick_period_s=_LEADER_TICK_PERIOD_S,
     )
@@ -147,3 +154,13 @@ teleop_openarm_mini_leader = _leader().global_config(
 teleop_openarm_mini_follower = _follower(ViserVisualizationConfig(host="0.0.0.0")).global_config(
     zenoh_connect=OPENARM_ROUTER
 )
+
+# Joy-Cons on the leaders instead of trigger servos: ZL/ZR drive the jaws,
+# B/Y mark episodes, plus pauses and resumes following.
+teleop_openarm_mini_joycon = autoconnect(
+    _leader(JOYCON_MAPPINGS), JoyConTeleopModule.blueprint(), _follower()
+)
+
+teleop_openarm_mini_joycon_leader = autoconnect(
+    _leader(JOYCON_MAPPINGS), JoyConTeleopModule.blueprint()
+).global_config(zenoh_mode="client", serve_coordinator_rpc=False)

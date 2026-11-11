@@ -88,6 +88,59 @@ dimos run teleop-openarm-mini-leader --robot-ip <robot-ip> \
 Start the router before the follower. If the link drops, the follower holds its
 last target.
 
+## Joy-Cons instead of trigger servos
+
+`teleop-openarm-mini-joycon` and `teleop-openarm-mini-joycon-leader` add a
+Nintendo Joy-Con per leader (L on the left, R on the right) beside the leader
+module, with the leaders mapped as arm joints only. The Joy-Cons pair over
+Bluetooth; the kernel `hid-nintendo` driver registers each as an input device
+and the module reads those devices directly, no extra dependency.
+
+| Joy-Con | does |
+|---|---|
+| ZL / ZR held | close the left / right jaw (`--joyconteleopmodule.gripper-mode toggle` flips per press instead) |
+| B / Y | start or save / discard an episode (the episode monitor's defaults) |
+| plus | pause and resume following (`LeaderTeleopModule.set_authority`) |
+| left stick | base velocity on `cmd_vel` when `publish_cmd_vel` is on; stick pressed turns it into yaw |
+
+With only the L Joy-Con, point the episode monitor at its buttons:
+`--episodes.button-map '{"toggle": "MENU_L", "discard": "LG"}'` (minus and L).
+
+Pair once per Joy-Con, holding the SYNC button on its rail until the LEDs
+chase. bluez refuses a Joy-Con's input session by default because the
+controller opens it before the bond completes, so allow that first:
+
+```bash
+sudo sed -i 's/^#ClassicBondedOnly=true/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
+sudo systemctl restart bluetooth
+bluetoothctl
+power on; agent on; scan on
+pair <MAC>; trust <MAC>; connect <MAC>
+```
+
+A Joy-Con that was refused once goes to sleep and does not reconnect by
+itself; connect it from the Bluetooth settings panel or pair it again.
+
+Confirm the key and axis codes the driver reports, pressing each button and
+moving each stick:
+
+```bash
+python -m dimos.teleop.joycon.probe 60
+```
+
+The defaults in `dimos.teleop.joycon.mapping` are `hid-nintendo`'s codes (ZL
+is key 312, B is 304, the left stick is axes 0 and 1, the right stick 3 and
+4); when a code differs, pass the table per side, for example
+`--joyconteleopmodule.right-buttons '{"ZR": 313, "B": 304, "Y": 308, "plus": 315, "A": 305, "X": 307, "R": 311, "stick": 318}'`.
+The published opening slews at `gripper_slew_per_s` (3 per second) so a jaw
+never slams. A Joy-Con that drops off Bluetooth keeps its last opening until
+it is back; the other side keeps working.
+
+A leader calibrated with its trigger still loads: the mapping names no
+trigger, so pass an arm-only calibration with
+`--leaderteleopmodule.left-calibration-path`, or recalibrate with the servo
+removed.
+
 ## Record demonstrations
 
 `openarm-mini-collection` wraps the one-machine stack in the collection

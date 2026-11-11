@@ -36,6 +36,7 @@ from dimos.teleop.leader.module import (
     LeaderTeleopModule,
     LeaderTeleopModuleConfig,
 )
+from dimos.teleop.webxr.controller_types import Buttons
 
 MAPPINGS = {
     "left": SideMapping(
@@ -106,6 +107,26 @@ def test_enabled_sides_limit_the_follower_joints(module_factory: Any) -> None:
 
 def test_authority_off_yields_no_command(module_factory: Any) -> None:
     assert module_factory(_config(authority_active=False)).get_current_command() is None
+
+
+def test_authority_toggles_by_rpc_and_by_the_right_menu_button(module_factory: Any) -> None:
+    module = module_factory(_config())
+    assert module.get_authority() is True
+    assert module.set_authority(False) is False
+    assert module.get_current_command() is None
+    module._on_buttons(_buttons(right_menu=True))
+    assert module.get_authority() is True
+    module._on_buttons(_buttons(right_menu=True))
+    module._on_buttons(_buttons(right_menu=False))
+    assert module.get_authority() is True
+    module._on_buttons(_buttons(right_menu=True))
+    assert module.get_authority() is False
+
+
+def _buttons(*, right_menu: bool) -> Buttons:
+    buttons = Buttons()
+    buttons.right_menu = right_menu
+    return buttons
 
 
 def test_jump_guard_drops_the_command_and_logs_once(module_factory: Any, mocker: Any) -> None:

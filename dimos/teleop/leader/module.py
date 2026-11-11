@@ -30,11 +30,12 @@ else:
     from typing_extensions import Self
 
 from pydantic import Field, model_validator
+from reactivex.disposable import Disposable
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.leader.calibration import (
@@ -60,6 +61,7 @@ from dimos.teleop.leader.mapping import (
     map_side_readings,
     smooth_positions,
 )
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -152,9 +154,13 @@ class LeaderTeleopModule(Module):
     leader_joint_command: Out[JointState]
     left_gripper_command: Out[Float32]
     right_gripper_command: Out[Float32]
+    # Optional: a teleop_buttons producer (Joy-Con, WebXR) pauses and resumes following.
+    teleop_buttons: In[Buttons]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._authority = bool(self.leader_config.authority_active)
+        self._menu_was_down = False
         self._readers: dict[LeaderSide, LeaderReader] = {}
         self._previous_positions_by_side: dict[LeaderSide, dict[str, float]] = {}
         self._filtered_by_joint: dict[str, float] = {}
@@ -176,6 +182,10 @@ class LeaderTeleopModule(Module):
         self._stop_event.clear()
         try:
             self.connect_teleop()
+            if getattr(self.teleop_buttons, "transport", None) is not None:
+                self.register_disposable(
+                    Disposable(self.teleop_buttons.subscribe(self._on_buttons))
+                )
             self._thread = threading.Thread(target=self._run_loop, daemon=True)
             self._thread.start()
         except Exception:
@@ -195,6 +205,24 @@ class LeaderTeleopModule(Module):
                 self._thread = None
         self.disconnect_teleop()
         super().stop()
+
+    @rpc
+    def set_authority(self, active: bool) -> bool:
+        """Publish leader targets (True) or leave the follower where it is (False)."""
+        self._authority = bool(active)
+        logger.info("leader teleop authority %s", "on" if self._authority else "off")
+        return self._authority
+
+    @rpc
+    def get_authority(self) -> bool:
+        return self._authority
+
+    def _on_buttons(self, msg: Buttons) -> None:
+        """The right menu button (Joy-Con plus) toggles authority on its rising edge."""
+        down = bool(msg.right_menu)
+        if down and not self._menu_was_down:
+            self.set_authority(not self._authority)
+        self._menu_was_down = down
 
     def connect_teleop(self) -> None:
         if self._connected:
@@ -237,7 +265,7 @@ class LeaderTeleopModule(Module):
     def get_current_commands(self) -> list[SideCommand] | None:
         """Read every enabled leader once; None when a read fails or authority is off."""
         config = self.leader_config
-        if not self._connected or not config.authority_active:
+        if not self._connected or not self._authority:
             return None
         commands: list[SideCommand] = []
         previous: dict[LeaderSide, dict[str, float]] = {}

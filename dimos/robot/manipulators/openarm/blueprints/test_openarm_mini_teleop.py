@@ -208,3 +208,27 @@ def test_follower_accepts_can_port_overrides() -> None:
     kwargs = parsed.module_kwargs(OpenArmConnection.name)
     assert kwargs["left_can_port"] == "can1"
     assert kwargs["right_can_port"] == "can2"
+
+
+def test_joycon_blueprints_add_the_joycon_module_beside_a_trigger_less_leader() -> None:
+    from dimos.teleop.joycon.joycon_module import JoyConTeleopModule
+
+    combined = mini_teleop.teleop_openarm_mini_joycon
+    assert _module_types(combined) == [
+        LeaderTeleopModule,
+        JoyConTeleopModule,
+        LeaderCoordinator,
+        OpenArmConnection,
+        ManipulationModule,
+    ]
+    for stream in (LEADER_JOINT_COMMAND, "teleop_buttons", "left_gripper_command"):
+        assert _is_name_unique(combined, stream)
+    _assert_gripper_tasks(combined)
+    mappings = _module_kwargs(combined, LeaderTeleopModule)["mappings"]
+    assert all(mapping.gripper is None for mapping in mappings.values())
+    assert mappings["left"].joint_names() == mini_teleop.MAPPINGS["left"].joint_names()
+
+    operator = mini_teleop.teleop_openarm_mini_joycon_leader
+    assert _module_types(operator) == [LeaderTeleopModule, JoyConTeleopModule]
+    assert operator.global_config_overrides["serve_coordinator_rpc"] is False
+    assert operator.global_config_overrides["zenoh_mode"] == "client"
