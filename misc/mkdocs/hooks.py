@@ -29,6 +29,7 @@ import hashlib
 from pathlib import Path
 import posixpath
 import re
+from urllib.parse import unquote
 
 from mkdocs.utils import write_file
 
@@ -130,7 +131,9 @@ def _rewrite_link(match: re.Match[str], src_uri: str) -> str:
         anchor = "#" + anchor
 
     if target.startswith("/docs/"):
-        page = target[len("/docs/") :]
+        # Destinations are percent-encoded so a path with spaces stays a link
+        # on github (`%20`); mkdocs needs the decoded path to find the file.
+        page = unquote(target[len("/docs/") :])
         # A link to a directory means its index page; relpath would otherwise
         # collapse a link to the page's own directory down to ".".
         if page.endswith("/"):

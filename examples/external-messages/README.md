@@ -32,6 +32,6 @@ PASS: external Reading message shares the installed dimos_messages Header identi
 ```
 
 To build your own package with these files, follow
-[Add a message in your own project](/docs/use dimos as a library/external-message.md).
+[Add a message in your own project](/docs/use%20dimos%20as%20a%20library/external-message.md).
 It also explains the exact message-version entry that `dimos-cdrgen` checks
 against the installed manifest.

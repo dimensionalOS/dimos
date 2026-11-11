@@ -7,21 +7,38 @@ installed dimOS.
 
 ## Before you start
 
-- Python 3.12.
-- An environment with `dimos` and `dimos-cdrgen==0.1.2` installed. Install DimOS
-  with its release instructions; this tutorial assumes the installed
-  `dimos_messages` manifest reports version `0.0.15`.
-- For a DimOS checkout that is not published yet, install that checkout into the
-  environment first, so the external build uses it instead of a PyPI release:
+- Python 3.12 and `pip`.
+- An environment with `dimos` and `dimos-cdrgen==0.1.2` installed. For a released
+  dimOS, follow its install instructions. This tutorial assumes the installed
+  `dimos_messages` manifest reports version `0.0.15`; check the installed
+  versions after installing:
+
+```sh
+python -c "from importlib.metadata import version; print(version('dimos'), version('dimos-cdrgen'))"
+```
+
+The build in step 4 reads the `dimos_messages` manifest from that installation
+and compares its version with `[tool.dimos.messages.dependencies]`.
+
+If you are working against a dimOS checkout that is not published yet, install
+that checkout into your own environment so the external build uses it instead of
+a PyPI release. A fresh checkout has no built web bundles and ships a C++
+extension, so the checkout build needs `DIMOS_ALLOW_MISSING_COCKPIT=1` and a C++
+compiler (`gcc` or `clang`):
 
 ```sh
 python -m venv .venv
 . .venv/bin/activate
-pip install /path/to/dimos
+python -m pip install --upgrade pip
+DIMOS_ALLOW_MISSING_COCKPIT=1 pip install /path/to/dimos
 ```
 
-The external package generates Python only. It does not need a C++ compiler,
-ROS, a robot or a transport.
+The flag builds a UI-less wheel; it does not change the messages. Installing the
+checkout also installs its `dimos-cdrgen==0.1.2` dependency.
+
+Building `plant-telemetry` itself generates Python only. It does not need a C++
+compiler, ROS, a robot or a transport; the compiler above is for the dimOS
+checkout install.
 
 ## 1. Create the project
 

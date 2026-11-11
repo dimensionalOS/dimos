@@ -7,17 +7,18 @@ involved.
 
 Two tutorials cover the two places a message can live:
 
-- [Add a message inside the DimOS repository](/docs/use dimos as a library/internal-message.md):
+- [Add a message inside the DimOS repository](/docs/use%20dimos%20as%20a%20library/internal-message.md):
   edit a `.msg` file under `packages/dimos-messages/interfaces`, rebuild dimOS,
   and the message becomes part of the built-in `dimos_messages` package.
-- [Add a message in your own project](/docs/use dimos as a library/external-message.md):
+- [Add a message in your own project](/docs/use%20dimos%20as%20a%20library/external-message.md):
   keep the `.msg` files in your package, depend on an installed dimOS, and reuse
   its built-in `Header`.
 
 Both start from one small requirement, create one `.msg` file, install the
 package and read the value back from CDR bytes. Both need Python 3.12 and a
-terminal. The internal tutorial also needs a git checkout and a C++ compiler
-because building dimOS builds one existing extension.
+terminal. Building dimOS from a checkout also needs a C++ compiler, because the
+build compiles one existing extension. That applies to the internal tutorial and
+to the external tutorial when it installs an unpublished checkout.
 
 Built-in message provenance, packaging details and the native C++/Rust examples
 are in [CDR generation in dimOS](/docs/development/message-source-packages.md).

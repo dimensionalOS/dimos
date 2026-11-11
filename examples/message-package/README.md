@@ -11,4 +11,4 @@ for install commands, expected output, and generated-file locations.
 The examples do not need an external message project or a robot.
 
 To add a message to the built-in package, follow
-[Add a message inside the DimOS repository](/docs/use dimos as a library/internal-message.md).
+[Add a message inside the DimOS repository](/docs/use%20dimos%20as%20a%20library/internal-message.md).

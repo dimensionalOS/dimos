@@ -14,4 +14,4 @@ This page explains general dimOS concepts that you'd use to build applications: 
 
 ## Messages as a library
 
-- [Use dimOS as a library](/docs/use dimos as a library/README.md): add a built-in message inside this repository, or define one in your own Python package and reuse the built-in `Header`.
+- [Use dimOS as a library](/docs/use%20dimos%20as%20a%20library/README.md): add a built-in message inside this repository, or define one in your own Python package and reuse the built-in `Header`.

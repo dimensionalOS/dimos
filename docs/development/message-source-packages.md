@@ -7,7 +7,7 @@ per-file hashes). `setup.py` generates Python messages from those files through
 `dimos-cdrgen==0.1.2`; builds never download definitions or prepare schema
 archives.
 
-To add your own message, start with [Use dimOS as a library](/docs/use dimos as a library/README.md).
+To add your own message, start with [Use dimOS as a library](/docs/use%20dimos%20as%20a%20library/README.md).
 The rest of this page covers the built-in sources, packaging and verification.
 
 The wheel contains the generated `dimos_messages` package, the
@@ -79,7 +79,7 @@ retain Rust build artifacts. Cold builds download pinned dependencies;
 
 ### External message package
 
-[Add a message in your own project](/docs/use dimos as a library/external-message.md)
+[Add a message in your own project](/docs/use%20dimos%20as%20a%20library/external-message.md)
 walks through `examples/external-messages`: the committed `.msg` definition, the
 plain `pyproject.toml`, the wheel build, and a roundtrip that checks the nested
 `Header` identity. It also explains the exact message-version entry that
