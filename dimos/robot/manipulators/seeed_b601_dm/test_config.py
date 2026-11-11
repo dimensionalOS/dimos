@@ -141,7 +141,7 @@ def test_simulation_composes_a_mock_connection(monkeypatch: pytest.MonkeyPatch) 
     assert mock.kwargs["source"] == "arm"
     assert list(mock.kwargs["initial_positions"]) == [*B601_DM_ARM_JOINTS, "finger_left"]
     assert set(mock.kwargs["initial_positions"].values()) == {0.0}
-    assert blueprint.remapping_map[(mock.name, "position_command")] == "arm_position_command"
+    assert (mock.name, "position_command") not in blueprint.remapping_map
 
 
 def test_planner_blueprint_requires_a_can_port() -> None:

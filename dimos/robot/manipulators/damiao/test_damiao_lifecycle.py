@@ -28,7 +28,10 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.damiao._damiao_native_test_helpers import LocalTransport
+from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
+    read_until_fault,
+    wire_hosted_connection,
+)
 from dimos.robot.manipulators.damiao._damiao_test_helpers import _local_test_model
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
@@ -96,9 +99,7 @@ def _rig(connection_type, ports, boundary, mocker, tmp_path, **kwargs):
         deadman_timeout_s=10,
         **kwargs,
     )
-    commands, readings = LocalTransport(), LocalTransport()
-    module.set_transport("position_command", commands)
-    module.set_transport("joint_state", readings)
+    commands, readings = wire_hosted_connection(module)
     return module, commands, readings
 
 
@@ -116,6 +117,7 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
 
         module.start()
         assert "enable" in native.events
+        module.publish_measured(module.read_measured())
         wait_until(lambda: bool(readings.sent), timeout=2)
         assert readings.sent[0].name == [f"arm/{name}" for name in robot.joint_names]
 
@@ -140,7 +142,8 @@ def test_fake_device_lifecycle(connection_type, ports, boundary, mocker, tmp_pat
             assert rows[0, 4] == 0.0
         assert native.groups[jaw.name].commands[-1] == pytest.approx(0.5)
 
-        # The reader keeps publishing the fake feedback in declared order.
+        # A hosted read publishes the fake feedback in declared order.
+        module.publish_measured(module.read_measured())
         wait_until(lambda: len(readings.sent) > 1, timeout=2)
         assert readings.sent[-1].name == [f"arm/{name}" for name in robot.joint_names]
 
@@ -166,7 +169,7 @@ def test_fake_feedback_fault_disables_each_arm(connection_type, ports, boundary,
         commands.publish(
             JointState(name=[f"arm/{connection_type.robot.arm_joint_names[0]}"], position=[0.0])
         )
-        wait_until(lambda: module._fault is not None, timeout=2)
+        read_until_fault(module)
         assert "feedback failed" in module._fault
         assert "disable" in native.events
         sent = sum(len(getattr(group, "commands", [])) for group in native.groups.values())

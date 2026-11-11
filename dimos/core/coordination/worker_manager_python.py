@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.coordination.python_worker import PythonWorker
@@ -139,13 +139,25 @@ class WorkerManagerPython:
             self._workers.remove(target)
             self._n_workers = max(0, self._n_workers - 1)
 
-    def deploy_parallel(self, specs: Iterable[ModuleSpec]) -> list[ModuleProxyProtocol]:
+    def deploy_parallel(
+        self,
+        specs: Iterable[ModuleSpec],
+        groups: Sequence[Hashable | None] | None = None,
+    ) -> list[ModuleProxyProtocol]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
         specs = list(specs)
         if len(specs) == 0:
             return []
+        group_keys: list[Hashable | None] = (
+            list(groups) if groups is not None else [None] * len(specs)
+        )
+        if len(group_keys) != len(specs):
+            raise ValueError(
+                f"groups must have one entry per spec: {len(group_keys)} groups for "
+                f"{len(specs)} modules"
+            )
 
         if not self._started:
             self.start()
@@ -158,10 +170,18 @@ class WorkerManagerPython:
         # Process dedicated specs first so they claim empty workers before
         # non-dedicated specs land on them; preserve input order in output.
         workers_by_index: dict[int, PythonWorker] = {}
+        workers_by_group: dict[Hashable, PythonWorker] = {}
         order = sorted(range(len(specs)), key=lambda i: not specs[i][0].dedicated_worker)
         for i in order:
             module_class, _, _ = specs[i]
-            worker = self._select_worker(dedicated=module_class.dedicated_worker)
+            group = group_keys[i]
+            grouped = workers_by_group.get(group) if group is not None else None
+            if grouped is not None:
+                worker = grouped
+            else:
+                worker = self._select_worker(dedicated=module_class.dedicated_worker)
+                if group is not None:
+                    workers_by_group[group] = worker
             worker.reserve_slot()
             workers_by_index[i] = worker
 

@@ -15,8 +15,9 @@
 """Coordinator types and explicit composition helpers for Damiao deployments.
 
 Blueprints wire a coordinator and a connection themselves with ``autoconnect``,
-exactly like the xArm ones. The only shared helpers are the two declarations
-that must agree with the connection: the simulation swap and the stream remaps.
+exactly like the xArm ones. The only shared helper is the declaration both must
+agree on: the simulation swap. The connection is driven directly, so there is
+no command stream to wire between them.
 """
 
 from __future__ import annotations
@@ -38,6 +39,9 @@ from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 class DamiaoCoordinator(ControlCoordinator):
     """One connection named arm, including a robot with two synchronized arms."""
 
+    hosted_connections = True
+    #: Declares the position interface to ConnectionSource. A hosted cycle
+    #: writes the connection directly and does not publish commands here.
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
     left_gripper_command: In[Float32]
@@ -47,6 +51,9 @@ class DamiaoCoordinator(ControlCoordinator):
 class DamiaoTwistCoordinator(ArmTwistCoordinator):
     """End-effector twists and gripper inputs, with joint commands over streams."""
 
+    hosted_connections = True
+    #: Declares the position interface to ConnectionSource. A hosted cycle
+    #: writes the connection directly and does not publish commands here.
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
     left_gripper_command: In[Float32]
@@ -56,6 +63,7 @@ class DamiaoTwistCoordinator(ArmTwistCoordinator):
 class DamiaoTeleopCoordinator(TeleopControlCoordinator):
     """WebXR inputs with a direct connection owning the robot."""
 
+    hosted_connections = True
     arm_position_command: Out[JointState]
     arm_joint_state: In[JointState]
 
@@ -83,21 +91,20 @@ def arm_connection(connection: type[DamiaoConnection], *, teach: bool = False) -
             source="arm",
             model=connection.robot.model,
             initial_positions=mock_initial_positions(connection.robot),
+            hosted=True,
         )
-    return connection.blueprint(source="arm", teach=teach)
+    return connection.blueprint(source="arm", teach=teach, hosted=True)
 
 
 def arm_remaps(
     connection: type[DamiaoConnection],
     coordinator: type[ControlCoordinator],
 ) -> list[tuple[type[ModuleBase], str, str]]:
-    """Wire the connection's command stream and the coordinator's joint state.
+    """Wire the coordinator's joint-state input to its connection's readings.
 
-    While simulating, the command stream belongs to the mock connection that
-    ``arm_connection`` substituted, so the remap names it instead.
+    The mock that ``arm_connection`` substitutes publishes the same port, so
+    the remap does not need to name a different module while simulating. There
+    is no command stream: the hosted cycle calls the connection directly.
     """
-    module: type[ModuleBase] = MockJointConnection if global_config.simulation else connection
-    return [
-        (module, "position_command", "arm_position_command"),
-        (coordinator, "arm_joint_state", "joint_state"),
-    ]
+    del connection
+    return [(coordinator, "arm_joint_state", "joint_state")]

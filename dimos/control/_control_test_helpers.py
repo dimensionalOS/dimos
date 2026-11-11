@@ -30,7 +30,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -168,6 +168,9 @@ class FakeArm(ConnectionModule):
 
     config: FakeArmConfig
 
+    #: Can be driven directly by a coordinator in the same worker process.
+    hosted_direct: ClassVar[bool] = True
+
     position_command: In[JointState]
     joint_state: Out[JointState]
 
@@ -185,6 +188,9 @@ class FakeArm(ConnectionModule):
     @rpc
     def start(self) -> None:
         super().start()
+        if self.config.hosted:
+            self._start_telemetry()
+            return
         self.register_disposable(
             Disposable(
                 self.position_command.subscribe(
@@ -218,6 +224,12 @@ class FakeArm(ConnectionModule):
 
     def halt(self) -> None:
         self.halts += 1
+
+    def read_measured(self) -> JointState:
+        """The arm's last written positions, as the cycle's measured state."""
+        with self._hardware_lock:
+            readings = dict(self._readings)
+        return joint_state_from_values(readings, self._joints, ts=time.time())
 
     def _read_loop(self) -> None:
         period = 1.0 / self.config.state_rate_hz

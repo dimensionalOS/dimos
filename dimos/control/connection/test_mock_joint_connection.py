@@ -64,3 +64,31 @@ def test_invalid_commands_do_not_change_mock_feedback(rig, bad):
     commands.publish(JointState(name=["arm/joint1"], position=[bad]))
     assert module.status().last_rejection
     assert readings.sent[-1].position == [0.2, 0.4]
+
+
+def test_hosted_mock_starts_no_reader_and_serves_the_cycle_directly(mocker):
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.start")
+    mocker.patch("dimos.protocol.rpc.zenohrpc.ZenohRPC.serve_module_rpc")
+    module = MockJointConnection(
+        model=fake_arm_model(("joint1", "joint2")),
+        initial_positions={"joint1": 0.2, "joint2": 0.4},
+        deadman_timeout_s=10,
+        hosted=True,
+    )
+    readings = LocalTransport()
+    module.set_transport("joint_state", readings)  # type: ignore[arg-type]
+    try:
+        module.start()
+        # No independent reader tick: the hosting cycle is the only reader.
+        assert module._reader is None
+        module.command({"arm/joint1/position": 0.7})
+        measured = module.read_measured()
+        assert measured.name == ["arm/joint1", "arm/joint2"]
+        assert measured.position == pytest.approx([0.7, 0.4])
+        module.publish_measured(measured)
+        wait_until(
+            lambda: bool(readings.sent and readings.sent[-1].position == pytest.approx([0.7, 0.4])),
+            timeout=2,
+        )
+    finally:
+        module.stop()

@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.global_config import GlobalConfig
@@ -40,7 +40,20 @@ class WorkerManager(Protocol):
         kwargs: dict[str, Any],
     ) -> ModuleProxyProtocol: ...
 
-    def deploy_parallel(self, specs: Sequence[ModuleSpec]) -> list[ModuleProxyProtocol]: ...
+    def deploy_parallel(
+        self,
+        specs: Sequence[ModuleSpec],
+        groups: Sequence[Hashable | None] | None = None,
+    ) -> list[ModuleProxyProtocol]:
+        """Deploy every spec, keeping specs that share a group in one worker.
+
+        Args:
+            specs: Module class, global config and kwargs, per module.
+            groups: Optional group key per spec, parallel to ``specs``. Specs
+                with the same key land in one worker process, in first-seen
+                order; ``None`` leaves a spec on the usual least-loaded choice.
+        """
+        ...
 
     def stop(self) -> None: ...
 

@@ -14,8 +14,16 @@
 
 """Every retained entry uses one connection and one consistent deployed schema."""
 
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
+import dimos
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
@@ -69,6 +77,10 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config
 from dimos.robot.manipulators.openyam.connection import OpenYamConnection
+from dimos.robot.manipulators.seeed_b601_dm.blueprints.basic import (
+    coordinator_seeed_b601_dm,
+    seeed_b601_dm_planner_coordinator,
+)
 
 CASES = [
     ("coordinator-makermods-metal", coordinator_makermods_metal),
@@ -88,6 +100,8 @@ CASES = [
     ("openyam-connection-control", openyam_connection_control),
     ("openarm-connection-control", openarm_connection_control),
     ("makermods-metal-connection-control", makermods_metal_connection_control),
+    ("coordinator-seeed-b601-dm", coordinator_seeed_b601_dm),
+    ("seeed-b601-dm-planner-coordinator", seeed_b601_dm_planner_coordinator),
 ]
 
 
@@ -107,6 +121,12 @@ def test_retained_entry_routes_every_task_through_its_connection(name, blueprint
     connection, coordinator = connections[0], coordinators[0]
     assert connection.module.deployment == "python"
     assert connection.kwargs["source"] == "arm"
+    # The shipped stack drives this connection from the coordinator's cycle,
+    # in one worker process, rather than over command/reading streams.
+    assert connection.kwargs["hosted"] is True
+    assert coordinator.module.hosted_connections is True
+    [group] = [group for group in blueprint.process_groups if coordinator.name in group]
+    assert set(group) == {coordinator.name, connection.name}
     assert coordinator.kwargs.get("hardware", []) == []
     joints = {f"arm/{name}" for name in connection.module.robot.joint_names}
     for task in coordinator.kwargs["tasks"]:
@@ -128,6 +148,9 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         # joint7 is closed at 0 m and fully open at -0.05 m.
         assert coordinator.task_invoke("arm_gripper", "set_normalized", {"values": [0.6]})
         rig.tick()
+        # The hosted cycle computes on the reading taken at the start of the
+        # tick, so the write it commands shows up in the next tick's feedback.
+        rig.tick()
         assert rig.positions == {
             **{f"arm/joint{i}": 0.0 for i in range(1, 7)},
             "arm/joint7": pytest.approx(-0.03),
@@ -143,6 +166,8 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
         rig.tick()
         clock.return_value = 101.0
         rig.tick()
+        # Read back what the previous tick wrote, as the hosted cycle does.
+        rig.tick()
         assert rig.positions["arm/joint2"] == pytest.approx(-0.02)
         assert rig.positions["arm/joint7"] == pytest.approx(-0.03)
 
@@ -154,6 +179,7 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     assert not any(issubclass(atom.module, DamiaoConnection) for atom in blueprint.blueprints)
     [mock] = [atom for atom in blueprint.blueprints if atom.module is MockJointConnection]
     assert mock.kwargs["source"] == "arm"
+    assert mock.kwargs["hosted"] is True
     assert list(mock.kwargs["initial_positions"]) == [
         *[f"left_joint{i}" for i in range(1, 7)],
         *[f"right_joint{i}" for i in range(1, 7)],
@@ -163,7 +189,61 @@ def test_simulation_composes_an_independent_dual_arm_mock(mocker):
     assert mock.kwargs["initial_positions"]["left_gripper"] == 0.0
     assert mock.kwargs["initial_positions"]["right_gripper"] == 0.0
     assert mock.kwargs["initial_positions"]["left_joint1"] == pytest.approx(0.0)
-    assert blueprint.remapping_map[(mock.name, "position_command")] == "arm_position_command"
+    assert (mock.name, "position_command") not in blueprint.remapping_map
+
+
+def test_shipped_metal_blueprint_runs_the_direct_cycle_in_real_workers(tmp_path):
+    """The shipped stack, real workers, a fake native arm: one direct cycle.
+
+    Run in its own process: ``dimos/robot/manipulators/damiao/testing`` is put
+    first on ``PYTHONPATH`` so ``sitecustomize`` installs the fake CAN boundary
+    in the driver and, through the forkserver, in every worker before robot code
+    can run. The vendor transport constructors are sealed, so a boundary that
+    did not reach a worker fails there instead of touching hardware.
+    """
+    repo = Path(dimos.__file__).resolve().parents[1]
+    support = repo / "dimos/robot/manipulators/damiao/testing"
+    assert (support / "sitecustomize.py").is_file()
+    environment = dict(os.environ)
+    inherited = [part for part in environment.get("PYTHONPATH", "").split(os.pathsep) if part]
+    environment["PYTHONPATH"] = os.pathsep.join(
+        dict.fromkeys([str(support), str(repo), *inherited])
+    )
+    environment["DIMOS_FAKE_DAMIAO_LOG"] = str(tmp_path / "fake-native.jsonl")
+    environment["DIMOS_FAKE_DAMIAO_FAIL"] = str(tmp_path / "fake-native-fail")
+    # A private discovery bus: this machine also may run an unrelated stack
+    # that serves a ControlCoordinator, and sharing a bus would race its
+    # replies against this run's. The group is unique per test invocation so
+    # parallel runs stay apart too.
+    digest = hashlib.sha256(str(tmp_path).encode()).digest()
+    environment["DIMOS_FAKE_DAMIAO_SCOUT"] = (
+        f"239.255.{digest[0] % 250}.{digest[1] % 250}:{27000 + digest[2] % 1000}"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "dimos.robot.manipulators.damiao._shipped_worker_check"],
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == 0, output[-4000:]
+    lines = [line for line in completed.stdout.splitlines() if line.startswith("EVIDENCE:")]
+    assert lines, output[-4000:]
+    evidence = json.loads(lines[-1].removeprefix("EVIDENCE:"))
+
+    assert evidence["installed"] and evidence["fail_closed"]
+    assert evidence["module_counts"] == [2], evidence
+    # The driver already asserts these; re-check the evidence it published.
+    assert evidence["same_cycle_and_thread"] and evidence["wrote_target"], evidence
+    assert len(evidence["writer_identities"]) == 1, evidence["writer_identities"]
+    assert evidence["deadman_fired_then_cleared"] and evidence["workers_exited"]
+    assert (
+        "feedback failed: RuntimeError: fake Damiao feedback failure requested by the test"
+        in (evidence["fault"])
+    )
 
 
 def test_blueprint_composition_is_coordinator_connection_and_remaps():
@@ -175,11 +255,10 @@ def test_blueprint_composition_is_coordinator_connection_and_remaps():
         atom for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
     ]
     assert connection.module is OpenYamConnection
-    assert connection.kwargs == {"source": "arm", "teach": False}
+    assert connection.kwargs == {"source": "arm", "teach": False, "hosted": True}
     assert coordinator.kwargs["model"] == make_openyam_model_config(robot="arm").model
     assert coordinator.kwargs["zero_stiffness_joints"] == []
     assert blueprint.remapping_map == {
-        (connection.name, "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
     }
 

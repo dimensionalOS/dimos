@@ -142,7 +142,6 @@ def test_openarm_webxr_blueprint_has_one_bimanual_mock_task() -> None:
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}
     assert teleop_webxr_openarm.remapping_map == {
-        (OpenArmConnection.name, "position_command"): "arm_position_command",
         ("ControlCoordinator", "arm_joint_state"): "joint_state",
         (ArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
         (ArmTeleopModule.name, "left_gripper_command"): "left_gripper_command",

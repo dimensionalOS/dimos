@@ -24,16 +24,18 @@ from typing_extensions import Self
 from dimos.robot.manipulators.damiao import arm as arm_module
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (
     TEST_ROBOT,
-    Builder,
-    FakeArm,
-    FakeGripper,
-    FakeRobot,
-    LocalTransport,
+    wire_hosted_connection,
 )
 from dimos.robot.manipulators.damiao.arm import PhysicalModel
 from dimos.robot.manipulators.damiao.connection import (
     DamiaoConnection,
     DamiaoConnectionConfig,
+)
+from dimos.robot.manipulators.damiao.testing.fake_native import (
+    Builder,
+    FakeArm,
+    FakeGripper,
+    FakeRobot,
 )
 from dimos.utils.testing.waiting import wait_until
 
@@ -109,11 +111,12 @@ def make_rig(connection_class, boundary, mocker):
 
     def make(**kwargs):
         module = connection_class(deadman_timeout_s=10, **kwargs)
-        commands, readings = LocalTransport(), LocalTransport()
-        module.set_transport("position_command", commands)
-        module.set_transport("joint_state", readings)
+        commands, readings = wire_hosted_connection(module)
         made.append(module)
         module.start()
+        # The hosted cycle is the only reader; publish one measured sample so
+        # tests that inspect telemetry have the same view as a running tick.
+        module.publish_measured(module.read_measured())
         wait_until(lambda: bool(readings.sent), timeout=2)
         return module, commands, readings
 

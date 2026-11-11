@@ -184,6 +184,89 @@ def test_autoconnect_preserves_independent_hosted_units() -> None:
     )
 
 
+class HostedCoordinator(Module):
+    """Stands in for a control coordinator that drives a connection directly."""
+
+    hosted_connections = True
+
+
+class HostedConnection(Module):
+    """Stands in for a connection module a coordinator reads and writes."""
+
+    hosted_direct = True
+
+
+def test_autoconnect_groups_only_a_coordinator_and_connection_pair() -> None:
+    blueprint = autoconnect(
+        HostedCoordinator.blueprint(),
+        HostedConnection.blueprint(),
+        ModuleA.blueprint(),
+    )
+
+    # Only the pair that must share a cycle is grouped; the unrelated module
+    # stays free to land wherever the worker pool puts it.
+    assert blueprint.process_groups == ((HostedCoordinator.name, HostedConnection.name),)
+    # Without both roles there is no implied group to make.
+    assert autoconnect(HostedCoordinator.blueprint(), ModuleA.blueprint()).process_groups == ()
+    assert autoconnect(HostedConnection.blueprint(), ModuleA.blueprint()).process_groups == ()
+
+
+def test_autoconnect_namespaces_and_composes_implied_groups() -> None:
+    pair = autoconnect(HostedCoordinator.blueprint(), HostedConnection.blueprint())
+
+    assert pair.namespace("robot0").process_groups == (
+        (f"robot0/{HostedCoordinator.name}", f"robot0/{HostedConnection.name}"),
+    )
+    # Each pair keeps its own group; the implied grouping must not cover a
+    # module that a nested blueprint already grouped.
+    merged = autoconnect(pair.namespace("one"), pair.namespace("two"))
+    assert merged.process_groups == (
+        (f"one/{HostedCoordinator.name}", f"one/{HostedConnection.name}"),
+        (f"two/{HostedCoordinator.name}", f"two/{HostedConnection.name}"),
+    )
+
+
+def test_autoconnect_groups_only_the_roles_a_nested_blueprint_left_out() -> None:
+    pair = autoconnect(HostedCoordinator.blueprint(), HostedConnection.blueprint())
+
+    merged = autoconnect(
+        pair.namespace("one"),
+        HostedCoordinator.blueprint(instance_name="spare"),
+        HostedConnection.blueprint(instance_name="spare_conn"),
+    )
+
+    assert merged.process_groups == (
+        (f"one/{HostedCoordinator.name}", f"one/{HostedConnection.name}"),
+        ("spare", "spare_conn"),
+    )
+
+
+def test_same_process_joins_modules_and_needs_two_distinct_ones() -> None:
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).same_process(ModuleA, ModuleB)
+
+    assert blueprint.process_groups == ((ModuleA.name, ModuleB.name),)
+    assert blueprint.namespace("robot0").process_groups == (
+        (f"robot0/{ModuleA.name}", f"robot0/{ModuleB.name}"),
+    )
+    with pytest.raises(ValueError, match="at least two distinct modules"):
+        blueprint.same_process(ModuleA)
+    with pytest.raises(ValueError, match="at least two distinct modules"):
+        blueprint.same_process(ModuleA, ModuleA)
+
+
+def test_blueprint_rejects_a_bad_process_group() -> None:
+    atom = ModuleA.blueprint().blueprints[0]
+    blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+
+    with pytest.raises(ValueError, match="same_process references unknown modules: missing"):
+        Blueprint(blueprints=(atom,), process_groups=(("missing", "modulea"),))
+    with pytest.raises(ValueError, match="more than one same_process group"):
+        Blueprint(
+            blueprints=blueprint.blueprints,
+            process_groups=(("modulea", "moduleb"), ("moduleb", "modulea")),
+        )
+
+
 @pytest.mark.parametrize(
     "minimum", ({"gpu_mem_gb": "11"}, {"gpu_mem_gb": True}, {"": 1}, [("a", 1)])
 )

@@ -125,7 +125,6 @@ def test_native_wiring_and_commands(
         model=_local_test_model(connection_type, tmp_path / "control.urdf"),
         deadman_timeout_s=10,
     )
-    module.set_transport("position_command", LocalTransport())
     module.set_transport("joint_state", LocalTransport())
     native = boundary[0]
     try:
