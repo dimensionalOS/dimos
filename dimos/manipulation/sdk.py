@@ -190,14 +190,13 @@ class Arm:
         dy: float = 0.0,
         dz: float = 0.0,
         *,
-        check_collision: bool | None = None,
+        check_collision: bool = True,
         speed_scale: float | None = None,
         timeout: float | None = None,
     ) -> MoveResult:
         """Execute the existing world-frame translation primitive, in metres.
 
-        ``check_collision`` None takes the manipulation module's default
-        (``linear_check_collision``).
+        Collision checking is on by default, matching the RPC.
         """
         delta = _vector((dx, dy, dz), 3, "delta")
         result = self.rpc.move_linear(

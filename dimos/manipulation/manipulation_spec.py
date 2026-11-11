@@ -257,7 +257,7 @@ class ManipulationSpec(Spec, Protocol):
         dy: float = 0.0,
         dz: float = 0.0,
         planning_group: PlanningGroupID | None = None,
-        check_collision: bool | None = None,
+        check_collision: bool = True,
         speed_scale: float | None = None,
         blocking: bool = True,
         timeout: float | None = None,
