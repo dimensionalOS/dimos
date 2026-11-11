@@ -37,7 +37,6 @@ def _state(positions: dict[str, float], t_now: float = 0.0) -> CoordinatorState:
             joint_command_interfaces={
                 **{f"arm/joint{i}": frozenset({Interface.POSITION}) for i in (1, 2, 3)},
                 "arm/vx": frozenset({Interface.POSITION}),
-                "base/slide": frozenset({Interface.VELOCITY}),
             },
         ),
         t_now=t_now,
@@ -78,25 +77,62 @@ def test_freezes_position_capable_joints_at_first_sight_without_name_heuristics(
     assert task.claim().priority == 100
 
 
-@pytest.mark.parametrize("scope", [None, frozenset({"arm/vx", "base/slide"})])
-def test_hold_tracks_capability_changes_but_keeps_targets_without_feedback(
+@pytest.mark.parametrize("scope", [None, frozenset({"arm/vx", "drive/slide"})])
+def test_mixed_hold_uses_declared_interfaces_and_scopes_both_modes(
     scope: frozenset[str] | None,
 ) -> None:
     task = OperatorHoldTask(joint_names=scope)
     task.request("manual")
-    state = _state({"arm/vx": 1.5, "base/slide": 0.2, "unknown/joint": 0.4})
+    state = CoordinatorState(
+        joints=JointStateSnapshot(
+            joint_positions={"arm/vx": 1.5, "drive/slide": 9.0, "other/joint": 0.4},
+            joint_command_interfaces={
+                "arm/vx": frozenset({Interface.POSITION, Interface.VELOCITY}),
+                "drive/slide": frozenset({Interface.VELOCITY}),
+                "drive/unmeasured": frozenset({Interface.VELOCITY}),
+                "other/joint": frozenset({Interface.POSITION}),
+            },
+        )
+    )
     output = task.compute(state)
-    assert output is not None and output.joint_names == ["arm/vx"]
+    assert isinstance(output, list) and len(output) == 2
+    positions, velocities = output
+    expected_positions = {"arm/vx": 1.5}
+    expected_velocities = {"drive/slide": 0.0}
+    if scope is None:
+        expected_positions["other/joint"] = 0.4
+        expected_velocities["drive/unmeasured"] = 0.0
+    assert positions.mode is ControlMode.SERVO_POSITION
+    assert dict(zip(positions.joint_names, positions.positions, strict=True)) == expected_positions
+    assert velocities.mode is ControlMode.VELOCITY
+    assert (
+        dict(zip(velocities.joint_names, velocities.velocities, strict=True)) == expected_velocities
+    )
+    assert task.claim().joints == expected_positions.keys() | expected_velocities.keys()
+    assert not task.get_status().unheld
+    # Lost feedback retains positional targets and never gates zero velocity commands.
     state.joints.joint_positions.clear()
+    assert task.compute(state) == output
+
+
+def test_hold_tracks_capability_changes_but_keeps_targets_without_feedback() -> None:
+    task = OperatorHoldTask(joint_names=frozenset({"arm/vx"}))
+    task.request("manual")
+    state = _state({"arm/vx": 1.5})
     output = task.compute(state)
     assert output is not None and output.positions == [1.5]
+    state.joints.joint_positions.clear()
+    assert task.compute(state) == output
     state.joints.joint_command_interfaces["arm/vx"] = frozenset({Interface.VELOCITY})
-    assert task.compute(state) is None
-    assert task.claim().joints == frozenset()
+    output = task.compute(state)
+    assert output is not None and output.velocities == [0.0]
     state.joints.joint_command_interfaces["arm/vx"] = frozenset({Interface.POSITION})
     state.joints.joint_positions["arm/vx"] = 2.0
     output = task.compute(state)
     assert output is not None and output.positions == [2.0]
+    del state.joints.joint_command_interfaces["arm/vx"]
+    assert task.compute(state) is None
+    assert task.claim().joints == frozenset()
 
 
 def test_joint_without_a_valid_reading_is_reported_until_frozen():

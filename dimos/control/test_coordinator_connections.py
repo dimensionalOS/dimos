@@ -652,17 +652,32 @@ def test_connection_routes_each_winning_interface(rig: Callable[..., Rig], targe
         assert list(commands["mock_velocity_command"].velocity) == [0.4, 0.0, 0.0, 0.0]
 
 
-def test_position_hold_scope_preserves_velocity_joint_feedback(rig: Callable[..., Rig]) -> None:
-    r = rig(WholeRobot, tasks=[operator_hold_task()])
+@pytest.mark.parametrize("scoped", [False, True])
+def test_mixed_hold_scope_preserves_velocity_joint_feedback(
+    rig: Callable[..., Rig],
+    scoped: bool,
+) -> None:
+    r = rig(WholeRobot, tasks=[operator_hold_task(joint_names=MOCK_JOINTS if scoped else None)])
     hold = r.coordinator.get_task(OPERATOR_HOLD_TASK_NAME)
     assert isinstance(hold, OperatorHoldTask)
+    axes = ["mock/base_forward", "mock/base_lateral", "mock/base_turn"]
+    velocity = JointVelocityTask("velocity", JointVelocityTaskConfig(axes, priority=50))
+    r.coordinator.add_task(velocity)
     r.report_arm(*AT_REST)
     r.report_base("mock")
+    moving = [0.4, -0.2, 0.3]
+    assert velocity.set_velocities(moving, time.perf_counter())
+    r.tick()
+    assert list(dict(r.sent)["mock_velocity_command"].velocity) == moving
     hold.request("manual")
     r.tick()
-    assert hold.claim().joints == frozenset(MOCK_JOINTS)
+    expected = MOCK_JOINTS if scoped else [*MOCK_JOINTS, *axes]
+    assert hold.claim().joints == frozenset(expected)
     assert "mock/base_forward" not in r.coordinator.get_joint_positions()
     assert r.positions_sent()[-1] == AT_REST
+    assert list(dict(r.sent)["mock_velocity_command"].velocity) == (
+        moving if scoped else [0.0] * len(axes)
+    )
 
 
 def test_velocity_estop_invalidates_commands_until_fresh_post_clear_input(

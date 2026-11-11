@@ -22,6 +22,7 @@ so every assertion is deterministic.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -52,6 +53,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
+)
+from dimos.control.tasks.velocity_task.velocity_task import (
+    JointVelocityTask,
+    JointVelocityTaskConfig,
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
@@ -193,10 +198,10 @@ class TestRequest:
         assert status.on and status.route == "manual" and status.reason == "arm stuck"
         assert status.started_at > 0.0
         rig.tick()
-        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS)
+        assert rig.hold_task.claim().joints == frozenset([*ARM_JOINTS, *BASE_JOINTS])
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-        # Velocity-only joints report odometry but are not position-held.
-        assert rig.base_writes() == []
+        # Truthful odometry does not make a velocity-only resource position-held.
+        assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
 
     def test_keeps_the_first_positions_if_the_arm_drifts(self, rig, monkeypatch):
         rig.request()
@@ -214,7 +219,7 @@ class TestRequest:
             Interface.VELOCITY,
         }
         rig.tick()
-        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS)
+        assert rig.hold_task.claim().joints == frozenset([*ARM_JOINTS, *BASE_JOINTS])
 
     def test_unknown_route_raises_and_holds_nothing(self, rig):
         with pytest.raises(ValueError):
@@ -261,6 +266,51 @@ class TestWhileHeld:
         assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
         assert not rig.trajectory_task.is_active()
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)  # the arm did not move
+
+
+def test_velocity_stream_is_preempted_through_hold_estop_clear_and_ack(rig: Rig) -> None:
+    velocity = JointVelocityTask(
+        "velocity", JointVelocityTaskConfig(joint_names=BASE_JOINTS, priority=50, timeout=10.0)
+    )
+    velocity.on_preempted = MagicMock(wraps=velocity.on_preempted)
+    assert rig.coordinator.add_task(velocity)
+    moving = [0.4, -0.2, 0.1]
+    assert velocity.set_velocities(moving, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == moving
+
+    rig.request()
+    rig.tick()
+    assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+    velocity.on_preempted.assert_called_once_with(
+        by_task=OPERATOR_HOLD_TASK_NAME, joints=frozenset(BASE_JOINTS)
+    )
+    # Live updates cannot drive through a hold.
+    assert velocity.set_velocities(moving, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+
+    assert rig.coordinator.set_estop(True)
+    assert not velocity.set_velocities(moving, time.perf_counter())
+    assert rig.acknowledge().on  # Cannot release while e-stop is latched.
+    writes_at_stop = len(rig.base_writes())
+    rig.tick()
+    assert len(rig.base_writes()) == writes_at_stop
+    assert not rig.hold_task.claim().joints
+    assert rig.coordinator.set_estop(False)
+    assert not velocity.is_streaming()  # Cached pre-stop intent was discarded.
+    rig.tick()
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+    # Fresh post-clear streaming is still preempted until the operator acknowledges.
+    assert velocity.set_velocities(moving, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+    assert rig.acknowledge().on is False
+    fresh = [-0.3, 0.1, 0.0]
+    assert velocity.set_velocities(fresh, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == fresh
 
 
 class TestStatus:
@@ -324,7 +374,7 @@ class TestEstop:
         status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
         assert status.on and status.route == "failsafe" and not status.estopped
         assert rig.arm_writes()[-1] == pytest.approx([0.15, 0.25, 0.35])
-        assert rig.base_writes() == []
+        assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
 
         assert rig.acknowledge().on is False
         assert not rig.hold_task.is_active()
