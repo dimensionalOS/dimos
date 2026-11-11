@@ -19,6 +19,8 @@ from dimos.sim2.sensors.lidar.config import LidarConfig
 from dimos.sim2.sensors.lidar.module import SimLidarModule
 from dimos.sim2.sensors.lidar.raycasters.mujoco import MujocoRaycaster
 
+pytestmark = pytest.mark.self_hosted  # Requires MuJoCo's native USD importer.
+
 
 @pytest.fixture
 def lidar(world):

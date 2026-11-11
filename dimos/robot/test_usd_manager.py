@@ -954,6 +954,7 @@ def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
     assert "git lfs checkout" in str(error.value)
 
 
+@pytest.mark.self_hosted
 def test_relative_root_mesh_survives_rename_serving_and_a_different_reader_directory(
     make_manager, tmp_path, capfd
 ):

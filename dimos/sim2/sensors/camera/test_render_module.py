@@ -38,7 +38,7 @@ from dimos.sim2.sensors.camera.render_module import CameraRenderModule
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoRenderer
 from dimos.utils.testing.waiting import wait_until
 
-pytestmark = pytest.mark.native_e2e
+pytestmark = pytest.mark.self_hosted
 
 
 @pytest.fixture
