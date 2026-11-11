@@ -857,7 +857,10 @@ configure_memlock() {
     local user; user="$(id -un)"
     local limits_file=/etc/security/limits.d/99-dimos-memlock.conf
     local -a privilege=(/usr/bin/env)
-    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    if [[ $(id -u) != 0 ]]; then
+        privilege=(sudo)
+        if [[ "$NON_INTERACTIVE" == "1" ]]; then privilege+=(-n); fi
+    fi
 
     printf "\n"
     info "DimOS uses Zenoh shared memory which needs a 64MB locked-memory limit (now $((hard / 1024))MB):"
@@ -866,12 +869,18 @@ configure_memlock() {
     printf "\n"
 
     if prompt_confirm "Raise the locked-memory limit?" "yes"; then
-        run_cmd "${privilege[@]}" prlimit --pid=$$ --memlock=67108864:67108864 \
-            || warn "could not raise the limit for this session"
+        if run_cmd "${privilege[@]}" prlimit --pid=$$ --memlock=67108864:67108864; then
+            if [[ "$DRY_RUN" != "1" ]]; then ok "locked-memory limit raised for this session"; fi
+        else
+            warn "could not raise the limit for this session"
+        fi
         if [[ "$DRY_RUN" != "1" ]]; then
-            printf "# Written by dimos: zenoh's SHM pool must be lockable.\n%s\t-\tmemlock\t65536\n" "$user" | "${privilege[@]}" tee "$limits_file" >/dev/null
+            if printf "# Written by dimos: zenoh's SHM pool must be lockable.\n%s\t-\tmemlock\t65536\n" "$user" | "${privilege[@]}" tee "$limits_file" >/dev/null; then
+                ok "locked-memory limit saved for future logins"
+            else
+                warn "could not save locked-memory limit to $limits_file"
+            fi
         else dim "[dry-run] would write $limits_file"; fi
-        ok "locked-memory limit configured"
     fi
 }
 
