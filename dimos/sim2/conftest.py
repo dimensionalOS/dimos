@@ -31,12 +31,25 @@ from dimos_lcm.control_msgs import ActionCommand, JointCommand
 from dimos_lcm.sim_msgs import WorldState
 from dimos_lcm.std_msgs import Header, Time
 import pytest
+import reactivex as rx
+from reactivex.testing import TestScheduler
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.robot.assets.usd import graft_usd, layer_from, load_pxr, usd_with_drives
 from dimos.sim2.module import SimModule
 from dimos.sim2.physics.mujoco import MujocoBackend
+
+
+@pytest.fixture
+def publication_clock(mocker):
+    clock = TestScheduler()
+    mocker.patch("dimos.sim2.publication.monotonic", side_effect=lambda: clock.clock)
+    mocker.patch(
+        "dimos.sim2.publication.interval",
+        side_effect=lambda period: rx.interval(period, scheduler=clock),
+    )
+    return clock
 
 
 def _box_link(
