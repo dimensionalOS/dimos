@@ -20,11 +20,11 @@ recording that holds it under its own name, as ``map/<name>/cloud`` beside
 (``map -> map/<name>`` is the fix, since the M20's live LIO frame is already called ``map``).
 Walk the space, recording what a map is built from::
 
-    dtk run m20 --record sqlite --record-topics 'tf,global_map,named_locations'
+    dimos run m20 --record sqlite --record-topics 'tf,global_map,named_locations'
 
 Build and name the map out of that recording in the Map Editor, then come back to it::
 
-    dtk run m20 --map-file <that recording>.db
+    dimos run m20 --map-file <that recording>.db
 
 A recording holding more than one map needs ``--cloud-stream`` to say which.
 """
