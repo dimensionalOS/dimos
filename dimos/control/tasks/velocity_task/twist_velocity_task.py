@@ -19,7 +19,6 @@ from __future__ import annotations
 import math
 from typing import Any, Literal
 
-from dimos.control.task import CoordinatorState, JointCommandOutput
 from dimos.control.tasks.velocity_task.velocity_task import (
     JointVelocityTask,
     JointVelocityTaskConfig,
@@ -39,10 +38,10 @@ _AXES: tuple[Axis, ...] = (
 
 
 class TwistVelocityTask(JointVelocityTask):
-    """Map axes in joint order; optional measured yaw rotates body input to world.
+    """Map explicit Twist axes to joint velocities in the same declared frame.
 
-    No yaw_joint means the explicitly mapped axes are aligned with the input.
-    With yaw_joint, rotation is recomputed every tick, not frozen on receipt.
+    This task performs no frame conversion and requires no pose feedback.
+    The input producer and connection declaration must agree on the frame.
     """
 
     def __init__(
@@ -50,14 +49,11 @@ class TwistVelocityTask(JointVelocityTask):
         name: str,
         config: JointVelocityTaskConfig,
         axes: list[Axis],
-        yaw_joint: str | None = None,
     ) -> None:
         super().__init__(name, config)
         if len(axes) != len(config.joint_names) or any(axis not in _AXES for axis in axes):
             raise ValueError("axes must explicitly map each joint to a Twist component")
         self._axes = list(axes)
-        self._yaw_joint = yaw_joint
-        self._intent: tuple[float, ...] | None = None
 
     def on_twist_command(self, msg: Twist, t_now: float) -> bool:
         values = tuple(
@@ -66,43 +62,12 @@ class TwistVelocityTask(JointVelocityTask):
         )
         if not all(math.isfinite(value) for value in values):
             return False
-        with self._lock:
-            if self._estopped:
-                return False
-            self._intent = values
-            # Reuse the velocity task's receipt clock, activation and timeout.
-            return self.set_velocities([0.0] * self._num_joints, t_now)
-
-    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        with self._lock:
-            if self._intent is None or self._estopped or not self._active:
-                return None
-            components = dict(zip(_AXES, self._intent, strict=True))
-            if self._yaw_joint is not None:
-                yaw = state.joints.get_position(self._yaw_joint)
-                if yaw is None or not math.isfinite(yaw):
-                    return None
-                c, s = math.cos(yaw), math.sin(yaw)
-                x, y = components["linear.x"], components["linear.y"]
-                components["linear.x"], components["linear.y"] = c * x - s * y, s * x + c * y
-            self._velocities = [components[axis] for axis in self._axes]
-            return super().compute(state)
-
-    def set_estop(self, estopped: bool) -> None:
-        with self._lock:
-            if estopped or self._estopped:
-                self._intent = None
-            super().set_estop(estopped)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._intent = None
-            super().clear()
+        components = dict(zip(_AXES, values, strict=True))
+        return self.set_velocities([components[axis] for axis in self._axes], t_now)
 
 
 class TwistVelocityTaskParams(JointVelocityTaskParams):
     axes: list[Axis]
-    yaw_joint: str | None = None
 
 
 def create_task(cfg: Any, hardware: Any) -> TwistVelocityTask:
@@ -116,5 +81,4 @@ def create_task(cfg: Any, hardware: Any) -> TwistVelocityTask:
             zero_on_timeout=params.zero_on_timeout,
         ),
         axes=params.axes,
-        yaw_joint=params.yaw_joint,
     )
