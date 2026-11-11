@@ -12,62 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro Quest WebXR teleop: both arms and the torso through one IK model.
+"""R1Pro Quest teleop, with an explicit fake/real connection backend.
 
-The Quest's controllers drive both arms (7+7) and **one** torso joint through
-a single ``teleop_ik`` task on the standard control contract — the same input,
-task, IK and model path regardless of backend — and each trigger drives its
-own jaw through the existing gripper task; the connection owns feedback checks.
-
-The IK solves both arms (7+7) plus the waist's top pitch and yaw joints, so the
-torso acts as the redundancy that lets the operator reach without a locked
-waist. The two lower pitch joints stay outside the controlled set and are
-locked at their feedback. ``make_r1pro_vr_teleop(full_torso=True)`` restores the old 18-DOF
-behaviour for both backends.
-
-The same controllers drive the holonomic chassis: the thumbsticks are
-mapped to a body-frame Twist exactly as the Go2's are (one shared
-``thumbstick_twist``, left stick translate, right stick yaw, with the
-deadzone), published on the coordinator's ``twist_command`` by the
-``vel_chassis`` velocity task's arbitration and routed to the connection's
-canonical ``velocity_command: JointState``. The teleop module publishes the twist every control-loop tick
-from the latest stick state, so sticks centred, controllers absent or a
-stale session send zero speed — never the previous one. Speeds are capped at
-the declared planar velocity limits (±1/±1 m/s, ±2 rad/s) by the module's own scaling
-and again by the connection's limits table; nothing bypasses the
-coordinator's arbitration, its timeout (a silent twist stream zeroes the
-chassis), its holds, or its E-STOP.
-
-Backends (``make_r1pro_vr_teleop(backend=...)``):
-
-- ``"fake"`` (default, and what ``dimos run r1pro-vr-teleop`` starts):
-  ``FakeR1ProConnection``, an in-memory closed-loop stand-in on the same
-  contract. No ROS 2, vendor stack, cameras, lidar, CAN or robot; the
-  coordinator_joint_state bus stream and the rerun viewer show the Quest
-  input moving the simulated 18 DOF and both jaws, and the chassis is
-  integrated in memory (``base_state()``) so a thumbstick command is
-  observable as pose and speed.
-- ``"real"``: ``R1ProConnection`` (ROS 2 + vendor stack). Assembly is
-  identical otherwise; selecting it is explicit. Bring-up on hardware is a
-  separate, deliberate operation — see the R1 Pro README.
-
-Safety semantics are the framework's, unchanged: middle-finger grips engage
-(hands only, for the arms), releasing either grip, input going stale, or a
-coordinator E-STOP ends the arm session and clears the captured references,
-so no stale intent replays on the next engagement. The chassis follows the
-sticks whenever the module runs (as on the Go2) and is zeroed by the module
-on no input, by the velocity task's timeout when twist frames stop, and by
-the connection's deadman when commands stop. The connection rejects jaw
-writes while feedback is invalid and blocks the interrupted target after
-recovery, including targets received during the outage. A different opening
-is required to reauthorize a vendor write; the generic gripper task has no
-intent-generation signal. This is not a vendor cancel or a physical E-STOP.
-
-Usage:
-    dimos run r1pro-vr-teleop            # fake backend, safe anywhere
-    # real robot (explicit):
-    #   python -c "from ...r1pro_vr_teleop import make_r1pro_vr_teleop; \\
-    #       make_r1pro_vr_teleop(backend='real').build().loop()"
+ArmTeleopModule emits poses, buttons and original Joy packets. A separate
+JoystickTeleopMapper maps the left stick to chassis translation, right X to
+yaw and right Y to lift rate, while right-stick click enables body motion.
+The chassis uses TwistVelocityTask; R1ProTorsoHeightTask controls only lower
+pitch joints 1/2, alongside TeleopIKTask controlling top pitch/yaw and arms.
+Both tasks read feedback independently and merge through normal arbitration.
+No automatic Home or hardware startup occurs while assembling a blueprint.
 """
 
 from __future__ import annotations
@@ -102,8 +55,10 @@ from dimos.robot.galaxea.r1pro.connection import (
 )
 from dimos.robot.galaxea.r1pro.fake_connection import FakeR1ProConnection, FakeR1ProConnectionConfig
 from dimos.robot.galaxea.r1pro.teleop_ik import R1ProPinkPoseTargetSolver
+from dimos.robot.galaxea.r1pro.torso_height_task import TORSO_LIFT_JOINTS
+from dimos.teleop.joystick import JoystickTeleopMapper
 from dimos.teleop.webxr.controller_types import Buttons
-from dimos.teleop.webxr.extensions import ArmThumbstickTeleopModule
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 R1PRO_VR_TASK_NAME = "teleop_r1pro_vr"
 R1PRO_VR_CHASSIS_TASK_NAME = "vel_chassis"
@@ -236,6 +191,7 @@ class R1ProVrCoordinator(ControlCoordinator):
     teleop_buttons: In[Buttons]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
+    lift_rate: In[Float32]
 
 
 def _vr_tasks(*, full_torso: bool = False) -> list[TaskConfig]:
@@ -245,6 +201,18 @@ def _vr_tasks(*, full_torso: bool = False) -> list[TaskConfig]:
         _gripper_task("r1pro_right_gripper", "r1pro/right_gripper", "right_gripper_command"),
         joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
         _chassis_task(),
+        *(
+            []
+            if full_torso
+            else [
+                TaskConfig(
+                    name="torso_height",
+                    type="r1pro_torso_height",
+                    joint_names=list(TORSO_LIFT_JOINTS),
+                    priority=20,
+                )
+            ]
+        ),
         operator_hold_task(joint_names=list(R1PRO_UPPER_BODY_JOINTS)),
     ]
 
@@ -254,6 +222,7 @@ def make_r1pro_vr_teleop(
     backend: Literal["fake", "real"] = "fake",
     manipulation: bool = True,
     full_torso: bool = False,
+    joystick: dict[str, Any] | None = None,
     **connection: Any,
 ) -> Blueprint:
     """Assemble the R1 Pro Quest VR teleop stack on the chosen backend.
@@ -266,6 +235,8 @@ def make_r1pro_vr_teleop(
     assembles the blueprint — starting it against hardware is a separate,
     deliberate operation.
     """
+    if full_torso:
+        raise ValueError("joystick lift owns torso_joint1/2; full_torso IK would overlap")
     declaration: R1ProConnectionConfig
     if backend == "fake":
         declaration = FakeR1ProConnectionConfig(**connection)
@@ -284,16 +255,21 @@ def make_r1pro_vr_teleop(
     # teleop scaling never asks for more than declared velocity limits; the same
     # range is enforced again by the connection's limits table.
     vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
-    teleop_bp = ArmThumbstickTeleopModule.blueprint(
-        linear_speed=min(vx, vy),
-        angular_speed=wz,
-        body_tracking_mode="optional",
+    teleop_bp = ArmTeleopModule.blueprint(body_tracking_mode="optional")
+    joystick_bp = JoystickTeleopMapper.blueprint(
+        **{
+            "base_linear_speed": min(vx, vy, 0.3),
+            "base_angular_speed": min(wz, 0.5),
+            "lift_speed": 0.03,
+            **(joystick or {}),
+        }
     )
 
     return (
         autoconnect(
             r1pro_visualization(),
             teleop_bp,
+            joystick_bp,
             connection_bp,
             R1ProVrCoordinator.blueprint(
                 instance_name="ControlCoordinator",
@@ -323,13 +299,10 @@ def make_r1pro_vr_teleop(
                 (connection_cls, "position_command", "r1pro_position_command"),
                 (connection_cls, "velocity_command", "r1pro_velocity_command"),
                 (R1ProVrCoordinator, "r1pro_joint_state", "joint_state"),
-                # One teleop module feeds both halves of the robot: poses and
-                # jaw openings to the coordinator's task inputs, and the
-                # thumbstick twist onto the coordinator's twist bus, which
-                # its explicit twist_velocity task maps onto named planar joints.
-                (ArmThumbstickTeleopModule, "left_controller_output", "left_cartesian_command"),
-                (ArmThumbstickTeleopModule, "right_controller_output", "right_cartesian_command"),
-                (ArmThumbstickTeleopModule, "cmd_vel", "twist_command"),
+                # Device input and robot intent mapping are separate modules.
+                (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+                (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+                (JoystickTeleopMapper, "base_twist", "twist_command"),
             ]
         )
         .global_config(transport="zenoh")

@@ -51,18 +51,29 @@ dimos run r1pro-vr-teleop        # Quest VR: both arms + torso, safe fake backen
 
 `r1pro-vr-teleop` is the operator stack for a Meta Quest browser: both
 controllers drive both arms and the top torso pitch/yaw joints through one
-`teleop_ik` task. The lower two pitch joints stay at measured positions;
-`full_torso=True` explicitly enables all 18 upper-body joints. Top pitch has
+`teleop_ik` task. The lower two pitch joints are controlled independently
+by the joystick lift task. Top pitch has
 5× posture cost and a 0.15 rad/s velocity cap; arm and yaw costs are unchanged. Each trigger drives its own jaw through
 the existing gripper task with a separate input binding; the jaws never enter the IK model or a
 trajectory. Left thumbstick controls forward/lateral velocity and right
 thumbstick x controls yaw, reusing Go2's thumbstick mapping and deadzone.
-`ArmThumbstickTeleopModule.cmd_vel` feeds the coordinator's `twist_command`
-input. Its explicit `twist_velocity` task maps body input using measured yaw
-onto `r1pro_velocity_command: JointState` and the selected connection. The same
-path applies to fake and real, with limits ±1/±1 m/s and ±2 rad/s. Centred,
-missing or stale sticks command zero; arm poses and triggers never drive the
-chassis. Thumbsticks do not require the arm grips. No keyboard/nav input is wired.
+`ArmTeleopModule` publishes original `left_joy` / `right_joy` packets, not
+robot movement commands. `JoystickTeleopMapper` applies the axis mapping,
+deadzone, scales and input expiry, then publishes body-frame `Twist` and
+`Float32` lift speed (m/s). The existing `twist_velocity` task maps the Twist
+onto the named base joints; the connection still owns vendor conversion.
+Hold right-stick click to enable body motion: left X/Y translate, right X
+turns and right Y lifts/lowers. Default caps are 0.3 m/s, 0.5 rad/s and
+0.03 m/s. `make_r1pro_vr_teleop(joystick={...})` overrides mapper config.
+The R1Pro height task owns only torso joints 1/2; IK owns torso 3/4 and arms.
+The lift follows the pinned URDF's two-link geometry, retaining fore/aft
+position, with a 0.45 m minimum hip-relative height and 0.15 rad/s joint cap.
+Full extension is the upper boundary, so raising an already upright waist does
+nothing. Joystick lift and `full_torso=True` are rejected as overlapping owners.
+Both tasks read measured feedback independently; neither feeds the other.
+Raw Joy is emitted only on receipt: old input is not periodically re-stamped.
+Stale/disabled input zeros body intent; the lift task independently times out
+and clears its target on E-stop or preemption. Software stop is not vendor cancel.
 Operator hold is explicitly scoped to the upper-body joints;
 it does not claim jaw positions or chassis velocity interfaces. E-stop stops command
 publication and invalidates velocity intent. After clearing it, fresh velocity

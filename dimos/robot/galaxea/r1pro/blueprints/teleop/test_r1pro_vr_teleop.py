@@ -14,7 +14,7 @@
 
 """Tests for the R1 Pro Quest VR teleop blueprint.
 
-The chain under test is the real one: a live ``ArmThumbstickTeleopModule``
+The chain under test is the real one: a live ``ArmTeleopModule``
 fed programmatic Quest packets (``_on_pose_bytes``/``_on_joy_bytes``, the same
 decoders the websocket routes call) → the coordinator's ``teleop_ik``,
 gripper and ``vel_chassis`` tasks → the per-robot contract ports →
@@ -62,7 +62,8 @@ from dimos.robot.galaxea.r1pro.connection import (
     R1ProConnection,
 )
 from dimos.robot.galaxea.r1pro.fake_connection import FakeR1ProConnection, FakeR1ProConnectionConfig
-from dimos.teleop.webxr.extensions import ArmThumbstickTeleopModule
+from dimos.teleop.joystick import JoystickTeleopMapper
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 from dimos.utils.testing.waiting import wait_until
 
 
@@ -88,18 +89,19 @@ def _joy_bytes(
     grip: float,
     stick_x: float = 0.0,
     stick_y: float = 0.0,
+    enable: bool = False,
 ) -> bytes:
     # axes: [thumbstick_x, thumbstick_y, trigger_analog, grip_analog]
     return Joy(
         ts=time.time(),
         frame_id=hand,
         axes=[stick_x, stick_y, trigger, grip],
-        buttons=[0, 0, 0, 0, 0, 0],
+        buttons=[0, 0, 0, int(enable), 0, 0],
     ).lcm_encode()
 
 
 class Chain:
-    """ArmThumbstickTeleopModule → R1ProVrCoordinator → FakeR1ProConnection.
+    """ArmTeleopModule → R1ProVrCoordinator → FakeR1ProConnection.
 
     The streams the blueprint wires share one ``LocalTransport`` per logical
     name, so messages flow exactly as the blueprint routes them; every other
@@ -131,7 +133,10 @@ class Chain:
         # The thumbstick Twist: teleop → coordinator's twist bus → the
         # vel_chassis task's arbitration → the coordinator's base port → the
         # connection's cmd_vel.
-        "twist_command": (("teleop", "cmd_vel"), ("coordinator", "twist_command")),
+        "left_joy": (("teleop", "left_joy"), ("joystick", "left_joy")),
+        "right_joy": (("teleop", "right_joy"), ("joystick", "right_joy")),
+        "lift_rate": (("joystick", "lift_rate"), ("coordinator", "lift_rate")),
+        "twist_command": (("joystick", "base_twist"), ("coordinator", "twist_command")),
         "r1pro_velocity_command": (
             ("coordinator", "r1pro_velocity_command"),
             ("fake", "velocity_command"),
@@ -146,14 +151,23 @@ class Chain:
         ),
     }
 
-    def __init__(self, *, input_timeout_s: float = 1.0, deadman_s: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        input_timeout_s: float = 1.0,
+        deadman_s: float = 5.0,
+        enable_button: int | None = None,
+    ) -> None:
         #: Full stick deflection is the chassis' base_range, as in the blueprint.
         vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
-        self.teleop = ArmThumbstickTeleopModule(
+        self.teleop = ArmTeleopModule(
             server_port=_free_port(),
             input_timeout_s=input_timeout_s,
-            linear_speed=min(vx, vy),
-            angular_speed=wz,
+        )
+        self.joystick = JoystickTeleopMapper(
+            base_linear_speed=min(vx, vy),
+            base_angular_speed=wz,
+            enable_button=enable_button,
         )
         self.coordinator = R1ProVrCoordinator(
             tick_rate=100,
@@ -161,7 +175,12 @@ class Chain:
             tasks=_vr_tasks(),
         )
         self.fake = FakeR1ProConnection(deadman_timeout_s=deadman_s)
-        modules = {"teleop": self.teleop, "coordinator": self.coordinator, "fake": self.fake}
+        modules = {
+            "teleop": self.teleop,
+            "joystick": self.joystick,
+            "coordinator": self.coordinator,
+            "fake": self.fake,
+        }
 
         self.stream: dict[str, LocalTransport] = {}
         wired: set[tuple[int, str]] = set()
@@ -177,12 +196,15 @@ class Chain:
                     module.set_transport(port, LocalTransport())  # type: ignore[arg-type]
 
     def __enter__(self) -> Chain:
+        self.joystick.start()
         self.teleop.start()
         self.coordinator.start()
         self.fake.start()
+        wait_until(lambda: self.coordinator._connections["r1pro"].ready_for_control(), timeout=5.0)
         return self
 
     def __exit__(self, *exc: Any) -> None:
+        self.joystick.stop()
         self.fake.stop()
         self.coordinator.stop()
         self.teleop.stop()
@@ -201,6 +223,8 @@ class Chain:
         left_x: float = 0.0,
         left_y: float = 0.0,
         right_x: float = 0.0,
+        right_y: float = 0.0,
+        enable: bool = False,
         left_trigger: float = 1.0,
         right_trigger: float = 1.0,
     ) -> None:
@@ -209,7 +233,14 @@ class Chain:
             _joy_bytes("left", trigger=left_trigger, grip=0.0, stick_x=left_x, stick_y=left_y)
         )
         self.teleop._on_joy_bytes(
-            _joy_bytes("right", trigger=right_trigger, grip=0.0, stick_x=right_x, stick_y=0.0)
+            _joy_bytes(
+                "right",
+                trigger=right_trigger,
+                grip=0.0,
+                stick_x=right_x,
+                stick_y=right_y,
+                enable=enable,
+            )
         )
 
     def hold(self, *, trigger_left: float = 1.0, trigger_right: float = 1.0) -> None:
@@ -322,11 +353,11 @@ def test_thumbstick_twist_is_the_only_chassis_command_path(monkeypatch: pytest.M
         produced, consumed = _twist_wiring(blueprint)
         assert produced == {"twist_command"}, produced
         assert consumed == {"twist_command"}, consumed
-        teleop_atom = next(a for a in blueprint.blueprints if a.module is ArmThumbstickTeleopModule)
+        teleop_atom = next(a for a in blueprint.blueprints if a.module is JoystickTeleopMapper)
         connection_atom = next(a for a in blueprint.blueprints if a.module is connection_cls)
         # The teleop module's sticks produce the bus twist; the connection's
         # cmd_vel input is the per-robot base port, fed by the coordinator.
-        assert blueprint.remapping_map[(teleop_atom.name, "cmd_vel")] == "twist_command"
+        assert blueprint.remapping_map[(teleop_atom.name, "base_twist")] == "twist_command"
         assert (
             blueprint.remapping_map[(connection_atom.name, "velocity_command")]
             == "r1pro_velocity_command"
@@ -362,9 +393,9 @@ def test_blueprint_teleop_scaling_matches_the_base_range() -> None:
     vx, vy, wz = R1PRO_PLANAR_BASE.velocity_limits
     for backend in ("fake", "real"):
         blueprint = make_r1pro_vr_teleop(backend=backend, boot_vendor_stack=False)
-        atom = next(a for a in blueprint.blueprints if a.module is ArmThumbstickTeleopModule)
-        assert atom.kwargs["linear_speed"] == pytest.approx(min(vx, vy))
-        assert atom.kwargs["angular_speed"] == pytest.approx(wz)
+        atom = next(a for a in blueprint.blueprints if a.module is JoystickTeleopMapper)
+        assert atom.kwargs["base_linear_speed"] == pytest.approx(min(vx, vy, 0.3))
+        assert atom.kwargs["base_angular_speed"] == pytest.approx(min(wz, 0.5))
 
 
 def test_ik_steers_arms_and_top_torso_joints() -> None:
@@ -673,15 +704,14 @@ def test_arm_and_jaw_commands_never_reach_the_chassis() -> None:
         assert chain.base_state()["vx"] == pytest.approx(0.0)
 
 
-def test_twist_timeout_zeroes_the_chassis_instead_of_holding_speed() -> None:
-    """No twist frames → the velocity task times out to zero, then the deadman."""
+def test_joy_timeout_zeroes_the_chassis_instead_of_holding_speed() -> None:
+    """No new Joy frames → body intent expires before the connection deadman."""
     with Chain(deadman_s=5.0) as chain:
         chain.send_sticks(left_y=-1.0)
         wait_until(
             lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0, interval=0.02
         )
-        # The Quest stops sending: no more joy packets, so no more twist frames.
-        chain.teleop._stop_control_loop()
+        # No further Joy packets: the mapper must not rejuvenate cached input.
         wait_until(
             lambda: chain.base_state()["vx"] == pytest.approx(0.0), timeout=5.0, interval=0.02
         )
@@ -724,3 +754,21 @@ def test_estop_stops_the_chassis_and_clearing_it_does_not_resume_motion() -> Non
         assert chain.base_state()["vx"] == pytest.approx(0.0)
         chain.send_sticks(left_y=-1.0)
         wait_until(lambda: chain.base_state()["vx"] == pytest.approx(1.0), timeout=5.0)
+
+
+def test_body_sticks_move_base_and_lower_torso_without_ik_joint_overlap() -> None:
+    with Chain(enable_button=3) as chain:
+        # One actual Joy event enables driving and requests lower height.
+        chain.send_sticks(left_y=-0.3, right_y=1.0, enable=True)
+        wait_until(
+            lambda: chain.body_q()[0] > 0.001 and chain.base_state()["x"] > 0.001,
+            timeout=5.0,
+            interval=0.01,
+        )
+        assert chain.body_q()[1] < 0.0
+        assert chain.body_q()[2:] == [0.0] * 16
+        lift = chain.coordinator._tasks["torso_height"]
+        assert not lift.claim().joints & chain.task.claim().joints
+        chain.send_sticks(enable=False)
+        wait_until(lambda: chain.base_state()["vx"] == 0.0, timeout=5.0)
+        assert chain.joystick.config.enable_button == 3

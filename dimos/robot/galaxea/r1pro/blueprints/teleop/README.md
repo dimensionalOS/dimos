@@ -51,3 +51,22 @@ Vendor warnings observed during the on-robot experiment included missing
 Torso key protection and physical controller mode 0 (external chassis control
 may be rejected). They were not bypassed. The operator reported the experiment
 working; this is not a claim that every safety/fault scenario was tested.
+
+## Body joystick controls
+
+Hold **right-stick click** to enable chassis and waist movement. Left X/Y
+translate, right X turns, and right Y raises/lowers the lower waist. Release
+the click or centre the sticks to stop requesting motion. The upright starting
+pose is already at maximum lift height. Arm grip engagement is separate.
+
+WebXR publishes raw `Joy`; the independent joystick mapper publishes `Twist`
+and `Float32` lift rate. Coordinator tasks own disjoint joints: base velocity,
+lower pitch 1/2 lift, and upper pitch/yaw plus arms IK. The height task uses
+actual feedback and bounded position commands; it never calls the vendor SDK.
+Position hold includes the waist but not the velocity-driven chassis. E-stop
+stops all coordinator output; no input or hardware action runs automatically.
+
+The default mapper limits are 0.3 m/s translation, 0.5 rad/s yaw and 0.03 m/s
+lift. Configure `joystick={"enable_button": 3, "lift_speed": 0.02}` in
+`make_r1pro_vr_teleop(...)`; `enable_button=None` explicitly disables the clutch.
+These are fake-tested controls, not collision/stability or hardware acceptance.

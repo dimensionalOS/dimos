@@ -18,7 +18,6 @@ Available subclasses:
     - ArmTeleopModule: Raw arm poses with middle-finger grip deadman buttons
     - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - ArmThumbstickTeleopModule: ArmTeleopModule + thumbstick-driven base Twist
     - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the headset over /ws
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
 """
@@ -330,55 +329,6 @@ class HandTeleopModule(ArmTeleopModule):
         buttons.right_grip = self._is_engaged[Hand.RIGHT]
         self._publish_buttons(buttons)
         self._publish_gripper_commands(left, right, buttons)
-
-
-class ArmThumbstickTeleopConfig(ThumbstickDriveConfig):
-    """ArmTeleopModule's config plus the thumbstick drive settings."""
-
-
-class ArmThumbstickTeleopModule(ArmTeleopModule):
-    """ArmTeleopModule plus a thumbstick-driven ``cmd_vel`` Twist.
-
-    One Quest module therefore carries every operator input: absolute
-    controller poses for the IK task, buttons and per-hand gripper openings,
-    and the chassis twist from the same sticks (``thumbstick_twist``, shared
-    with ``Go2TeleopModule``). The twist goes out on every control-loop tick
-    from the latest controller state, so sticks centred, controllers absent
-    or a stale session publish zero speed instead of the last one.
-
-    Outputs:
-        - left_controller_output: PoseStamped (inherited)
-        - right_controller_output: PoseStamped (inherited)
-        - teleop_buttons: Buttons (inherited)
-        - left_gripper_command: Float32 normalized opening (inherited)
-        - right_gripper_command: Float32 normalized opening (inherited)
-        - cmd_vel: Twist (base velocity, zero when the sticks are not deflected)
-    """
-
-    config: ArmThumbstickTeleopConfig
-
-    cmd_vel: Out[Twist]
-
-    def _publish_safe_command(self) -> None:
-        """Stop the base: a zero Twist, never the last speed."""
-        self.cmd_vel.publish(Twist.zero())
-
-    def _publish_button_state(
-        self,
-        left: WebXRControllerState | None,
-        right: WebXRControllerState | None,
-    ) -> None:
-        """Publish the inherited input streams plus the base twist."""
-        super()._publish_button_state(left, right)
-        self.cmd_vel.publish(
-            thumbstick_twist(
-                left,
-                right,
-                deadzone=self.config.deadzone,
-                linear_speed=self.config.linear_speed,
-                angular_speed=self.config.angular_speed,
-            )
-        )
 
 
 class VideoArmTeleopConfig(WebXRTeleopConfig):
