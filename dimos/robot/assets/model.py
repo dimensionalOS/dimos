@@ -110,6 +110,7 @@ class LoadedRobotModel:
         return next((joint for joint in self.joints if joint.name == name), None)
 
     def referenced_files(self) -> set[str]:
+        """The full path of every file the URDF names (mesh, texture, splat, ...): any filename attribute."""
         return {
             element.attrib["filename"]
             for element in ET.fromstring(self.xml).iter()
