@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos_messages.dimos_msgs.msg import TriangleMesh
 import numpy as np
 
 from dimos.message_utils import mesh as mesh_utils
+from dimos_messages.dimos_msgs.msg import TriangleMesh
 from dimos.visualization.rerun.bridge import RerunEntry
 
 Key = tuple[int, int, int]

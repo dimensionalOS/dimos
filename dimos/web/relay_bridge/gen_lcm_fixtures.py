@@ -32,21 +32,19 @@ import base64
 import json
 from typing import Any
 
-from dimos_lcm import sensor_msgs as lcm_sensor_msgs, std_msgs as lcm_std_msgs
+from dimos_lcm import (
+    geometry_msgs as lcm_geometry_msgs,
+    nav_msgs as lcm_nav_msgs,
+    sensor_msgs as lcm_sensor_msgs,
+    std_msgs as lcm_std_msgs,
+    tf2_msgs as lcm_tf2_msgs,
+)
 import numpy as np
 
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs.Imu import Imu
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.web.lcm_codec import (
     LCM_PRIMITIVES,
-    default_encoding,
+    LCM_V1_SUFFIX,
+    canonical_name,
     encode_lcm_v1,
     export_schema,
     schema_class_for,
@@ -54,7 +52,7 @@ from dimos.web.lcm_codec import (
 from dimos.web.relay_bridge.locate import find_web_dir
 
 TS = 1757400000.5  # exact in float64: stamp (1757400000, 500000000)
-Q = Quaternion(0.0, 0.0, 0.6, 0.8)  # unit, exact doubles
+Q = lcm_geometry_msgs.Quaternion(0.0, 0.0, 0.6, 0.8)  # unit, exact doubles
 
 
 def _header(frame_id: str, seq: int = 0) -> Any:
@@ -97,74 +95,74 @@ def build_messages() -> list[tuple[str, Any]]:
         data=xyz.tobytes(),
         is_dense=True,
     )
-    return [
-        # doubles, nested structs, string, int32
-        (
-            "pose_stamped",
-            PoseStamped(ts=TS, frame_id="map", position=[1.5, -2.5, 0.25], orientation=Q),
+    pose = lcm_geometry_msgs.Pose(position=lcm_geometry_msgs.Point(1.5, -2.5, 0.25), orientation=Q)
+    origin = lcm_geometry_msgs.Pose(
+        position=lcm_geometry_msgs.Point(-5.0, -5.0, 0.0),
+        orientation=lcm_geometry_msgs.Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
+    transforms = [
+        lcm_geometry_msgs.TransformStamped(
+            header=_header("map", seq=1),
+            child_frame_id="base_link",
+            transform=lcm_geometry_msgs.Transform(
+                translation=lcm_geometry_msgs.Vector3(0.1, 0, 0.5), rotation=Q
+            ),
         ),
-        # variable float arrays, one of them empty
+        lcm_geometry_msgs.TransformStamped(
+            header=_header("base_link", seq=1),
+            child_frame_id="camera",
+            transform=lcm_geometry_msgs.Transform(
+                translation=lcm_geometry_msgs.Vector3(-1, 2, 0),
+                rotation=lcm_geometry_msgs.Quaternion(0, 0, 0, 1),
+            ),
+        ),
+    ]
+    return [
+        ("pose_stamped", lcm_geometry_msgs.PoseStamped(header=_header("map"), pose=pose)),
         ("laser_scan", laser_scan),
-        # fixed double[9] arrays
         (
             "imu",
-            Imu(
-                angular_velocity=Vector3(0.1, -0.2, 0.3),
-                linear_acceleration=Vector3(0.0, 0.0, 9.5),
+            lcm_sensor_msgs.Imu(
+                header=_header("imu"),
                 orientation=Q,
+                angular_velocity=lcm_geometry_msgs.Vector3(0.1, -0.2, 0.3),
+                linear_acceleration=lcm_geometry_msgs.Vector3(0, 0, 9.5),
                 orientation_covariance=[0.01] * 9,
                 angular_velocity_covariance=[float(i) for i in range(9)],
                 linear_acceleration_covariance=[0.03] * 9,
-                frame_id="imu",
-                ts=TS,
             ),
         ),
-        # int8 cells with negatives, MapMetaData (float32 resolution)
         (
             "occupancy_grid",
-            OccupancyGrid(
-                grid=np.array([[0, 100, -1], [50, 0, 7]], dtype=np.int8),
-                resolution=0.05,
-                origin=Pose(-5.0, -5.0, 0.0, 0.0, 0.0, 0.0, 1.0),
-                frame_id="map",
-                ts=TS,
+            lcm_nav_msgs.OccupancyGrid(
+                header=_header("map"),
+                info=lcm_nav_msgs.MapMetaData(
+                    map_load_time=lcm_std_msgs.Time(int(TS), 500000000),
+                    resolution=0.05,
+                    width=3,
+                    height=2,
+                    origin=origin,
+                ),
+                data_length=6,
+                data=[0, 100, -1, 50, 0, 7],
             ),
         ),
-        # string arrays, non-ASCII
         (
             "joint_state",
-            JointState(
-                ts=TS,
-                frame_id="arm",
+            lcm_sensor_msgs.JointState(
+                header=_header("arm"),
+                name_length=3,
                 name=["shoulder", "elbow", "wrist_é"],
+                position_length=3,
                 position=[0.1, -0.2, 0.3],
+                velocity_length=3,
                 velocity=[0.01, 0.02, 0.03],
+                effort_length=3,
                 effort=[1.0, 2.0, 3.0],
             ),
         ),
-        # byte[], booleans, a struct array with a byte scalar
         ("point_cloud", point_cloud),
-        # struct array with strings
-        (
-            "tf_message",
-            TFMessage(
-                Transform(
-                    translation=Vector3(0.1, 0.0, 0.5),
-                    rotation=Q,
-                    frame_id="map",
-                    child_frame_id="base_link",
-                    ts=TS,
-                ),
-                Transform(
-                    translation=Vector3(-1.0, 2.0, 0.0),
-                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                    frame_id="base_link",
-                    child_frame_id="camera",
-                    ts=TS,
-                ),
-            ),
-        ),
-        # int64 beyond 2^53: a lossy decoder cannot reproduce it
+        ("tf_message", lcm_tf2_msgs.TFMessage(transforms_length=2, transforms=transforms)),
         ("int64", lcm_std_msgs.Int64(data=-9007199254740993)),
     ]
 
@@ -202,7 +200,7 @@ def build_vectors() -> list[dict[str, Any]]:
         vectors.append(
             {
                 "name": name,
-                "encoding": default_encoding(type(msg), "rx"),
+                "encoding": canonical_name(type(msg)) + LCM_V1_SUFFIX,
                 "schema": schema,
                 "payload_b64": base64.b64encode(payload).decode(),
                 "value": walk_value(generated.lcm_decode(payload), generated),

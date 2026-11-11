@@ -15,10 +15,11 @@
 import numpy as np
 from scipy import ndimage
 
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.mapping.occupancy.operations import _grid_values, _GridT, _with_grid
+from dimos.message_utils.occupancy import CostValues
 
 
-def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGrid:
+def simple_inflate(occupancy_grid: _GridT, radius: float) -> _GridT:
     """Inflate obstacles by a given radius (binary inflation).
     Args:
         radius: Inflation radius in meters
@@ -26,10 +27,10 @@ def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGri
         New OccupancyGrid with inflated obstacles
     """
     # Convert radius to grid cells
-    cell_radius = int(np.ceil(radius / occupancy_grid.resolution))
+    cell_radius = int(np.ceil(radius / occupancy_grid.info.resolution))
 
     # Get grid as numpy array
-    grid_array = occupancy_grid.grid
+    grid_array = _grid_values(occupancy_grid)
 
     # Create circular kernel for binary inflation
     y, x = np.ogrid[-cell_radius : cell_radius + 1, -cell_radius : cell_radius + 1]
@@ -44,10 +45,4 @@ def simple_inflate(occupancy_grid: OccupancyGrid, radius: float) -> OccupancyGri
     result_grid[inflated] = CostValues.OCCUPIED
 
     # Create new OccupancyGrid with inflated data using numpy constructor
-    return OccupancyGrid(
-        grid=result_grid,
-        resolution=occupancy_grid.resolution,
-        origin=occupancy_grid.origin,
-        frame_id=occupancy_grid.frame_id,
-        ts=occupancy_grid.ts,
-    )
+    return _with_grid(occupancy_grid, result_grid)

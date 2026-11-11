@@ -16,10 +16,11 @@
 
 from typing import Any
 
-from dimos_messages.dimos_msgs.msg import TriangleMesh
-from dimos_messages.std_msgs.msg import Header
 import numpy as np
 from numpy.typing import NDArray
+
+from dimos_messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.std_msgs.msg import Header
 
 
 def from_arrays(

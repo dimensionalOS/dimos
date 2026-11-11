@@ -26,6 +26,13 @@ import threading
 from typing import Any
 
 from dimos_cdrgen.registry import encode, schema
+import imagecodecs
+from mcap.writer import Writer
+import numpy as np
+import rerun as rr
+import rerun.blueprint as rrb
+
+from dimos.core.transport import ZenohTransport
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.dimos_msgs.msg import EntityMarker, EntityMarkers
 from dimos_messages.geometry_msgs.msg import (
@@ -52,13 +59,6 @@ from dimos_messages.sensor_msgs.msg import (
 )
 from dimos_messages.std_msgs.msg import Header
 from dimos_messages.tf2_msgs.msg import TFMessage
-import imagecodecs
-from mcap.writer import Writer
-import numpy as np
-import rerun as rr
-import rerun.blueprint as rrb
-
-from dimos.core.transport import ZenohTransport
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.rpc.zenohrpc import ZenohRPC

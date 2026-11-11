@@ -43,7 +43,7 @@ The relay flags are `dimos run` options. Most of the rest are fields of the brid
 ### Generated CDR messages
 
 An installed generated type can be sent as CDR with its complete ROS2 definition
-in the manifest. Select the CDR encoding explicitly:
+in the manifest. Generated classes select CDR by default. An explicit encoding is also supported:
 
 ```python
 from dimos_messages.geometry_msgs.msg import PoseStamped
@@ -208,22 +208,25 @@ These encoding families need no custom registration:
 
 - `json.v1`: JSON scalars, lists, dicts and plain dataclasses on rx. On tx, scalars, lists and dicts only (a dataclass built from untrusted browser JSON needs an explicit decoder).
 - `<package>/msg/<Message>.cdr.v1`, for example `geometry_msgs/msg/PoseStamped.cdr.v1`: registered generated messages. The manifest includes the ROS2 schema, and the browser decodes the CDR payload.
-- `<package>.<Message>.lcm.v1`, for example `geometry_msgs.PoseStamped.lcm.v1`: an rx DimOS message with an LCM schema. The frame is the message's `lcm_encode()` bytes and the manifest carries the schema, so the browser decodes it with no registration. Raw third-party LCM schema classes use the same id family.
+- `<package>.<Message>.lcm.v1`: an explicitly selected codec for raw third-party LCM schema classes. It preserves the external LCM wire format and includes its schema in `params.lcm`.
 
-When `encoding` is omitted, an rx DimOS message gets its LCM encoding and everything else (every tx channel included) gets `json.v1`; select `<package>/msg/<Message>.cdr.v1` explicitly for an installed generated type. A bulk CDR message sends the full message, including raw image pixels, so set `max_hz` accordingly or provide an encoder that sends less data. `Image` has no default: use `jpeg.v1` or an encoder of your own.
+When `encoding` is omitted, a registered generated class selects CDR. Other supported values select `json.v1`. CDR sends the full message, including raw image pixels. Use `jpeg.v1` for a Video panel, or provide an encoder that sends less data.
 
 The built-in channel names keep their codecs. For example, `Channel("odom", PoseStamped)` raises because the `odom` port requires `pose.json.v1`; specify that encoding for this built-in port.
 
 ```python
 from dimos_messages.geometry_msgs.msg import PoseStamped
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.web.cockpit import Channel
 
-print(Channel("pose", PoseStamped, encoding="geometry_msgs/msg/PoseStamped.cdr.v1").encoding)
+print(Channel("pose", PoseStamped).encoding)
+print(Channel("camera_2", Image).encoding)
 print(Channel("health", dict).encoding)
 ```
 
 ```results
 geometry_msgs/msg/PoseStamped.cdr.v1
+sensor_msgs/msg/Image.cdr.v1
 json.v1
 ```
 
