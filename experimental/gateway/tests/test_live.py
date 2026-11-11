@@ -101,12 +101,12 @@ class FakeDimos:
 
         return Handle()
 
-    def restart(self, name: str) -> None:
-        self.calls.append(("restart", name))
+    def restart(self, module_class: type) -> None:
+        self.calls.append(("restart", module_class.__name__))
 
-    def unload(self, name: str) -> None:
-        self.calls.append(("unload", name))
-        if name == "class x.Camera":
+    def unload(self, module_class: type) -> None:
+        self.calls.append(("unload", module_class.__name__))
+        if module_class.__name__ == "Camera":
             raise ValueError("camera is busy")
 
     def peek_stream(self, name: str, timeout: float) -> Any:
@@ -125,8 +125,6 @@ def dimos(state: State, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return world["apps"][-1]
 
     state.live = live.Live(connect, lambda: world["run"])
-    # stands in for importing the module class from its class path
-    monkeypatch.setattr(live, "load_class", lambda path: f"class {path}")
     monkeypatch.setattr(
         state.scanner,
         "cache",
@@ -211,9 +209,9 @@ def test_restart_and_stop_go_by_the_instances_class(
     assert client.post("/active/modules/nope/stop").status_code == 404
     calls = [call for call in dimos["apps"][-1].calls if call[0] in ("restart", "unload")]
     assert calls == [
-        ("restart", "class x.Speaker"),
-        ("unload", "class x.Speaker"),
-        ("unload", "class x.Camera"),
+        ("restart", "Speaker"),
+        ("unload", "Speaker"),
+        ("unload", "Camera"),
     ]
 
 
@@ -295,3 +293,32 @@ def test_connect_uses_the_active_runs_transport_not_the_last_launchs(
     assert live.connect_dimos() == "lcm"
     registered(terminal_run.pid, original_argv=["dimos", "--transport=lcm", "run", "demo"])
     assert live.connect_dimos() == "lcm"
+
+
+def test_an_rpc_the_gateways_copy_of_the_class_lacks_is_still_called() -> None:
+    from dimos.core.core import rpc
+    from dimos.core.module import Module
+    from dimos.core.rpc_client import RPCClient
+
+    class OldGrasp(Module):
+        """The gateway's own (older) copy of a module class: it has no `grasp`."""
+
+        @rpc
+        def home(self) -> str:
+            return "home"
+
+    class Bus:
+        sent: list[tuple[str, Any]] = []
+
+        def call_sync(self, name: str, arguments: Any, rpc_timeout: float | None = None) -> Any:
+            self.sent.append((name, arguments))
+            return f"did {name}", lambda: None
+
+    bus = Bus()
+    handle = RPCClient(None, OldGrasp, "GraspModule", rpc=bus)
+    assert live.rpc_method(handle, "grasp")(target="cup") == "did GraspModule/grasp"
+    assert live.rpc_method(handle, "home")() == "did GraspModule/home"
+    assert bus.sent == [
+        ("GraspModule/grasp", ((), {"target": "cup"})),
+        ("GraspModule/home", ((), {})),
+    ]
