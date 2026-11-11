@@ -58,8 +58,8 @@ failure handling.
 ## Navigation
 
 Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
-arrives or gives up; `help(app.skills.move_to)` explains its world and relative
-coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
+arrives or gives up; `app.describe("UnitreeSkillContainer.move_to")` explains its world
+and relative coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
 and `stop_navigation()` cancels the goal:
 
 ```python skip

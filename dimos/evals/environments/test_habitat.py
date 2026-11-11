@@ -166,7 +166,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
     store.stop.assert_called_once()
 
 
-def test_a_python_api_launch_waits_for_the_coordinator(tmp_path, mocker):
+def test_a_launch_without_mcp_waits_for_the_coordinator(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     proc.extra_env = {}
     mocker.patch(
@@ -177,11 +177,19 @@ def test_a_python_api_launch_waits_for_the_coordinator(tmp_path, mocker):
     env = HabitatEnvironment(blueprint=["habitat-nav", "observe-skill"], scene_id="apt_1")
     mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
     mocker.patch.object(env, "wait_ready")
+    wait_mcp = mocker.patch.object(env, "_wait_mcp")
     try:
         env.start(())
-        connectable.assert_called_once()
+        assert connectable.call_args.args[1] is proc.process
+        wait_mcp.assert_not_called()
     finally:
         env.stop()
+
+
+def test_preflight_refuses_a_transport_other_than_zenoh(mocker):
+    mocker.patch("dimos.evals.environments.habitat.global_config", transport="lcm")
+    with pytest.raises(ValueError, match="DIMOS_TRANSPORT=zenoh"):
+        environment().preflight(Mock())
 
 
 def test_readiness_failure_releases_resources(tmp_path, mocker):
