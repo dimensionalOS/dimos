@@ -15,18 +15,22 @@
 """Nintendo Joy-Cons as a teleop input: buttons, gripper openings and a base twist.
 
 Each Joy-Con pairs over Bluetooth and the kernel's hid-nintendo driver shows
-it as its own gamepad; pygame reads both. Nothing here is specific to a
-robot: the module publishes the same streams the WebXR and keyboard teleop
-modules do, so the episode monitor and the gripper tasks consume it as is.
+it as its own input device; the module reads those event devices directly.
+Nothing here is specific to a robot: the module publishes the same streams the
+WebXR and keyboard teleop modules do, so the episode monitor and the gripper
+tasks consume it as is.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 import os
+from pathlib import Path
+import re
+import struct
 import threading
 import time
-from typing import Any, Protocol
+from typing import Protocol
 
 from pydantic import Field
 
@@ -42,6 +46,7 @@ from dimos.teleop.joycon.mapping import (
     DEFAULT_BUTTON_INDEX,
     GRIPPER_LABEL,
     JOYCON_SIDES,
+    STICK_FULL_SCALE,
     GripperMode,
     JoyConReading,
     JoyConSide,
@@ -58,7 +63,7 @@ logger = setup_logger()
 
 
 class JoyConBackend(Protocol):
-    """Where the readings come from: pygame on a machine, a fake in tests."""
+    """Where the readings come from: the kernel driver on a machine, a fake in tests."""
 
     def open(self) -> None: ...
     def read(self) -> dict[JoyConSide, JoyConReading | None]: ...
@@ -67,17 +72,17 @@ class JoyConBackend(Protocol):
 
 class JoyConTeleopModuleConfig(ModuleConfig):
     tick_period_s: float = Field(default=0.02, gt=0.0)
-    # Substring of the SDL joystick name that identifies each side.
-    left_name: str = "Left Joy-Con"
-    right_name: str = "Right Joy-Con"
-    # SDL button and axis indices per side; run `python -m dimos.teleop.joycon.probe`
-    # and override these when a driver orders them differently.
+    # Substring of the input device name the kernel driver registers for each side.
+    left_name: str = "Joy-Con (L)"
+    right_name: str = "Joy-Con (R)"
+    # Key and axis codes per side; run `python -m dimos.teleop.joycon.probe` and
+    # override these when a driver version reports others.
     left_buttons: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_BUTTON_INDEX["left"]))
     right_buttons: dict[str, int] = Field(
         default_factory=lambda: dict(DEFAULT_BUTTON_INDEX["right"])
     )
-    left_axes: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_AXIS_INDEX))
-    right_axes: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_AXIS_INDEX))
+    left_axes: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_AXIS_INDEX["left"]))
+    right_axes: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_AXIS_INDEX["right"]))
     # hold: closed while ZL/ZR is held. toggle: a press flips open/closed.
     gripper_mode: GripperMode = "hold"
     # The published opening moves at most this much per second (1 = full travel).
@@ -98,79 +103,112 @@ class JoyConTeleopModuleConfig(ModuleConfig):
         return self.left_name if side == "left" else self.right_name
 
 
-class PygameJoyConBackend:
-    """Both Joy-Cons through pygame's joystick API on the kernel driver."""
+_EVENT_FORMAT = "llHHi"
+_EVENT_SIZE = struct.calcsize(_EVENT_FORMAT)
+_EV_KEY = 1
+_EV_ABS = 3
+_RESCAN_PERIOD_S = 1.0
+_DEVICES_FILE = Path("/proc/bus/input/devices")
+
+
+def input_device_paths(devices_file: Path = _DEVICES_FILE) -> dict[str, str]:
+    """Input device name to its event node, from the kernel's device list."""
+    paths: dict[str, str] = {}
+    try:
+        text = devices_file.read_text()
+    except OSError:
+        return paths
+    for block in text.split("\n\n"):
+        name = re.search(r'^N: Name="(.*)"$', block, re.M)
+        handlers = re.search(r"^H: Handlers=(.*)$", block, re.M)
+        event = re.search(r"\bevent\d+\b", handlers.group(1)) if handlers else None
+        if name and event:
+            paths[name.group(1)] = f"/dev/input/{event.group(0)}"
+    return paths
+
+
+class EvdevJoyConBackend:
+    """Both Joy-Cons through the kernel driver's event devices, no library in between."""
 
     def __init__(self, config: JoyConTeleopModuleConfig) -> None:
         self._config = config
-        self._pygame: Any = None
-        self._sticks: dict[JoyConSide, Any] = {}
+        self._fds: dict[JoyConSide, int] = {}
+        self._down: dict[JoyConSide, set[int]] = {side: set() for side in JOYCON_SIDES}
+        self._axes: dict[JoyConSide, dict[int, int]] = {side: {} for side in JOYCON_SIDES}
+        self._next_scan = 0.0
 
     def open(self) -> None:
-        # The kernel driver is the one reader; SDL's own HID backend would fight it.
-        os.environ.setdefault("SDL_JOYSTICK_HIDAPI", "0")
-        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-        try:
-            import pygame
-        except ImportError as exc:
-            raise RuntimeError(
-                "Joy-Con teleop needs pygame; install the manipulation extra"
-            ) from exc
-        pg: Any = pygame
-        self._pygame = pg
-        pg.init()
-        pg.joystick.init()
-        self._rescan()
+        self._scan()
 
-    def _rescan(self) -> None:
-        pygame = self._pygame
-        found: dict[JoyConSide, Any] = {}
-        for index in range(pygame.joystick.get_count()):
-            stick = pygame.joystick.Joystick(index)
-            name = stick.get_name()
-            for side in JOYCON_SIDES:
-                if side not in found and self._config.joystick_name(side) in name:
-                    stick.init()
-                    found[side] = stick
+    def _scan(self) -> None:
+        self._next_scan = time.monotonic() + _RESCAN_PERIOD_S
+        paths = input_device_paths()
         for side in JOYCON_SIDES:
-            if (side in found) != (side in self._sticks):
-                logger.info("Joy-Con %s %s", side, "connected" if side in found else "not present")
-        self._sticks = found
-
-    def read(self) -> dict[JoyConSide, JoyConReading | None]:
-        pygame = self._pygame
-        rescan = False
-        for event in pygame.event.get():
-            if event.type in (pygame.JOYDEVICEADDED, pygame.JOYDEVICEREMOVED):
-                rescan = True
-        if rescan:
-            self._rescan()
-        readings: dict[JoyConSide, JoyConReading | None] = {}
-        for side in JOYCON_SIDES:
-            stick = self._sticks.get(side)
-            if stick is None:
-                readings[side] = None
+            if side in self._fds:
+                continue
+            wanted = self._config.joystick_name(side)
+            path = next((p for name, p in paths.items() if wanted in name), None)
+            if path is None:
                 continue
             try:
-                down = {i: bool(stick.get_button(i)) for i in range(stick.get_numbuttons())}
-                axes = self._config.axis_index(side)
-                count = stick.get_numaxes()
-                x = float(stick.get_axis(axes["x"])) if axes["x"] < count else 0.0
-                y = float(stick.get_axis(axes["y"])) if axes["y"] < count else 0.0
-            except pygame.error as exc:
-                logger.warning("Joy-Con %s read failed: %s", side, exc)
+                self._fds[side] = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError as exc:
+                logger.warning("Joy-Con %s at %s cannot be opened: %s", side, path, exc)
+                continue
+            self._down[side] = set()
+            self._axes[side] = {}
+            logger.info("Joy-Con %s connected at %s", side, path)
+
+    def _drop(self, side: JoyConSide) -> None:
+        fd = self._fds.pop(side, None)
+        if fd is not None:
+            os.close(fd)
+
+    def _drain(self, side: JoyConSide) -> bool:
+        """Apply every queued event; False when the device is gone."""
+        fd = self._fds[side]
+        while True:
+            try:
+                data = os.read(fd, _EVENT_SIZE * 64)
+            except BlockingIOError:
+                return True
+            except OSError:
+                self._drop(side)
+                return False
+            if not data:
+                self._drop(side)
+                return False
+            for offset in range(0, len(data) - len(data) % _EVENT_SIZE, _EVENT_SIZE):
+                _, _, kind, code, value = struct.unpack_from(_EVENT_FORMAT, data, offset)
+                if kind == _EV_KEY:
+                    if value:
+                        self._down[side].add(code)
+                    else:
+                        self._down[side].discard(code)
+                elif kind == _EV_ABS:
+                    self._axes[side][code] = value
+
+    def read(self) -> dict[JoyConSide, JoyConReading | None]:
+        if len(self._fds) < len(JOYCON_SIDES) and time.monotonic() >= self._next_scan:
+            self._scan()
+        readings: dict[JoyConSide, JoyConReading | None] = {}
+        for side in JOYCON_SIDES:
+            if side not in self._fds or not self._drain(side):
                 readings[side] = None
                 continue
+            axes = self._config.axis_index(side)
+            x = self._axes[side].get(axes["x"], 0) / STICK_FULL_SCALE
+            y = self._axes[side].get(axes["y"], 0) / STICK_FULL_SCALE
+            down = dict.fromkeys(self._down[side], True)
             readings[side] = JoyConReading(
-                pressed=pressed_labels(down, self._config.button_index(side)), stick=(x, y)
+                pressed=pressed_labels(down, self._config.button_index(side)),
+                stick=(max(-1.0, min(1.0, x)), max(-1.0, min(1.0, y))),
             )
         return readings
 
     def close(self) -> None:
-        if self._pygame is not None:
-            self._pygame.joystick.quit()
-            self._pygame.quit()
-        self._sticks = {}
+        for side in list(self._fds):
+            self._drop(side)
 
 
 class JoyConTeleopModule(Module):
@@ -196,7 +234,7 @@ class JoyConTeleopModule(Module):
         return self.config
 
     def use_backend(self, backend: JoyConBackend) -> None:
-        """Install a reading source other than pygame, e.g. in tests."""
+        """Install a reading source other than the kernel driver, e.g. in tests."""
         self._backend = backend
 
     @rpc
@@ -207,7 +245,7 @@ class JoyConTeleopModule(Module):
         super().start()
         self._stop_event.clear()
         if self._backend is None:
-            self._backend = PygameJoyConBackend(self.joycon_config)
+            self._backend = EvdevJoyConBackend(self.joycon_config)
         self._backend.open()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()

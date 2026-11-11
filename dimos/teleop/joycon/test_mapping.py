@@ -100,7 +100,7 @@ def test_left_stick_drives_forward_and_left_or_yaw_when_pressed() -> None:
     ) == (0.0, 0.0, 0.0)
 
 
-def test_pressed_labels_translate_sdl_indices() -> None:
+def test_pressed_labels_translate_key_codes() -> None:
     index = DEFAULT_BUTTON_INDEX["right"]
     down = {index["ZR"]: True, index["B"]: True, 99: True}
     assert pressed_labels(down, index) == frozenset({"ZR", "B"})

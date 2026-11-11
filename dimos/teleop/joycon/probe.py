@@ -12,62 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Print every joystick pygame sees and its live button and axis values.
+"""Print every Joy-Con the kernel driver registered and its live key and axis codes.
 
     python -m dimos.teleop.joycon.probe [seconds]
 
-Press each Joy-Con button once and note its index; move each stick to its
-ends. Put the indices into the Joy-Con module config when they differ from
-the defaults in dimos.teleop.joycon.mapping.
+Press each button once and note its code; move each stick to its ends. Put
+the codes into the Joy-Con module config when they differ from the defaults
+in dimos.teleop.joycon.mapping.
 """
 
 from __future__ import annotations
 
-import importlib
 import os
+import select
+import struct
 import sys
 import time
-from typing import Any
+
+from dimos.teleop.joycon.joycon_module import _EVENT_FORMAT, _EVENT_SIZE, input_device_paths
 
 
 def main(seconds: float) -> None:
-    os.environ.setdefault("SDL_JOYSTICK_HIDAPI", "0")
-    os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
-    pygame: Any = importlib.import_module("pygame")
-
-    pygame.init()
-    pygame.joystick.init()
-    sticks = [pygame.joystick.Joystick(i) for i in range(pygame.joystick.get_count())]
-    if not sticks:
-        print("no joysticks; pair the Joy-Cons over bluetoothctl and press a button")
+    devices = {name: path for name, path in input_device_paths().items() if "Joy-Con" in name}
+    if not devices:
+        print("no Joy-Con input devices; pair over Bluetooth (hold SYNC on the rail) and retry")
         return
-    for stick in sticks:
-        stick.init()
-        print(
-            f"[{stick.get_instance_id()}] {stick.get_name()}: "
-            f"{stick.get_numbuttons()} buttons, {stick.get_numaxes()} axes, "
-            f"{stick.get_numhats()} hats"
-        )
+    fds = {}
+    for name, path in devices.items():
+        fds[os.open(path, os.O_RDONLY | os.O_NONBLOCK)] = name
+        print(f"{path}: {name}")
     print("press buttons and move sticks; Ctrl-C to stop")
-    last: dict[tuple[int, str], str] = {}
     deadline = time.monotonic() + seconds
     try:
         while time.monotonic() < deadline:
-            pygame.event.pump()
-            for stick in sticks:
-                sid = stick.get_instance_id()
-                down = [i for i in range(stick.get_numbuttons()) if stick.get_button(i)]
-                axes = [round(stick.get_axis(i), 2) for i in range(stick.get_numaxes())]
-                hats = [stick.get_hat(i) for i in range(stick.get_numhats())]
-                line = f"buttons {down} axes {axes} hats {hats}"
-                if last.get((sid, "line")) != line:
-                    last[(sid, "line")] = line
-                    print(f"[{sid}] {line}")
-            time.sleep(0.02)
+            ready, _, _ = select.select(list(fds), [], [], 0.5)
+            for fd in ready:
+                data = os.read(fd, _EVENT_SIZE * 64)
+                for offset in range(0, len(data) - len(data) % _EVENT_SIZE, _EVENT_SIZE):
+                    _, _, kind, code, value = struct.unpack_from(_EVENT_FORMAT, data, offset)
+                    if kind == 1:
+                        print(f"{fds[fd]}: key {code} {'down' if value else 'up'}")
+                    elif kind == 3:
+                        print(f"{fds[fd]}: axis {code} = {value}")
     except KeyboardInterrupt:
         pass
     finally:
-        pygame.quit()
+        for fd in fds:
+            os.close(fd)
 
 
 if __name__ == "__main__":

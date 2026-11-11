@@ -65,38 +65,45 @@ BUTTONS_BIT_BY_LABEL: dict[JoyConSide, dict[str, str]] = {
 }
 GRIPPER_LABEL: dict[JoyConSide, str] = {"left": "ZL", "right": "ZR"}
 
-# SDL button indices under the kernel hid-nintendo driver, in the order the
-# driver reports its key codes. A best guess until the probe confirms them on
-# a machine; override per side in the module config.
+# Input event key codes the kernel hid-nintendo driver reports per button (BTN_TL2
+# for ZL, BTN_SOUTH for B, ...), read straight from the driver's event device.
+# Confirm with `python -m dimos.teleop.joycon.probe` and override per side in the
+# module config when a driver version differs.
 DEFAULT_BUTTON_INDEX: dict[JoyConSide, dict[str, int]] = {
     "left": {
-        "capture": 0,
-        "L": 1,
-        "SL": 2,
-        "ZL": 3,
-        "SR": 4,
-        "minus": 5,
-        "stick": 6,
-        "up": 7,
-        "down": 8,
-        "left": 9,
-        "right": 10,
+        "capture": 309,
+        "L": 310,
+        "SL": 311,
+        "ZL": 312,
+        "SR": 313,
+        "minus": 314,
+        "stick": 317,
+        "up": 544,
+        "down": 545,
+        "left": 546,
+        "right": 547,
     },
     "right": {
-        "B": 0,
-        "A": 1,
-        "X": 2,
-        "Y": 3,
-        "SL": 4,
-        "R": 5,
-        "SR": 6,
-        "ZR": 7,
-        "plus": 8,
-        "home": 9,
-        "stick": 10,
+        "B": 304,
+        "A": 305,
+        "X": 307,
+        "Y": 308,
+        "SL": 310,
+        "R": 311,
+        "SR": 312,
+        "ZR": 313,
+        "plus": 315,
+        "home": 316,
+        "stick": 318,
     },
 }
-DEFAULT_AXIS_INDEX: dict[str, int] = {"x": 0, "y": 1}
+# Absolute axis codes of each Joy-Con's stick: ABS_X/ABS_Y on the left, ABS_RX/ABS_RY
+# on the right, each -32767..32767.
+DEFAULT_AXIS_INDEX: dict[JoyConSide, dict[str, int]] = {
+    "left": {"x": 0, "y": 1},
+    "right": {"x": 3, "y": 4},
+}
+STICK_FULL_SCALE = 32767.0
 
 
 @dataclass(frozen=True)
@@ -193,7 +200,7 @@ def stick_to_base_velocity(
 ) -> tuple[float, float, float]:
     """Left stick to (vx, vy, wz): forward and left, or yaw while the stick is pressed.
 
-    SDL gives +x to the right and +y down, so forward is -y and left is -x.
+    The driver gives +x to the right and +y down, so forward is -y and left is -x.
     """
     if reading is None:
         return (0.0, 0.0, 0.0)
@@ -207,7 +214,7 @@ def stick_to_base_velocity(
 def pressed_labels(
     button_down: Mapping[int, bool], index_by_label: Mapping[str, int]
 ) -> frozenset[str]:
-    """Translate SDL button indices that are down into Joy-Con labels."""
+    """Translate the key codes that are down into Joy-Con labels."""
     return frozenset(
         label for label, index in index_by_label.items() if button_down.get(index, False)
     )

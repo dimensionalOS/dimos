@@ -128,8 +128,9 @@ def test_start_and_stop_open_and_close_the_backend(mocker: MockerFixture) -> Non
 
 def test_config_validates_mode_and_rates() -> None:
     config = JoyConTeleopModuleConfig(gripper_mode="toggle", deadzone=0.2)
-    assert config.button_index("right")["ZR"] == 7
-    assert config.joystick_name("left") == "Left Joy-Con"
+    assert config.button_index("right")["ZR"] == 313
+    assert config.axis_index("right") == {"x": 3, "y": 4}
+    assert config.joystick_name("left") == "Joy-Con (L)"
     with pytest.raises(ValueError):
         JoyConTeleopModuleConfig(gripper_slew_per_s=0.0)
     with pytest.raises(ValueError):

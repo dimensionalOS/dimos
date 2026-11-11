@@ -215,8 +215,8 @@ target on a measured angle that lags the leader; that is follower-side.
 `teleop-openarm-mini-joycon` and `teleop-openarm-mini-joycon-leader` add a
 Nintendo Joy-Con per leader (L on the left, R on the right) beside the leader
 module. The Joy-Cons pair over Bluetooth; the kernel `hid-nintendo` driver
-shows each as a gamepad and the module reads both with pygame, so there is
-no extra dependency. With the trigger servo removed, `calibrate` records arm
+registers each as an input device and the module reads those devices
+directly, so there is no extra dependency. With the trigger servo removed, `calibrate` records arm
 joints only and the Joy-Cons are the only gripper publisher.
 
 | Joy-Con | does |
@@ -227,24 +227,31 @@ joints only and the Joy-Cons are the only gripper publisher.
 | left stick | base velocity on `cmd_vel` when `publish_cmd_vel` is on; stick pressed turns it into yaw |
 
 Pair once per Joy-Con, holding the SYNC button on its rail until the LEDs
-chase:
+chase. bluez refuses a Joy-Con's input session by default because the
+controller opens it before the bond completes, so allow that first:
 
 ```bash
+sudo sed -i 's/^#ClassicBondedOnly=true/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
+sudo systemctl restart bluetooth
 bluetoothctl
 power on; agent on; scan on
 pair <MAC>; trust <MAC>; connect <MAC>
 ```
 
-Then confirm the button indices the driver reports, pressing each button
+A Joy-Con that was refused once goes to sleep; wake it with any button or
+pair it again. The Bluetooth settings panel works as well.
+
+Then confirm the key and axis codes the driver reports, pressing each button
 and moving each stick:
 
 ```bash
 python -m dimos.teleop.joycon.probe 60
 ```
 
-The defaults in `dimos.teleop.joycon.mapping` are a first guess for
-`hid-nintendo`; when an index differs, pass the table per side, for example
-`--joyconteleopmodule.right-buttons '{"ZR": 7, "B": 0, "Y": 3, "plus": 8, "A": 1, "X": 2, "R": 5, "stick": 10}'`.
+The defaults in `dimos.teleop.joycon.mapping` are `hid-nintendo`'s codes
+(ZL is key 312, B is 304, the left stick is axes 0 and 1, the right stick 3
+and 4); when a code differs, pass the table per side, for example
+`--joyconteleopmodule.right-buttons '{"ZR": 313, "B": 304, "Y": 308, "plus": 315, "A": 305, "X": 307, "R": 311, "stick": 318}'`.
 The published opening slews at `gripper_slew_per_s` (3 per second) so a jaw
 never slams. A Joy-Con that drops off Bluetooth keeps its last opening until
 it is back; the other side keeps working.
