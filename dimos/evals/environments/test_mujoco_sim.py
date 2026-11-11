@@ -23,8 +23,8 @@ import pytest
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ARM_README, RAW_README
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
-from dimos.evals.environments.live import PYTHON_API_GUIDE
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

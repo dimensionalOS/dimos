@@ -52,7 +52,8 @@ from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.environments.live import PYTHON_API_GUIDE, LiveEnvironment
+from dimos.evals.environments.live import LiveEnvironment
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -288,13 +289,6 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
     proc.stop.assert_called_once_with()
 
 
-def test_attach_checks_the_python_guide_exists(tmp_path: Path, mocker: MockerFixture) -> None:
-    mocker.patch("dimos.evals.environments.live.PYTHON_API_GUIDE", tmp_path / "missing.md")
-    env = DimSimEnvironment(blueprint=["unitree-go2"], attach=True)
-    with pytest.raises(RuntimeError, match="Python API guide .* does not exist"):
-        env.preflight(McpClientAdapter())
-
-
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
         _sim(attach=True).preflight(McpClientAdapter(modules=("agent",)))
@@ -461,16 +455,6 @@ def test_a_blueprint_with_mcp_server_fails_without_its_mcp_url(
             env.start(())
     finally:
         env.stop()
-
-
-def test_agents_without_dimos_skip_the_python_api_guide_check(
-    tmp_path: Path, mocker: MockerFixture
-) -> None:
-    mocker.patch("dimos.evals.environments.live.PYTHON_API_GUIDE", tmp_path / "missing.md")
-    env = DimSimEnvironment(blueprint=["unitree-go2"], raw_bridge=True, raw_guide=RAW_README)
-    env.preflight(PiAdapter(no_dimos=True))
-    with pytest.raises(RuntimeError, match="Python API guide"):
-        env.preflight(PiAdapter())
 
 
 def test_question_answer_encodes_the_recording_into_one_call(

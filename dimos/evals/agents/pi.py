@@ -30,7 +30,6 @@ from typing import IO, TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, JsonValue, TypeAdapter
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.evals.agents.base import EvalSubject, ModelAgentConfig, strip_dimos
 from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
@@ -255,8 +254,7 @@ class PiAdapter(EvalSubject):
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
             if env.python_guide is not None:
                 guide = run_dir / "DIMOS.md"
-                text = env.python_guide.read_text()
-                guide.write_text(text.replace("](/", f"]({DIMOS_PROJECT_ROOT}/"))
+                guide.write_text(env.python_guide)
                 files["robot"] = guide
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))

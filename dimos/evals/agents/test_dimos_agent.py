@@ -174,12 +174,10 @@ def test_run_records_tool_results_and_reports_unanswered_cases(
 
 def test_its_own_mcp_server_gives_the_agent_dimos_md_not_a_tool_list(tmp_path, mocker):
     listing = mocker.patch("dimos.evals.agents.pi.tool_listing")
-    guide = tmp_path / "python_api.md"
-    guide.write_text("# Python API")
     run_dir = tmp_path / "case"
     run_dir.mkdir()
     env = RunningEnvironment(
-        mcp_url="http://127.0.0.1:9990/mcp", streams=(), artifacts={}, python_guide=guide
+        mcp_url="http://127.0.0.1:9990/mcp", streams=(), artifacts={}, python_guide="# Python API"
     )
     prompt = DimosAgentAdapter()._prepare_case(env, run_dir)
     assert f"- robot: {run_dir / 'DIMOS.md'}" in prompt

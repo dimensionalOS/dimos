@@ -29,7 +29,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
-from dimos.constants import DIMOS_PROJECT_ROOT, RECORDINGS_DIR
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import MCP_SERVER, RAW_ENDPOINT
@@ -40,6 +40,7 @@ from dimos.evals.environments.lib.launch import (
     validate_blueprints,
     wait_connectable,
 )
+from dimos.evals.guide import PYTHON_API_GUIDE
 from dimos.evals.types import RunningEnvironment
 from dimos.utils.logging_config import setup_logger
 
@@ -49,8 +50,6 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
-
-PYTHON_API_GUIDE = DIMOS_PROJECT_ROOT / "docs" / "usage" / "python-api.md"
 
 
 class LiveEnvironmentConfig(EnvironmentConfig):
@@ -101,8 +100,8 @@ class LiveEnvironment(Environment):
         return MCP_SERVER in self.config.blueprint
 
     @property
-    def python_guide(self) -> Path | None:
-        """DIMOS.md source when agents drive the robot through the Python API."""
+    def python_guide(self) -> str | None:
+        """DIMOS.md, when agents drive the robot through the Python API."""
         return None if self.serves_mcp else PYTHON_API_GUIDE
 
     def __init__(self, **kwargs: Any) -> None:
@@ -134,9 +133,6 @@ class LiveEnvironment(Environment):
         return cast("PoseStamped", recording.streams.odom.last().data)
 
     def preflight(self, agent: EvalSubject) -> None:
-        guide = self.python_guide
-        if guide is not None and not agent.config.no_dimos and not guide.is_file():
-            raise RuntimeError(f"Python API guide {guide} does not exist")
         if self.config.attach:
             if agent.config.modules:
                 raise RuntimeError(
