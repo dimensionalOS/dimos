@@ -38,9 +38,8 @@ import shutil
 import subprocess
 import sys
 import threading
-from urllib.parse import parse_qs
-
 import tomllib
+from urllib.parse import parse_qs
 
 OWNER, NAME = "dimensionalOS", "dimos"
 GIT_URL = f"https://github.com/{OWNER}/{NAME}"
