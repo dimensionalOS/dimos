@@ -28,6 +28,7 @@ from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import RobotModel, UsdModel
 from dimos.sim2.geometry.poses import pose_array, poses_by_id
+from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.lidar.config import LidarConfig, Raycaster
 from dimos.sim2.sensors.poses import PoseSensorConfig, _PoseSensorModule
 from dimos.sim2.sensors.sampling import Acquisition
@@ -72,6 +73,7 @@ class SimLidarModule(_PoseSensorModule):
         self._response = c.response() if c.response is not None else None
         self._history: deque[WorldState] = deque()
         self._sampling = Acquisition(c.scan_hz)
+        self._publication_rate = PublicationRate(self, "lidar", c.scan_hz)
         self._epoch = -1
 
     def open_sensor(self, scene: UsdModel) -> None:
@@ -154,10 +156,12 @@ class SimLidarModule(_PoseSensorModule):
         return raw, world
 
     def acquire(self, sample: WorldState, *, latest: bool = True) -> None:
+        self._publication_rate.begin()
         clouds = self.measure(sample)
         if clouds is not None:
             raw, world = clouds
             self.lidar.publish(raw)
+            self._publication_rate.published()
             if self.config.sensor.publish_truth:
                 self.pointcloud.publish(world)
             self.count("acquisitions")

@@ -34,6 +34,7 @@ from dimos.core.stream import In, Out
 from dimos.sim2.cbor import validate_cbor_entries
 from dimos.sim2.description import SceneConfig
 from dimos.sim2.physics.interface import PhysicsBackend
+from dimos.sim2.publication import PublicationRate
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -92,6 +93,7 @@ class SimModule(Module):
         self._expires: dict[str, int] = {}
         self._next_sample_ns = 0
         self._next_warning = 0.0
+        self._publication_rate = PublicationRate(self, "observations", self.config.observation_hz)
 
     @rpc
     def simulation_config(self) -> dict[str, Any]:
@@ -108,6 +110,7 @@ class SimModule(Module):
         try:
             self._threads[0].start()
             self._ready.result(timeout=120)
+            self._publication_rate.begin()
             publisher = threading.Thread(
                 target=self._publish, name="sim2-observations", daemon=True
             )
@@ -349,6 +352,7 @@ class SimModule(Module):
                     self._done.wait(0.001)
                     continue
                 self.observations.publish(sample)
+                self._publication_rate.published()
         except Exception as error:
             self._publication_failed(error)
 

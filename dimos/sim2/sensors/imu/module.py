@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.robot.assets.model import RobotModel
 from dimos.sim2.module import SimModule
+from dimos.sim2.publication import PublicationRate
 from dimos.sim2.sensors.sampling import Acquisition, same_acquisition
 
 
@@ -64,6 +65,7 @@ class SimImuModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._sampling = Acquisition(self.config.sensor.hz)
+        self._publication_rate = PublicationRate(self, "imu", self.config.sensor.hz)
         self._last: Imu | None = None
         self._last_header: SampleHeader | None = None
         self._gravity_world: NDArray[np.float64] | None = None
@@ -123,6 +125,8 @@ class SimImuModule(Module):
         return self._last
 
     async def handle_observations(self, truth: WorldState) -> None:
+        self._publication_rate.begin()
         sample = self.measure(truth)
         if sample is not None:
             self.imu.publish(sample)
+            self._publication_rate.published()
