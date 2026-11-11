@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 
 _WORLD = Path(__file__).parents[3] / "misc" / "DimSim" / "cli"
 TIMESTEP = 0.02
+# Seconds of world time between repeats of the entity table.
+_ANNOUNCE_PERIOD = 1.0
 BASE_JOINTS = ("base_vx", "base_vy", "base_wz")
 _DEFAULT_ROBOT_MASS = 10.0
 
@@ -66,7 +68,8 @@ class DimSimBackend:
         self._pending: list[Action] = []
         self._lock = Lock()
         self.world = WorldWriter()
-        self._added: set[str] = set()
+        self._entities: dict[str, dict[str, Any]] = {}
+        self._announced_at: float | None = None
         self._moved: dict[str, Any] = {}
         self._base = {robot.robot_id: [0.0, 0.0, 0.0] for robot in self._robots}
         self._layers = {robot.robot_id: usd_layer(robot.model) for robot in self._robots}
@@ -187,22 +190,38 @@ class DimSimBackend:
         with self._lock:
             self._moved.update(state["entities"])
 
+    def _remember(self, path: str, **cbor: Any) -> None:
+        self._entities[path] = cbor
+        self.world.add(path, **cbor)
+
+    def _announce(self) -> None:
+        """Say what is in this world, again.
+
+        Positions carry entity ids, and an id a listener never saw named is dropped, so a
+        table sent once at startup leaves anything that joins later blind for good -- a module
+        restarted, a tool attached, a listener whose first frame the transport lost. Repeating
+        it costs a handful of items a second and bounds how stale a new listener can be.
+        """
+        if not self._entities:
+            self._remember("world", backend="dimsim")
+            for robot_id in self._base:
+                self._remember(robot_id, model=str(self._layers[robot_id]))
+                for name in BASE_JOINTS:
+                    self._remember(f"{robot_id}/{name}")
+            return
+        for path, cbor in self._entities.items():
+            self.world.add(path, **cbor)
+
     def frame(self) -> WorldObservations:
         world = self.world
-        if not self._added:
-            world.add("world", backend="dimsim")
-            self._added.add("world")
-            for robot_id in self._base:
-                world.add(robot_id, model=str(self._layers[robot_id]))
-                for name in BASE_JOINTS:
-                    world.add(f"{robot_id}/{name}")
-                self._added.add(robot_id)
+        if self._announced_at is None or self._time - self._announced_at >= _ANNOUNCE_PERIOD:
+            self._announce()
+            self._announced_at = self._time
         with self._lock:
             moved, self._moved = self._moved, {}
         for name, entity in moved.items():
-            if name not in self._added:
-                world.add(name)
-                self._added.add(name)
+            if name not in self._entities:
+                self._remember(name)
             world.position(name, [*entity["pos"], *entity["quat"]])
         for robot_id, held in self._base.items():
             if robot_id not in self._base_sent:
