@@ -376,6 +376,7 @@ all_modules = {
     "semantic-search": "dimos.memory.semantic_search.SemanticSearch",
     "sim-camera": "dimos.sim2.camera.SimCamera",
     "sim-go2-world": "dimos.simulation.go2_sim.world.SimGo2World",
+    "sim-imu": "dimos.sim2.imu.SimImu",
     "sim-m20-world": "dimos.simulation.m20_sim.world.SimM20World",
     "simple-phone-teleop": "dimos.teleop.phone.phone_extensions.SimplePhoneTeleop",
     "spatial-memory": "dimos.perception.experimental.spatial_perception.SpatialMemory",
