@@ -32,7 +32,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.testing.waiting import wait_until
 
 J1 = "arm/joint1"
@@ -94,11 +94,27 @@ def arm(
 
 
 def base(readings: Collection[str] = ("joint_state",)) -> ConnectionSource:
-    """A base called "go2" that takes speeds and reports where it is and how fast it goes."""
-    names = ("go2/base_x", "go2/base_y", "go2/base_yaw")
-    model = fake_arm_model().with_planar_base(
-        PlanarBaseDefinition(
-            joint_names=names, velocity_limits=(1.0, 0.5, 2.0), acceleration_limits=(1.0, 1.0, 2.0)
+    """A base called "go2" with native body-rate feedback and no pose dependency."""
+    names = ("go2/base_forward", "go2/base_lateral", "go2/base_turn")
+    # Control-only axes carrying limits, not geometric odometry coordinates.
+    model = fake_arm_model().with_added_joints(
+        *(
+            JointDescription(
+                name=name,
+                type=kind,
+                parent_link="link0",
+                child_link=f"body_axis_{index}",
+                velocity=limit,
+                acceleration=1.0,
+            )
+            for index, (name, kind, limit) in enumerate(
+                zip(
+                    names,
+                    ("prismatic", "prismatic", "continuous"),
+                    (1.0, 0.5, 2.0),
+                    strict=True,
+                )
+            )
         )
     )
     config = ConnectionConfig(
@@ -271,14 +287,12 @@ def test_each_kind_of_command_goes_to_its_own_port() -> None:
     assert list(velocities.message.position) == []
 
 
-def test_planar_joints_use_the_same_command_and_state_wire() -> None:
+def test_body_rate_feedback_is_ready_without_positions_or_odometry() -> None:
     source = base()
     names = source.joint_names
-    source.on_message(
-        "joint_state", JointState(name=names, position=[1.0, -2.0, 0.7], velocity=[0.4, 0.0, 0.0])
-    )
+    source.on_message("joint_state", JointState(name=names, velocity=[0.4, 0.0, 0.0]))
     assert source.ready_for_control()
-    assert source.read_joints().joint_positions == dict(zip(names, [1.0, -2.0, 0.7], strict=True))
+    assert source.read_joints().joint_positions == {}
     assert source.read_joints().joint_velocities[names[0]] == 0.4
     values = source.command({})
     (message,) = source.command_messages(values, ts=1.0)
@@ -298,7 +312,7 @@ def test_invalid_velocity_alias_commands_are_rejected(
     mode: ControlMode, value: float, error: str
 ) -> None:
     with pytest.raises(ValueError, match=error):
-        base().command({"go2/base_x": (value, mode)})
+        base().command({"go2/base_forward": (value, mode)})
 
 
 def test_one_velocity_winner_does_not_switch_an_idle_joints_interface() -> None:
@@ -315,7 +329,7 @@ def test_live_sensor_traffic_cannot_refresh_joint_feedback(monkeypatch: pytest.M
     clock = [1000.0]
     monkeypatch.setattr("time.monotonic", lambda: clock[0])
     source = base(readings=("joint_state", "imu"))
-    feedback = JointState(name=source.joint_names, position=[1.0, -2.0, 0.7])
+    feedback = JointState(name=source.joint_names, velocity=[0.4, 0.0, 0.0])
     source.on_message("joint_state", feedback)
     source.on_message("imu", Imu(frame_id="imu"))
     assert source.ready_for_control()
@@ -323,7 +337,7 @@ def test_live_sensor_traffic_cannot_refresh_joint_feedback(monkeypatch: pytest.M
         clock[0] += 0.04
         source.on_message("imu", Imu(frame_id="imu"))
     assert not source.ready_for_control()
-    assert source.read_joints().joint_positions["go2/base_x"] == 1.0
+    assert source.read_joints().joint_velocities["go2/base_forward"] == 0.4
     assert source.read_joints().joint_command_interfaces == {
         name: frozenset({Interface.VELOCITY}) for name in source.joint_names
     }
@@ -334,7 +348,7 @@ def test_live_sensor_traffic_cannot_refresh_joint_feedback(monkeypatch: pytest.M
 @pytest.mark.parametrize("bad", [math.nan, math.inf])
 def test_nonfinite_joint_packets_do_not_refresh_feedback(bad: float) -> None:
     source = base()
-    source.on_message("joint_state", JointState(name=source.joint_names, position=[1.0, 2.0, bad]))
+    source.on_message("joint_state", JointState(name=source.joint_names, velocity=[0.4, 0.0, bad]))
     assert not source.ready_for_control()
     assert source.read_joints().joint_positions == {}
 
