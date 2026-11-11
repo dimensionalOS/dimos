@@ -230,7 +230,8 @@ class GlobalPlanner(Resource):
                 continue
 
             if (
-                current_goal.position.distance(current_odom.position) < self._goal_tolerance
+                _planar_distance(current_goal.position, current_odom.position)
+                < self._goal_tolerance
                 and abs(
                     angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
                 )
@@ -302,7 +303,10 @@ class GlobalPlanner(Resource):
         assert current_odom is not None
         assert current_goal is not None
 
-        if current_goal.position.distance(current_odom.position) < self._replan_goal_tolerance:
+        if (
+            _planar_distance(current_goal.position, current_odom.position)
+            < self._replan_goal_tolerance
+        ):
             self.cancel_goal(arrived=True)
             return
 
@@ -360,7 +364,7 @@ class GlobalPlanner(Resource):
         sizes_to_try: list[float] = [1.1]
 
         for size in sizes_to_try:
-            distance = robot_pos.distance(goal)
+            distance = _planar_distance(robot_pos, goal)
             navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
             costmap = navigation_map.make_gradient_costmap(size)
             self._clear_robot_footprint(costmap, navigation_map.binary_costmap, robot_pos)
@@ -426,9 +430,9 @@ class GlobalPlanner(Resource):
             logger.warning("No safe goal found near requested target.")
             return None
 
-        goals_distance = safe_goal.distance(goal)
+        goals_distance = _planar_distance(safe_goal, goal)
         if goals_distance > 0.2:
-            logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
+            logger.warning(f"Travelling to goal {goals_distance:.2f}m away from requested goal.")
 
         logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
@@ -437,3 +441,13 @@ class GlobalPlanner(Resource):
     def _reset_safe_goal_clearance(self) -> None:
         with self._lock:
             self._safe_goal_clearance = self._robot_rotation_diameter / 2
+
+
+def _planar_distance(a: Vector3, b: Vector3) -> float:
+    """Distance in the costmap plane.
+
+    Odometry carries the height of the robot's body and a goal carries whatever z
+    its sender gave it, while costmap cells are at z=0. None of that is distance
+    left to travel.
+    """
+    return a.to_2d().distance(b.to_2d())
