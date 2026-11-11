@@ -215,34 +215,40 @@ def test_publish_tf_on_by_default(connection: Callable[[bool], GO2Connection]) -
     assert conn.odom.publish.call_count == 1
 
 
-def test_canonical_velocity_requires_independent_fresh_yaw(connection):
+def test_body_command_and_pose_derived_feedback(connection):
     conn = connection(publish_tf=False)
     conn.joint_state = MagicMock()
+    conn.odometry = MagicMock()
     values = {
         f"{name}/velocity": v
-        for name, v in zip(go2_conn.GO2_BASE_JOINTS, (0.0, 1.0, 0.2), strict=True)
+        for name, v in zip(go2_conn.GO2_BASE_JOINTS, (0.4, 0.1, 0.2), strict=True)
     }
-    with pytest.raises(ValueError, match="fresh measured"):
-        conn.write(values)
-    conn._publish_tf(
-        PoseStamped(
-            position=[2.0, 3.0, 0.0],
-            orientation=Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4)),
-        )
-    )
+    conn.write(values)  # No pose prerequisite.
+    q = Quaternion(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    conn._publish_tf(PoseStamped(ts=10.0, position=[2.0, 3.0, 0.0], orientation=q))
+    conn.joint_state.publish.assert_not_called()  # No invented first rate.
+    conn.odometry.publish.assert_not_called()
+    conn._publish_tf(PoseStamped(ts=10.1, position=[1.99, 3.04, 0.0], orientation=q))
     state = conn.joint_state.publish.call_args.args[0]
+    odom = conn.odometry.publish.call_args.args[0]
     assert state.name == list(go2_conn.GO2_BASE_JOINTS)
-    assert state.position == pytest.approx([2.0, 3.0, math.pi / 2])
-    conn.write(values)
+    assert list(state.position) == []
+    assert state.frame_id == odom.child_frame_id == "base_link"
+    assert state.ts == odom.ts == 10.1
+    assert state.velocity == pytest.approx([0.4, 0.1, 0.0])
+    assert [odom.twist.linear.x, odom.twist.linear.y] == pytest.approx([0.4, 0.1])
+    assert odom.pose.position.y == 3.04
+    conn.write(values)  # Measured nonzero yaw cannot change body commands.
     twist = conn.connection.move.call_args.args[0]
-    assert [twist.linear.x, twist.linear.y, twist.angular.z] == pytest.approx([1.0, 0.0, 0.2])
-    conn._odom_received_at -= 1.0
-    with pytest.raises(ValueError, match="fresh measured"):
-        conn.write(values)
-    conn._publish_tf(PoseStamped(orientation=Quaternion(0.0, 0.0, 0.0, 0.0)))
-    with pytest.raises(ValueError, match="fresh measured"):
-        conn.write(values)
+    assert [twist.linear.x, twist.linear.y, twist.angular.z] == pytest.approx([0.4, 0.1, 0.2])
+    conn._publish_tf(PoseStamped(ts=10.1, orientation=q))  # duplicate time: no rate
+    conn._publish_tf(PoseStamped(ts=12.0, orientation=q))  # missing interval
     assert conn.joint_state.publish.call_count == 1
+    half_yaw = math.pi / 4 + 0.01
+    turning = Quaternion(0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+    conn._publish_tf(PoseStamped(ts=12.1, orientation=turning))
+    assert conn.joint_state.publish.call_args.args[0].velocity[2] == pytest.approx(0.2)
+    assert conn.odometry.publish.call_args.args[0].twist.angular.z == pytest.approx(0.2)
     conn.halt()
     conn.connection.stop_movement.assert_called_once()
 

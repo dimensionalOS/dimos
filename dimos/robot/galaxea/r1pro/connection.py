@@ -16,8 +16,8 @@
 
 Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams under
 the control contract: the upper body's 18 joints (torso 4 + left arm 7 +
-right arm 7) take positions on ``position_command``. The ordinary planar
-model joints take world-frame velocities on ``velocity_command``. Feedback
+right arm 7) take positions on ``position_command``. The
+body-axis resources take native body-frame velocities on ``velocity_command``. Feedback
 goes out on ``joint_state``, the two
 IMU streams and wheel odometry. The chassis lidar is ours, not the
 vendor's: see ``r1pro_lidar_odometry``.
@@ -25,8 +25,7 @@ vendor's: see ``r1pro_lidar_odometry``.
 Commands arrive as standard messages and go through ``command``: checked
 against the model limits (out-of-range speeds are rejected), then forwarded
 by ``write``. Existing measured chassis speeds integrate local wheel odometry
-and rotate vendor body velocity into world derivatives; fresh feedback yaw rotates
-outgoing velocities back to the vendor body frame. Once a command was accepted, going
+independently of the native body commands and measured body-rate feedback. Once a command was accepted, going
 ``deadman_timeout_s`` without another halts the robot: zero chassis speed
 and the arms held where they were last measured.
 
@@ -83,7 +82,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.galaxea.r1pro.config import R1PRO_CONTROL_MODEL, R1PRO_PLANAR_BASE
+from dimos.robot.galaxea.r1pro.config import R1PRO_BODY_AXES, R1PRO_CONTROL_MODEL
 from dimos.robot.galaxea.r1pro.joints import GRIPPER_JOINTS, UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -100,8 +99,8 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# Ordinary model joints, in world x/y/yaw order.
-R1PRO_BASE_JOINTS: list[str] = list(R1PRO_PLANAR_BASE.joint_names)
+# Native body forward/lateral/turn velocity resources; no pose coordinates.
+R1PRO_BASE_JOINTS: list[str] = list(R1PRO_BODY_AXES)
 R1PRO_GRIPPER_JOINTS: list[str] = [coordinator_name(joint) for joint in GRIPPER_JOINTS]
 R1PRO_GRIPPER_SIDES = dict(zip(R1PRO_GRIPPER_JOINTS, ("left", "right"), strict=True))
 _GRIPPER_MM_PER_M = 1000.0
@@ -189,11 +188,10 @@ class R1ProConnectionConfig(ConnectionConfig):
     ``deadman_timeout_s``) default to the real robot: the
     18 upper-body joints take positions only — the vendor tracker's speed
     is a tracking-speed cap, not a continuous velocity command — and the
-    planar joints take velocities bounded by ``R1PRO_PLANAR_BASE.velocity_limits``.
+    body resources take bounded forward/lateral/turn velocities; they carry no pose.
 
     Attributes:
-        odometry_timeout_s: Independent measured chassis timestamp and receipt
-            age limit. Wheel odometry integrates /motion_control/chassis_speed
+        odometry_timeout_s: Measured chassis source-timestamp age limit. Wheel odometry integrates /motion_control/chassis_speed
             in a local relative frame, not an externally localized map frame.
         tracking_speed: rad/s the on-board tracker follows targets at.
         publish_odom_tf: Gates wheel odometry's odom -> base_link tf and the
@@ -242,11 +240,11 @@ class R1ProConnection(ConnectionModule):
     """R1 Pro connection module — ROS 2 control and sensor nodes.
 
     ``position_command`` carries all 18 upper-body joints' targets in rad,
-    named ``r1pro/<joint>``; ``velocity_command`` carries planar joint velocities. Both
+    named ``r1pro/<joint>``; ``velocity_command`` carries native body rates. Both
     are checked against the limits table before anything is sent. Feedback
     for the upper body is published once every segment has reported, at
-    ``config.publish_rate_hz``. Planar feedback is published on actual odometry
-    receipts, independently of that timer and the IMUs.
+    ``config.publish_rate_hz``. Body-rate feedback is published on actual chassis
+    measurements, independently of that timer, odometry integration and the IMUs.
     """
 
     config: R1ProConnectionConfig
@@ -314,9 +312,6 @@ class R1ProConnection(ConnectionModule):
         self._odom_y = 0.0
         self._odom_yaw = 0.0
         self._odom_last_ts: float | None = None
-        # Only actual validated feedback authorizes world -> body commands.
-        self._base_state: JointState | None = None
-        self._odom_received_mono: float | None = None
         # The jaws, by side ("left"/"right"); see _GripperChannel.
         self._grippers: dict[str, _GripperChannel] = {
             side: _GripperChannel() for side in _GRIPPER_FAULT_SEGMENTS
@@ -441,8 +436,6 @@ class R1ProConnection(ConnectionModule):
             self._torso_seen = self._left_seen = self._right_seen = False
             self._latest_imu_chassis = None
             self._latest_imu_torso = None
-            self._base_state = None
-            self._odom_received_mono = None
             self._odom_last_ts = None
 
     # The control contract
@@ -463,24 +456,7 @@ class R1ProConnection(ConnectionModule):
         base_packet: tuple[float, float, float] | None = None
         if any(speed is not None for speed in speeds):
             vx, vy, wz = (0.0 if speed is None else speed for speed in speeds)
-            # A literal zero is frame independent, including when odometry is absent.
-            if vx == vy == wz == 0.0:
-                base_packet = (0.0, 0.0, 0.0)
-            else:
-                with self._lock:
-                    state, received = self._base_state, self._odom_received_mono
-                if (
-                    state is None
-                    or received is None
-                    or time.monotonic() - received > self.config.odometry_timeout_s
-                    or not 0 <= time.time() - state.ts <= self.config.odometry_timeout_s
-                ):
-                    raise ValueError("fresh measured odometry yaw is required")
-                yaw = float(state.position[2])
-                if not math.isfinite(yaw):
-                    raise ValueError("fresh measured odometry yaw is required")
-                cy, sy = math.cos(yaw), math.sin(yaw)
-                base_packet = (cy * vx + sy * vy, -sy * vx + cy * vy, wz)
+            base_packet = (vx, vy, wz)
         # Validate/compute the whole batch before any arm SDK send.
         if any(target is not None for target in positions):
             if not all(target is not None for target in positions):
@@ -885,18 +861,20 @@ class R1ProConnection(ConnectionModule):
                 raise ValueError("stale chassis timestamp")
         except (AttributeError, TypeError, ValueError):
             with self._lock:
-                self._base_state = None
-                self._odom_received_mono = None
                 self._odom_last_ts = None
             return
+        # Measured native rates exist even before the integration time anchor.
+        self.joint_state.publish(
+            JointState(
+                ts=ts, frame_id=self.config.frame_id, name=R1PRO_BASE_JOINTS, velocity=[vx, vy, wz]
+            )
+        )
         with self._lock:
             previous = self._odom_last_ts
             self._odom_last_ts = ts
             if previous is None or not 0 < ts - previous <= 1.0:
                 # Establish/rebase the time anchor, not the accumulated local pose.
                 # No invented motion across invalid, backwards or missing intervals.
-                self._base_state = None
-                self._odom_received_mono = None
                 return
             dt = ts - previous
             cy, sy = math.cos(self._odom_yaw), math.sin(self._odom_yaw)
@@ -904,23 +882,9 @@ class R1ProConnection(ConnectionModule):
             y = self._odom_y + (sy * vx + cy * vy) * dt
             yaw = self._odom_yaw + wz * dt
             if not all(math.isfinite(n) for n in (x, y, yaw)):
-                self._base_state = None
-                self._odom_received_mono = None
                 self._odom_last_ts = None
                 return
             self._odom_x, self._odom_y, self._odom_yaw = x, y, yaw
-            cy, sy = math.cos(yaw), math.sin(yaw)
-            state = JointState(
-                ts=ts,
-                frame_id=self.config.odom_frame_id,
-                name=R1PRO_BASE_JOINTS,
-                position=[x, y, yaw],
-                velocity=[cy * vx - sy * vy, sy * vx + cy * vy, wz],
-            )
-            self._base_state = state
-            self._odom_received_mono = time.monotonic()
-        # Only measured receipts publish planar state; arm timers cannot refresh it.
-        self.joint_state.publish(state)
         position = Vector3(x, y, 0.0)
         orientation = Quaternion(0.0, 0.0, math.sin(yaw / 2), math.cos(yaw / 2))
         pose = PoseStamped(

@@ -45,10 +45,12 @@ from dimos.control.tasks.holonomic_pose_follower_task.progress_reference import 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_values
 from dimos.utils.trigonometry import angle_diff
 
 logger = setup_logger()
@@ -86,8 +88,6 @@ def _pose_stamped(pose: tuple[float, float, float]) -> PoseStamped:
 
 @dataclass
 class HolonomicPoseFollowerTaskConfig:
-    # Explicit measured yaw for world-coordinate output joints. None: body axes.
-    yaw_joint: str | None = None
     joint_names: list[str] = field(default_factory=lambda: ["base/vx", "base/vy", "base/wz"])
     priority: int = 10
     speed: float = 0.5
@@ -133,8 +133,8 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self._reference: ProgressPathReference | None = None
         self._v_path = 0.0  # slew-limited path speed (m/s)
         self._last_t: float | None = None
-        self._last_pose: tuple[float, float, float] | None = None
-        self._last_pose_t: float | None = None
+        self._odom: PoseStamped | None = None
+        self._odom_received_at: float | None = None
         self._stop_started_t: float | None = None
         self._pending_path: Path | None = None
 
@@ -160,11 +160,6 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         return self._state in ("tracking", "settling", "stopping")
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
-        output_yaw = None
-        if self._config.yaw_joint is not None:
-            output_yaw = state.joints.get_position(self._config.yaw_joint)
-            if output_yaw is None or not math.isfinite(output_yaw):
-                return None
         if self._pending_path is not None:
             # Arm a stream-delivered path on the first tick that carries a pose;
             # the card handler has no odom to hand us.
@@ -176,14 +171,6 @@ class HolonomicPoseFollowerTask(BaseControlTask):
             return None
 
         pose = self._read_pose(state)
-        if pose is not None:
-            self._last_pose = pose
-            self._last_pose_t = state.t_now
-        elif (
-            self._last_pose_t is not None
-            and state.t_now - self._last_pose_t < self._config.stale_pose_timeout
-        ):
-            pose = self._last_pose
         if pose is None:
             return self._command(0.0, 0.0, 0.0, calibrate=False)
 
@@ -196,13 +183,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
             vx, vy, wz = self._tracking_command(pose, dt)
         else:
             vx, vy, wz = self._settling_command(pose)
-        command = self._command(vx, vy, wz, calibrate=True)
-        if output_yaw is not None:
-            assert command.velocities is not None
-            vx, vy, wz = command.velocities
-            c, s = math.cos(output_yaw), math.sin(output_yaw)
-            command.velocities = [c * vx - s * vy, s * vx + c * vy, wz]
-        return command
+        return self._command(vx, vy, wz, calibrate=True)
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         if joints & self._joint_names and self.is_active():
@@ -213,14 +194,22 @@ class HolonomicPoseFollowerTask(BaseControlTask):
     # Control law
 
     def _read_pose(self, state: CoordinatorState) -> tuple[float, float, float] | None:
-        # Twist-base hardware routes read_odometry() into joint positions [x, y, yaw].
-        positions = state.joints.joint_positions
-        x = positions.get(self._joint_names_list[0])
-        y = positions.get(self._joint_names_list[1])
-        yaw = positions.get(self._joint_names_list[2])
-        if x is None or y is None or yaw is None:
+        if self._odom is None or self._odom_received_at is None:
             return None
-        return float(x), float(y), float(yaw)
+        if state.t_now - self._odom_received_at > self._config.stale_pose_timeout:
+            return None
+        return (self._odom.position.x, self._odom.position.y, self._odom.orientation.euler[2])
+
+    def on_odometry(self, msg: Odometry, t_now: float) -> None:
+        pose = PoseStamped(
+            ts=msg.ts,
+            frame_id=msg.frame_id,
+            position=msg.pose.position,
+            orientation=msg.pose.orientation,
+        )
+        pose_to_values(pose, ("x", "y", "yaw"))
+        self._odom = pose
+        self._odom_received_at = t_now
 
     def _tracking_command(
         self, pose: tuple[float, float, float], dt: float
@@ -432,8 +421,6 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         # in-motion replan does not re-ramp from rest.
         reference.advance(float(current_odom.position.x), float(current_odom.position.y))
         self._last_t = None
-        self._last_pose = None
-        self._last_pose_t = None
         self._stop_started_t = None
         self._state = "tracking"
         logger.info(
@@ -517,8 +504,6 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         self._reference = None
         self._v_path = 0.0
         self._last_t = None
-        self._last_pose = None
-        self._last_pose_t = None
         self._stop_started_t = None
         self._pending_path = None
         return True
@@ -528,7 +513,6 @@ class HolonomicPoseFollowerTask(BaseControlTask):
 
 
 class HolonomicPoseFollowerTaskParams(BaseConfig):
-    yaw_joint: str | None = None
     artifact_path: str = DEFAULT_ARTIFACT_PATH
     speed: float = 0.5
     lookahead: float = 0.25
@@ -546,7 +530,6 @@ def create_task(cfg: Any, hardware: Any) -> HolonomicPoseFollowerTask:
     return HolonomicPoseFollowerTask(
         cfg.name,
         HolonomicPoseFollowerTaskConfig(
-            yaw_joint=params.yaw_joint,
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             speed=params.speed,

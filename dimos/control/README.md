@@ -228,29 +228,44 @@ class PIDController:
 
 ## Connection wire and Twist inputs
 
-Shared `ConnectionModule` declarations describe named model joints and their
-supported interfaces. Planar virtual joints are ordinary joints: positions and
-velocities travel on `joint_state`, and commands on `position_command` or
-`velocity_command`, all `JointState`. IMU telemetry has its own stream. A concrete
-connection converts vendor odometry/body velocities and commands internally;
-`ConnectionSource` does not own a chassis protocol or frame rotation.
+Shared `ConnectionModule` declarations describe named control resources and their
+supported interfaces. Commands and actuator-state feedback use `JointState` on
+independent `position_command` / `velocity_command` and `joint_state` ports.
+For a mobile base, `<robot>/base_forward`, `<robot>/base_lateral`, and
+`<robot>/base_turn` are velocity-only **BODY-frame** action axes, not odometry
+x/y/yaw coordinates. Native measured body rates may be published as velocity-only
+`JointState` feedback for these resources; leave positions empty, never fabricate
+positions or combine body rates with world positions under the same joint names.
+This is actuator-state feedback, not pose telemetry.
+
+Pose/world x/y/yaw and pose/twist telemetry belong on an independent `Odometry`
+stream. Ordinary body velocity control does not require odometry or measured yaw.
+`ConnectionSource` and the coordinator do not interpret base axes, Twist, yaw, or
+odometry and perform no frame conversion. Existing startup/readiness contracts
+are unchanged: a velocity-only joint-state reading can establish actuator readiness.
+Do not wire optional pose telemetry as a required control reading.
+`PlanarBaseDefinition` / `RobotModel.with_planar_base` still describe geometric
+x/y/yaw position coordinates for planning and limits; they do not define body
+velocity as the derivative of odometry q. Control-only axis declarations must be
+explicit and must not be used as a world-pose kinematic model.
 
 For a body-frame Twist input, explicitly configure its consuming task:
 
 ```python
 TaskConfig(
     name="drive", type="twist_velocity",
-    joint_names=["r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"],
-    params={"axes": ["linear.x", "linear.y", "angular.z"],
-            "yaw_joint": "r1pro/base_yaw"},
+    joint_names=["r1pro/base_forward", "r1pro/base_lateral", "r1pro/base_turn"],
+    params={"axes": ["linear.x", "linear.y", "angular.z"]},
 )
 ```
 
-`yaw_joint` selects measured yaw for body-to-world rotation on **every tick**.
-Without it, the configured axes are aligned with the input (as in the existing
-body-axis adapters). Neither joint names nor hardware type imply a mapping.
-The task keeps input receipt time unchanged while rotating; timeout emits zero,
-and E-stop clears intent so only fresh post-clear input can restart motion.
+`TwistVelocityTask` simply maps configured components in joint order, in the
+same declared frame. Neither joint names nor hardware type imply a mapping.
+There is no `yaw_joint` parameter or implicit rotation. World-frame-consuming
+controllers must explicitly use transform helpers at their own boundary; the
+default body action path must not make a body→world→body round trip.
+Timeout emits zero without refreshing the input receipt clock, and E-stop clears
+intent so only fresh post-clear input can restart motion.
 Like `JointVelocityTask`, ordinary `stop()` only deactivates output; it does not
 latch input rejection or discard intent. New input reactivates the stream, and
 `start()` can resume an unexpired command. Use `clear()` to discard cached intent;
@@ -365,12 +380,21 @@ retains the firmware safe-stop packet before closing DDS. SDK stop sentinels
 are internal firmware values, never ordinary joint position targets. Feedback
 silence is not hidden by republishing cached DDS samples with fresh timestamps.
 
-Go2's planar model joints are `go2/x`, `go2/y`, and `go2/yaw`: measured positions
-and world-frame velocity commands. The connection uses its existing odometry
-stream and requires independently fresh measured yaw before converting a
-canonical command to the vendor's body Twist. Teleop and calibrated path tasks
-explicitly declare the measured yaw used for their body-to-world output mapping.
-The existing odometry, camera, lidar, replay/simulation backends, body-Twist
-RPC/stream, and high-level sport skills remain available to their existing
-non-coordinator callers. The canonical command path uses the connection
+Go2's velocity-only control resources are `go2/base_forward`,
+`go2/base_lateral`, and `go2/base_turn`. Commands map directly to the vendor's
+body Twist, without a cached yaw gate. The backend exposes measured
+`PoseStamped` odometry, not native base rates (lowstate carries IMU/motors/battery).
+The concrete connection estimates average body rates from successive valid
+source-timestamped poses. It publishes those rates without positions on
+`joint_state`, and pose plus estimated body twist on independent
+`odometry: Out[Odometry]`. The first pose and invalid/nonpositive/too-large
+intervals cannot produce a rate measurement. WebRTC pose stamps are preserved,
+not replaced by callback receipt time.
+
+The existing `odom: Out[PoseStamped]` port remains for navigation consumers.
+Holonomic and RPP follower cards consume `odometry` separately from the action
+resources. Their control laws already convert world path goals using measured
+pose and produce body velocities; no second output rotation is performed.
+The camera, lidar, replay/simulation backends, body-Twist RPC/stream, and sport
+skills remain available. The canonical command path retains the connection
 deadman and rejects commands after stop without replaying a target.

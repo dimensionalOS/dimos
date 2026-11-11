@@ -95,7 +95,6 @@ unitree_go2_rpp_controller = (
                     priority=20,
                     params={
                         "axes": ["linear.x", "linear.y", "angular.z"],
-                        "yaw_joint": GO2_BASE_JOINTS[2],
                         "zero_on_timeout": False,
                     },
                 ),
@@ -109,7 +108,6 @@ unitree_go2_rpp_controller = (
                     priority=10,
                     params={
                         "speed": 0.7,
-                        "yaw_joint": GO2_BASE_JOINTS[2],
                         "goal_tolerance": 0.20,
                         "orientation_tolerance": 0.35,
                         "k_angular": 1.5,
@@ -148,7 +146,7 @@ unitree_go2_rpp_controller = (
             ("speed", Float32): LCMTransport("/speed", Float32),
             # Operator gate (teleop -> benchmark) to pace runs.
             ("operator_command", Int8): LCMTransport("/benchmark/gate", Int8),
-            # This robot's joint state for observability (positions = [x,y,yaw]).
+            # Measured native body rates for observability (no pose positions).
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
