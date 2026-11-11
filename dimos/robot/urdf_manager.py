@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 from pathlib import Path
 from threading import RLock
 import time
@@ -28,12 +29,13 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import IO, In, Out
-from dimos.msgs.files.File import File
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import geometry
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header, String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.robot.assets.model import RobotModel
+from dimos.types.file import File
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -108,14 +110,23 @@ class UrdfManager(Module):
         if transforms:
             self.tfbuffer.publish(*transforms)
 
-    def _edges_to_send(self, transforms: list[Transform]) -> list[Transform]:
+    def _edges_to_send(self, transforms: list[TransformStamped]) -> list[TransformStamped]:
         """The edges that moved since they were last sent, and those not sent for one keepalive period."""
         now = time.monotonic()
         keepalive_s = 1.0 / self.config.unchanged_tf_hz
         due = []
         for transform in transforms:
-            key = (transform.frame_id, transform.child_frame_id)
-            value = (*transform.translation.to_tuple(), *transform.rotation.to_tuple())
+            key = (transform.header.frame_id, transform.child_frame_id)
+            translation, rotation = transform.transform.translation, transform.transform.rotation
+            value = (
+                translation.x,
+                translation.y,
+                translation.z,
+                rotation.x,
+                rotation.y,
+                rotation.z,
+                rotation.w,
+            )
             sent = self._sent_edges.get(key)
             if (
                 sent is None
@@ -126,7 +137,7 @@ class UrdfManager(Module):
                 self._sent_edges[key] = (value, now)
         return due
 
-    def joint_transforms(self, state: JointState) -> list[Transform]:
+    def joint_transforms(self, state: JointState) -> list[TransformStamped]:
         """One parent -> child transform per URDF joint; joints the state leaves out stay at zero."""
         positions = dict(zip(state.name, state.position, strict=False))
         for joint in self._joints.values():
@@ -135,11 +146,12 @@ class UrdfManager(Module):
                 positions[joint.name] = multiplier * positions[leader] + offset
         # Fixed joints are republished with the moving ones: a chained lookup is only as fresh as its stalest edge.
         return [
-            Transform.from_matrix(
-                joint.parent_from_child(positions.get(joint.name, 0.0)),
-                frame_id=joint.parent_link,
+            TransformStamped(
+                header=Header(stamp=deepcopy(state.header.stamp), frame_id=joint.parent_link),
                 child_frame_id=joint.child_link,
-                ts=state.ts,
+                transform=geometry.transform_from_matrix(
+                    joint.parent_from_child(positions.get(joint.name, 0.0))
+                ),
             )
             for joint in self._joints.values()
             if joint.type not in MULTI_DOF_JOINT_TYPES

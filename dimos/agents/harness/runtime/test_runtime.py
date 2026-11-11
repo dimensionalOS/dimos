@@ -39,6 +39,7 @@ from dimos.agents.annotation import skill
 from dimos.agents.harness.runtime import load as runtime_load
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.agents.harness.runtime.agent_module_manager import AgentModuleManager, _Record
+from dimos.agents.harness.runtime.events import AgentStep
 from dimos.agents.harness.runtime.inventory import environment, relay_endpoint
 from dimos.agents.harness.runtime.load import mcp_server_blueprint
 from dimos.agents.skill_result import SkillResult
@@ -52,9 +53,9 @@ from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.agent_msgs.AgentStep import AgentStep
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos_messages.geometry_msgs.msg import Vector3
+from dimos_messages.sensor_msgs.msg import Image
 from dimos.spec.utils import Spec
 
 
@@ -112,7 +113,11 @@ class HarnessProbe(Module):
 
     def _publish(self) -> None:
         step = 0
-        frame = Image.from_numpy(np.zeros((48, 64, 3), dtype=np.uint8))
+        frame = image_utils.from_array(
+            np.zeros((48, 64, 3), dtype=np.uint8),
+            encoding="bgr8",
+            header=message_time.header_now(),
+        )
         while not self._stopping.wait(0.05):
             step += 1
             self.position.publish(Vector3(math.cos(step / 20), math.sin(step / 20), 0.0))
@@ -409,7 +414,7 @@ def test_inventory_follows_a_module_loaded_at_runtime(
     stream = next(item for item in inventory["runtime"]["streams"] if item["name"] == "position")
     assert (stream["module"], stream["type"], stream["direction"]) == (
         "HarnessProbe",
-        "Vector3",
+        "geometry_msgs__msg__Vector3",
         "out",
     )
     assert stream["channel"]
@@ -444,7 +449,7 @@ def test_compact_inventory_lists_facts_and_drills_down(runtime: Client) -> None:
     }
     assert "rpc:HarnessProbe.start" not in keyed
     assert keyed["stream:HarnessProbe.position"]["line"].startswith(
-        "HarnessProbe.position out Vector3"
+        "HarnessProbe.position out geometry_msgs__msg__Vector3"
     )
     assert keyed["rpc:HarnessProbe.echo"]["line"] == (
         "HarnessProbe.echo(text: str) -> str — Return the given text."
@@ -457,7 +462,7 @@ def test_compact_inventory_lists_facts_and_drills_down(runtime: Client) -> None:
     assert "Multiply the probe's scale" in module_text
     assert "clients and modules call it directly" not in module_text
     position = next(line for line in module_text.splitlines() if "HarnessProbe.position" in line)
-    assert position.endswith("· from dimos.msgs.geometry_msgs.Vector3 import Vector3")
+    assert position.endswith("· from rosbags.usertypes import geometry_msgs__msg__Vector3")
     full = runtime.call_raw("inventory", {"module": "HarnessProbe", "rpc": "scale"}, {})
     assert "clients and modules call it directly" in full["content"][0]["text"]
     assert "nope" in runtime.error("inventory", module="HarnessProbe", rpc="nope")
@@ -498,7 +503,7 @@ import threading
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 
 class Ticker(AgentModule):
@@ -545,7 +550,8 @@ def watcher_source() -> str:
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image
+from dimos_messages.sensor_msgs.msg import Image
 
 
 class Watcher(AgentModule):
@@ -559,7 +565,7 @@ class Watcher(AgentModule):
         super().start()
         self.subscribe(
             self.color_image,
-            lambda frame: self.notify("{label}", frame=frame, shape=list(frame.shape)),
+            lambda frame: self.notify("{label}", frame=frame, shape=list(image.view(frame).shape)),
         )
 """
 
@@ -767,7 +773,7 @@ def test_agent_module_errors_are_visible(runtime: Client, state_home: Path, tmp_
 from dimos.agents.harness.runtime.agent_module import AgentModule
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 
 
 class Divider(AgentModule):

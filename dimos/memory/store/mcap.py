@@ -35,11 +35,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
-import re
 from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import codec_for, codec_from_id
+from dimos.memory.codecs.base import codec_for, codec_from_id, recorded_payload_type
 from dimos.memory.codecs.cdr import CdrCodec
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.json import JsonCodec
@@ -51,7 +50,6 @@ from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
 from dimos.protocol.pubsub.codec import describe_message
-from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 from dimos.protocol.pubsub.message_types import resolve_declared_message_type, resolve_message_type
 
 
@@ -101,21 +99,6 @@ def _dimos_wire(topic: str) -> tuple[str, type] | None:
         return None
     msg_type = resolve_declared_message_type(msg_name)
     return (port, msg_type) if msg_type is not None else None
-
-
-def _declared_legacy_type(declared: str) -> type | None:
-    """Resolve a ``dimos.msgs.<pkg>.<Class>.<Class>`` artifact payload type.
-
-    Artifact metadata may select only a built-in message class, never an
-    arbitrary Python module or pickle decoder. The historical class wins: an
-    artifact declared this way was written by the legacy encoder, so it decodes
-    to the type that recorded it (the recorded values are retained), while raw
-    CDR channels carry the canonical generated type in their schema instead.
-    """
-    match = re.fullmatch(r"dimos\.msgs\.([a-z][a-z0-9_]*_msgs)\.([A-Z][A-Za-z0-9]*)\.\2", declared)
-    if match is None:
-        return None
-    return get_dimos_type(f"{match[1]}.{match[2]}")
 
 
 def _slug(topic: str) -> str:
@@ -315,21 +298,20 @@ class McapStore(Store):
                 if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
                     self._codecs[ch.topic] = JpegCodec()
                 if ch.topic not in self._codecs and ch.message_encoding in {"lcm", "lz4+lcm"}:
-                    kind = _declared_legacy_type(ch.metadata.get("dimos.payload_type", ""))
-                    if kind is not None and hasattr(kind, "lcm_decode"):
+                    # Artifact metadata may select only a built-in generated message
+                    # class, never an arbitrary Python module or pickle decoder. All
+                    # three recorded spellings (canonical, generated qualname,
+                    # historical) resolve through the registry.
+                    kind = recorded_payload_type(ch.metadata.get("dimos.payload_type", ""))
+                    if kind is not None:
                         codec = LcmCodec(kind)
                         self._codecs[ch.topic] = (
                             Lz4Codec(codec) if ch.message_encoding == "lz4+lcm" else codec
                         )
                 if ch.topic not in self._codecs and ch.message_encoding == "json":
-                    declared = ch.metadata.get("dimos.payload_type", "")
-                    kind = JsonCodec.payload_type
-                    if declared in {kind.__msgtype__, f"{kind.__module__}.{kind.__qualname__}"}:
+                    kind = recorded_payload_type(ch.metadata.get("dimos.payload_type", ""))
+                    if kind is JsonCodec.payload_type:
                         self._codecs[ch.topic] = JsonCodec()
-                    else:
-                        legacy = _declared_legacy_type(declared)
-                        if legacy is not None and getattr(legacy, "msg_name", "") == "std_msgs.String":
-                            self._codecs[ch.topic] = JsonCodec(legacy)
                 self._stream_topic[name] = ch.topic
                 self._available[name] = self._available.get(name, 0) + count
                 self._observation_uses_publish_time[name] = (

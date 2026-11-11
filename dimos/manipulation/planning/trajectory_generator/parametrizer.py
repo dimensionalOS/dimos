@@ -133,16 +133,31 @@ class BaseTrajectoryParametrizer(ABC):
     def _stationary_trajectory(
         selection: PlanningGroupSelection, state: JointState
     ) -> JointTrajectory:
+        """Build the degenerate hold trajectory for a path that never moves.
+
+        The hold keeps the start pose for ``_STATIONARY_HOLD_DURATION`` with zero
+        velocity, so the generated message must still carry the full required
+        shape: a stamped header, explicit float64 arrays, a builtin_interfaces
+        ``Duration`` for ``time_from_start``, and the empty accelerations/effort
+        that mark a position+velocity trajectory (same convention as
+        ``_timed_trajectory``).
+        """
+        positions = np.asarray(list(state.position), dtype=np.float64)
+        zero_velocities = np.zeros(len(selection.joint_names), dtype=np.float64)
+        points = [
+            JointTrajectoryPoint(
+                time_from_start=message_time.duration_from_seconds(time_from_start),
+                positions=positions,
+                velocities=zero_velocities,
+                accelerations=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+            for time_from_start in (0.0, _STATIONARY_HOLD_DURATION)
+        ]
         return JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=list(selection.joint_names),
-            points=[
-                JointTrajectoryPoint(
-                    time_from_start=time_from_start,
-                    positions=list(state.position),
-                    velocities=[0.0] * len(selection.joint_names),
-                )
-                for time_from_start in (0.0, _STATIONARY_HOLD_DURATION)
-            ],
+            points=points,
         )
 
     @classmethod

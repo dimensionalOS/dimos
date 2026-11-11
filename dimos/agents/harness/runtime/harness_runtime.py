@@ -41,6 +41,7 @@ from dimos.agents.harness.runtime.constants import (
     HARNESS_STATUS_METHOD,
     JSON,
 )
+from dimos.agents.harness.runtime.events import AgentNotice, AgentStep
 from dimos.agents.harness.runtime.inventory import (
     Inventory,
     describe_module,
@@ -61,8 +62,6 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.agent_msgs.AgentNotice import AgentNotice
-from dimos.msgs.agent_msgs.AgentStep import AgentStep
 from dimos.porcelain.dimos import Dimos
 from dimos.utils.logging_config import setup_logger
 

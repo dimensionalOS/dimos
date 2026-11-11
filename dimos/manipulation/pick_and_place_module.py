@@ -275,12 +275,17 @@ class PickAndPlaceModule(Module):
         if robot is None or robot.gripper is None or not candidates.candidates:
             return candidates, {}
         scene = self._scene.get_full_scene_pointcloud(exclude_object_id=object_id)
-        if scene is None or not scene.frame_id == pointcloud.frame_id == candidates.header.frame_id:
+        if (
+            scene is None
+            or not scene.header.frame_id == pointcloud.header.frame_id == candidates.header.frame_id
+        ):
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"
             }
         states = self._manipulation.get_state().groups.values()
-        tips = [s.end_effector_pose.position for s in states if s.end_effector_pose is not None]
+        tips = [
+            s.end_effector_pose.pose.position for s in states if s.end_effector_pose is not None
+        ]
         joints = {
             name: position
             for s in states

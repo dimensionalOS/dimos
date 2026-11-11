@@ -24,8 +24,8 @@ from dimos.imitation.dataprep.schema import (
     OutputConfig,
     RecordingSchema,
 )
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils
+from dimos_messages.sensor_msgs.msg import Image, JointState
 
 
 @pytest.fixture
@@ -97,7 +97,9 @@ def test_profile_lowers_to_existing_json_protocol_and_preserves_projections(prof
     assert restored.recording_schema.observation["positions"].source_kind == "snapshot"
     assert restored.recording_schema.observation["positions"].message_type is None
     assert restored.recording_schema.action["target"].message_type is None
-    message = JointState(name=["a", "b"], position=[1.0, 2.0], velocity=[3.0, 4.0])
+    message = joint_state_utils.from_mapping(
+        {"name": ["a", "b"], "position": [1.0, 2.0], "velocity": [3.0, 4.0]}
+    )
     np.testing.assert_array_equal(
         resolve_field(message, restored.recording_schema.observation["positions"]), [2, 1]
     )

@@ -140,15 +140,13 @@ def test_costmapper_actual_generated_ports_deliver_cdr_without_network(
 ):
     create, cleanup = mapper_factory
     global_wire = LCMTransport("costmap_global", PointCloud2, url="memq://")
-    merged_wire = LCMTransport("costmap_merged", PointCloud2, url="memq://")
     output_wire = LCMTransport("costmap_output", OccupancyGrid, url="memq://")
-    for wire in (global_wire, merged_wire, output_wire):
+    for wire in (global_wire, output_wire):
         cleanup.callback(wire.stop)
     module = create(algo="simple", config=SimpleOccupancyConfig(resolution=0.25))
     assert module.global_map.type is PointCloud2
     assert module.global_costmap.type is OccupancyGrid
     module.global_map.transport = global_wire
-    module.merged_map.transport = merged_wire
     module.global_costmap.transport = output_wire
     received = []
     ready = Event()
@@ -168,16 +166,6 @@ def test_costmapper_actual_generated_ports_deliver_cdr_without_network(
     assert len(received) == 1
     assert received[0].header == header
     assert 100 in received[0].data
-
-    ready.clear()
-    merged_header = Header(frame_id="merged_map", stamp=Time(sec=1700000000, nanosec=123456790))
-    merged = pointcloud.from_xyz(
-        np.array([[0, 0, 0.4], [1, 1, 0]], dtype=np.float32), header=merged_header
-    )
-    merged_wire.broadcast(None, merged)
-    assert ready.wait(5)
-    assert len(received) == 2
-    assert received[-1].header == merged_header
 
 
 @pytest.mark.self_hosted

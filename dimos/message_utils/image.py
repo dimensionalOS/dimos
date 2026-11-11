@@ -26,11 +26,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import cv2
-import imagecodecs
 import numpy as np
 from numpy.typing import NDArray
-from PIL import Image as PILImage
 
 from dimos_messages.builtin_interfaces.msg import Time
 from dimos_messages.sensor_msgs.msg import CompressedImage, Image
@@ -102,6 +99,7 @@ def view(msg: Image) -> NDArray[Any]:
 
 def to_jpeg(msg: Image, quality: int = 75) -> bytes:
     """Return JPEG bytes for an 8-bit gray or color image, without message metadata."""
+    import cv2
 
     if isinstance(quality, bool) or not 0 <= quality <= 100:
         raise ValueError("JPEG quality must be in 0..100")
@@ -134,6 +132,8 @@ def to_compressed(
     PNG preserves uint16 depth. JXL preserves uint16/float32 depth losslessly;
     it requires imagecodecs and is an explicit codec extension for consumers.
     """
+    import cv2
+
     if not isinstance(message, Image):
         raise TypeError("compression expects a generated Image")
     if max_width is not None:
@@ -155,6 +155,8 @@ def to_compressed(
         data = bytes(encoded)
         output_encoding = {"rgb8": "bgr8", "rgba8": "bgra8"}.get(message.encoding, message.encoding)
     elif format == "jxl":
+        import imagecodecs
+
         pixels = view(message)
         if pixels.dtype.kind not in ("u", "f") or (
             pixels.dtype.kind,
@@ -183,8 +185,12 @@ def to_compressed(
 def from_compressed(message: CompressedImage) -> Image:
     """Decode JPEG/PNG or the JXL extension into explicitly encoded generated pixels."""
 
+    import cv2
+
     format_name = message.format.lower()
     if "jxl" in format_name:
+        import imagecodecs
+
         jxl_pixels = imagecodecs.jpegxl_decode(bytes(message.data))
         if jxl_pixels.ndim == 2:
             encoding = {
@@ -233,6 +239,7 @@ def brightness(message: Image) -> float:
 
 def sharpness(message: Image) -> float:
     """Return the original normalized Laplacian score, downsampled to 160 pixels wide."""
+    import cv2
 
     pixels = view(message)
     codes = {
@@ -263,6 +270,7 @@ def sharpness(message: Image) -> float:
 
 def to_bgr(message: Image) -> NDArray[np.uint8]:
     """Return an independent BGR8 array for drawing or OpenCV color operations."""
+    import cv2
 
     pixels = view(message)
     if message.encoding == "bgr8":
@@ -284,6 +292,7 @@ def to_rgb(message: Image) -> NDArray[np.uint8]:
     Alpha is discarded. Floating-point depth needs an explicit visualization
     scale and is rejected rather than assigning pixel values to meters.
     """
+    import cv2
 
     pixels = view(message)
     if message.encoding == "rgb8":
@@ -310,6 +319,7 @@ def resize_to_fit(message: Image, max_width: int, max_height: int) -> tuple[Imag
     independent pixels, preserve the encoding and reuse the source header.
     Integer output dimensions may round down from the scaled aspect ratio.
     """
+    import cv2
 
     if min(max_width, max_height, message.width, message.height) <= 0:
         raise ValueError("Image and target dimensions must be positive")
@@ -326,5 +336,7 @@ def resize_to_fit(message: Image, max_width: int, max_height: int) -> tuple[Imag
 
 def from_file(path: str | Path, *, header: Header | None = None) -> Image:
     """Decode an image file as generated RGB8 with an explicit optional source header."""
+    from PIL import Image as PILImage
+
     with PILImage.open(path) as image:
         return from_array(np.asarray(image.convert("RGB")), encoding="rgb8", header=header)

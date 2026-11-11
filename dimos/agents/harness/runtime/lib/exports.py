@@ -31,10 +31,12 @@ from dimos.agents.harness.runtime.constants import (
     MAX_EXPORT_FILES,
     MAX_EXPORT_POINTS,
 )
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import image as image_utils, pointcloud, time as message_time
+from dimos_messages.sensor_msgs.msg import Image, PointCloud2
 
 Exportable: TypeAlias = Image | PointCloud2
+
+_DEPTH_ENCODINGS = frozenset({"32FC1", "64FC1", "16UC1", "16SC1"})
 
 
 @dataclass(frozen=True)
@@ -72,9 +74,9 @@ Export: TypeAlias = ImageExport | PointsExport
 
 def jpeg_bytes(image: Image, quality: int) -> bytes:
     """The image as JPEG. A DEPTH image becomes grayscale, its finite range spread over 0-255."""
-    if image.format != ImageFormat.DEPTH:
-        return image.to_jpeg_bytes(quality=quality)
-    depth = np.asarray(image.data, dtype=np.float64)
+    if image.encoding not in _DEPTH_ENCODINGS:
+        return image_utils.to_jpeg(image, quality=quality)
+    depth = np.asarray(image_utils.view(image), dtype=np.float64)
     finite = np.isfinite(depth)
     gray = np.zeros(depth.shape, dtype=np.uint8)
     if finite.any():
@@ -82,9 +84,10 @@ def jpeg_bytes(image: Image, quality: int) -> bytes:
         span = depth[finite].max() - low
         if span > 0:
             gray[finite] = np.round((depth[finite] - low) * (255 / span)).astype(np.uint8)
-    return Image(
-        data=gray, format=ImageFormat.GRAY, frame_id=image.frame_id, ts=image.ts
-    ).to_jpeg_bytes(quality=quality)
+    return image_utils.to_jpeg(
+        image_utils.from_array(gray, encoding="mono8", header=image.header),
+        quality=quality,
+    )
 
 
 def export(message: Exportable, stem: str, directory: Path = EXPORTS_DIR) -> Export:
@@ -96,22 +99,21 @@ def export(message: Exportable, stem: str, directory: Path = EXPORTS_DIR) -> Exp
         path.write_bytes(data)
         result: Export = ImageExport(str(path), hashlib.sha256(data).hexdigest())
     else:
-        points, colors = message.as_numpy()
+        points = pointcloud.xyz(message)
+        colors = pointcloud.rgb(message)
         finite = np.isfinite(points[:, :3]).all(axis=1)
         kept = points[finite]
         stride = max(1, -(-len(kept) // MAX_EXPORT_POINTS))
         selected = kept[::stride, :3]
         cloud: dict[str, JSON] = {
             "points": selected.astype(float).round(4).tolist(),
-            "frame": message.frame_id,
+            "frame": message.header.frame_id,
         }
-        if message.ts is not None:
-            cloud["timestamp"] = float(message.ts)
+        if message_time.to_nanoseconds(message.header.stamp):
+            cloud["timestamp"] = message_time.to_seconds(message.header.stamp)
         if colors is not None and len(colors) == len(points):
-            # PointCloud2 colors are in [0, 1]; the XYZ JSON export uses 0-255.
-            cloud["colors"] = (
-                (colors[finite][::stride, :3] * 255).round().clip(0, 255).astype(int).tolist()
-            )
+            # PointCloud2 colors are packed RGB bytes; the XYZ JSON export uses 0-255.
+            cloud["colors"] = colors[finite][::stride, :3].tolist()
         path = directory / f"{stem}.json"
         text = json.dumps(cloud, allow_nan=False)
         path.write_text(text)

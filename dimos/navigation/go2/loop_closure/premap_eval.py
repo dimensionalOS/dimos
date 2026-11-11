@@ -23,6 +23,7 @@ recording time as the last one took to run::
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 import time
@@ -32,8 +33,10 @@ from scipy.spatial import cKDTree
 import typer
 
 from dimos.memory.cli.dataset import open_dataset
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos_messages.geometry_msgs.msg import Transform, TransformStamped
+from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 from dimos.navigation.go2.loop_closure.premap import Premap
 from dimos.navigation.go2.loop_closure.relocalizer import PremapMatcher, attempt_fix
@@ -53,7 +56,7 @@ class Report:
     attached_at_s: float | None
     attaches: int
     premap_loops: int
-    world_to_map: Transform | None
+    world_to_map: TransformStamped | None
     agree: float  # live points on a premap surface, of those that overlap it
     median_m: float
     wall_s: float
@@ -61,7 +64,9 @@ class Report:
 
 def agreement(live: PointCloud2, premap: PointCloud2) -> tuple[float, float]:
     """Of the live points within OVERLAP_M of the premap, the share within SURFACE_M, and the median."""
-    d, _ = cKDTree(premap.points_f32()).query(live.points_f32(), distance_upper_bound=OVERLAP_M)
+    d, _ = cKDTree(pointcloud.xyz(premap)).query(
+        pointcloud.xyz(live), distance_upper_bound=OVERLAP_M
+    )
     d = d[np.isfinite(d)]
     if not len(d):
         return 0.0, math.inf
@@ -86,12 +91,19 @@ def run(
     lidar = open_dataset(recording).stream("lidar", PointCloud2).from_time(seek or None)
     lidar = lidar.to_time(duration)
 
-    wrong = Transform.from_matrix(
-        np.array(
-            [[0.0, -1.0, 0.0, 5.0], [1.0, 0.0, 0.0, -3.0], [0.0, 0.0, 1.0, 0.0], [0, 0, 0, 1]]
-        ),
-        frame_id="world",
+    wrong = TransformStamped(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="world"),
         child_frame_id="map",
+        transform=geometry.transform_from_matrix(
+            np.array(
+                [
+                    [0.0, -1.0, 0.0, 5.0],
+                    [1.0, 0.0, 0.0, -3.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0, 0, 0, 1],
+                ]
+            )
+        ),
     )
     t_start = time.perf_counter()
     first_ts: float | None = None
@@ -100,7 +112,8 @@ def run(
     attached_at: float | None = None
     for obs in lidar:
         cloud = obs.data
-        cloud.ts = obs.ts  # old recordings carry Unitree's stale lidar stamps
+        # old recordings carry Unitree's stale lidar stamps
+        cloud.header.stamp = message_time.time_from_seconds(obs.ts)
         first_ts = obs.ts if first_ts is None else first_ts
         world_map.add(cloud, obs.pose)
         frames += 1
@@ -113,11 +126,15 @@ def run(
             continue
         attempts += 1
         t0 = time.perf_counter()
-        found: tuple[Transform, float, float | None] | None
+        found: tuple[TransformStamped, float, float | None] | None
         if wrong_first and attempts <= 3:
             # scored as a match would be, so only a better real fix overturns it
-            wrong_fix = Transform(
-                translation=wrong.translation, rotation=wrong.rotation, ts=window.ts
+            wrong_fix = TransformStamped(
+                header=Header(stamp=deepcopy(window.header.stamp), frame_id=wrong.header.frame_id),
+                child_frame_id=wrong.child_frame_id,
+                transform=Transform(
+                    translation=wrong.transform.translation, rotation=wrong.transform.rotation
+                ),
             )
             found = (wrong_fix, 0.9, None)
         else:
@@ -132,7 +149,7 @@ def run(
     agree, median = (0.0, math.inf)
     if placement is not None:
         live = world_map.live_map()
-        agree, median = agreement(live, premap_cloud.transform(placement))
+        agree, median = agreement(live, pointcloud.transform(premap_cloud, placement))
     report = Report(
         frames=frames,
         keyframes=world_map.pgo.n_keyframes,
@@ -178,8 +195,8 @@ def main(
     if r.world_to_map is None:
         print("never attached")
         raise typer.Exit(1)
-    t = r.world_to_map.translation
-    yaw = math.degrees(r.world_to_map.rotation.euler.z)
+    t = r.world_to_map.transform.translation
+    yaw = math.degrees(geometry.quaternion_euler(r.world_to_map.transform.rotation)[2])
     print(f"world -> map t=({t.x:.2f}, {t.y:.2f}, {t.z:.2f}) yaw={yaw:.1f}deg")
     print(
         f"live map on a premap surface: {r.agree:.1%} within {SURFACE_M} m, "

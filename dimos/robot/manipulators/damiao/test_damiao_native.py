@@ -23,7 +23,8 @@ import can_motor_control
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.damiao import arm as common
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import TEST_ROBOT
 from dimos.robot.manipulators.damiao.arm import DamiaoArm
@@ -33,14 +34,30 @@ from dimos.utils.testing.waiting import wait_until
 def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, boundary):
     module, commands, readings = make_rig()
     native = boundary[0]
-    commands.publish(JointState(name=["arm/joint2", "arm/left_finger"], position=[-0.5, 0.032]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint2", "arm/left_finger"],
+            position=np.asarray([-0.5, 0.032], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     np.testing.assert_equal(
         native.groups["left_arm"].commands[-1], [[80, 5, 0.2, 0, 0], [10, 1.5, -0.5, 0, 0]]
     )
     np.testing.assert_equal(native.groups["right_arm"].commands[-1], [[20, 0.6, 0.2, 0, 0]])
     assert native.groups["left_gripper"].commands == [pytest.approx(0.8)]
     assert native.groups["right_gripper"].commands == [pytest.approx(0.4)]
-    commands.publish(JointState(name=["arm/joint1"], position=[0.6]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.6], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     assert native.groups["left_arm"].commands[-1][1, 2] == -0.5
     assert readings.sent[-1].name == [
         "arm/joint1",
@@ -49,8 +66,8 @@ def test_native_partial_commands_keep_targets_and_exact_mit_rows(make_rig, bound
         "arm/left_finger",
         "arm/right_finger",
     ]
-    assert readings.sent[-1].velocity == [0.3, 0.3, 0.3, 0, 0]
-    assert readings.sent[-1].effort == [0.4, 0.4, 0.4, 0, 0]
+    assert list(readings.sent[-1].velocity) == [0.3, 0.3, 0.3, 0, 0]
+    assert list(readings.sent[-1].effort) == [0.4, 0.4, 0.4, 0, 0]
     assert module.status().connected
 
 
@@ -58,7 +75,15 @@ def test_feedback_failure_disables_latches_and_blocks_commands(make_rig, boundar
     module, commands, _ = make_rig()
     boundary[0].refresh_error = RuntimeError("lost feedback")
     wait_until(lambda: module._fault is not None, timeout=2)
-    commands.publish(JointState(name=["arm/joint1"], position=[0.7]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.7], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     assert boundary[0].groups["left_arm"].commands == []
     assert "disable" in boundary[0].events
     assert "feedback" in module.status().last_error
@@ -97,7 +122,15 @@ def test_gravity_is_added_from_measured_q(make_rig, boundary, mocker):
     gravity = mocker.patch.object(
         module._arm._physical, "gravity", return_value=np.array([1.0, 2.0, 3.0])
     )
-    commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.8], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     np.testing.assert_equal(gravity.call_args.args[0], [0.2, 0.2, 0.2])
     np.testing.assert_equal(boundary[0].groups["left_arm"].commands[-1][:, 4], [1.0, 2.0])
     assert boundary[0].groups["right_arm"].commands[-1][0, 4] == 3.0
@@ -139,7 +172,15 @@ def test_write_failure_attempts_measured_hold(make_rig, boundary, mocker):
     module, commands, _ = make_rig()
     arm = boundary[0].groups["left_arm"]
     send = mocker.patch.object(arm, "mit_control", side_effect=[RuntimeError("send refused"), None])
-    commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.8], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     assert send.call_count == 2
     np.testing.assert_equal(send.call_args.args[0][:, 2], [0.2, 0.2])
     assert "send refused" in module.status().last_error
@@ -206,7 +247,15 @@ def test_invalid_second_arm_gain_prevents_all_native_sends(make_rig, boundary, g
     values[0] = bad
     buses[1] = replace(buses[1], **{gain: values})
     module._arm._robot = replace(robot, buses=buses)
-    commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+    commands.publish(
+        JointState(
+            header=message_time.header_now(),
+            name=["arm/joint1"],
+            position=np.asarray([0.8], dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
+    )
     assert "non-finite" in module.status().last_error
     assert boundary[0].groups["left_arm"].commands == []
     assert boundary[0].groups["right_arm"].commands == []
@@ -223,7 +272,15 @@ def test_teach_mode_sends_zero_stiffness_teaching_damping_and_gravity(make_rig, 
     import unittest.mock
 
     with unittest.mock.patch.object(module._arm._physical, "gravity", return_value=gravity):
-        commands.publish(JointState(name=["arm/joint1"], position=[0.8]))
+        commands.publish(
+            JointState(
+                header=message_time.header_now(),
+                name=["arm/joint1"],
+                position=np.asarray([0.8], dtype=np.float64),
+                velocity=np.asarray([], dtype=np.float64),
+                effort=np.asarray([], dtype=np.float64),
+            )
+        )
     left = boundary[0].groups["left_arm"].commands[-1]
     right = boundary[0].groups["right_arm"].commands[-1]
     np.testing.assert_equal(left[:, 0], [0.0, 0.0])

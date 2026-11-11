@@ -47,7 +47,7 @@ from dimos.hosted.config import HostConfig
 from dimos.hosted.daemon import HostDaemon
 from dimos.hosted.deploy import deployed, wait_for_hosts
 from dimos.hosted.machine import code_revision
-from dimos.msgs.std_msgs.String import String
+from dimos_messages.std_msgs.msg import String
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -73,7 +73,7 @@ class Source(Module):
 
     async def _publish(self) -> None:
         while True:
-            self.local_events.publish(String("x" * PAYLOAD_BYTES))
+            self.local_events.publish(String(data="x" * PAYLOAD_BYTES))
             await asyncio.sleep(self.config.interval_seconds)
 
 
@@ -87,7 +87,7 @@ class Relay(Module):
 
     async def handle_local_events(self, message: String) -> None:
         self._bytes += len(message.data)
-        self.cross_events.publish(String(str(self._bytes)))
+        self.cross_events.publish(String(data=str(self._bytes)))
 
 
 class SinkConfig(ModuleConfig):

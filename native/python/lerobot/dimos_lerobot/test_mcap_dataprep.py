@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
+from dimos_cdrgen.registry import encode, schema
 from dimos_lerobot.dataprep import write
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from mcap.writer import Writer as McapWriter
@@ -30,10 +31,10 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
-from dimos.memory.codecs.jpeg import JpegCodec
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.memory.codecs.cdrjpeg import CdrjpegCodec
+from dimos.message_utils import image, joint_state, time as message_time
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 JOINTS = [f"joint_{i}" for i in range(14)]
 
@@ -42,13 +43,22 @@ def _channel(
     writer: McapWriter,
     name: str,
     payload_type: type[Any],
-    message_encoding: str = "lcm",
+    message_encoding: str = "cdr",
 ) -> int:
+    schema_type = CompressedImage if message_encoding == "cdrjpeg" else payload_type
     return int(
         writer.register_channel(
             topic=name,
             message_encoding=message_encoding,
-            schema_id=0,
+            schema_id=(
+                0
+                if message_encoding == "json"
+                else writer.register_schema(
+                    name=schema_type.__msgtype__,
+                    encoding="ros2msg",
+                    data=schema(schema_type.__msgtype__).encode(),
+                )
+            ),
             metadata={
                 "dimos.payload_type": f"{payload_type.__module__}.{payload_type.__qualname__}",
                 "dimos.observation_time": "publish_time",
@@ -65,7 +75,7 @@ def _add(writer: McapWriter, channel_id: int, ts: float, message: Any) -> None:
         publish_time=timestamp_ns,
         data=message.to_json().encode("utf-8")
         if isinstance(message, EpisodeStatus)
-        else (message if isinstance(message, bytes) else message.lcm_encode()),
+        else (message if isinstance(message, bytes) else encode(message)),
     )
 
 
@@ -73,7 +83,9 @@ def _record(path: Path, camera_count: int) -> None:
     with path.open("wb") as output:
         writer = McapWriter(output)
         writer.start(profile="dimos", library="test")
-        image_channels = [_channel(writer, f"view_{i}", Image, "jpeg") for i in range(camera_count)]
+        image_channels = [
+            _channel(writer, f"view_{i}", Image, "cdrjpeg") for i in range(camera_count)
+        ]
         state_channel = _channel(writer, "measured", JointState)
         action_channel = _channel(writer, "commanded", JointState)
         status_channel = _channel(writer, "status", String, "json")
@@ -100,12 +112,14 @@ def _record(path: Path, camera_count: int) -> None:
                         writer,
                         image_channel,
                         ts,
-                        JpegCodec().encode(
-                            Image(
-                                ts=ts,
-                                frame_id="wrist_camera_link",
-                                format=ImageFormat.RGB,
-                                data=np.full((64, 64, 3), frame, dtype=np.uint8),
+                        CdrjpegCodec().encode(
+                            image.from_array(
+                                np.full((64, 64, 3), frame, dtype=np.uint8),
+                                encoding="rgb8",
+                                header=Header(
+                                    stamp=message_time.time_from_seconds(ts),
+                                    frame_id="wrist_camera_link",
+                                ),
                             )
                         ),
                     )
@@ -113,26 +127,32 @@ def _record(path: Path, camera_count: int) -> None:
                     writer,
                     state_channel,
                     ts,
-                    JointState(
-                        ts=ts,
-                        frame_id="coordinator",
-                        name=list(reversed(JOINTS)),
-                        position=[float(frame + i) for i in reversed(range(len(JOINTS)))],
-                        velocity=[0.0] * len(JOINTS),
-                        effort=[0.0] * len(JOINTS),
+                    joint_state.from_mapping(
+                        {
+                            "ts": ts,
+                            "frame_id": "coordinator",
+                            "name": list(reversed(JOINTS)),
+                            "position": [float(frame + i) for i in reversed(range(len(JOINTS)))],
+                            "velocity": [0.0] * len(JOINTS),
+                            "effort": [0.0] * len(JOINTS),
+                        }
                     ),
                 )
                 _add(
                     writer,
                     action_channel,
                     ts,
-                    JointState(
-                        ts=ts,
-                        frame_id="coordinator",
-                        name=list(reversed(JOINTS)),
-                        position=[float(frame + i) + 0.5 for i in reversed(range(len(JOINTS)))],
-                        velocity=[],
-                        effort=[],
+                    joint_state.from_mapping(
+                        {
+                            "ts": ts,
+                            "frame_id": "coordinator",
+                            "name": list(reversed(JOINTS)),
+                            "position": [
+                                float(frame + i) + 0.5 for i in reversed(range(len(JOINTS)))
+                            ],
+                            "velocity": [],
+                            "effort": [],
+                        }
                     ),
                 )
             end = start_time + 2 / 30.0

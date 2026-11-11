@@ -28,7 +28,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos_messages.geometry_msgs.msg import Vector3
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, RPC_WIRE_VERSION
 from dimos.protocol.rpc.rpc_utils import RemoteError, deserialize_exception

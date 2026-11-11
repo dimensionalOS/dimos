@@ -16,7 +16,9 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
 from dimos.robot.urdf_manager import UrdfManager
@@ -34,11 +36,13 @@ def joint_state(**positions: float) -> JointState:
     values = dict.fromkeys(R1PRO_UPPER_BODY_JOINTS, 0.0)
     for joint, angle in positions.items():
         values[f"r1pro/{joint}"] = angle
+    positions_array = np.asarray(list(values.values()), dtype=np.float64)
     return JointState(
-        ts=1.0,
-        frame_id="base_link",
+        header=Header(stamp=message_time.time_from_seconds(1.0), frame_id="base_link"),
         name=R1PRO_UPPER_BODY_JOINTS,
-        position=list(values.values()),
+        position=positions_array,
+        velocity=np.zeros(len(positions_array), dtype=np.float64),
+        effort=np.zeros(0, dtype=np.float64),
     )
 
 
@@ -48,13 +52,17 @@ def pose_in_root(transforms: list, link: str) -> tuple[np.ndarray, Rotation]:
     position, rotation = np.zeros(3), Rotation.identity()
     while link in edges:
         edge = edges[link]
-        quaternion = edge.rotation
+        quaternion = edge.transform.rotation
         local = Rotation.from_quat([quaternion.x, quaternion.y, quaternion.z, quaternion.w])
         position = local.apply(position) + np.array(
-            [edge.translation.x, edge.translation.y, edge.translation.z]
+            [
+                edge.transform.translation.x,
+                edge.transform.translation.y,
+                edge.transform.translation.z,
+            ]
         )
         rotation = local * rotation
-        link = edge.frame_id
+        link = edge.header.frame_id
     return position, rotation
 
 
@@ -78,11 +86,13 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager
     def edges(state: JointState) -> dict[str, tuple[float, ...]]:
         return {
             transform.child_frame_id: (
-                *transform.translation,
-                transform.rotation.x,
-                transform.rotation.y,
-                transform.rotation.z,
-                transform.rotation.w,
+                transform.transform.translation.x,
+                transform.transform.translation.y,
+                transform.transform.translation.z,
+                transform.transform.rotation.x,
+                transform.transform.rotation.y,
+                transform.transform.rotation.z,
+                transform.transform.rotation.w,
             )
             for transform in fk.joint_transforms(state)
         }
@@ -96,9 +106,9 @@ def test_the_head_moves_through_torso_edges_not_its_camera_edges(fk: UrdfManager
 def test_transforms_hang_off_base_link(fk: UrdfManager) -> None:
     transforms = fk.joint_transforms(joint_state())
     children = [transform.child_frame_id for transform in transforms]
-    parents = {transform.frame_id for transform in transforms}
+    parents = {transform.header.frame_id for transform in transforms}
 
     assert len(children) == len(set(children)), "a link with two parents breaks the tree"
     assert parents - set(children) == {"base_link"}
     assert {HEAD, "head_link", "camera_head_right_link"} <= set(children)
-    assert all(transform.ts == 1.0 for transform in transforms)
+    assert all(message_time.to_seconds(transform.header.stamp) == 1.0 for transform in transforms)

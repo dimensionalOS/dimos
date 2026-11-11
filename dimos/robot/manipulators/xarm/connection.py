@@ -22,6 +22,7 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 from pydantic import field_validator, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
@@ -36,7 +37,8 @@ from dimos.control.contract.convert import joint_state_to_values
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.xarm.config import (
     XARM_ARMS,
     XArmGripperType,
@@ -367,11 +369,11 @@ class XArmConnection(ConnectionModule):
                 self._measured_at = time.monotonic()
                 self.joint_state.publish(
                     JointState(
-                        ts=time.time(),
+                        header=message_time.header_now(),
                         name=list(self._joints),
-                        position=positions,
-                        velocity=speeds,
-                        effort=efforts,
+                        position=np.asarray(positions, dtype=np.float64),
+                        velocity=np.asarray(speeds, dtype=np.float64),
+                        effort=np.asarray(efforts, dtype=np.float64),
                     )
                 )
                 if self._gripper is not None and count % _GRIPPER_READ_EVERY == 0:
@@ -380,9 +382,14 @@ class XArmConnection(ConnectionModule):
                     # The gripper reports no speed or effort, so it has a message of its own.
                     self.joint_state.publish(
                         JointState(
-                            ts=time.time(),
+                            header=message_time.header_now(),
                             name=[self._gripper],
-                            position=[_GRIPPER_CLOSED_RAD * (1.0 - pulses / _GRIPPER_OPEN_SDK)],
+                            position=np.asarray(
+                                [_GRIPPER_CLOSED_RAD * (1.0 - pulses / _GRIPPER_OPEN_SDK)],
+                                dtype=np.float64,
+                            ),
+                            velocity=np.asarray([], dtype=np.float64),
+                            effort=np.asarray([], dtype=np.float64),
                         )
                     )
             except Exception as error:

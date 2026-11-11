@@ -31,8 +31,10 @@ from numpy.typing import NDArray
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.bench.driver import TERMINAL_FILE
 from dimos.navigation.bench.ground_truth import Difficulty
 from dimos.navigation.bench.playback import Puppet, find_episode, frames
@@ -69,9 +71,9 @@ FAKE_BLUEPRINT = """
 import json, signal, subprocess, sys, time
 from pathlib import Path
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.PointStamped import PointStamped
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.std_msgs.Bool import Bool
+from dimos.message_utils import time as message_time
+from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Bool, Header
 
 args = dict(a.split("=", 1) for a in sys.argv if a.startswith("--") and "=" in a)
 out = Path(args["--episodedriver.out-dir"])
@@ -97,8 +99,22 @@ x, y, z = case["goal"]
 poses = store.stream("ground_truth", PoseStamped)
 for i in range(20):
     px = x if arrive else x - 3.0
-    poses.append(PoseStamped(px, y, z + 0.3, 0, 0, 0, 1, ts=t0 + i, frame_id="odom"), ts=t0 + i)
-store.stream("goal", PointStamped).append(PointStamped(x, y, z, ts=t0, frame_id="odom"), ts=t0)
+    poses.append(
+        PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(t0 + i), frame_id="odom"),
+            pose=Pose(
+                position=Point(px, y, z + 0.3), orientation=Quaternion(0, 0, 0, 1)
+            ),
+        ),
+        ts=t0 + i,
+    )
+store.stream("goal", PointStamped).append(
+    PointStamped(
+        header=Header(stamp=message_time.time_from_seconds(t0), frame_id="odom"),
+        point=Point(x, y, z),
+    ),
+    ts=t0,
+)
 if arrive:
     store.stream("goal_reached", Bool).append(Bool(True), ts=t0 + 5)
 store.stop()
@@ -412,9 +428,20 @@ def test_playback_poses_the_puppet_from_a_recording(tmp_path: Path) -> None:
     store.start()
     for k in range(3):
         t = T0 + 0.02 * k
-        pose = PoseStamped(1.0 + k, 2.0, 0.3, 0.0, 0.0, 0.0, 1.0, ts=t, frame_id="odom")
+        pose = PoseStamped(
+            header=Header(stamp=message_time.time_from_seconds(t), frame_id="odom"),
+            pose=Pose(
+                position=Point(1.0 + k, 2.0, 0.3), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
+            ),
+        )
         store.stream("ground_truth", PoseStamped).append(pose, ts=t)
-        state = JointState(ts=t + 0.001, name=joints, position=[0.1 * k] * len(joints))
+        state = JointState(
+            header=Header(stamp=message_time.time_from_seconds(t + 0.001), frame_id=""),
+            name=list(joints),
+            position=np.array([0.1 * k] * len(joints), dtype=np.float64),
+            velocity=np.array([], dtype=np.float64),
+            effort=np.array([], dtype=np.float64),
+        )
         store.stream("joint_state", JointState).append(state, ts=t + 0.001)
     store.stop()
     recorded = frames(tmp_path / "memory.db")

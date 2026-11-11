@@ -28,8 +28,8 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
 from dimos.core.module import ModuleBase
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Float32
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot

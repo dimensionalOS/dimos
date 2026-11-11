@@ -20,8 +20,8 @@ from types import SimpleNamespace
 import pytest
 
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
 from dimos.protocol.encode.cbor import decode, encode
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
 from dimos.protocol.pubsub.benchmarks.image_roundtrip import make_image
@@ -57,9 +57,15 @@ def test_roundtrip_over_lcm(retry_until, collector) -> None:
         retry_until(collector.event, lambda: t.broadcast(None, src))
         img = collector.received[0]
         assert isinstance(img, Image)
-        assert img.frame_id == "cam"
-        assert abs(img.ts - src.ts) < 1e-6
-        assert img.shape == src.shape
+        assert img.header.frame_id == "cam"
+        assert (
+            abs(
+                message_time.to_seconds(img.header.stamp)
+                - message_time.to_seconds(src.header.stamp)
+            )
+            < 1e-6
+        )
+        assert image_utils.view(img).shape == image_utils.view(src).shape
 
 
 def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
@@ -72,7 +78,13 @@ def test_roundtrip_over_zenoh(retry_until, collector, session_pool) -> None:
         retry_until(collector.event, lambda: t.broadcast(None, src))
         img = collector.received[0]
         assert isinstance(img, Image)
-        assert abs(img.ts - src.ts) < 1e-6
+        assert (
+            abs(
+                message_time.to_seconds(img.header.stamp)
+                - message_time.to_seconds(src.header.stamp)
+            )
+            < 1e-6
+        )
 
 
 def test_cbor_roundtrip() -> None:

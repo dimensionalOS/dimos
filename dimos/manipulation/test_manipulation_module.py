@@ -42,7 +42,7 @@ from dimos.manipulation.manipulation_module import (
 from dimos.manipulation.manipulation_spec import ExecutionStatus, OperationStatus
 from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.message_utils import time as message_time
+from dimos.message_utils import time as message_time, trajectory as trajectory_utils
 from dimos.message_utils.trajectory import TrajectoryState
 from dimos_messages.dimos_msgs.msg import TrajectoryStatus
 from dimos_messages.geometry_msgs.msg import Point, Pose, Quaternion
@@ -174,7 +174,7 @@ class TestManipulationModuleIntegration:
 
         assert module._pending_plan is not None
         assert len(module._pending_plan.trajectory.points) > 1
-        assert module._pending_plan.trajectory.duration > 0
+        assert trajectory_utils.duration(module._pending_plan.trajectory) > 0
         assert module._pending_plan.group_ids == ("manipulator",)
 
     def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):

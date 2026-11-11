@@ -14,14 +14,15 @@
 
 """Every retained entry uses one connection and one consistent deployed schema."""
 
+import numpy as np
 import pytest
 
 from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.global_config import global_config
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import time as message_time
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.damiao.connection import (
@@ -133,10 +134,23 @@ def test_mock_metal_shell_commands_drive_real_coordinator_connection_path(tmp_pa
             "arm/joint7": pytest.approx(-0.03),
         }
         request = JointTrajectory(
+            header=message_time.header_now(),
             joint_names=["arm/joint2"],
             points=[
-                TrajectoryPoint(time_from_start=0.0, positions=[0.0]),
-                TrajectoryPoint(time_from_start=0.5, positions=[-0.02]),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray([-0.02], dtype=np.float64),
+                    velocities=np.asarray([0.0], dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.5),
+                ),
             ],
         )
         assert coordinator.execute_trajectory(request).status is TrajectoryExecutionStatus.ACCEPTED

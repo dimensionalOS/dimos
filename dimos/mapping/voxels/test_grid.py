@@ -16,7 +16,8 @@ import numpy as np
 import pytest
 
 from dimos.mapping.voxels.grid import VoxelGrid
-from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos.message_utils import pointcloud, time as message_time
+from dimos_messages.std_msgs.msg import Header
 
 
 @pytest.fixture
@@ -46,11 +47,17 @@ def grid(request):
 )
 def test_new_frame_preserves_untouched_columns(grid, expected):
     grid.add_frame(
-        PointCloud2.from_numpy(
-            np.array([[0.5, 0.5, 0.5], [0.5, 0.5, 1.5], [2.5, 0.5, 0.5]], dtype=np.float32)
+        pointcloud.from_xyz(
+            np.array([[0.5, 0.5, 0.5], [0.5, 0.5, 1.5], [2.5, 0.5, 0.5]], dtype=np.float32),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
         )
     )
-    grid.add_frame(PointCloud2.from_numpy(np.array([[0.5, 0.5, 2.5]], dtype=np.float32)))
+    grid.add_frame(
+        pointcloud.from_xyz(
+            np.array([[0.5, 0.5, 2.5]], dtype=np.float32),
+            header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        )
+    )
 
-    points = grid.get_global_pointcloud2().points_f32()
+    points = pointcloud.xyz(grid.get_global_pointcloud2())
     assert {tuple(point) for point in points} == expected

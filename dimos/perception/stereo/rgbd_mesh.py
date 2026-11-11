@@ -29,17 +29,22 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from reactivex.disposable import Disposable
-from scipy.spatial.transform import Rotation
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.shape_msgs.TriangleMesh import TriangleMesh
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import (
+    geometry,
+    image as image_utils,
+    mesh as mesh_utils,
+    time as message_time,
+)
+from dimos_messages.dimos_msgs.msg import TriangleMesh
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import CameraInfo, Image
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -59,13 +64,8 @@ _TRUNC_VOXELS = 3.0
 _INITIAL_BLOCK_COUNT = 256
 
 
-def _transform_to_matrix(transform: Transform) -> NDArray[np.float64]:
-    mat = np.eye(4, dtype=np.float64)
-    q = transform.rotation
-    t = transform.translation
-    mat[:3, :3] = Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
-    mat[:3, 3] = [t.x, t.y, t.z]
-    return mat
+def _transform_to_matrix(transform: TransformStamped) -> NDArray[np.float64]:
+    return geometry.transform_matrix(transform.transform)
 
 
 class RgbdMeshConfig(ModuleConfig):
@@ -162,9 +162,9 @@ class RgbdMesh(Module):
                 self._info is None
                 or self._info.width != msg.width
                 or self._info.height != msg.height
-                or self._info.K != msg.K
+                or not np.array_equal(self._info.k, msg.k)
             ):
-                k = msg.K
+                k = msg.k
                 fx, fy, cx, cy = float(k[0]), float(k[4]), float(k[2]), float(k[5])
                 if fx <= 0 or fy <= 0 or msg.width <= 0 or msg.height <= 0:
                     return
@@ -179,11 +179,12 @@ class RgbdMesh(Module):
 
     def _on_color(self, color: Image) -> None:
         pair: tuple[Image, Image] | None = None
+        stamp = message_time.to_seconds(color.header.stamp)
         with self._pair_lock:
             best_idx = -1
             best_dt = self.config.pair_tolerance_s
             for i, d in enumerate(self._depths):
-                dt = abs(d.ts - color.ts)
+                dt = abs(message_time.to_seconds(d.header.stamp) - stamp)
                 if dt <= best_dt:
                     best_dt = dt
                     best_idx = i
@@ -198,11 +199,12 @@ class RgbdMesh(Module):
 
     def _on_depth(self, depth: Image) -> None:
         pair: tuple[Image, Image] | None = None
+        stamp = message_time.to_seconds(depth.header.stamp)
         with self._pair_lock:
             best_idx = -1
             best_dt = self.config.pair_tolerance_s
             for i, c in enumerate(self._colors):
-                dt = abs(c.ts - depth.ts)
+                dt = abs(message_time.to_seconds(c.header.stamp) - stamp)
                 if dt <= best_dt:
                     best_dt = dt
                     best_idx = i
@@ -260,14 +262,15 @@ class RgbdMesh(Module):
         if info is None or intrinsic is None or ray_grid is None:
             return
 
-        frame_id = color.frame_id or depth.frame_id or info.frame_id
+        frame_id = color.header.frame_id or depth.header.frame_id or info.header.frame_id
         if not frame_id:
             return
 
+        stamp = message_time.to_seconds(color.header.stamp)
         transform = self.tfbuffer.get(
             self.config.world_frame,
             frame_id,
-            time_point=color.ts,
+            time_point=stamp,
             time_tolerance=self.config.tf_tolerance_s,
             forward_tolerance=self.config.tf_wait_s,
             warn=False,
@@ -275,7 +278,7 @@ class RgbdMesh(Module):
         if transform is None:
             return
 
-        d_raw = np.ascontiguousarray(depth.data)
+        d_raw = np.ascontiguousarray(image_utils.view(depth))
         if d_raw.dtype == np.uint16:
             lo = self.config.depth_min * DEPTH_UNITS_PER_M
             hi = self.config.depth_max * DEPTH_UNITS_PER_M
@@ -298,7 +301,7 @@ class RgbdMesh(Module):
             depth_scale = 1.0
             zero_val = np.float32(0.0)
 
-        rgb = np.ascontiguousarray(color.to_rgb().data, dtype=np.uint8)
+        rgb = np.ascontiguousarray(image_utils.to_rgb(color), dtype=np.uint8)
         pose = _transform_to_matrix(transform)
         extrinsic = np.linalg.inv(pose)
 
@@ -372,7 +375,7 @@ class RgbdMesh(Module):
             and self._integrated_frames % self.config.emit_every == 0
             and now - self._last_emit >= self.config.min_emit_interval_s
         ):
-            self._emit_dirty(color.ts)
+            self._emit_dirty(message_time.to_seconds(color.header.stamp))
 
     def _emit_dirty(self, ts: float) -> None:
         self._last_emit = time.monotonic()
@@ -393,7 +396,6 @@ class RgbdMesh(Module):
             if len(verts) == 0 or len(tris) == 0:
                 continue
             normals = o3d_mesh.vertex.normals.numpy().astype(np.float32)
-            colors = (o3d_mesh.vertex.colors.numpy() * 255.0).astype(np.uint8)
 
             # Keep triangles whose centroids lie in [ix*region_m, (ix+1)*region_m) x [iy*region_m, (iy+1)*region_m)
             # so adjacent regions stitch seamlessly without overlapping duplicate bands.
@@ -416,16 +418,14 @@ class RgbdMesh(Module):
             remap[used] = np.arange(int(np.count_nonzero(used)), dtype=np.uint32)
             verts = verts[used]
             normals = normals[used]
-            colors = colors[used]
             tris = remap[tris]
 
             self.mesh.publish(
-                TriangleMesh(
+                mesh_utils.from_arrays(
                     verts,
                     tris,
                     normals,
                     key=(ix, iy, 0),
-                    ts=ts,
-                    colors=colors,
+                    header=Header(stamp=message_time.time_from_seconds(ts), frame_id=""),
                 )
             )

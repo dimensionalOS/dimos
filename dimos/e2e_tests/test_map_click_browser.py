@@ -25,6 +25,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
+from dimos.message_utils import pointcloud
 from dimos.message_utils.time import time_from_seconds
 from dimos_messages.geometry_msgs.msg import Point, PointStamped, Pose, PoseStamped, Quaternion
 from dimos_messages.nav_msgs.msg import Path
@@ -46,7 +47,9 @@ CANVAS = '[data-testid="map2d-global_costmap-canvas"]'
 GRID = grid_msg([[0, 50], [100, -1]], 0.5, 0.25, -0.5, 0.0)
 # One elevated voxel: the camera fits it at the canvas centre, and its x/y
 # differs from where that same ray hits the floor.
-CLOUD = PointCloud2.from_numpy(np.array([[2.5, 3.5, 0.5]], np.float32), frame_id="world")
+CLOUD = pointcloud.from_xyz(
+    np.array([[2.5, 3.5, 0.5]], np.float32), header=Header(frame_id="world")
+)
 
 
 class MapBridge(NamedTuple):

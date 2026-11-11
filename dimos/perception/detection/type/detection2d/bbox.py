@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 
     from dimos_messages.sensor_msgs.msg import Image
 
-import cv2
 import numpy as np
 from rich.console import Console
 from rich.text import Text
@@ -96,6 +95,8 @@ class Detection2DBBox(Detection2D):
 
     def draw_on(self, img: Any, scale: float = 1.0) -> None:
         """Draw this detection's bbox and label onto a BGR numpy array (in-place)."""
+        import cv2
+
         x1, y1, x2, y2 = map(int, self.bbox)
 
         h = hashlib.md5(self.name.encode()).digest()[0]

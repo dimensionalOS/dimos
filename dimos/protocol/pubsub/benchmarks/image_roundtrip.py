@@ -22,11 +22,13 @@ import threading
 import time
 from typing import Any
 
+from dimos_cdrgen.registry import encode
 import numpy as np
 
 from dimos.core.transport import LCMTransport, PubSubTransport, ZenohTransport
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.message_utils import image as image_utils, time as message_time
+from dimos_messages.sensor_msgs.msg import CompressedImage, Image
+from dimos_messages.std_msgs.msg import Header
 from dimos.protocol.pubsub.benchmarks.codec import CompressedCodec
 from dimos.protocol.service.zenohservice import ZenohSessionPool
 
@@ -37,7 +39,11 @@ def make_image(width: int = 1280, height: int = 720) -> Image:
     gradient = np.broadcast_to(np.linspace(0, 255, width, dtype=np.uint8), (height, width))
     noise = rng.randint(0, 60, (height, width), dtype=np.uint8)
     data = np.stack([gradient, np.minimum(gradient, 128) + noise // 2, noise], axis=-1)
-    return Image(data=data, format=ImageFormat.RGB, frame_id="cam", ts=42.125)
+    return image_utils.from_array(
+        data,
+        encoding="rgb8",
+        header=Header(stamp=message_time.time_from_seconds(42.125), frame_id="cam"),
+    )
 
 
 def measure(
@@ -106,8 +112,8 @@ def main() -> None:
     if min(args.frames, args.width, args.height) <= 0:
         parser.error("frames, width, and height must be positive")
     frame = make_image(args.width, args.height)
-    raw_wire = len(frame.lcm_encode())
-    jpeg_wire = len(CompressedImage.from_image(frame).lcm_encode())
+    raw_wire = len(encode(frame))
+    jpeg_wire = len(encode(image_utils.to_compressed(frame)))
     print(
         f"{'transport':<10}{'mode':<8}{'wire/frame':>12}{'median ms':>12}{'max ms':>12}{'fps':>10}{'drops':>8}"
     )

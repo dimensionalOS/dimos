@@ -22,6 +22,7 @@ from scipy.spatial.transform import Rotation
 # TODO(PY311): drop. Skip before importing test_pgo, which skips mid-import without gtsam.
 gtsam = pytest.importorskip("gtsam")
 
+from dimos.message_utils import pointcloud
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP, Premap
 from dimos.navigation.go2.loop_closure.test_pgo import _make_lidar_stream
@@ -53,7 +54,7 @@ def _premap() -> tuple[Premap, np.ndarray]:
     premap = world_map.joint_premap()
     world_map.dispose()
     assert premap is not None
-    return premap, np.concatenate([c.points_f32() for c in clouds])
+    return premap, np.concatenate([pointcloud.xyz(c) for c in clouds])
 
 
 def test_a_map_built_by_the_live_mapper_keeps_what_its_frames_saw() -> None:
@@ -61,7 +62,7 @@ def test_a_map_built_by_the_live_mapper_keeps_what_its_frames_saw() -> None:
     assert len(premap) >= 1
     assert premap.edges.max(initial=0) < len(premap)
     # no loop closed, so nothing moved: every mapped point is on something a frame saw
-    d, _ = cKDTree(world).query(premap.cloud().points_f32())
+    d, _ = cKDTree(world).query(pointcloud.xyz(premap.cloud()))
     assert d.max() < 0.05 * np.sqrt(3)
 
 
@@ -181,7 +182,7 @@ def test_pruned_drops_an_old_keyframe_a_much_younger_one_stands_on() -> None:
     assert len(pruned) == n - 1
     np.testing.assert_allclose(pruned.poses[:, 0, 3], np.r_[0.0, np.arange(2, n - 1), 1.0])
     # keyframe 1's point now belongs to the keyframe that replaced it, at the same place
-    np.testing.assert_allclose(np.sort(pruned.cloud().points_f32()[:, 2]), np.arange(n))
+    np.testing.assert_allclose(np.sort(pointcloud.xyz(pruned.cloud())[:, 2]), np.arange(n))
 
 
 def test_a_saved_map_keeps_its_tension_through_pruning() -> None:

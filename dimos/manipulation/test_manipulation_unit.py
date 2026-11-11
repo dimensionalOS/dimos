@@ -88,6 +88,33 @@ from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
+def _joint_state(position: list[float], name: list[str] | None = None) -> JointState:
+    """A generated JointState holding only the positions a plan target needs.
+
+    Generated messages have no field defaults, so every construction must supply
+    header/name/velocity/effort explicitly.
+    """
+    return JointState(
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+        name=list(name or []),
+        position=np.asarray(position, dtype=np.float64),
+        velocity=np.asarray([], dtype=np.float64),
+        effort=np.asarray([], dtype=np.float64),
+    )
+
+
+def _status(state: TrajectoryState) -> TrajectoryStatus:
+    """A generated TrajectoryStatus for a mocked coordinator reply (no defaults)."""
+    return TrajectoryStatus(
+        header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
+        state=state,
+        progress=0.0,
+        time_elapsed=message_time.duration_from_seconds(0.0),
+        time_remaining=message_time.duration_from_seconds(0.0),
+        error="",
+    )
+
+
 def _control_coordinator(
     *,
     execute_status: TrajectoryExecutionStatus = TrajectoryExecutionStatus.ACCEPTED,
@@ -1369,7 +1396,7 @@ def state_module(module_factory, mocker):
 @pytest.mark.parametrize("failure", ["planner", "materializer", None])
 def test_planning_always_finishes_and_can_retry(state_module, failure):
     module = state_module
-    target = {"manipulator": JointState(name=["j0"], position=[0.1])}
+    target = {"manipulator": _joint_state([0.1], name=["j0"])}
     boundary = (
         module._planner.plan_selected_joint_path
         if failure == "planner"
@@ -1411,7 +1438,7 @@ def test_rejected_requests_preserve_workflow_and_plan(state_module, state, comma
     if command == "empty":
         result = module.plan_to_joints({})
     elif command == "invalid":
-        result = module.plan_to_joints({"manipulator": JointState(position=[0.1, 0.2])})
+        result = module.plan_to_joints({"manipulator": _joint_state([0.1, 0.2])})
     elif command == "timeout":
         result = module.execute(timeout=-1)
     elif state in {OperationStatus.IDLE, OperationStatus.HAS_PLAN}:
@@ -1437,7 +1464,7 @@ def test_old_planning_result_cannot_replace_new_plan(state_module, invalidate):
         return original
 
     module._planner.plan_selected_joint_path.side_effect = plan
-    target = {"manipulator": JointState(position=[0.1])}
+    target = {"manipulator": _joint_state([0.1])}
     with ThreadPoolExecutor(max_workers=1) as pool:
         old = pool.submit(module.plan_to_joints, target)
         try:
@@ -1524,7 +1551,7 @@ def test_blocking_wait_does_not_prevent_cancel_or_overwrite_new_planning(state_m
             assert waiting.wait(3)
             assert module.cancel().status is ExecutionStatus.ABORTED
             cancel.assert_called_once_with()
-            new = pool.submit(module.plan_to_joints, {"manipulator": JointState(position=[0.1])})
+            new = pool.submit(module.plan_to_joints, {"manipulator": _joint_state([0.1])})
             assert planning.wait(3)
             release.set()
             assert old.result(timeout=3).status is ExecutionStatus.COMPLETED
@@ -1553,7 +1580,7 @@ def test_planning_admission_follows_cancel_without_holding_state_lock(state_modu
 
     def request_plan():
         attempted.set()
-        return module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+        return module.plan_to_joints({"manipulator": _joint_state([0.1])})
 
     mocker.patch.object(module._execution_manager, "cancel", side_effect=cancel)
     module._planner.plan_selected_joint_path.side_effect = plan
@@ -1592,9 +1619,9 @@ def test_wait_timeout_keeps_execution_and_invalid_wait_does_not_finish_it(state_
 @pytest.mark.parametrize(
     ("targets", "speed", "reason"),
     [
-        ({"manipulator": JointState(position=[0.1])}, 0, "speed_scale"),
-        ({"manipulator": JointState(position=[0.1, 0.2])}, None, "expected 1"),
-        ({"unknown": JointState(position=[0.1])}, None, "unknown"),
+        ({"manipulator": _joint_state([0.1])}, 0, "speed_scale"),
+        ({"manipulator": _joint_state([0.1, 0.2])}, None, "expected 1"),
+        ({"unknown": _joint_state([0.1])}, None, "unknown"),
     ],
 )
 def test_planning_rejection_reports_its_own_reason(state_module, targets, speed, reason):
@@ -1602,7 +1629,7 @@ def test_planning_rejection_reports_its_own_reason(state_module, targets, speed,
     module._planner.plan_selected_joint_path.return_value = PlanningResult(
         status=PlanningStatus.TIMEOUT, message="previous planner timeout"
     )
-    previous = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+    previous = module.plan_to_joints({"manipulator": _joint_state([0.1])})
     assert previous.status is PlanStatus.FAILED
     assert "TIMEOUT" in previous.message
     pending = module._pending_plan
@@ -1628,7 +1655,7 @@ def test_next_plan_refreshes_finished_nonblocking_execution(state_module, mocker
     )
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
 
-    result = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+    result = module.plan_to_joints({"manipulator": _joint_state([0.1])})
 
     assert result.succeeded
     assert module._state is OperationStatus.HAS_PLAN
@@ -1642,7 +1669,18 @@ def test_pose_and_linear_rejections_keep_saved_error_separate(state_module, requ
     module._error_message = "previous planner timeout"
 
     result = (
-        module.plan_to_poses({"manipulator": PoseStamped()}, speed_scale=0)
+        module.plan_to_poses(
+            {
+                "manipulator": PoseStamped(
+                    header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
+                    pose=Pose(
+                        position=Vector3(0.0, 0.0, 0.0),
+                        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    ),
+                )
+            },
+            speed_scale=0,
+        )
         if request_kind == "pose"
         else module.move_linear(dx=0.1, speed_scale=0).plan
     )
@@ -1663,7 +1701,7 @@ def test_new_plan_cannot_replace_still_active_execution(state_module, mocker):
     )
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
 
-    result = module.plan_to_joints({"manipulator": JointState(position=[0.1])})
+    result = module.plan_to_joints({"manipulator": _joint_state([0.1])})
 
     assert result.status is PlanStatus.FAILED
     assert "EXECUTING" in result.message
@@ -1673,7 +1711,7 @@ def test_new_plan_cannot_replace_still_active_execution(state_module, mocker):
 
 def test_plan_lifecycle_has_one_pending_state(state_module, mocker):
     module = state_module
-    target = {"manipulator": JointState(position=[0.1])}
+    target = {"manipulator": _joint_state([0.1])}
     module.clear_planned_path()
     assert module.get_state().operation_status is OperationStatus.IDLE
     assert not module.get_state().has_pending_plan
@@ -1722,7 +1760,7 @@ def test_unconfirmed_stop_blocks_new_motion_until_cancel_confirms(state_module, 
     )
     assert module.execute(blocking=False).status is outcome
     assert module.get_operation_status() is OperationStatus.EXECUTING
-    assert not module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert not module.plan_to_joints({"manipulator": _joint_state([0.1])}).succeeded
     assert not module.execute(blocking=False).succeeded
     module.clear_planned_path()
     assert module.get_operation_status() is OperationStatus.EXECUTING
@@ -1731,7 +1769,7 @@ def test_unconfirmed_stop_blocks_new_motion_until_cancel_confirms(state_module, 
     )
     assert module.cancel().status is ExecutionStatus.ABORTED
     assert module.get_operation_status() is OperationStatus.IDLE
-    assert module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert module.plan_to_joints({"manipulator": _joint_state([0.1])}).succeeded
 
 
 def test_cleared_plan_cannot_be_executed_by_operator(state_module):
@@ -1758,8 +1796,8 @@ def test_restart_preserves_unconfirmed_motion_until_cancel_confirms(state_module
                 if reported["stopped"]
                 else TrajectoryCancellationStatus.UNCERTAIN
             )
-        return TrajectoryStatus(
-            state=TrajectoryState.ABORTED if reported["stopped"] else TrajectoryState.EXECUTING
+        return _status(
+            TrajectoryState.ABORTED if reported["stopped"] else TrajectoryState.EXECUTING
         )
 
     mocker.patch.object(coordinator, "task_invoke", side_effect=invoke)
@@ -1768,13 +1806,13 @@ def test_restart_preserves_unconfirmed_motion_until_cancel_confirms(state_module
     assert module.get_operation_status() is OperationStatus.EXECUTING
     module.start()
     assert module.get_state().operation_status is OperationStatus.EXECUTING
-    assert not module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert not module.plan_to_joints({"manipulator": _joint_state([0.1])}).succeeded
     assert not module.execute(blocking=False).succeeded
     assert len(dispatches) == 1
 
     reported["stopped"] = True
     assert module.cancel().status is ExecutionStatus.ABORTED
     assert module.get_operation_status() is OperationStatus.IDLE
-    assert module.plan_to_joints({"manipulator": JointState(position=[0.1])}).succeeded
+    assert module.plan_to_joints({"manipulator": _joint_state([0.1])}).succeeded
     assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
     assert len(dispatches) == 2

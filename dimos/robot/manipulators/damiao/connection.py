@@ -28,6 +28,7 @@ import time
 from typing import Any, ClassVar
 import uuid
 
+import numpy as np
 from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 from typing_extensions import Self
@@ -40,7 +41,8 @@ from dimos.control.contract.limits import limits as limits_of, movable_joints
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.manipulators.damiao.arm import ArmReading, DamiaoArm
 from dimos.robot.manipulators.damiao.robot import DamiaoRobot
 from dimos.utils.logging_config import setup_logger
@@ -258,12 +260,11 @@ class DamiaoConnection(ConnectionModule):
                     return
                 self.joint_state.publish(
                     JointState(
-                        ts=time.time(),
-                        frame_id=self._state_frame,
+                        header=message_time.header_now(self._state_frame),
                         name=[f"{self.config.source}/{name}" for name in self.joint_names],
-                        position=reading.position,
-                        velocity=reading.velocity,
-                        effort=reading.effort,
+                        position=np.asarray(reading.position, dtype=np.float64),
+                        velocity=np.asarray(reading.velocity, dtype=np.float64),
+                        effort=np.asarray(reading.effort, dtype=np.float64),
                     )
                 )
             except Exception as error:

@@ -24,8 +24,9 @@ from scipy.spatial.transform import Rotation
 
 gtsam = pytest.importorskip("gtsam")
 
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.go2.loop_closure.pgo import PGOConfig, PGOState
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 from dimos.navigation.go2.loop_closure.premap import Premap, apply, matrix_pose
@@ -99,18 +100,27 @@ def _walk(state: PGOState, room: np.ndarray, steps: range, drift_per_step: float
         odom = TRUE @ _tf(0.0, drift_per_step * i) @ in_map
         near = room[np.linalg.norm(room[:, :2] - in_map[:2, 3], axis=1) < 8.0]
         body = apply(np.linalg.inv(in_map), near)
-        world = PointCloud2.from_numpy(apply(odom, body).astype(np.float32), timestamp=float(i))
+        world = pointcloud.from_xyz(
+            apply(odom, body).astype(np.float32),
+            header=Header(stamp=message_time.time_from_seconds(float(i)), frame_id="world"),
+        )
         state.process(gtsam.Pose3(odom), float(i), world)
 
 
-def _fix(m: np.ndarray, ts: float = 0.0) -> Transform:
-    return Transform.from_matrix(m, frame_id="world", child_frame_id="map", ts=ts)
+def _fix(m: np.ndarray, ts: float = 0.0) -> TransformStamped:
+    return TransformStamped(
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="world"),
+        child_frame_id="map",
+        transform=geometry.transform_from_matrix(m),
+    )
 
 
-def _assert_near(tf: Transform | None, m: np.ndarray, tol_m: float = 0.05) -> None:
+def _assert_near(tf: TransformStamped | None, m: np.ndarray, tol_m: float = 0.05) -> None:
     assert tf is not None
-    np.testing.assert_allclose(tf.to_matrix()[:3, 3], m[:3, 3], atol=tol_m)
-    np.testing.assert_allclose(tf.to_matrix()[:3, :3], m[:3, :3], atol=0.02)
+    np.testing.assert_allclose(geometry.transform_matrix(tf.transform)[:3, 3], m[:3, 3], atol=tol_m)
+    np.testing.assert_allclose(
+        geometry.transform_matrix(tf.transform)[:3, :3], m[:3, :3], atol=0.02
+    )
 
 
 def _no_premap_loops() -> PGOConfig:
@@ -218,7 +228,13 @@ def _walk_map(world_map: PGOMap, room: np.ndarray, steps: range, t0: float = 0.0
         odom = TRUE @ in_map
         near = room[np.linalg.norm(room[:, :2] - in_map[:2, 3], axis=1) < 8.0]
         world = apply(TRUE, near).astype(np.float32)
-        world_map.add(PointCloud2.from_numpy(world, timestamp=t0 + i), matrix_pose(odom))
+        world_map.add(
+            pointcloud.from_xyz(
+                world,
+                header=Header(stamp=message_time.time_from_seconds(t0 + i), frame_id="world"),
+            ),
+            matrix_pose(odom),
+        )
 
 
 def test_the_joint_premap_holds_both_runs_and_lies_on_the_room(tmp_path: Path) -> None:
@@ -236,7 +252,7 @@ def test_the_joint_premap_holds_both_runs_and_lies_on_the_room(tmp_path: Path) -
     n_live = world_map.pgo.n_keyframes
     # the walk saw the whole room again: the saved map is about the walk's points alone
     stored = sum(len(scan) for scan in premap.scans)
-    live = len(world_map.live_map().points_f32())
+    live = len(pointcloud.xyz(world_map.live_map()))
     assert sum(len(scan) for scan in joint.scans) < live + 0.05 * stored
     assert len(joint) < len(premap) + n_live
     assert joint.edges.max() < len(joint) and (joint.edges[:, 0] == 0).any()
@@ -244,7 +260,7 @@ def test_the_joint_premap_holds_both_runs_and_lies_on_the_room(tmp_path: Path) -
     joint.save(tmp_path / "house.map.db")
     back = Premap.load(tmp_path / "house")
     np.testing.assert_allclose(back.poses, joint.poses, atol=1e-9)
-    d, _ = cKDTree(room).query(back.cloud().points_f32())
+    d, _ = cKDTree(room).query(pointcloud.xyz(back.cloud()))
     assert np.mean(d < 0.1) > 0.95
     world_map.dispose()
 
@@ -278,13 +294,19 @@ def test_walking_a_path_again_hands_the_old_keyframes_over_and_keeps_the_map() -
         in_map = _tf(x, PATH_Y + 0.02 * (t % 2))
         near = room[np.linalg.norm(room[:, :2] - in_map[:2, 3], axis=1) < 8.0]
         world = apply(TRUE, near).astype(np.float32)
-        world_map.add(PointCloud2.from_numpy(world, timestamp=float(t)), matrix_pose(TRUE @ in_map))
+        world_map.add(
+            pointcloud.from_xyz(
+                world,
+                header=Header(stamp=message_time.time_from_seconds(float(t)), frame_id="world"),
+            ),
+            matrix_pose(TRUE @ in_map),
+        )
     # the graph keeps every node, so a change of mind finds it as it was
     assert world_map.pgo.n_keyframes == len(path)
     # the last ten steps back stood where steps at least 20 s older did
     saved = world_map.joint_premap()
     assert saved is not None and len(saved) <= len(path) - 10
-    d, _ = cKDTree(world_map.global_map().points_f32()).query(apply(TRUE, room))
+    d, _ = cKDTree(pointcloud.xyz(world_map.global_map())).query(apply(TRUE, room))
     assert np.mean(d < 0.1) > 0.9
     world_map.dispose()
 

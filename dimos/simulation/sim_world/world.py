@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -42,20 +43,24 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.files.File import File
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
-from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.sim_msgs.Contacts import Contact, Contacts, Part
-from dimos.msgs.std_msgs.String import String
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.message_utils import pointcloud, time as message_time
+from dimos_messages.dimos_msgs.msg import Contact, Contacts, LineSegment3D, LineSegments3D
+from dimos_messages.geometry_msgs.msg import (
+    Point,
+    Pose,
+    PoseStamped,
+    PoseWithCovariance,
+    Quaternion,
+    Transform,
+    TransformStamped,
+    Twist,
+    TwistWithCovariance,
+    Vector3,
+)
+from dimos_messages.nav_msgs.msg import Odometry
+from dimos_messages.sensor_msgs.msg import JointState, PointCloud2
+from dimos_messages.std_msgs.msg import Header, String
+from dimos_messages.tf2_msgs.msg import TFMessage
 from dimos.simulation.scenes.mjcf import SCENE_GROUP, add_boxes, geom_name
 from dimos.simulation.scenes.procedural import Family, Params, Scene, generate
 from dimos.simulation.sensors.mujoco_raycaster import NO_BODY_EXCLUDED, MujocoRaycaster
@@ -68,6 +73,7 @@ from dimos.simulation.sim_world.body import (
 )
 from dimos.simulation.sim_world.premap import premap_cloud, without_objects
 from dimos.simulation.sim_world.scene_data import scene_files
+from dimos.types.file import File
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.logging_config import setup_logger
 
@@ -319,16 +325,17 @@ class Sim:
     def contacts(self) -> list[Contact]:
         """Every (robot part, scene kind) pair in contact right now, sorted."""
         m, d = self.model, self.data
-        found: set[Contact] = set()
+        found: dict[tuple[str, str], Contact] = {}
         for i in range(d.ncon):
             c = d.contact[i]
             for scene_geom, robot_geom in ((c.geom1, c.geom2), (c.geom2, c.geom1)):
                 kind = self._kind.get(scene_geom)
                 if kind is not None and m.geom_bodyid[robot_geom] != 0:
-                    found.add(Contact(self._part(robot_geom), kind))
-        return sorted(found)
+                    part = self._part(robot_geom)
+                    found.setdefault((part, kind), Contact(part=part, kind=kind))
+        return [found[key] for key in sorted(found)]
 
-    def _part(self, geom: int) -> Part:
+    def _part(self, geom: int) -> str:
         if geom in self._housings:
             return "lidar"
         return self.robot.part(geom)
@@ -456,7 +463,13 @@ class SimWorld(Module, ABC):
         scene = sim.scene if objects else without_objects(sim.scene)
         cloud = premap_cloud(scene, sim.rig, np.asarray(route, dtype=np.float64))
         self.loaded_map.publish(
-            PointCloud2.from_numpy(cloud, frame_id=sim.rig.world_frame, timestamp=time.time())
+            pointcloud.from_xyz(
+                cloud,
+                header=Header(
+                    stamp=message_time.time_from_seconds(time.time()),
+                    frame_id=sim.rig.world_frame,
+                ),
+            )
         )
         return len(cloud)
 
@@ -512,8 +525,6 @@ class SimWorld(Module, ABC):
         return open_viewer(sim.model, sim.data, sim.base_pose()[0])
 
     def _run(self) -> None:
-        # open3d loads on the first cloud, about a second
-        PointCloud2.from_numpy(np.zeros((0, 3), np.float32), frame_id=self.rig.odom_child_frame)
         viewer = self._open_viewer(self._sim)
         try:
             self._simulate(self._sim, viewer)
@@ -543,19 +554,41 @@ class SimWorld(Module, ABC):
             self._publish_poses(sim, stamp)
             contacts = sim.contacts()
             if contacts != last_contacts or sim.t >= next_contacts_publish:
-                self.contacts.publish(Contacts(contacts, ts=stamp))
+                self.contacts.publish(
+                    Contacts(
+                        header=Header(stamp=message_time.time_from_seconds(stamp), frame_id=""),
+                        contacts=contacts,
+                    )
+                )
                 last_contacts = contacts
                 next_contacts_publish = sim.t + CONTACTS_HEARTBEAT_DT
             if frame is not None:
                 self.lidar.publish(
-                    PointCloud2.from_numpy(
-                        frame.points, frame_id=sim.rig.odom_child_frame, timestamp=stamp
+                    pointcloud.from_xyz(
+                        frame.points,
+                        header=Header(
+                            stamp=message_time.time_from_seconds(stamp),
+                            frame_id=sim.rig.odom_child_frame,
+                        ),
                     )
                 )
             if sim.t >= next_scene_publish:
                 self.scene.publish(
                     LineSegments3D(
-                        ts=stamp, frame_id=sim.rig.world_frame, segments=scene_edges(sim.scene)
+                        header=Header(
+                            stamp=message_time.time_from_seconds(stamp),
+                            frame_id=sim.rig.world_frame,
+                        ),
+                        segments=[
+                            LineSegment3D(
+                                start=Point(
+                                    x=float(start[0]), y=float(start[1]), z=float(start[2])
+                                ),
+                                end=Point(x=float(end[0]), y=float(end[1]), z=float(end[2])),
+                                weight=1.0,
+                            )
+                            for start, end in scene_edges(sim.scene)
+                        ],
                     )
                 )
                 next_scene_publish = sim.t + SCENE_PUBLISH_DT
@@ -568,47 +601,78 @@ class SimWorld(Module, ABC):
 
     def _publish_poses(self, sim: Sim, stamp: float) -> None:
         world, child = sim.rig.world_frame, sim.rig.odom_child_frame
+        header = Header(stamp=message_time.time_from_seconds(stamp), frame_id=world)
         position, rotation = sim.odom_pose()
         linear, angular = sim.odom_velocity()
         q = Rotation.from_matrix(rotation).as_quat()
-        odom = Pose(*map(float, position), *map(float, q))
+        odom = Pose(
+            position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2])),
+            orientation=Quaternion(x=float(q[0]), y=float(q[1]), z=float(q[2]), w=float(q[3])),
+        )
         self.odometry.publish(
             Odometry(
-                ts=stamp,
-                frame_id=world,
+                header=deepcopy(header),
                 child_frame_id=child,
-                pose=odom,
-                twist=Twist(Vector3(linear.tolist()), Vector3(angular.tolist())),
+                pose=PoseWithCovariance(pose=odom, covariance=np.zeros(36)),
+                twist=TwistWithCovariance(
+                    twist=Twist(
+                        linear=Vector3(x=float(linear[0]), y=float(linear[1]), z=float(linear[2])),
+                        angular=Vector3(
+                            x=float(angular[0]), y=float(angular[1]), z=float(angular[2])
+                        ),
+                    ),
+                    covariance=np.zeros(36),
+                ),
             )
         )
         self.tf.publish(
             TFMessage(
-                Transform(
-                    translation=Vector3(odom.position),
-                    rotation=Quaternion(odom.orientation),
-                    frame_id=world,
-                    child_frame_id=child,
-                    ts=stamp,
-                )
+                transforms=[
+                    TransformStamped(
+                        header=deepcopy(header),
+                        child_frame_id=child,
+                        transform=Transform(
+                            translation=Vector3(
+                                x=odom.position.x, y=odom.position.y, z=odom.position.z
+                            ),
+                            rotation=Quaternion(
+                                x=odom.orientation.x,
+                                y=odom.orientation.y,
+                                z=odom.orientation.z,
+                                w=odom.orientation.w,
+                            ),
+                        ),
+                    )
+                ]
             )
         )
         base_position, base_rotation = sim.base_pose()
         base_q = Rotation.from_matrix(base_rotation).as_quat()
         self.ground_truth.publish(
             PoseStamped(
-                *map(float, base_position),
-                *map(float, base_q),
-                ts=stamp,
-                frame_id=world,
+                header=deepcopy(header),
+                pose=Pose(
+                    position=Point(
+                        x=float(base_position[0]),
+                        y=float(base_position[1]),
+                        z=float(base_position[2]),
+                    ),
+                    orientation=Quaternion(
+                        x=float(base_q[0]),
+                        y=float(base_q[1]),
+                        z=float(base_q[2]),
+                        w=float(base_q[3]),
+                    ),
+                ),
             )
         )
         positions, velocities = sim.robot.joint_state()
         self.joint_state.publish(
             JointState(
-                ts=stamp,
-                frame_id=BASE_FRAME_ID,
+                header=Header(stamp=message_time.time_from_seconds(stamp), frame_id=BASE_FRAME_ID),
                 name=list(sim.robot.joint_names),
-                position=positions.tolist(),
-                velocity=velocities.tolist(),
+                position=np.asarray(positions, dtype=np.float64),
+                velocity=np.asarray(velocities, dtype=np.float64),
+                effort=np.zeros(0, dtype=np.float64),
             )
         )

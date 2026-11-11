@@ -27,7 +27,7 @@ from dimos.control.connection.mock_joint_connection import MockJointConnection
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tick_loop import TickLoop
 from dimos.core.stream import Stream, Transport
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
 from dimos.utils.testing.waiting import wait_until

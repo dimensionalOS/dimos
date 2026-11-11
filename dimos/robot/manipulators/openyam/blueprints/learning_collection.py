@@ -22,8 +22,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos_messages.sensor_msgs.msg import Image, JointState
 from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
 from dimos.robot.manipulators.damiao.damiao_blueprint import arm_connection, arm_remaps
 from dimos.robot.manipulators.openyam.config import OPENYAM, make_openyam_model_config

@@ -27,10 +27,8 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.msgs.std_msgs.UInt32 import UInt32
+from dimos_messages.geometry_msgs.msg import Twist, Vector3
+from dimos_messages.std_msgs.msg import Int32, UInt32
 from dimos.robot.deeprobotics.m20 import connection as m20_connection
 from dimos.robot.deeprobotics.m20.basic_server import (
     CHARGE_CHARGING,
@@ -237,6 +235,11 @@ def started(
             conn.stop()
 
 
+def _zero_velocity() -> Twist:
+    """A Twist that tells the robot to stand still."""
+    return Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+
+
 def _transport(stream: In[Any] | Out[Any]) -> FakeTransport:
     transport = stream.transport
     assert isinstance(transport, FakeTransport)
@@ -315,7 +318,7 @@ def test_dock_cancels_nav_then_sends_the_vendor_command_and_reports_charging(
 
     mocks.goal.publish.assert_called_once()
     goal = mocks.goal.publish.call_args.args[0]
-    assert math.isnan(goal.x) and math.isnan(goal.y) and math.isnan(goal.z)
+    assert math.isnan(goal.point.x) and math.isnan(goal.point.y) and math.isnan(goal.point.z)
     mocks.cmd_vel.publish.assert_not_called()
 
     apdu = next(frame for frame in server.raw if b'"Command":24' in frame)
@@ -577,7 +580,7 @@ def test_commands_are_refused_on_the_dock(
     server.charge = CHARGE_CHARGING
     _wait_for_status(connection, CHARGE_CHARGING)
 
-    assert connection.move(Twist.zero()) is False
+    assert connection.move(_zero_velocity()) is False
     connection.stop_movement()
     assert connection.liedown() is False
     assert connection.standup() is False
@@ -623,11 +626,13 @@ def test_requested_velocity_is_dropped_on_the_dock_and_cancels_the_goal_once(
     _wait_for_status(conn, CHARGE_CHARGING)
 
     for _ in range(5):
-        _transport(conn.requested_cmd_vel).publish(Twist(linear=Vector3(0.3, 0.0, 0.0)))
+        _transport(conn.requested_cmd_vel).publish(
+            Twist(linear=Vector3(0.3, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+        )
 
     assert _transport(conn.cmd_vel).sent == []
     (goal,) = _transport(conn.goal).sent
-    assert math.isnan(goal.x)
+    assert math.isnan(goal.point.x)
 
 
 def test_the_dock_guards_hold_when_reports_go_stale(
@@ -643,7 +648,7 @@ def test_the_dock_guards_hold_when_reports_go_stale(
     monkeypatch.setattr("dimos.robot.deeprobotics.m20.connection._CHARGE_STATUS_MAX_AGE_S", 0.05)
     _wait_until(lambda: connection.charge_status() == "unknown")
 
-    assert connection.move(Twist.zero()) is False
+    assert connection.move(_zero_velocity()) is False
     connection.stop()
 
     mocks.motion_state_cmd.publish.assert_not_called()

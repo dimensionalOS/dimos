@@ -20,17 +20,21 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.mapping.costmapper import Config, CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig, general_occupancy
-from dimos_messages.sensor_msgs.msg import PointCloud2
+from dimos.message_utils import occupancy, pointcloud, time as message_time
+from dimos_messages.std_msgs.msg import Header
 
 
 def test_general_algorithm_accepts_base_config_dict() -> None:
     config = Config(algo="general", config={"resolution": 1.0})
-    cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.5]]), frame_id="map")
+    cloud = pointcloud.from_xyz(
+        np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 0.5]]),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id="map"),
+    )
 
     grid = general_occupancy(cloud, **asdict(config.config))
 
-    assert grid.resolution == 1.0
-    np.testing.assert_array_equal(grid.grid, [[-1, 0, -1], [0, 0, 0], [-1, 0, 100]])
+    assert grid.info.resolution == 1.0
+    np.testing.assert_array_equal(occupancy.view(grid), [[-1, 0, -1], [0, 0, 0], [-1, 0, 100]])
 
 
 @pytest.mark.parametrize("serialized", [False, True])

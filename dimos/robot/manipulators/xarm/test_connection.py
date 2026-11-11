@@ -27,12 +27,14 @@ from pathlib import Path
 import time
 from typing import Any
 
+import numpy as np
 from pydantic import ValidationError
 import pytest
 
 from dimos.control.connection_source import ConnectionSource
 from dimos.control.contract.limits import limits
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.xarm import connection
 from dimos.robot.manipulators.xarm.config import XARM_ARMS, xarm_model
@@ -183,13 +185,25 @@ class Rig:
     def move(self, **positions: float) -> None:
         """Send joint targets in rad on ``position_command``, e.g. ``move(joint1=0.2)``."""
         names = [f"arm/{joint}" for joint in positions]
-        msg = JointState(name=names, position=list(positions.values()))
+        msg = JointState(
+            header=message_time.header_now(),
+            name=names,
+            position=np.asarray(list(positions.values()), dtype=np.float64),
+            velocity=np.asarray([], dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
         self.ports["position_command"].publish(msg)
 
     def jog(self, **speeds: float) -> None:
         """Send joint speeds in rad/s on ``velocity_command``, e.g. ``jog(joint1=0.5)``."""
         names = [f"arm/{joint}" for joint in speeds]
-        msg = JointState(name=names, velocity=list(speeds.values()))
+        msg = JointState(
+            header=message_time.header_now(),
+            name=names,
+            position=np.asarray([], dtype=np.float64),
+            velocity=np.asarray(list(speeds.values()), dtype=np.float64),
+            effort=np.asarray([], dtype=np.float64),
+        )
         self.ports["velocity_command"].publish(msg)
 
     def readings(self) -> list[JointState]:
@@ -340,7 +354,7 @@ def test_the_gripper_is_read_in_radians_in_a_message_of_its_own(rig: Callable[..
     wait_until(lambda: any(m.name == ["arm/drive_joint"] for m in r.readings()), timeout=2.0)
     gripper = next(m for m in r.readings() if m.name == ["arm/drive_joint"])
     assert gripper.position == pytest.approx([0.425])
-    assert gripper.velocity == gripper.effort == []
+    assert len(gripper.velocity) == len(gripper.effort) == 0
 
 
 def test_a_target_past_the_jump_guard_is_refused_and_nothing_reaches_the_sdk(
@@ -422,9 +436,9 @@ def test_joint_state_names_each_joint_with_its_position_speed_and_torque(
     wait_until(lambda: bool(r.readings()), timeout=2.0)
     msg = r.readings()[-1]
     assert msg.name == [f"arm/joint{i}" for i in range(1, 7)]
-    assert msg.position == sdk.positions[:6]
-    assert msg.velocity == sdk.speeds[:6]
-    assert msg.effort == sdk.efforts[:6]
+    assert list(msg.position) == sdk.positions[:6]
+    assert list(msg.velocity) == sdk.speeds[:6]
+    assert list(msg.effort) == sdk.efforts[:6]
 
 
 def test_the_coordinator_takes_the_arm_and_gripper_messages_as_one_robot(

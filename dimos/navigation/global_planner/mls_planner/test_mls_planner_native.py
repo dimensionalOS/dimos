@@ -33,7 +33,7 @@ from dimos_messages.std_msgs.msg import Header
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNative
 
 _GOAL = PointStamped(
-    header=Header(stamp=message_time.time_from_seconds(1000.25)),
+    header=Header(stamp=message_time.time_from_seconds(1000.25), frame_id=""),
     point=Point(x=1.0, y=0.0, z=0.0),
 )
 
@@ -88,7 +88,7 @@ def _report(goal: PointStamped, status: int, text: str = "") -> GoalStatus:
 def _pose(x: float, y: float, z: float) -> PoseStamped:
     """A tf pose for the wrapper's lookup to return."""
     return PoseStamped(
-        header=Header(),
+        header=Header(stamp=message_time.time_from_seconds(0.0), frame_id=""),
         pose=Pose(position=Point(x=x, y=y, z=z), orientation=Quaternion(x=0, y=0, z=0, w=1)),
     )
 
@@ -140,7 +140,10 @@ def test_a_report_that_ends_the_goal_ends_the_go_to(
         pytest.param(_report(_GOAL, GoalStatus.ACTIVE, "following the path"), id="held"),
         pytest.param(
             _report(
-                PointStamped(header=Header(stamp=message_time.time_from_seconds(900.0))),
+                PointStamped(
+                    header=Header(stamp=message_time.time_from_seconds(900.0), frame_id=""),
+                    point=Point(x=0.0, y=0.0, z=0.0),
+                ),
                 GoalStatus.SUCCEEDED,
             ),
             id="other goal",
@@ -157,7 +160,7 @@ def test_a_report_that_does_not_end_the_goal_is_ignored(rig: _Rig, report: GoalS
 
 def test_a_report_for_a_go_to_already_replaced_leaves_the_new_one_alone(rig: _Rig) -> None:
     newer = PointStamped(
-        header=Header(stamp=message_time.time_from_seconds(1001.0)),
+        header=Header(stamp=message_time.time_from_seconds(1001.0), frame_id=""),
         point=Point(x=2.0, y=0.0, z=0.0),
     )
     rig.module._goal = newer

@@ -23,7 +23,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.transport import LCMTransport, ZenohTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos_messages.geometry_msgs.msg import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from experimental.gateway.introspect import (
     Cache,

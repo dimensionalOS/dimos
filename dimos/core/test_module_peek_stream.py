@@ -21,8 +21,21 @@ from dimos.core.module import Module, PeekNotFound
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport
 from dimos.core.transport_factory import make_transport
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.message_utils import time as message_time
+from dimos_messages.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from dimos_messages.std_msgs.msg import Header
 from dimos.utils.testing.waiting import wait_until
+
+
+def pose_at(ts: float, x: float, y: float, z: float, *, frame_id: str = "") -> PoseStamped:
+    """A stamped pose at ``(x, y, z)``, facing along x."""
+    return PoseStamped(
+        header=Header(stamp=message_time.time_from_seconds(ts), frame_id=frame_id),
+        pose=Pose(
+            position=Point(x=x, y=y, z=z),
+            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+        ),
+    )
 
 
 class PeekModule(Module):
@@ -47,7 +60,7 @@ def module(mocker):
 def test_peek_observes_external_publications(module, each_transport, stream_name):
     topic = f"/peek/{stream_name}"
     module.set_transport(stream_name, make_transport(topic, PoseStamped))
-    expected = PoseStamped(ts=123.0, frame_id="world", position=(1.0, 2.0, 3.0))
+    expected = pose_at(123.0, 1.0, 2.0, 3.0, frame_id="world")
 
     with make_transport(topic, PoseStamped) as publisher, ThreadPoolExecutor() as executor:
         result = executor.submit(module.peek_stream, stream_name, 3.0)
@@ -60,9 +73,11 @@ def test_peek_observes_external_publications(module, each_transport, stream_name
         pose = result.result()
 
     assert isinstance(pose, PoseStamped)
-    assert pose.ts == expected.ts
-    assert pose.frame_id == expected.frame_id
-    assert (pose.x, pose.y, pose.z) == (1.0, 2.0, 3.0)
+    assert message_time.to_seconds(pose.header.stamp) == message_time.to_seconds(
+        expected.header.stamp
+    )
+    assert pose.header.frame_id == expected.header.frame_id
+    assert (pose.pose.position.x, pose.pose.position.y, pose.pose.position.z) == (1.0, 2.0, 3.0)
 
 
 def send_only_transport(mocker) -> LCMTransport:
@@ -78,7 +93,7 @@ def send_only_transport(mocker) -> LCMTransport:
 def test_peek_preserves_local_output_without_transport_loopback(module, mocker, has_transport):
     if has_transport:
         module.set_transport("odom", send_only_transport(mocker))
-    expected = PoseStamped(ts=123.0, position=(4.0, 5.0, 6.0))
+    expected = pose_at(123.0, 4.0, 5.0, 6.0)
 
     with ThreadPoolExecutor() as executor:
         result = executor.submit(module.peek_stream, "odom", 3.0)
@@ -98,7 +113,7 @@ def test_one_publication_reaches_every_pending_peek_and_subscriber(module, mocke
     transport = send_only_transport(mocker)
     module.set_transport("odom", transport)
     received = []
-    expected = PoseStamped(ts=123.0, position=(4.0, 5.0, 6.0))
+    expected = pose_at(123.0, 4.0, 5.0, 6.0)
 
     with ThreadPoolExecutor() as executor:
         peeks = [executor.submit(module.peek_stream, "odom", 3.0) for _ in range(2)]

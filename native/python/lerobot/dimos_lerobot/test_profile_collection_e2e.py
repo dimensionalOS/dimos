@@ -30,9 +30,9 @@ from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.build import run_dataprep
 from dimos.imitation.dataprep.schema import FeatureSpec, OutputConfig, RecordingSchema
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import image, joint_state, time as message_time
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 
 @pytest.fixture
@@ -86,13 +86,23 @@ def recorded_profile(tmp_path: Path, mock_profile: CollectionProfile, camera_cou
 
         def emit(name: str, message: Any) -> None:
             value = String(message.to_json()) if isinstance(message, EpisodeStatus) else message
-            store.stream(name, types[name], codec="json" if name == "status" else "lcm").append(
+            ts = (
+                message.ts
+                if isinstance(message, EpisodeStatus)
+                else message_time.to_seconds(message.header.stamp)
+            )
+            store.stream(name, types[name], codec="json" if name == "status" else "cdr").append(
                 value,
-                ts=message.ts,
+                ts=ts,
             )
 
-        emit("accepted", JointState(ts=9.9, name=["left"], position=[1000]))
-        emit("accepted", JointState(ts=9.9, name=["right"], position=[2000]))
+        emit(
+            "accepted", joint_state.from_mapping({"ts": 9.9, "name": ["left"], "position": [1000]})
+        )
+        emit(
+            "accepted",
+            joint_state.from_mapping({"ts": 9.9, "name": ["right"], "position": [2000]}),
+        )
         emit(
             "status",
             EpisodeStatus(
@@ -107,19 +117,28 @@ def recorded_profile(tmp_path: Path, mock_profile: CollectionProfile, camera_cou
         for frame in range(3):
             ts = 10 + frame / 30
             emit(
-                "measured", JointState(ts=ts, name=["left", "right"], position=[frame, 100 + frame])
+                "measured",
+                joint_state.from_mapping(
+                    {"ts": ts, "name": ["left", "right"], "position": [frame, 100 + frame]}
+                ),
             )
             if frame == 1:
-                emit("accepted", JointState(ts=ts, name=["left"], position=[1001]))
+                emit(
+                    "accepted",
+                    joint_state.from_mapping({"ts": ts, "name": ["left"], "position": [1001]}),
+                )
             elif frame == 2:
-                emit("accepted", JointState(ts=ts, name=["right"], position=[2002]))
+                emit(
+                    "accepted",
+                    joint_state.from_mapping({"ts": ts, "name": ["right"], "position": [2002]}),
+                )
             for camera in range(camera_count):
                 emit(
                     f"camera_{camera}",
-                    Image(
-                        ts=ts,
-                        format=ImageFormat.RGB,
-                        data=np.full((64, 64, 3), camera * 50 + frame * 10 + 20, dtype=np.uint8),
+                    image.from_array(
+                        np.full((64, 64, 3), camera * 50 + frame * 10 + 20, dtype=np.uint8),
+                        encoding="rgb8",
+                        header=Header(stamp=message_time.time_from_seconds(ts), frame_id=""),
                     ),
                 )
         emit(

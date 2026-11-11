@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import av
+from dimos_cdrgen.registry import encode, schema
 from dimos_lerobot.dataprep import inspect_dataset, write
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -41,9 +42,9 @@ from dimos.imitation.dataprep.schema import (
     RecordingSchema,
     SyncConfig,
 )
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.String import String
+from dimos.message_utils import image, joint_state, time as message_time
+from dimos_messages.sensor_msgs.msg import Image, JointState
+from dimos_messages.std_msgs.msg import Header, String
 
 EXPECTED_STATE = np.asarray(
     [[0, 100], [1, 101], [2, 102], [20, 120], [21, 121], [22, 122]], dtype=np.float32
@@ -93,8 +94,16 @@ def recorded_session(tmp_path: Path) -> tuple[Path, dict[float, np.ndarray[Any, 
         ):
             channels[name] = writer.register_channel(
                 topic=name,
-                message_encoding="lcm",
-                schema_id=0,
+                message_encoding="json" if kind is String else "cdr",
+                schema_id=(
+                    0
+                    if kind is String
+                    else writer.register_schema(
+                        name=kind.__msgtype__,
+                        encoding="ros2msg",
+                        data=schema(kind.__msgtype__).encode(),
+                    )
+                ),
                 metadata={
                     "dimos.payload_type": f"{kind.__module__}.{kind.__qualname__}",
                     "dimos.observation_time": "publish_time",
@@ -106,7 +115,9 @@ def recorded_session(tmp_path: Path) -> tuple[Path, dict[float, np.ndarray[Any, 
                 channel_id=channels[name],
                 log_time=round(ts * 1e9),
                 publish_time=round(ts * 1e9),
-                data=message.lcm_encode(),
+                data=message.data.encode("utf-8")
+                if isinstance(message, String)
+                else encode(message),
             )
 
         saved = discarded = 0
@@ -135,27 +146,35 @@ def recorded_session(tmp_path: Path) -> tuple[Path, dict[float, np.ndarray[Any, 
                 add(
                     "camera",
                     ts,
-                    Image(data=images[ts], format=ImageFormat.RGB, ts=ts, frame_id="camera"),
+                    image.from_array(
+                        images[ts],
+                        encoding="rgb8",
+                        header=Header(stamp=message_time.time_from_seconds(ts), frame_id="camera"),
+                    ),
                 )
                 add(
                     "state",
                     ts,
-                    JointState(
-                        ts=ts,
-                        frame_id="arm",
-                        name=["joint_0", "joint_1"],
-                        position=[base + frame, base + 100.0 + frame],
-                        velocity=[],
-                        effort=[],
+                    joint_state.from_mapping(
+                        {
+                            "ts": ts,
+                            "frame_id": "arm",
+                            "name": ["joint_0", "joint_1"],
+                            "position": [base + frame, base + 100.0 + frame],
+                            "velocity": [],
+                            "effort": [],
+                        }
                     ),
                 )
                 add(
                     "target",
                     ts,
-                    JointState(
-                        ts=ts,
-                        name=["joint_0", "joint_1"],
-                        position=[base + frame + 1000.0, base + frame + 2000.0],
+                    joint_state.from_mapping(
+                        {
+                            "ts": ts,
+                            "name": ["joint_0", "joint_1"],
+                            "position": [base + frame + 1000.0, base + frame + 2000.0],
+                        }
                     ),
                 )
             saved += int(success)

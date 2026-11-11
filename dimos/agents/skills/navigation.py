@@ -16,7 +16,6 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
@@ -32,7 +31,7 @@ from dimos_messages.geometry_msgs.msg import (
     PoseStamped,
 )
 from dimos_messages.sensor_msgs.msg import Image
-from dimos_messages.std_msgs.msg import Header
+from dimos_messages.std_msgs.msg import Bool, Header
 from dimos.models.qwen.bbox import BBox
 from dimos.navigation.base import NavigationState
 from dimos.navigation.go2.replanning_a_star.spec import NavigationInterfaceSpec

@@ -19,7 +19,7 @@ from typing import get_args
 import numpy as np
 import pytest
 
-from dimos.msgs.sim_msgs.Contacts import Contact, Kind
+from dimos_messages.dimos_msgs.msg import Contact
 from dimos.navigation.bench.scorer import (
     Commands,
     ContactSample,
@@ -40,6 +40,8 @@ START = np.array([1.0, 1.0, 0.3])
 GOAL = (5.0, 1.0, 0.0)
 T0 = 100.0
 SPEED = 0.5
+# The contact kinds the simulator reports, as the retired message's literal listed them.
+KINDS = ("floor", "wall", "clutter")
 
 
 def _walk(
@@ -255,7 +257,7 @@ def test_margin_is_the_gap_to_the_nearest_obstacle_at_body_height() -> None:
 
 
 def test_a_contact_is_named_by_the_part_and_what_it_collided_with() -> None:
-    assert [contact_name("lidar", kind) for kind in get_args(Kind)] == [
+    assert [contact_name("lidar", kind) for kind in KINDS] == [
         "lidar collided with floor",
         "lidar collided with wall",
         "lidar collided with object",

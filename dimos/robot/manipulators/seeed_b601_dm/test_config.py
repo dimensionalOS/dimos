@@ -21,6 +21,7 @@ from unittest.mock import ANY
 
 import can_motor_control
 from can_motor_control import damiao
+import numpy as np
 import pinocchio
 import pytest
 
@@ -31,8 +32,8 @@ from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import time as message_time
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from dimos.robot.manipulators.damiao._damiao_test_helpers import mock_connection_rig
 from dimos.robot.manipulators.damiao.arm import DamiaoArm
 from dimos.robot.manipulators.damiao.connection import DamiaoConnection
@@ -226,10 +227,23 @@ def test_mock_coordinator_executes_trajectory_and_gripper_command(tmp_path, mock
     with mock_connection_rig(B601DMConnection, coordinator, tmp_path=tmp_path) as rig:
         target = [0.01, -0.01, -0.01, 0.01, 0.01, 0.01]
         trajectory = JointTrajectory(
+            header=message_time.header_now(),
             joint_names=[f"arm/{name}" for name in B601_DM_ARM_JOINTS],
             points=[
-                TrajectoryPoint(positions=[0.0] * 6, velocities=[0.0] * 6, time_from_start=0.0),
-                TrajectoryPoint(positions=target, velocities=[0.0] * 6, time_from_start=0.3),
+                JointTrajectoryPoint(
+                    positions=np.asarray([0.0] * 6, dtype=np.float64),
+                    velocities=np.asarray([0.0] * 6, dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.0),
+                ),
+                JointTrajectoryPoint(
+                    positions=np.asarray(target, dtype=np.float64),
+                    velocities=np.asarray([0.0] * 6, dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(0.3),
+                ),
             ],
         )
         assert coordinator.execute_trajectory(trajectory).status is (

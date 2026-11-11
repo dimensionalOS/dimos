@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from copy import deepcopy
 import time
 from typing import Protocol
 
@@ -26,9 +27,9 @@ from numpy.typing import NDArray
 from pydantic import Field
 
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.message_utils import geometry, pointcloud, time as message_time
+from dimos_messages.geometry_msgs.msg import TransformStamped
+from dimos_messages.sensor_msgs.msg import JointState, PointCloud2
 from dimos.robot.roboplan_body_filter import RoboPlanBodyFilter
 from dimos.robot.urdf_manager import MULTI_DOF_JOINT_TYPES, UrdfManager, UrdfManagerConfig
 from dimos.types.timestamped import TimestampedBufferCollection
@@ -62,7 +63,10 @@ class UrdfManagerPointClearing(UrdfManager):
             self._description, self.config.padding_m
         )
         self._base_link = self._description.root_link
-        self._states = TimestampedBufferCollection[JointState](self.config.state_history_s)
+        self._states = TimestampedBufferCollection[JointState](
+            self.config.state_history_s,
+            timestamp_key=lambda state: message_time.to_seconds(state.header.stamp),
+        )
         self._clouds_in = self._clouds_dropped = self._points_in = self._points_removed = 0
         self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
 
@@ -72,13 +76,16 @@ class UrdfManagerPointClearing(UrdfManager):
 
     def add_joint_state(self, state: JointState) -> None:
         """Buffer the full model state (out-of-order arrivals stay timestamped) and publish its joints on tf."""
+        stamp = message_time.to_seconds(state.header.stamp)
         with self._lock:
-            if np.isfinite(state.ts):
-                self._states.remove_by_timestamp(state.ts)
-                self._states.add(JointState(state))
+            if np.isfinite(stamp):
+                self._states.remove_by_timestamp(stamp)
+                self._states.add(deepcopy(state))
                 latest = self._states.last()
                 if latest is not None:
-                    self._states.prune_old(latest.ts - self.config.state_history_s)
+                    self._states.prune_old(
+                        message_time.to_seconds(latest.header.stamp) - self.config.state_history_s
+                    )
         super().add_joint_state(state)
 
     def filter_cloud(self, cloud: PointCloud2) -> PointCloud2 | None:
@@ -88,8 +95,8 @@ class UrdfManagerPointClearing(UrdfManager):
         if filtered is None:
             self._clouds_dropped += 1
         else:
-            self._points_in += len(cloud)
-            self._points_removed += len(cloud) - len(filtered)
+            self._points_in += cloud.width * cloud.height
+            self._points_removed += cloud.width * cloud.height - filtered.width * filtered.height
         if self.config.filter_stats_interval_s > 0 and time.monotonic() >= self._next_stats_t:
             self._next_stats_t = time.monotonic() + self.config.filter_stats_interval_s
             logger.info(
@@ -102,19 +109,16 @@ class UrdfManagerPointClearing(UrdfManager):
     def _filter_capture(self, cloud: PointCloud2) -> PointCloud2 | None:
         with self._lock:
             # Sensors sharing this input interleave, so an older capture is filtered at its own time rather than dropped.
-            if not np.isfinite(cloud.ts):
+            if not np.isfinite(message_time.to_seconds(cloud.header.stamp)):
                 logger.warning("Dropping cloud: invalid capture timestamp")
                 return None
-            points = cloud.points_f32()
+            points = pointcloud.xyz(cloud)
             if not np.isfinite(points).all():
                 return None
             keep = self._compute_keep_mask(cloud, points)
             if keep is None:
                 return None
-            filtered = PointCloud2(frame_id=cloud.frame_id, ts=cloud.ts, seq=cloud.seq)
-            for name, values in cloud.pointcloud_tensor.point.items():
-                filtered.pointcloud_tensor.point[name] = values[keep]
-            return filtered
+            return pointcloud.select(cloud, keep)
 
     def _on_pointcloud(self, cloud: PointCloud2) -> None:
         with self._lock:
@@ -123,15 +127,16 @@ class UrdfManagerPointClearing(UrdfManager):
                 self.filtered_pointcloud.publish(filtered)
 
     def _compute_keep_mask(
-        self, cloud: PointCloud2, points: NDArray[np.float32]
+        self, cloud: PointCloud2, points: NDArray[np.float64]
     ) -> NDArray[np.bool_] | None:
         """One keep flag per point (input order), or None when the capture-time state or tf is missing."""
-        base_from_sensor = self._tf_at(self._base_link, cloud.frame_id, cloud.ts)
-        state = self._capture_state(cloud.ts)
-        motions = self._multi_dof_motions(cloud.ts)
+        stamp = message_time.to_seconds(cloud.header.stamp)
+        base_from_sensor = self._tf_at(self._base_link, cloud.header.frame_id, stamp)
+        state = self._capture_state(stamp)
+        motions = self._multi_dof_motions(stamp)
         keep = None
         if base_from_sensor is not None and state is not None and motions is not None:
-            transform = base_from_sensor.to_matrix()
+            transform = geometry.transform_matrix(base_from_sensor.transform)
             base_points = np.asarray(
                 points @ transform[:3, :3].T + transform[:3, 3], dtype=np.float64
             )
@@ -161,10 +166,12 @@ class UrdfManagerPointClearing(UrdfManager):
                 parent_from_child = self._tf_at(joint.parent_link, joint.child_link, stamp)
                 if parent_from_child is None:
                     return None
-                motions[joint.name] = np.linalg.inv(joint.origin()) @ parent_from_child.to_matrix()
+                motions[joint.name] = np.linalg.inv(joint.origin()) @ geometry.transform_matrix(
+                    parent_from_child.transform
+                )
         return motions
 
-    def _tf_at(self, parent: str, child: str, stamp: float) -> Transform | None:
+    def _tf_at(self, parent: str, child: str, stamp: float) -> TransformStamped | None:
         return self.tfbuffer.get(
             parent,
             child,

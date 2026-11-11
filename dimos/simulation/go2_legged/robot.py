@@ -22,7 +22,6 @@ import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sim_msgs.Contacts import Part
 from dimos.simulation.go2_legged.policy import LEGS, Go2Policy, Proprioception
 from dimos.utils.data import get_data
 
@@ -169,7 +168,7 @@ class LeggedGo2:
             BASE_ANGULAR_VELOCITY
         ].copy()
 
-    def part(self, geom: int) -> Part:
+    def part(self, geom: int) -> str:
         if geom in self.feet:
             return "foot"
         if self.model.geom_bodyid[geom] == self.trunk:

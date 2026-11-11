@@ -24,6 +24,8 @@ class MeshColours:
     ``z_range`` pins it. Works as a keyed rerun bridge renderer and in replays.
     """
 
+    keyed_by_seq = True
+
     @staticmethod
     def message_key(message: TriangleMesh) -> Key:
         return int(message.key[0]), int(message.key[1]), int(message.key[2])
