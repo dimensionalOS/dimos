@@ -40,7 +40,7 @@ from dimos.imitation.collection.episode import EpisodeStatus
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.dataprep.schema import RecordingSchema
 from dimos.memory.type.recording import OnExisting
-from dimos.msgs.std_msgs.String import String
+from dimos_messages.std_msgs.msg import String
 
 PortTypes = tuple[tuple[str, type[Any]], ...]
 

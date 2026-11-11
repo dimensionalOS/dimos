@@ -16,14 +16,20 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from copy import deepcopy
 import math
+import time
+
+import numpy as np
+from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.message_utils import time as message_time
+from dimos_messages.sensor_msgs.msg import JointState
+from dimos_messages.std_msgs.msg import Header
+from dimos_messages.trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 _TRAJECTORY_POSITION_TOLERANCE = 1e-6
 _STATIONARY_HOLD_DURATION = 0.01
@@ -50,7 +56,7 @@ class BaseTrajectoryParametrizer(ABC):
                 f"Cannot materialize unsuccessful planning result: {result.status.name}"
             )
 
-        path = [JointState(state) for state in result.path]
+        path = [deepcopy(state) for state in result.path]
         self._validate_selected_path(path, selection.joint_names)
         if result.timestamps is None:
             # TOPP-RA rejects a path that goes nowhere; hold still instead.
@@ -94,7 +100,7 @@ class BaseTrajectoryParametrizer(ABC):
             raise TrajectoryParametrizationError("speed_scale must be finite, > 0, and <= 1")
 
     @staticmethod
-    def _assert_finite_sequence(values: Sequence[float], label: str) -> None:
+    def _assert_finite_sequence(values: Sequence[float] | NDArray[np.float64], label: str) -> None:
         for value in values:
             if not math.isfinite(value):
                 raise TrajectoryParametrizationError(f"{label} contains non-finite value")
@@ -130,7 +136,7 @@ class BaseTrajectoryParametrizer(ABC):
         return JointTrajectory(
             joint_names=list(selection.joint_names),
             points=[
-                TrajectoryPoint(
+                JointTrajectoryPoint(
                     time_from_start=time_from_start,
                     positions=list(state.position),
                     velocities=[0.0] * len(selection.joint_names),
@@ -144,11 +150,11 @@ class BaseTrajectoryParametrizer(ABC):
         cls,
         selection: PlanningGroupSelection,
         path: Sequence[JointState],
-        timestamps: Sequence[float],
+        timestamps: Sequence[float] | NDArray[np.float64],
     ) -> JointTrajectory:
         if len(timestamps) != len(path):
             raise TrajectoryParametrizationError("Planner must return one timestamp per waypoint")
-        points: list[TrajectoryPoint] = []
+        points: list[JointTrajectoryPoint] = []
         for waypoint_index, (state, timestamp) in enumerate(zip(path, timestamps, strict=True)):
             velocities = list(state.velocity)
             if len(velocities) != len(selection.joint_names):
@@ -156,13 +162,16 @@ class BaseTrajectoryParametrizer(ABC):
                     f"Waypoint {waypoint_index} velocity dimension mismatch"
                 )
             points.append(
-                TrajectoryPoint(
-                    time_from_start=float(timestamp),
-                    positions=list(state.position),
-                    velocities=velocities,
+                JointTrajectoryPoint(
+                    positions=np.asarray(list(state.position), dtype=np.float64),
+                    velocities=np.asarray(velocities, dtype=np.float64),
+                    accelerations=np.asarray([], dtype=np.float64),
+                    effort=np.asarray([], dtype=np.float64),
+                    time_from_start=message_time.duration_from_seconds(float(timestamp)),
                 )
             )
         return JointTrajectory(
+            header=Header(stamp=message_time.time_from_seconds(time.time()), frame_id=""),
             joint_names=list(selection.joint_names),
             points=points,
         )
@@ -173,8 +182,8 @@ class BaseTrajectoryParametrizer(ABC):
         trajectory: JointTrajectory,
         expected_names: Sequence[str],
         *,
-        expected_start: Sequence[float],
-        expected_goal: Sequence[float],
+        expected_start: Sequence[float] | NDArray[np.float64],
+        expected_goal: Sequence[float] | NDArray[np.float64],
     ) -> None:
         expected = list(expected_names)
         if list(trajectory.joint_names) != expected:
@@ -197,17 +206,20 @@ class BaseTrajectoryParametrizer(ABC):
                 point.velocities,
                 f"Generated point {point_index} velocities",
             )
-            if not math.isfinite(point.time_from_start):
+            if not math.isfinite(message_time.to_seconds(point.time_from_start)):
                 raise TrajectoryParametrizationError(
                     f"Generated point {point_index} time is non-finite"
                 )
-            if point_index == 0 and point.time_from_start != 0.0:
+            if point_index == 0 and message_time.to_seconds(point.time_from_start) != 0.0:
                 raise TrajectoryParametrizationError("Generated trajectory must start at time 0")
-            if previous_time is not None and point.time_from_start <= previous_time:
+            if (
+                previous_time is not None
+                and message_time.to_seconds(point.time_from_start) <= previous_time
+            ):
                 raise TrajectoryParametrizationError(
                     "Generated trajectory times must be strictly increasing"
                 )
-            previous_time = point.time_from_start
+            previous_time = message_time.to_seconds(point.time_from_start)
         if not cls._positions_close(trajectory.points[0].positions, expected_start):
             raise TrajectoryParametrizationError(
                 "Generated trajectory does not preserve the path start"
@@ -218,7 +230,9 @@ class BaseTrajectoryParametrizer(ABC):
             )
 
     @staticmethod
-    def _positions_close(first: Sequence[float], second: Sequence[float]) -> bool:
+    def _positions_close(
+        first: Sequence[float] | NDArray[np.float64], second: Sequence[float] | NDArray[np.float64]
+    ) -> bool:
         return len(first) == len(second) and all(
             math.isclose(
                 left,

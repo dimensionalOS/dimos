@@ -19,7 +19,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
 )
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.message_utils import joint_state as joint_state_utils
 
 
 @pytest.fixture
@@ -40,13 +40,19 @@ def test_guarded_jog_holds_measured_position_on_expiry_or_stop(
     task: JointTrajectoryTask, explicit_stop: bool
 ) -> None:
     assert task.on_joint_command(
-        JointState(frame_id="dimos/guarded-joint", name=["arm/a"], position=[1.0]), 1.0
+        joint_state_utils.from_mapping(
+            {"frame_id": "dimos/guarded-joint", "name": ["arm/a"], "position": [1.0]}
+        ),
+        1.0,
     )
     moving = task.compute(state(1.1))
     assert moving is not None and moving.positions[0] > 0.1
     if explicit_stop:
         assert task.on_joint_command(
-            JointState(frame_id="dimos/guarded-joint", name=["arm/a"], velocity=[0.0]), 1.2
+            joint_state_utils.from_mapping(
+                {"frame_id": "dimos/guarded-joint", "name": ["arm/a"], "velocity": [0.0]}
+            ),
+            1.2,
         )
     stopped = task.compute(state(1.2 if explicit_stop else 1.4))
     assert stopped is not None
@@ -58,11 +64,19 @@ def test_guarded_jog_holds_measured_position_on_expiry_or_stop(
 
 def test_guarded_stop_does_not_cancel_an_ordinary_position_goal(task: JointTrajectoryTask) -> None:
     task.on_joint_command(
-        JointState(frame_id="dimos/guarded-joint", name=["arm/a"], position=[1.0]), 1.0
+        joint_state_utils.from_mapping(
+            {"frame_id": "dimos/guarded-joint", "name": ["arm/a"], "position": [1.0]}
+        ),
+        1.0,
     )
-    task.on_joint_command(JointState(name=["arm/a"], position=[2.0]), 1.1)
     task.on_joint_command(
-        JointState(frame_id="dimos/guarded-joint", name=["arm/a"], velocity=[0.0]), 1.2
+        joint_state_utils.from_mapping({"name": ["arm/a"], "position": [2.0]}), 1.1
+    )
+    task.on_joint_command(
+        joint_state_utils.from_mapping(
+            {"frame_id": "dimos/guarded-joint", "name": ["arm/a"], "velocity": [0.0]}
+        ),
+        1.2,
     )
     output = task.compute(state(2.0))
     assert output is not None and output.positions[0] > 0.1
@@ -72,7 +86,10 @@ def test_guarded_stop_does_not_cancel_an_ordinary_position_goal(task: JointTraje
 def test_new_guarded_input_gets_a_new_deadline(task: JointTrajectoryTask) -> None:
     for now in [1.0, 1.3]:
         assert task.on_joint_command(
-            JointState(frame_id="dimos/guarded-joint", name=["arm/a"], position=[1.0]), now
+            joint_state_utils.from_mapping(
+                {"frame_id": "dimos/guarded-joint", "name": ["arm/a"], "position": [1.0]}
+            ),
+            now,
         )
     assert task.compute(state(1.5)).positions[0] > 0.1
     assert task.compute(state(1.8)).positions == [0.1]
