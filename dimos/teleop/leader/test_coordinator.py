@@ -35,6 +35,7 @@ JOINTS = ["arm/left_joint1", "arm/left_joint2", "arm/right_joint1"]
 
 def test_coordinator_reads_the_port_the_leader_module_publishes() -> None:
     assert issubclass(LeaderCoordinator, DamiaoCoordinator)
+    assert LeaderCoordinator.dedicated_worker is True
     reader = get_type_hints(LeaderCoordinator)[LEADER_JOINT_COMMAND]
     writer = get_type_hints(LeaderTeleopModule)[LEADER_JOINT_COMMAND]
     assert (get_origin(reader), get_args(reader)) == (In, (JointState,))
