@@ -385,6 +385,20 @@ impl Module for MemoryRecorder {
             self.stop()
                 .await
                 .expect("failed to finalize memory recording");
+            // The recording is final and durable: stop() joined the writer
+            // thread after store.finish() and the "memory recorder flushed"
+            // line (written to unbuffered stderr). The only teardown left is
+            // the transport's Drop, whose zenoh session graceful close waits
+            // up to its ~10 s timeout on handshakes with unrelated scouting
+            // peers — it outlasts the Python supervisor's 2 s join, which then
+            // SIGKILLs this child even though the data is already durable.
+            // MemoryRecorder only runs as this standalone recorder binary
+            // (never inside a host), so exit now: the skipped destructor work
+            // is just that close handshake, and the peers see the TCP close on
+            // process exit. Failures never reach this line: build/setup panic,
+            // a pipeline failure panics in handle(), and a flush error panics
+            // in the expect above, so failure reporting is unchanged.
+            std::process::exit(0);
         }
     }
 }
