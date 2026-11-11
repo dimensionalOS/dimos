@@ -16,9 +16,8 @@
 
 The declaration and strict joint bounds match the real connection. Upper-body
 positions follow accepted targets at tracking_speed; jaws follow at the declared
-opening speed. Planar world velocities are converted to simulated body speeds
-inside this connection only, integrated in the local odom frame, and published
-as actual simulated canonical position/velocity feedback. No ROS, vendor stack,
+opening speed. Base actions and measured actuator rates stay in the body frame;
+pose is integrated and published separately as Odometry. No ROS, vendor stack,
 CAN, camera or robot is started. Outage hooks suppress measured publications;
 they never fabricate a recovered reading or resend a cached jaw target.
 """
@@ -45,8 +44,11 @@ from dimos.control.contract.convert import (
 from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.connection import (
     R1PRO_BASE_JOINTS,
@@ -102,6 +104,7 @@ class FakeR1ProConnection(ConnectionModule):
 
     # Whole-body feedback (same contract as the real module).
     joint_state: Out[JointState]
+    odometry: Out[Odometry]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -233,11 +236,7 @@ class FakeR1ProConnection(ConnectionModule):
             speeds = [values.get(f"{joint}/velocity") for joint in R1PRO_BASE_JOINTS]
             if any(speed is not None for speed in speeds):
                 vx, vy, wz = (0.0 if speed is None else speed for speed in speeds)
-                # Vendor stand-in uses body speed internally; public protocol stays canonical.
-                yaw = self._base_pose[2]
-                bx = math.cos(yaw) * vx + math.sin(yaw) * vy
-                by = -math.sin(yaw) * vx + math.cos(yaw) * vy
-                self._speed = Twist(linear=Vector3(bx, by, 0.0), angular=Vector3(0.0, 0.0, wz))
+                self._speed = Twist(linear=Vector3(vx, vy, 0.0), angular=Vector3(0.0, 0.0, wz))
 
             for joint, side in R1PRO_GRIPPER_SIDES.items():
                 value = values.get(f"{joint}{SEPARATOR}{Interface.POSITION}")
@@ -296,12 +295,7 @@ class FakeR1ProConnection(ConnectionModule):
                     (now - previous) / period for now, previous in zip(q, previous_q, strict=True)
                 ]
                 pose = list(self._base_pose)
-                yaw = pose[2]
-                world_velocity = [
-                    math.cos(yaw) * self._speed.linear.x - math.sin(yaw) * self._speed.linear.y,
-                    math.sin(yaw) * self._speed.linear.x + math.cos(yaw) * self._speed.linear.y,
-                    self._speed.angular.z,
-                ]
+                body_velocity = [self._speed.linear.x, self._speed.linear.y, self._speed.angular.z]
                 grippers = [
                     (joint, self._gripper_measured[side])
                     for joint, side in R1PRO_GRIPPER_SIDES.items()
@@ -314,10 +308,26 @@ class FakeR1ProConnection(ConnectionModule):
                 self.joint_state.publish(
                     JointState(
                         ts=ts,
-                        frame_id="odom",
+                        frame_id=frame_id,
                         name=R1PRO_BASE_JOINTS,
-                        position=pose,
-                        velocity=world_velocity,
+                        velocity=body_velocity,
+                    )
+                )
+                self.odometry.publish(
+                    Odometry(
+                        ts=ts,
+                        frame_id=self.config.odom_frame_id,
+                        child_frame_id=frame_id,
+                        pose=Pose(
+                            position=Vector3(pose[0], pose[1], 0.0),
+                            orientation=Quaternion(
+                                0.0, 0.0, math.sin(pose[2] / 2), math.cos(pose[2] / 2)
+                            ),
+                        ),
+                        twist=Twist(
+                            linear=Vector3(*body_velocity[:2], 0.0),
+                            angular=Vector3(0.0, 0.0, body_velocity[2]),
+                        ),
                     )
                 )
                 self.joint_state.publish(

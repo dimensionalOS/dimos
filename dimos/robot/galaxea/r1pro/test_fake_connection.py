@@ -167,23 +167,28 @@ def test_deadman_halts_when_commands_stop() -> None:
         assert rig.module._speed.linear.x == 0.0
 
 
-def test_nonzero_yaw_world_command_and_feedback_use_canonical_joints() -> None:
+def test_body_command_at_nonzero_yaw_and_independent_odometry() -> None:
     import math
 
     with Rig() as rig:
         with rig.module._lock:
             rig.module._base_pose = [0.0, 0.0, math.pi / 2]
         rig.drive(0.2, 0.0, 0.0)
-        wait_until(lambda: rig.module.base_state()["x"] > 0.01, timeout=2.0, interval=0.01)
+        wait_until(lambda: rig.module.base_state()["y"] > 0.01, timeout=2.0, interval=0.01)
         state = rig.module.base_state()
-        assert state["vx"] == pytest.approx(0.0, abs=1e-12)
-        assert state["vy"] == pytest.approx(-0.2)
-        assert state["y"] == pytest.approx(0.0, abs=1e-12)
-        planar = next(m for m in reversed(rig.feedback) if m.name == R1PRO_BASE_JOINTS)
-        assert list(planar.velocity) == pytest.approx([0.2, 0.0, 0.0])
-        assert planar.position[2] == pytest.approx(math.pi / 2)
+        assert state["vx"] == pytest.approx(0.2)
+        assert state["vy"] == pytest.approx(0.0)
+        assert state["x"] == pytest.approx(0.0, abs=1e-12)
+        odom = rig.ports["odometry"].sent[-1]
+        rates = next(
+            m for m in reversed(rig.feedback) if m.name == R1PRO_BASE_JOINTS and m.ts == odom.ts
+        )
+        assert list(rates.velocity) == pytest.approx([0.2, 0.0, 0.0])
+        assert len(rates.position) == 0
+        assert rates.frame_id == odom.child_frame_id == "base_link"
+        assert odom.pose.position.y > 0.0
+        assert odom.twist.linear.x == pytest.approx(0.2)
         assert "cmd_vel" not in rig.module.inputs
-        assert "velocity_command" in rig.module.inputs
 
 
 def test_halt_holds_arms_and_leaves_grippers() -> None:

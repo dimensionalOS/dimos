@@ -384,7 +384,6 @@ def test_thumbstick_twist_is_the_only_chassis_command_path(monkeypatch: pytest.M
     assert chassis[0].joint_names == R1PRO_BASE_JOINTS
     assert chassis[0].params == {
         "axes": ["linear.x", "linear.y", "angular.z"],
-        "yaw_joint": R1PRO_BASE_JOINTS[2],
         "timeout": 0.2,
     }
 

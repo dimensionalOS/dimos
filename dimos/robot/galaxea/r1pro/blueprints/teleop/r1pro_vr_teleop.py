@@ -154,9 +154,10 @@ def _gripper_task(name: str, joint: str, port: str) -> TaskConfig:
 def _chassis_task() -> TaskConfig:
     """The chassis' three axes, as speeds, through the shared velocity task.
 
-    ``R1PRO_BASE_JOINTS`` are the axes the coordinator's base port exposes
-    (``r1pro/base_x``, ``base_y``, ``base_yaw``), claimed in ``VELOCITY`` mode and arbitrated
-    like every other joint. The task's timeout is the second stop path: if
+    Body action axes (``base_forward``, ``base_lateral``, ``base_turn``) are
+    claimed in ``VELOCITY`` mode and arbitrated like every other resource.
+    Pose feedback lives on independent Odometry, not on these action axes.
+    The task's timeout is the second stop path: if
     twist frames stop arriving, it outputs zeros rather than holding the
     last speed, and the connection's own deadman halts after that.
     """
@@ -167,7 +168,6 @@ def _chassis_task() -> TaskConfig:
         priority=10,
         params={
             "axes": ["linear.x", "linear.y", "angular.z"],
-            "yaw_joint": R1PRO_BASE_JOINTS[2],
             "timeout": 0.2,
         },
     )
@@ -176,9 +176,9 @@ def _chassis_task() -> TaskConfig:
 class R1ProVrCoordinator(ControlCoordinator):
     """Canonical named-joint ports plus scoped Quest input streams.
 
-    Twist input is mapped by the explicit twist_velocity task, using measured
-    planar yaw. Vendor body/world conversion belongs to the connection, never
-    this coordinator. Gripper feedback and vendor policy stay inside the connection.
+    Twist input maps directly onto native body velocity resources. Odometry
+    is independent feedback, not a yaw prerequisite for joystick actions.
+    Gripper feedback and vendor policy stay inside the connection.
     """
 
     r1pro_position_command: Out[JointState]
