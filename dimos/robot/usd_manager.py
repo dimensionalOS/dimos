@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""One URDF and the live joint state: every joint on tf, and the URDF and its files for renderers."""
 
 from __future__ import annotations
 
@@ -20,11 +21,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from threading import Event, RLock, Thread
-import time
+from threading import RLock
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 from pydantic import Field, field_validator
 
 from dimos.core.core import rpc
@@ -36,7 +35,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.assets.model import RobotModel, UsdModel
+from dimos.robot.assets.model import JointDescription, RobotModel, UsdModel
 from dimos.robot.assets.usd import (
     graft_usd,
     prefix_usd_frames,
@@ -52,6 +51,7 @@ from dimos.robot.assets.usd_assets import (
     resolve_usd_assets,
     unopenable_assets,
 )
+from dimos.robot.joint_tf import JointTf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -60,11 +60,8 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-MULTI_DOF_JOINT_TYPES = frozenset({"floating", "planar"})
-
 SUBTREE_RPC = "get_usd"
 SCENE_RPC = "get_scene"
-ASSET_RPC = "get_asset"
 
 
 WORLD_LINK = "world"
@@ -164,8 +161,12 @@ class Mount:
 
 class UsdManagerConfig(ModuleConfig):
     model: RobotModel | UsdModel | None = None
+    # Every single-DOF and fixed URDF joint as a parent -> child tf edge; off where another module owns those frames.
     publish_joint_tf: bool = True
+    # An edge goes out when it moves, at most this often...
     joint_tf_hz: float = Field(default=30.0, gt=0.0)
+    # ...and otherwise at this keepalive rate: a tf lookup needs a sample within its time tolerance, so keep
+    # 1 / unchanged_tf_hz under twice the tightest tolerance of the tf readers (0.25 s in r1pro-nav: >= 2 Hz).
     unchanged_tf_hz: float = Field(default=4.0, gt=0.0)
     mounts: dict[str, Mount] = Field(default_factory=dict)
     tf_renames: dict[str, str] = Field(default_factory=dict)
@@ -181,10 +182,16 @@ class UsdManagerConfig(ModuleConfig):
 
 
 class UsdManager(Module):
+    """Poses its description from the joint state onto tf, and serves the USD and the files it names
+    to renderers."""
+
     config: UsdManagerConfig
 
+    # IO: the joints it poses are published on it (and UsdManagerPointClearing reads a cloud's mount from it).
     tf: IO[TFMessage]
     coordinator_joint_state: In[JointState]
+    # A request for a *.urdf gets the URDF; one for a file the URDF names (mesh, texture, splat, ...) by its full path
+    # gets that file. Either goes out on file_info named as requested.
     render_file_request: In[String]
     file_info: Out[File]
 
@@ -192,14 +199,16 @@ class UsdManager(Module):
         self._ready = asyncio.Event()
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._stop_static_tf = Event()
-        self._static_tf_thread: Thread | None = None
         self._description = _as_usd(self.config.model or _world_model())
         self._file_paths = self._description.referenced_files()
-        self._joints = {joint.name: joint for joint in self._description.joints}
         self._frames = self._renamed_own_frames()
-        self._next_joint_tf_t = 0.0
-        self._sent_edges: dict[tuple[str, str], tuple[tuple[float, ...], float]] = {}
+        # One description's joints on tf is its own job, not this module's; see dimos.robot.joint_tf.
+        self._joint_tf = JointTf(
+            self._description,
+            frame=self.frame,
+            joint_tf_hz=self.config.joint_tf_hz,
+            unchanged_tf_hz=self.config.unchanged_tf_hz,
+        )
         self._usd: str | None = None
         self._usd_lock = RLock()
         self._scene_build = asyncio.Lock()
@@ -250,19 +259,12 @@ class UsdManager(Module):
     def start(self) -> None:
         self.tfbuffer  # noqa: B018 - Initialize TF before binding input handlers.
         super().start()
-        self._stop_static_tf.clear()
-        if self.config.publish_joint_tf and self.static_transforms():
-            self._static_tf_thread = Thread(
-                target=self._publish_static_tf, daemon=True, name="UrdfManagerStaticTf"
-            )
-            self._static_tf_thread.start()
+        if self.config.publish_joint_tf:
+            self._joint_tf.start(self.coordinator_joint_state, self.tfbuffer)
 
     @rpc
     def stop(self) -> None:
-        self._stop_static_tf.set()
-        thread, self._static_tf_thread = self._static_tf_thread, None
-        if thread is not None:
-            thread.join(timeout=2.0)
+        self._joint_tf.stop()
         for client in self._subtree_clients.values():
             client.stop_rpc_client()
         self._subtree_clients.clear()
@@ -464,8 +466,11 @@ class UsdManager(Module):
                 usd = (await asyncio.to_thread(self.get_usd))[USD]
             self.file_info.publish(File(name, usd.encode()))
             return
+        # Only files this description names or the last scene published: a request is never an
+        # arbitrary path into the filesystem.
         real = self._published_assets.get(name, name if name in self._file_paths else None)
         if real is None:
+            # another module's file (the sim's scene, ...): it answers, this stays silent
             logger.debug(
                 f"render_file_request for {name!r}, which is neither a file this URDF names nor "
                 f"an asset the last scene published"
@@ -479,74 +484,23 @@ class UsdManager(Module):
         root = self._asset_root()
         return found if found.is_absolute() or not root else Path(root) / found
 
+    @property
+    def joints(self) -> dict[str, JointDescription]:
+        """This description's joints by name, which is what it poses on tf."""
+        return self._joint_tf.joints
+
     def static_transforms(self) -> list[Transform]:
         """The edges that never move, so they need no joint state to be known."""
-        return [
-            Transform.from_matrix(
-                joint.parent_from_child(0.0),
-                frame_id=self.frame(joint.parent_link),
-                child_frame_id=self.frame(joint.child_link),
-                ts=time.time(),
-            )
-            for joint in self._joints.values()
-            if joint.type == "fixed"
-        ]
-
-    def _publish_static_tf(self) -> None:
-        """A description with no joint-state source still has to put its fixed edges on tf."""
-        period = 1.0 / self.config.unchanged_tf_hz
-        while not self._stop_static_tf.is_set():
-            with self._lock:
-                transforms = self._edges_to_send(self.static_transforms())
-            if transforms:
-                self.tfbuffer.publish(*transforms)
-            self._stop_static_tf.wait(period)
-
-    async def handle_coordinator_joint_state(self, state: JointState) -> None:
-        await asyncio.to_thread(self.add_joint_state, state)
-
-    def add_joint_state(self, state: JointState) -> None:
-        if not self.config.publish_joint_tf or time.monotonic() < self._next_joint_tf_t:
-            return
-        self._next_joint_tf_t = time.monotonic() + 1.0 / self.config.joint_tf_hz
-        with self._lock:
-            transforms = self._edges_to_send(self.joint_transforms(state))
-        if transforms:
-            self.tfbuffer.publish(*transforms)
-
-    def _edges_to_send(self, transforms: list[Transform]) -> list[Transform]:
-        now = time.monotonic()
-        keepalive_s = 1.0 / self.config.unchanged_tf_hz
-        due = []
-        for transform in transforms:
-            key = (transform.frame_id, transform.child_frame_id)
-            value = (*transform.translation.to_tuple(), *transform.rotation.to_tuple())
-            sent = self._sent_edges.get(key)
-            if (
-                sent is None
-                or now - sent[1] >= keepalive_s
-                or not np.allclose(value, sent[0], atol=1e-6)
-            ):
-                due.append(transform)
-                self._sent_edges[key] = (value, now)
-        return due
+        return self._joint_tf.static_transforms()
 
     def joint_transforms(self, state: JointState) -> list[Transform]:
-        positions = dict(zip(state.name, state.position, strict=False))
-        for joint in self._joints.values():
-            if joint.mimic is not None and joint.mimic[0] in positions:
-                leader, multiplier, offset = joint.mimic
-                positions[joint.name] = multiplier * positions[leader] + offset
-        return [
-            Transform.from_matrix(
-                joint.parent_from_child(positions.get(joint.name, 0.0)),
-                frame_id=self.frame(joint.parent_link),
-                child_frame_id=self.frame(joint.child_link),
-                ts=state.ts,
-            )
-            for joint in self._joints.values()
-            if joint.type not in MULTI_DOF_JOINT_TYPES
-        ]
+        """One parent -> child transform per joint, under this manager's frame names."""
+        return self._joint_tf.joint_transforms(state)
+
+    def add_joint_state(self, state: JointState) -> None:
+        """Pose this description's joints from a state the caller already has."""
+        if self.config.publish_joint_tf:
+            self._joint_tf.add_joint_state(state, self.tfbuffer)
 
     def frame(self, link_or_joint: str) -> str:
         renamed = self._frames.get(link_or_joint, link_or_joint)
