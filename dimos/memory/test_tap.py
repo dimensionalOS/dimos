@@ -28,6 +28,7 @@ from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.perception_msgs.EmbeddedFrame import EmbeddedFrame
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 
@@ -181,3 +182,39 @@ def test_recording_delegates_to_rust_session(
     make_plan.assert_called_once_with(transports)
     create_session.assert_called_once_with("plan")
     session.stop.assert_called_once_with()
+
+
+def test_embedded_frames_are_recorded_with_frame_timestamps(tmp_path: Path) -> None:
+    path = tmp_path / "memory.db"
+    first = EmbeddedFrame(
+        embedding=np.array([0.25, -0.5, 1.0], dtype=np.float32),
+        sharpness=12.0,
+        embedder="siglip",
+        embed_hz=1.0,
+        frame_id="cam",
+        ts=10.5,
+    )
+    second = EmbeddedFrame(
+        embedding=np.array([0.75, 0.125, -0.25], dtype=np.float32),
+        sharpness=18.5,
+        embedder="siglip",
+        embed_hz=1.0,
+        frame_id="cam",
+        ts=11.5,
+    )
+    transport = _Transport()
+    with SqliteStore(path=str(path)) as store:
+        rec = TransportRecorder(store)
+        try:
+            rec.tap("frame_embeddings", EmbeddedFrame, transport)
+            transport.publish(first)
+            transport.publish(second)
+        finally:
+            rec.close()
+
+    with SqliteStore(path=str(path), must_exist=True) as store:
+        observations = store.stream("frame_embeddings", EmbeddedFrame).to_list()
+        assert [obs.ts for obs in observations] == [10.5, 11.5]
+        assert [obs.data.ts for obs in observations] == [10.5, 11.5]
+        assert np.array_equal(observations[0].data.embedding, first.embedding)
+        assert np.array_equal(observations[1].data.embedding, second.embedding)

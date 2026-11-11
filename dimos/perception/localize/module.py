@@ -16,17 +16,19 @@
 
 The module consumes ``color_image``, ``camera_info``, ``tf`` and the geometry
 its ``geometry`` config names: ``depth_image`` aligned to the colour camera,
-or ``lidar``, a point cloud in the world frame or a frame tf reaches. It keeps
-bounded memory, embeds the colour feed, and answers ``localize`` from what it
-has embedded. It opens no file and does not know whether the ports carry a
+or ``lidar``, a point cloud in the world frame or a frame tf reaches. It
+embeds the colour feed, keeps every embedded frame until the module stops, and
+answers ``localize`` from what it has embedded. It publishes
+``frame_embeddings`` for each embedded frame and ``detections`` for each
+``localize`` call. It opens no file and does not know whether the ports carry a
 robot or a replay.
 
 Memory layout: the raw colour and geometry feeds are kept for ``feed_frames``
 frames, only as long as the embed tail and the pairing need them. What
 ``localize`` reads is at index rate: the embedded frames, stored as JPEG, and
-the depth frame or lidar scan paired with each of them, stored lz4. Both roll
-over ``horizon_s`` seconds. A lidar call lifts through its window's scans
-merged.
+the depth frame or lidar scan paired with each of them, stored lz4. No frame
+is deleted while the module runs. A lidar call lifts through its window's
+scans merged.
 
 Agents calling ``state`` and ``localize`` over MCP: ``SKILL.md`` in this
 package covers windows, watching labels, narrowing a position and params.
@@ -37,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import replace
 import json
+import math
 import threading
 import time
 from typing import Any, Literal
@@ -50,10 +53,12 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.memory.blobstore.memory import MemoryBlobStore
+from dimos.memory.buffer import Unbounded
 from dimos.memory.observationstore.memory import ListObservationStore
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.perception_msgs.EmbeddedFrame import EmbeddedFrame
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -90,7 +95,6 @@ class PerceptionLocalizeConfig(ModuleConfig):
     geometry: Literal["depth", "lidar"] = "depth"
     # the camera rides a walking base: the index runs at WALK_EMBED_HZ
     mobile: bool = False
-    horizon_s: float = 600.0
     # raw frames kept for the embed tail and the pairing
     feed_frames: int = 300
     # each a dandetect registry name or a module:attr path
@@ -118,6 +122,7 @@ class PerceptionLocalize(Module):
     tf: In[TFMessage]
 
     detections: Out[Detection3DArray]
+    frame_embeddings: Out[EmbeddedFrame]
 
     _thread: threading.Thread | None = None
 
@@ -140,7 +145,6 @@ class PerceptionLocalize(Module):
             else self.config.params.embed_hz
         )
         self._embed_hz = embed_hz
-        memory_frames = int(self.config.horizon_s * embed_hz)
         feed_frames = self.config.feed_frames
         geometry_type = Image if self.config.geometry == "depth" else PointCloud2
         self._memory = self.register_disposable(MemoryStore())
@@ -158,17 +162,17 @@ class PerceptionLocalize(Module):
             INDEX_STREAM,
             Image,
             codec=COLOR_CODEC,
-            blob_store=MemoryBlobStore(max_items=memory_frames),
-            observation_store=ListObservationStore(name=INDEX_STREAM, max_size=memory_frames),
+            blob_store=MemoryBlobStore(),
+            observation_store=ListObservationStore(name=INDEX_STREAM),
         )
         self._geometry_memory = self._memory.stream(
             GEOMETRY_STREAM,
             geometry_type,
             codec=GEOMETRY_CODEC,
-            blob_store=MemoryBlobStore(max_items=memory_frames),
-            observation_store=ListObservationStore(name=GEOMETRY_STREAM, max_size=memory_frames),
+            blob_store=MemoryBlobStore(),
+            observation_store=ListObservationStore(name=GEOMETRY_STREAM),
         )
-        self._tf_buffer = TF(self.tf, buffer_size=self.config.horizon_s)
+        self._tf_buffer = TF(self.tf, buffer_size=math.inf)
         subscriptions.add(Disposable(self._tf_buffer.dispose))
 
         def on_camera_info(info: CameraInfo) -> None:
@@ -211,6 +215,21 @@ class PerceptionLocalize(Module):
             self._geometry_memory.append(paired.data, ts=paired.ts)
             yield obs
 
+    def _publish_frames(self, upstream: Iterator[Any]) -> Iterator[Any]:
+        """Publish one EmbeddedFrame per observation saved to the index."""
+        for obs in upstream:
+            self.frame_embeddings.publish(
+                EmbeddedFrame(
+                    embedding=obs.embedding.to_numpy(),
+                    sharpness=obs.tags["sharpness"],
+                    embedder=self.config.embedder,
+                    embed_hz=self.rig.embed_hz,
+                    frame_id=obs.tags["camera"],
+                    ts=obs.ts,
+                )
+            )
+            yield obs
+
     def _warm(self) -> None:
         stages = (self.config.embedder, self.config.detector, self.config.segmenter)
         self._stage = f"loading {', '.join(stages)} weights"
@@ -243,6 +262,9 @@ class PerceptionLocalize(Module):
         )
         self.detector.embed_live(self.rig, self._color_feed, self.index, embed_hz=self.rig.embed_hz)
         self.register_disposable(self.index.live().transform(self._pair_geometry).drain_thread())
+        self.register_disposable(
+            self.index.live(Unbounded()).transform(self._publish_frames).drain_thread()
+        )
 
         self._stage = "waiting for the first posed frame of the feed"
         logger.info(f"localize: {self._stage}")
@@ -290,8 +312,6 @@ class PerceptionLocalize(Module):
         first, head = self.index.get_time_range()
         lo = max(first, head + start if start < 0 else first + start)
         hi = lo + duration
-        # frames older than the feed's memory can no longer be asked for
-        self._memento.forget(first)
         index = self.index.time_range(lo, hi)
         for cam in self.rig.cameras.values():
             if cam.hz is None:

@@ -58,6 +58,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.perception_msgs.EmbeddedFrame import EmbeddedFrame
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.std_msgs.String import String
@@ -466,6 +467,66 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
         assert observation.ts == 22.5
         assert isinstance(observation.data, Imu)
         assert observation.data.lcm_encode() == expected.lcm_encode()
+
+
+@pytest.mark.parametrize(
+    "store_kind",
+    ["sqlite", "mcap"],
+)
+def test_cli_recording_records_embedded_frame_in_both_formats(
+    tmp_path: Path,
+    rust_recorder_executable: Path,
+    store_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suffix = "db" if store_kind == "sqlite" else "mcap"
+    artifact = tmp_path / f"memory.{suffix}"
+    lcm_url = f"udpm://239.255.76.67:{_free_port()}?ttl=0"
+    monkeypatch.setenv("LCM_DEFAULT_URL", lcm_url)
+    monkeypatch.setattr(global_config, "record_engine", "rust")
+    monkeypatch.setattr(global_config, "record", store_kind)
+    monkeypatch.setattr(global_config, "record_topics", "*")
+    monkeypatch.setattr(global_config, "record_encoding_threads", 2)
+    monkeypatch.setattr(global_config, "transport", "lcm")
+    monkeypatch.setattr(global_config, "build_native", False)
+    monkeypatch.setattr(
+        rust_cli_recorder, "prepare_rust_recorder", lambda: rust_recorder_executable
+    )
+    monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
+    channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
+    publisher: LCMTransport[EmbeddedFrame] = LCMTransport(channel, EmbeddedFrame, url=lcm_url)
+    session = RustRecordingSession(
+        rust_cli_recorder.make_plan({("frame_embeddings", EmbeddedFrame): publisher})
+    )
+    expected = EmbeddedFrame(
+        embedding=np.array([0.25, -0.5, 1.0], dtype=np.float32),
+        sharpness=14.0,
+        embedder="siglip",
+        embed_hz=3.0,
+        frame_id="cam",
+        ts=22.5,
+    )
+    try:
+        publisher.start()
+        session.start()
+        for _ in range(3):
+            publisher.broadcast(None, expected)
+            time.sleep(0.05)
+    finally:
+        session.stop()
+        publisher.stop()
+
+    memory: SqliteStore | McapStore
+    if store_kind == "sqlite":
+        memory = SqliteStore(path=str(artifact))
+    else:
+        memory = McapStore(path=str(artifact))
+    with memory:
+        observation = cast("Observation[EmbeddedFrame]", memory.stream("frame_embeddings").first())
+        assert isinstance(observation.data, EmbeddedFrame)
+        assert observation.data.ts == 22.5
+        assert observation.data.frame_id == "cam"
+        assert np.array_equal(observation.data.embedding, expected.embedding)
 
 
 def test_tf_records_over_zenoh_and_replays_through_python(
