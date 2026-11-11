@@ -60,6 +60,29 @@ def _decode_typed_lcm_message(channel: str, data: bytes) -> object:
     return cls.lcm_decode(data)
 
 
+def _format_message(msg: object) -> str:
+    """Render a message as str() when its class defines one, else as TypeName(field=value, ...)."""
+    cls = type(msg)
+    if cls.__str__ is not object.__str__ or cls.__repr__ is not object.__repr__:
+        return str(msg)
+    names = [name for klass in reversed(cls.__mro__) for name in getattr(klass, "__slots__", ())]
+    names += getattr(msg, "__dict__", {})
+    fields = ", ".join(
+        f"{name}={_format_field(getattr(msg, name))}"
+        for name in dict.fromkeys(names)
+        if not name.startswith("_")
+    )
+    return f"{cls.__name__}({fields})"
+
+
+def _format_field(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_format_field(item) for item in value) + "]"
+    if isinstance(value, (str, bytes)):
+        return repr(value)
+    return _format_message(value)
+
+
 def _listen_forever(listening_msg: str, on_stop: Callable[[], None] = lambda: None) -> None:
     """Print the banner and block until Ctrl+C, then run on_stop."""
     typer.echo(listening_msg)
@@ -76,7 +99,7 @@ def topic_echo(topic: str, type_name: str | None) -> None:
     if type_name is not None:
         msg_type = _resolve_type(type_name)
         transport: PubSubTransport[object] = make_transport(topic, msg_type)
-        transport.subscribe(lambda msg: print(msg))
+        transport.subscribe(lambda msg: print(_format_message(msg)))
         _listen_forever(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
         return
 
@@ -101,7 +124,7 @@ def _topic_echo_inferred_lcm(topic: str) -> None:
     typed_pattern = rf"^{re.escape(topic)}#.*"
 
     def on_msg(channel: str, data: bytes) -> None:
-        print(_decode_typed_lcm_message(channel, data), flush=True)
+        print(_format_message(_decode_typed_lcm_message(channel, data)), flush=True)
 
     assert bus.l is not None
     bus.l.subscribe(typed_pattern, on_msg)
@@ -122,7 +145,7 @@ def _topic_echo_inferred_zenoh(topic: str) -> None:
     # a wildcard subscription decodes each message from that suffix. Untyped keys
     # don't resolve to a type and are skipped by the encoder. The ignore reflects the
     # pattern Topic vs the encoder's concrete-topic protocol (see lcmpubsub.py).
-    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(msg, flush=True))  # type: ignore[arg-type]
+    bus.subscribe(Topic(f"{key}/**"), lambda msg, _topic: print(_format_message(msg), flush=True))  # type: ignore[arg-type]
 
     _listen_forever(
         f"Listening on {topic} (inferring from typed Zenoh keys like '{key}/pkg.Msg')... "

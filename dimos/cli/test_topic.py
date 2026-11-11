@@ -12,15 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+from dimos_lcm.std_msgs import Time
 import pytest
 
-from dimos.cli.topic import _build_eval_context, _decode_typed_lcm_message, topic_send
+from dimos.cli.topic import (
+    _build_eval_context,
+    _decode_typed_lcm_message,
+    _format_message,
+    topic_send,
+)
 from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.std_msgs.String import String
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.utils.testing.collector import CallbackCollector
 
@@ -43,6 +51,15 @@ def test_decode_typed_lcm_message_resolves_message_submodule() -> None:
     assert decoded.height == 1080
     assert decoded.frame_id == "camera_optical"
     assert decoded.distortion_model == "plumb_bob"
+
+
+def test_format_message_lists_fields_of_messages_without_str() -> None:
+    status = GoalStatus(goal_id=GoalID(stamp=Time(sec=1, nsec=2), id="goal"), status=3, text="done")
+
+    assert _format_message(String("hello")) == "String(data='hello')"
+    assert _format_message(status) == (
+        "GoalStatus(goal_id=GoalID(stamp=Time(sec=1, nsec=2), id='goal'), status=3, text='done')"
+    )
 
 
 def test_build_eval_context_maps_message_names_to_classes() -> None:
