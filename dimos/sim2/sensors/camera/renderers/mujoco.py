@@ -20,7 +20,6 @@ from dimos_lcm.sim_msgs import WorldState
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
-from pxr import Gf, UsdGeom, UsdLux, UsdPhysics
 from scipy.spatial.transform import Rotation
 
 from dimos.robot.assets.model import UsdModel
@@ -128,6 +127,10 @@ def _load_lights(spec: mujoco.MjSpec, scene: UsdModel) -> None:
     photometric renderer. Light transforms remain attached to their rigid body.
     """
     pxr = load_pxr()
+    # USD is optional during blueprint discovery; load it only for a camera scene.
+    # load_pxr() must register MuJoCo's schemas before the first pxr import.
+    from pxr import Gf, UsdGeom, UsdLux, UsdPhysics
+
     root = scene.source_path.parent if scene.source_path else None
     stage = pxr.Usd.Stage.Open(layer_from(pxr, scene.usd, "camera lights", root))
     transforms = UsdGeom.XformCache()

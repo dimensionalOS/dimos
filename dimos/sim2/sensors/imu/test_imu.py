@@ -20,9 +20,11 @@ from scipy.spatial.transform import Rotation
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.sim2.sensors.imu.module import ImuConfig, SimImuModule
 
+pytestmark = pytest.mark.self_hosted  # Motion truth is acquired from a real USD physics scene.
+
 
 @pytest.fixture
-def imu(world, mocker):
+def imu(mocker):
     module = SimImuModule(
         sensor=ImuConfig("left/imu", gyro_bias=(0.1, 0.2, 0.3), accel_std=0.02, seed=4)
     )
@@ -58,7 +60,7 @@ def test_wrong_frame_cannot_feed_imu(poses, imu):
 
 
 @pytest.fixture
-def ideal_imu(world, mocker):
+def ideal_imu(mocker):
     module = SimImuModule(sensor=ImuConfig(frame_id="left/imu", orientation="ideal"))
     client = mocker.patch("dimos.sim2.sensors.imu.module.RPCClient.remote").return_value
     client.simulation_config.return_value = {"sim_gravity_world": (0, 0, -9.81)}

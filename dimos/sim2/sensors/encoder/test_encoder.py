@@ -17,6 +17,8 @@ import pytest
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.sim2.sensors.encoder.module import EncoderConfig, SimJointEncoderModule
 
+pytestmark = pytest.mark.self_hosted  # Joint truth is acquired from a real USD physics scene.
+
 
 @pytest.fixture
 def encoder():

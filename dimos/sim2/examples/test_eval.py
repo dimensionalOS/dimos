@@ -39,7 +39,7 @@ from dimos.utils.testing.waiting import wait_until
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
 
-pytestmark = pytest.mark.native_e2e
+pytestmark = pytest.mark.self_hosted
 
 
 class PushEvalConfig(EnvironmentConfig):
