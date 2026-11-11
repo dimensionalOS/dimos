@@ -98,3 +98,21 @@ def test_invalid_gravity_fails_build(ideal_imu, gravity, mocker):
     with pytest.raises(ValueError, match="finite 3-vector"):
         ideal_imu.build()
     client.stop_rpc_client.assert_called_once()
+
+
+async def test_rate_warning_counts_only_successfully_published_imu_samples(
+    imu, poses, publication_clock, mocker
+):
+    publish = mocker.patch.object(imu.imu, "publish")
+    warning = mocker.patch("dimos.sim2.publication.logger.warning")
+    for tick in range(10):
+        await imu.handle_observations(poses(time_ns=tick * 5_000_000))
+    publish.side_effect = RuntimeError("transport failed")
+    with pytest.raises(RuntimeError, match="transport failed"):
+        await imu.handle_observations(poses(time_ns=50_000_000))
+    publication_clock.advance_to(5)
+    assert warning.call_count == 1
+    assert warning.call_args.kwargs["output"] == "imu"
+    assert warning.call_args.kwargs["requested_hz"] == 200
+    assert warning.call_args.kwargs["actual_hz"] == 2
+    assert warning.call_args.kwargs["published"] == 10
