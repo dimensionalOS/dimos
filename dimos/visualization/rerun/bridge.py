@@ -40,7 +40,7 @@ from typing import (
     get_args,
     runtime_checkable,
 )
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import numpy as np
 from pydantic import Field
@@ -565,6 +565,9 @@ class RerunBridgeModule(Module):
                 open_browser=open_web,
                 web_port=self.config.web_port,
             )
+            logger.info(
+                f"Rerun web viewer ready at {web_viewer_url(server_uri, self.config.web_port)}"
+            )
 
         # TODO: `spawned` is supposed to be false when run on the G1 (because viewer doesn't have a display) somehow it returns true
         if (
@@ -789,6 +792,11 @@ class RerunBridgeModule(Module):
             logger.warning("rerun --save did not exit; killing it, the .rrd may be truncated")
             client.kill()
             client.wait()
+
+
+def web_viewer_url(server_uri: str, web_port: int) -> str:
+    """The page the web viewer opens. Without the query it shows no data."""
+    return f"http://localhost:{web_port}/?url={quote(server_uri, safe='')}"
 
 
 def _start_save_client(server_uri: str) -> subprocess.Popen[bytes] | None:

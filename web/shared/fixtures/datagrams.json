@@ -107,6 +107,82 @@
       "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo4LCJyb2xlIjoicm9ib3QiLCJ0b2tlbiI6InByb3ZpZGVyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OSIsInRvcGljU291cmNlIjoid29ya3NwYWNlIiwidG9waWNzVmVyc2lvbiI6MSwidG9waWNDYXBhYmlsaXRpZXMiOnsicmVhZCI6dHJ1ZSwid3JpdGUiOmZhbHNlLCJwcm9maWxlcyI6WyJyYXciLCJkZXB0aC5sb3NzbGVzcy52MSJdLCJndWFyZGVkUHVibGlzaGVycyI6ZmFsc2V9fQ=="
     },
     {
+      "name": "hello_topic_source_options",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw",
+            "image.jpeg.low.v1",
+            "cloud.q16.low.v1"
+          ],
+          "guardedPublishers": false,
+          "profileOptions": {
+            "raw": {
+              "maxHz": {
+                "kind": "number",
+                "max": 1000,
+                "default": 1000
+              }
+            },
+            "image.jpeg.low.v1": {
+              "maxHz": {
+                "kind": "number",
+                "max": 1000,
+                "default": 30
+              },
+              "maxResolution": {
+                "kind": "size",
+                "min": 16,
+                "max": 4096,
+                "default": [
+                  640,
+                  360
+                ]
+              },
+              "quality": {
+                "kind": "int",
+                "min": 1,
+                "max": 100,
+                "default": 60
+              }
+            },
+            "cloud.q16.low.v1": {
+              "maxHz": {
+                "kind": "number",
+                "max": 1000,
+                "default": 5
+              },
+              "keepEvery": {
+                "kind": "int",
+                "min": 1,
+                "max": 64,
+                "default": 4
+              },
+              "fields": {
+                "kind": "enum",
+                "values": [
+                  "intensity",
+                  "color"
+                ],
+                "default": [
+                  "intensity",
+                  "color"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo4LCJyb2xlIjoicm9ib3QiLCJ0b3BpY1NvdXJjZSI6IndvcmtzcGFjZSIsInRvcGljc1ZlcnNpb24iOjEsInRvcGljQ2FwYWJpbGl0aWVzIjp7InJlYWQiOnRydWUsIndyaXRlIjpmYWxzZSwicHJvZmlsZXMiOlsicmF3IiwiaW1hZ2UuanBlZy5sb3cudjEiLCJjbG91ZC5xMTYubG93LnYxIl0sImd1YXJkZWRQdWJsaXNoZXJzIjpmYWxzZSwicHJvZmlsZU9wdGlvbnMiOnsicmF3Ijp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjEwMDB9fSwiaW1hZ2UuanBlZy5sb3cudjEiOnsibWF4SHoiOnsia2luZCI6Im51bWJlciIsIm1heCI6MTAwMCwiZGVmYXVsdCI6MzB9LCJtYXhSZXNvbHV0aW9uIjp7ImtpbmQiOiJzaXplIiwibWluIjoxNiwibWF4Ijo0MDk2LCJkZWZhdWx0IjpbNjQwLDM2MF19LCJxdWFsaXR5Ijp7ImtpbmQiOiJpbnQiLCJtaW4iOjEsIm1heCI6MTAwLCJkZWZhdWx0Ijo2MH19LCJjbG91ZC5xMTYubG93LnYxIjp7Im1heEh6Ijp7ImtpbmQiOiJudW1iZXIiLCJtYXgiOjEwMDAsImRlZmF1bHQiOjV9LCJrZWVwRXZlcnkiOnsia2luZCI6ImludCIsIm1pbiI6MSwibWF4Ijo2NCwiZGVmYXVsdCI6NH0sImZpZWxkcyI6eyJraW5kIjoiZW51bSIsInZhbHVlcyI6WyJpbnRlbnNpdHkiLCJjb2xvciJdLCJkZWZhdWx0IjpbImludGVuc2l0eSIsImNvbG9yIl19fX19fQ=="
+    },
+    {
       "name": "topic_sources",
       "message": {
         "t": "topic_sources",
@@ -127,6 +203,83 @@
       "b64": "eyJ0IjoidG9waWNfc291cmNlcyIsInYiOjEsInNvdXJjZXMiOlt7InNvdXJjZSI6IndvcmtzcGFjZSIsImdlbiI6MywicmVhZCI6dHJ1ZSwid3JpdGUiOmZhbHNlLCJwcm9maWxlcyI6WyJyYXciXSwiZ3VhcmRlZFB1Ymxpc2hlcnMiOmZhbHNlfV19"
     },
     {
+      "name": "topic_sources_options",
+      "message": {
+        "t": "topic_sources",
+        "v": 1,
+        "sources": [
+          {
+            "source": "workspace",
+            "gen": 3,
+            "read": true,
+            "write": false,
+            "profiles": [
+              "raw",
+              "image.jpeg.low.v1",
+              "cloud.q16.low.v1"
+            ],
+            "guardedPublishers": false,
+            "profileOptions": {
+              "raw": {
+                "maxHz": {
+                  "kind": "number",
+                  "max": 1000,
+                  "default": 1000
+                }
+              },
+              "image.jpeg.low.v1": {
+                "maxHz": {
+                  "kind": "number",
+                  "max": 1000,
+                  "default": 30
+                },
+                "maxResolution": {
+                  "kind": "size",
+                  "min": 16,
+                  "max": 4096,
+                  "default": [
+                    640,
+                    360
+                  ]
+                },
+                "quality": {
+                  "kind": "int",
+                  "min": 1,
+                  "max": 100,
+                  "default": 60
+                }
+              },
+              "cloud.q16.low.v1": {
+                "maxHz": {
+                  "kind": "number",
+                  "max": 1000,
+                  "default": 5
+                },
+                "keepEvery": {
+                  "kind": "int",
+                  "min": 1,
+                  "max": 64,
+                  "default": 4
+                },
+                "fields": {
+                  "kind": "enum",
+                  "values": [
+                    "intensity",
+                    "color"
+                  ],
+                  "default": [
+                    "intensity",
+                    "color"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "b64": "eyJ0IjoidG9waWNfc291cmNlcyIsInYiOjEsInNvdXJjZXMiOlt7InNvdXJjZSI6IndvcmtzcGFjZSIsImdlbiI6MywicmVhZCI6dHJ1ZSwid3JpdGUiOmZhbHNlLCJwcm9maWxlcyI6WyJyYXciLCJpbWFnZS5qcGVnLmxvdy52MSIsImNsb3VkLnExNi5sb3cudjEiXSwiZ3VhcmRlZFB1Ymxpc2hlcnMiOmZhbHNlLCJwcm9maWxlT3B0aW9ucyI6eyJyYXciOnsibWF4SHoiOnsia2luZCI6Im51bWJlciIsIm1heCI6MTAwMCwiZGVmYXVsdCI6MTAwMH19LCJpbWFnZS5qcGVnLmxvdy52MSI6eyJtYXhIeiI6eyJraW5kIjoibnVtYmVyIiwibWF4IjoxMDAwLCJkZWZhdWx0IjozMH0sIm1heFJlc29sdXRpb24iOnsia2luZCI6InNpemUiLCJtaW4iOjE2LCJtYXgiOjQwOTYsImRlZmF1bHQiOls2NDAsMzYwXX0sInF1YWxpdHkiOnsia2luZCI6ImludCIsIm1pbiI6MSwibWF4IjoxMDAsImRlZmF1bHQiOjYwfX0sImNsb3VkLnExNi5sb3cudjEiOnsibWF4SHoiOnsia2luZCI6Im51bWJlciIsIm1heCI6MTAwMCwiZGVmYXVsdCI6NX0sImtlZXBFdmVyeSI6eyJraW5kIjoiaW50IiwibWluIjoxLCJtYXgiOjY0LCJkZWZhdWx0Ijo0fSwiZmllbGRzIjp7ImtpbmQiOiJlbnVtIiwidmFsdWVzIjpbImludGVuc2l0eSIsImNvbG9yIl0sImRlZmF1bHQiOlsiaW50ZW5zaXR5IiwiY29sb3IiXX19fX1dfQ=="
+    },
+    {
       "name": "topic_sub",
       "message": {
         "t": "topic_sub",
@@ -140,6 +293,26 @@
       "b64": "eyJ0IjoidG9waWNfc3ViIiwiaWQiOiJzMSIsInNvdXJjZSI6IndvcmtzcGFjZSIsImtleUV4cHIiOiJkZW1vL86yLyoqIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsInByb2ZpbGUiOiJyYXciLCJtYXhIeiI6MTAwMH0="
     },
     {
+      "name": "topic_sub_settings",
+      "message": {
+        "t": "topic_sub",
+        "id": "c1",
+        "source": "workspace",
+        "keyExpr": "sensor/β/camera",
+        "delivery": "latest",
+        "profile": "image.jpeg.low.v1",
+        "maxHz": 15.5,
+        "settings": {
+          "maxResolution": [
+            320,
+            240
+          ],
+          "quality": 50
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfc3ViIiwiaWQiOiJjMSIsInNvdXJjZSI6IndvcmtzcGFjZSIsImtleUV4cHIiOiJzZW5zb3IvzrIvY2FtZXJhIiwiZGVsaXZlcnkiOiJsYXRlc3QiLCJwcm9maWxlIjoiaW1hZ2UuanBlZy5sb3cudjEiLCJtYXhIeiI6MTUuNSwic2V0dGluZ3MiOnsibWF4UmVzb2x1dGlvbiI6WzMyMCwyNDBdLCJxdWFsaXR5Ijo1MH19"
+    },
+    {
       "name": "topic_open",
       "message": {
         "t": "topic_open",
@@ -151,6 +324,27 @@
         "maxHz": 1000
       },
       "b64": "eyJ0IjoidG9waWNfb3BlbiIsInJvdXRlIjoiQHQ6cDEiLCJnZW4iOjMsImtleUV4cHIiOiJkZW1vL86yLyoqIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsInByb2ZpbGUiOiJyYXciLCJtYXhIeiI6MTAwMH0="
+    },
+    {
+      "name": "topic_open_settings",
+      "message": {
+        "t": "topic_open",
+        "route": "@t:p2",
+        "gen": 3,
+        "keyExpr": "sensor/β/camera",
+        "delivery": "latest",
+        "profile": "image.jpeg.low.v1",
+        "maxHz": 15.5,
+        "settings": {
+          "maxHz": 15.5,
+          "maxResolution": [
+            320,
+            240
+          ],
+          "quality": 50
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfb3BlbiIsInJvdXRlIjoiQHQ6cDIiLCJnZW4iOjMsImtleUV4cHIiOiJzZW5zb3IvzrIvY2FtZXJhIiwiZGVsaXZlcnkiOiJsYXRlc3QiLCJwcm9maWxlIjoiaW1hZ2UuanBlZy5sb3cudjEiLCJtYXhIeiI6MTUuNSwic2V0dGluZ3MiOnsibWF4SHoiOjE1LjUsIm1heFJlc29sdXRpb24iOlszMjAsMjQwXSwicXVhbGl0eSI6NTB9fQ=="
     },
     {
       "name": "topic_opened",
@@ -171,6 +365,25 @@
         "gen": 3
       },
       "b64": "eyJ0IjoidG9waWNfcmVhZHkiLCJpZCI6InMxIiwic291cmNlIjoid29ya3NwYWNlIiwicm91dGUiOiJAdDp2MiIsImdlbiI6M30="
+    },
+    {
+      "name": "topic_ready_settings",
+      "message": {
+        "t": "topic_ready",
+        "id": "c1",
+        "source": "workspace",
+        "route": "@t:v3",
+        "gen": 3,
+        "settings": {
+          "maxHz": 15.5,
+          "maxResolution": [
+            320,
+            240
+          ],
+          "quality": 50
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfcmVhZHkiLCJpZCI6ImMxIiwic291cmNlIjoid29ya3NwYWNlIiwicm91dGUiOiJAdDp2MyIsImdlbiI6Mywic2V0dGluZ3MiOnsibWF4SHoiOjE1LjUsIm1heFJlc29sdXRpb24iOlszMjAsMjQwXSwicXVhbGl0eSI6NTB9fQ=="
     },
     {
       "name": "topic_activate",
@@ -218,6 +431,127 @@
         "id": "s1"
       },
       "b64": "eyJ0IjoidG9waWNfdW5zdWIiLCJpZCI6InMxIn0="
+    },
+    {
+      "name": "topic_update",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfdXBkYXRlIiwiaWQiOiJjMSIsInJldmlzaW9uIjoyLCJvcHRpb25zIjp7Im1heEh6Ijo3LjUsIm1heFJlc29sdXRpb24iOm51bGwsInF1YWxpdHkiOjQwfX0="
+    },
+    {
+      "name": "topic_update_cloud",
+      "message": {
+        "t": "topic_update",
+        "id": "c2",
+        "revision": 1,
+        "options": {
+          "keepEvery": 2,
+          "fields": [
+            "color"
+          ]
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfdXBkYXRlIiwiaWQiOiJjMiIsInJldmlzaW9uIjoxLCJvcHRpb25zIjp7ImtlZXBFdmVyeSI6MiwiZmllbGRzIjpbImNvbG9yIl19fQ=="
+    },
+    {
+      "name": "topic_applied",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfYXBwbGllZCIsImlkIjoiYzEiLCJyZXZpc2lvbiI6Miwic2V0dGluZ3MiOnsibWF4SHoiOjcuNSwibWF4UmVzb2x1dGlvbiI6WzY0MCwzNjBdLCJxdWFsaXR5Ijo0MH19"
+    },
+    {
+      "name": "topic_variant",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v2",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfdmFyaWFudCIsInJvdXRlIjoiQHQ6cDIiLCJnZW4iOjMsInZhcmlhbnQiOiJ2MiIsInNldHRpbmdzIjp7Im1heEh6Ijo3LjUsIm1heFJlc29sdXRpb24iOls2NDAsMzYwXSwicXVhbGl0eSI6NDB9fQ=="
+    },
+    {
+      "name": "topic_variant_ready",
+      "message": {
+        "t": "topic_variant_ready",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v2",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfdmFyaWFudF9yZWFkeSIsInJvdXRlIjoiQHQ6cDIiLCJnZW4iOjMsInZhcmlhbnQiOiJ2MiIsInNldHRpbmdzIjp7Im1heEh6Ijo3LjUsIm1heFJlc29sdXRpb24iOls2NDAsMzYwXSwicXVhbGl0eSI6NDB9fQ=="
+    },
+    {
+      "name": "topic_variant_cloud",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p3",
+        "gen": 3,
+        "variant": "v1",
+        "settings": {
+          "maxHz": 2.5,
+          "keepEvery": 4,
+          "fields": [
+            "color"
+          ]
+        }
+      },
+      "b64": "eyJ0IjoidG9waWNfdmFyaWFudCIsInJvdXRlIjoiQHQ6cDMiLCJnZW4iOjMsInZhcmlhbnQiOiJ2MSIsInNldHRpbmdzIjp7Im1heEh6IjoyLjUsImtlZXBFdmVyeSI6NCwiZmllbGRzIjpbImNvbG9yIl19fQ=="
+    },
+    {
+      "name": "topic_variant_close",
+      "message": {
+        "t": "topic_variant_close",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v2"
+      },
+      "b64": "eyJ0IjoidG9waWNfdmFyaWFudF9jbG9zZSIsInJvdXRlIjoiQHQ6cDIiLCJnZW4iOjMsInZhcmlhbnQiOiJ2MiJ9"
+    },
+    {
+      "name": "topic_update_rejected",
+      "message": {
+        "t": "topic_error",
+        "id": "c1",
+        "revision": 3,
+        "code": "option_out_of_range",
+        "message": "calitate în afara intervalului β",
+        "outcome": "rejected"
+      },
+      "b64": "eyJ0IjoidG9waWNfZXJyb3IiLCJpZCI6ImMxIiwicmV2aXNpb24iOjMsImNvZGUiOiJvcHRpb25fb3V0X29mX3JhbmdlIiwibWVzc2FnZSI6ImNhbGl0YXRlIMOubiBhZmFyYSBpbnRlcnZhbHVsdWkgzrIiLCJvdXRjb21lIjoicmVqZWN0ZWQifQ=="
     },
     {
       "name": "topic_guard_ready",

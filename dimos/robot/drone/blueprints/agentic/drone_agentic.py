@@ -32,7 +32,7 @@ from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
 
 DRONE_SYSTEM_PROMPT = """\
 You are controlling a DJI drone with MAVLink interface.
-You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
+You have access to drone control skills you are already flying so only run move, set_mode, and fly_to.
 When the user gives commands, use the appropriate skills to control the drone.
 Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
 Here are some GPS locations to remember

@@ -341,6 +341,7 @@ def main(
                     )
                 rr.log("world/camera/image", img_obs.data.to_rerun())
 
+    rr.rerun_shutdown()  # flush + close the .rrd before opening it
     print(f"wrote {out}")
     if no_gui:
         print(f"open with: rerun {out}")

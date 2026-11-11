@@ -34,7 +34,7 @@ uv run dimos --help
 
 Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras base,unitree` to select capabilities (developer mode defaults to `all` with platform exclusions). See [dependency tiers](/docs/requirements.md#dependency-tiers).
 
-`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning. These commands can install system packages on your host.
+`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning and the locked-memory limit. These commands can install system packages on your host.
 
 For all options:
 

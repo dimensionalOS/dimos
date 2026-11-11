@@ -42,7 +42,7 @@ SUITE: Suite = [
             "its initial position. Use the robot interface described in ROBOT.md."
         ),
         environment=MujocoEnvironment(
-            blueprint=["xarm-sim", "mcp-server"],
+            blueprint=["xarm-sim"],
             raw_bridge=True,
             raw_guide=RAW_ARM_README + XARM7_NOTES,
             ready_streams=("color_image", "coordinator_joint_state"),

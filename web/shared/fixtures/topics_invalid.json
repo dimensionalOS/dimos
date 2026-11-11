@@ -431,6 +431,499 @@
       }
     },
     {
+      "name": "unknown_option",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": 1
+        }
+      }
+    },
+    {
+      "name": "negative_keep_every",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "keepEvery": -1
+        }
+      }
+    },
+    {
+      "name": "fractional_quality",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "quality": 75.5
+        }
+      }
+    },
+    {
+      "name": "boolean_quality",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "quality": true
+        }
+      }
+    },
+    {
+      "name": "short_resolution",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxResolution": [
+            640
+          ]
+        }
+      }
+    },
+    {
+      "name": "string_resolution",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxResolution": [
+            "640",
+            360
+          ]
+        }
+      }
+    },
+    {
+      "name": "zero_rate_option",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxHz": 0
+        }
+      }
+    },
+    {
+      "name": "duplicate_fields",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "fields": [
+            "color",
+            "color"
+          ]
+        }
+      }
+    },
+    {
+      "name": "numeric_fields",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "fields": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "null_options",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": null
+      }
+    },
+    {
+      "name": "unsafe_revision",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 9007199254740992,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "negative_revision",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": -1,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "fractional_revision",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 1.5,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "null_setting_in_force",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": {
+          "maxHz": 7.5,
+          "quality": null
+        }
+      }
+    },
+    {
+      "name": "settings_without_rate",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": {
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "null_settings",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": null
+      }
+    },
+    {
+      "name": "variant_zero",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v0",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_beyond_bound",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v5",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_prefix",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "w1",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_newline",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v1\n",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_null_settings",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v2",
+        "settings": null
+      }
+    },
+    {
+      "name": "sub_settings_scalar",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000,
+        "settings": 5
+      }
+    },
+    {
+      "name": "sub_settings_null",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000,
+        "settings": null
+      }
+    },
+    {
+      "name": "sub_settings_reset",
+      "message": {
+        "t": "topic_sub",
+        "id": "c1",
+        "source": "workspace",
+        "keyExpr": "sensor/β/camera",
+        "delivery": "latest",
+        "profile": "image.jpeg.low.v1",
+        "maxHz": 15.5,
+        "settings": {
+          "quality": null
+        }
+      }
+    },
+    {
+      "name": "ready_null_settings",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 3,
+        "settings": null
+      }
+    },
+    {
+      "name": "error_null_revision",
+      "message": {
+        "t": "topic_error",
+        "id": "s1",
+        "code": "source_offline",
+        "message": "Source interrupted",
+        "outcome": "interrupted",
+        "revision": null
+      }
+    },
+    {
+      "name": "invalid_profile_options_0",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxHz": {
+                "kind": "ratio",
+                "default": 30
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_1",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxHz": {
+                "kind": "number",
+                "min": "0"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_2",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "fields": {
+                "kind": "enum",
+                "values": [
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_3",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxResolution": {
+                "kind": "size",
+                "default": [
+                  640,
+                  360,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9,
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_4",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxHz": null
+            }
+          }
+        }
+      }
+    },
+    {
       "name": "oversized_page",
       "message": {
         "t": "topic_list",

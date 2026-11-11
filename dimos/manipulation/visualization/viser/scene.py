@@ -896,7 +896,6 @@ class ViserManipulationScene:
                 RobotDisplayMode.COLLISION,
                 RobotDisplayMode.BOTH,
             }
-            fallback.show_collision = False
             self._set_handle_visibility(
                 fallback,
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
