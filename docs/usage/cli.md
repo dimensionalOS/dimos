@@ -248,7 +248,7 @@ dimos stop [--force]
 |--------|-------------|
 | `--force`, `-f` | Immediate SIGKILL (skip graceful SIGTERM) |
 
-Default behavior: SIGTERM → wait 5s → SIGKILL. Cleans up the run registry entry.
+Default behavior: send SIGTERM and wait up to 30s before SIGKILL. This gives workers time to finish cleanup. Cleans up the run registry entry.
 
 ### `dimos restart`
 

@@ -246,6 +246,27 @@ def test_worker_shutdown_kills_and_reaps_a_process_that_ignores_terminate(mocker
     assert worker.pid is None
 
 
+def test_worker_shutdown_allows_slow_cleanup(mocker, monkeypatch):
+    worker = PythonWorker()
+    process = mocker.Mock()
+    remaining = 6.5
+
+    def join(timeout):
+        nonlocal remaining
+        remaining = max(0.0, remaining - timeout)
+
+    process.join.side_effect = join
+    process.is_alive.side_effect = lambda: remaining > 0
+    monkeypatch.setattr(worker, "_process", process)
+
+    worker.shutdown()
+
+    process.terminate.assert_not_called()
+    process.kill.assert_not_called()
+    process.close.assert_called_once_with()
+    assert worker.pid is None
+
+
 def test_unencodable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
     """An RPC result that cannot be encoded comes back as the error, not a dead worker."""
     worker_manager = create_worker_manager(n_workers=1)
