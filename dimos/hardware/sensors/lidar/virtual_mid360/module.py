@@ -90,6 +90,8 @@ class VirtualMid360Config(NativeModuleConfig):
 class VirtualMid360(NativeModule):
     config: VirtualMid360Config
 
+    _nic_setup_started: bool = False
+
     def _sudo(self, args: list[str], *, check: bool = True) -> None:
         """Run a privileged command via sudo, raising on failure (when check)."""
         result = subprocess.run(["sudo", *args], capture_output=True)
@@ -128,6 +130,7 @@ class VirtualMid360(NativeModule):
             self._sudo(["ip", "link", "del", cfg.alias_iface], check=False)
 
     def _setup_virtual_nic(self) -> None:
+        self._nic_setup_started = True
         self._teardown_virtual_nic()
         if sys.platform == "darwin":
             self._setup_macos()
@@ -184,7 +187,7 @@ class VirtualMid360(NativeModule):
     @rpc
     def stop(self) -> None:
         super().stop()
-        if self.config.setup_network:
+        if self._nic_setup_started:
             self._teardown_virtual_nic()
 
 

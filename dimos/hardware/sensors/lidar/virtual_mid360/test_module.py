@@ -43,8 +43,7 @@ def test_build_without_a_way_to_sudo_fails_before_any_privileged_command(
     try:
         with pytest.raises(RuntimeError, match="setup_network=False"):
             virtual.build()
-        assert [call.args[0] for call in sudo.call_args_list] == [["sudo", "-n", "true"]]
         native_build.assert_not_called()
     finally:
-        virtual.config.setup_network = False  # stop() would tear the interface down with sudo
-        virtual.stop()
+        virtual.stop()  # what the coordinator's cleanup runs after a failed build
+    assert [call.args[0] for call in sudo.call_args_list] == [["sudo", "-n", "true"]]
