@@ -28,3 +28,6 @@ cat "$repo/scripts/install.sh" | /bin/bash -s -- \
     --non-interactive --no-nix --no-sysctl --skip-tests --no-cuda \
     --mode "$mode" --project-dir "$project" \
     2>&1 | tee "$INSTALL_TEST_ROOT/logs/install.log"
+
+# Graph rendering needs the system Graphviz executable.
+"$project/.venv/bin/dimos" graph unitree-go2 --output "$INSTALL_TEST_ROOT/logs/graph.svg"

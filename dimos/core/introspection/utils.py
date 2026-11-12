@@ -16,6 +16,7 @@
 
 import hashlib
 import re
+import subprocess
 
 # Colors for type nodes and edges (bright, distinct, good on dark backgrounds)
 TYPE_COLORS = [
@@ -84,3 +85,22 @@ def color_for_string(colors: list[str], s: str) -> str:
 def sanitize_id(s: str) -> str:
     """Sanitize a string to be a valid graphviz node ID."""
     return re.sub(r"[^a-zA-Z0-9_]", "_", s)
+
+
+def render_dot_svg(dot_code: str, output_path: str, *, engine: str = "dot") -> None:
+    """Render DOT to SVG, with installation guidance when Graphviz is missing."""
+    try:
+        result = subprocess.run(
+            [engine, "-Tsvg", "-o", output_path],
+            input=dot_code,
+            text=True,
+            capture_output=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"Graphviz executable '{engine}' was not found on PATH. "
+            "Install Graphviz with 'sudo apt install graphviz' (Ubuntu/Debian) "
+            "or 'brew install graphviz' (macOS)."
+        ) from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"graphviz failed: {result.stderr}")
