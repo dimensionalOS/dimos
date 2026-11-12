@@ -18,7 +18,8 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames
+from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+from dimos.robot.assets.usd_utils.layers import graft_usd
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.sensor_world import open_view, robot_ids
 from dimos.sim2.mujoco.world import SensorMount

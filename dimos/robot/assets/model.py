@@ -162,7 +162,7 @@ class UsdModel:
     def _with_added_frames(self, layer: str) -> str:
         if not self._added_frames:
             return layer
-        from dimos.robot.assets.usd import usd_with_frames
+        from dimos.robot.assets.usd_utils.frames import usd_with_frames
 
         return usd_with_frames(
             layer,
@@ -174,7 +174,7 @@ class UsdModel:
         if self._text is not None:
             return self._text
         if self._urdf is not None:
-            from dimos.robot.assets.urdf_to_usd import urdf_to_usd
+            from dimos.robot.assets.usd_utils.from_urdf import urdf_to_usd
 
             return urdf_to_usd(self._urdf)
         path = self.source_path
@@ -192,7 +192,7 @@ class UsdModel:
 
     @cached_property
     def _poseable(self) -> LoadedRobotModel:
-        from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+        from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 
         source = self.source_path
         return RobotModel.from_urdf_string(
@@ -208,7 +208,7 @@ class UsdModel:
     def root_link(self) -> str:
         if self._urdf is not None:
             return self._urdf.root_link
-        from dimos.robot.assets.usd_to_urdf import usd_root_link
+        from dimos.robot.assets.usd_utils.to_urdf_mask import usd_root_link
 
         return usd_root_link(self.usd, self._asset_root())
 
@@ -220,7 +220,7 @@ class UsdModel:
 
     def frame_names(self) -> set[str]:
         if self._urdf is None:
-            from dimos.robot.assets.usd import usd_frame_names
+            from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
             return usd_frame_names(self.usd, self._asset_root())
         names = {self._urdf.root_link}
@@ -230,7 +230,7 @@ class UsdModel:
 
     def referenced_files(self) -> set[str]:
         if self._urdf is None:
-            from dimos.robot.assets.usd_assets import referenced_asset_paths
+            from dimos.robot.assets.usd_utils.assets import referenced_asset_paths
 
             return referenced_asset_paths(self.usd, self._asset_root())
         return self._urdf.referenced_files()
