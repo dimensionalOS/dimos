@@ -29,7 +29,10 @@ Metric conventions (all mean / P95 / max over the *complete* active window):
 * ``policy_goal_tracking`` — policy goal vs executed joint state, both in the
   trained plant's ``arm_tcp`` frame, sampled in the same 60 Hz sampler iteration.
 * ``requested_vs_achievable`` — operator request vs its IK projection, both in
-  the deployed URDF ``gripper_tip`` frame.
+  the deployed URDF ``gripper_tip`` frame. At the session anchor the projection
+  is zero *by construction* (the IK target is the measured pose), so the anchor
+  rows are reconstructed by identity (``achievable := requested``); that is a
+  convention reconstruction, not an independent saved-q FK.
 * ``request_tracking_urdf_tool`` — operator request vs the FK of the *measured*
   joints in that same URDF tool frame: genuine controller-request tracking.
 * ``cross_frame_*`` — URDF tool-frame poses against plant-frame poses. Reported
@@ -87,20 +90,63 @@ def ticks_first(arrays: dict[str, np.ndarray]) -> np.ndarray:
     return np.array([order[tick] for tick in sorted(order)], dtype=int)
 
 
+def session_anchor_ticks(arrays: dict[str, np.ndarray]) -> dict[float, int]:
+    """Anchor policy-tick ID of every session epoch, from the *full* recording.
+
+    The anchor is the smallest active policy tick of an epoch. It has to be
+    resolved before any row selection: a selection that starts at tick 2 does not
+    make tick 2 an anchor.
+    """
+    active = active_mask(arrays)
+    epochs = arrays["epoch"] if "epoch" in arrays else np.zeros(arrays["t"].size)
+    anchors: dict[float, int] = {}
+    for epoch in np.unique(epochs[active]):
+        rows = active & (epochs == epoch)
+        anchors[float(epoch)] = int(arrays["policy_ticks"][rows].min())
+    return anchors
+
+
 def anchor_rows(arrays: dict[str, np.ndarray], rows: np.ndarray) -> np.ndarray:
-    """Samples still carrying the session-anchor reference diagnostics (tick == min)."""
+    """Rows of ``rows`` that belong to a session anchor (tick == the epoch's anchor tick).
+
+    Anchor identity is resolved from the full active recording, per session
+    epoch, and only then intersected with ``rows``. Taking ``min`` of the ticks in
+    ``rows`` instead would treat tick 2 as an anchor for a post-anchor selection
+    and silently zero a real projection there.
+    """
+    if rows.size == 0:
+        return np.zeros(0, dtype=int)
+    anchors = session_anchor_ticks(arrays)
     ticks = arrays["policy_ticks"][rows]
-    return rows[ticks == ticks.min()]
+    if "epoch" not in arrays:
+        keep = np.isin(ticks.astype(int), list(anchors.values()))
+    else:
+        epochs = arrays["epoch"][rows]
+        keep = np.array(
+            [
+                int(tick) == anchors.get(float(epoch), -1)
+                for tick, epoch in zip(ticks, epochs, strict=False)
+            ],
+            dtype=bool,
+        )
+    return rows[keep].astype(int)
 
 
 def correct_anchor_achievable(arrays: dict[str, np.ndarray], rows: np.ndarray) -> np.ndarray:
-    """Achievable pose at the anchor in the *requested* (URDF tool) frame.
+    """Anchor achievable pose, reconstructed by identity -- not from saved joints.
 
-    The run-229 traces were recorded before the generator's anchor diagnostic was
-    fixed: at the anchor ``achievable`` came from the plant goal FK while
-    ``requested`` was the deployed URDF tool frame, so the frame offset appeared
-    as IK projection error. At the anchor the IK target is the measured pose, so
-    the fixed generator records ``achievable == requested``; this reproduces that.
+    The generator defines the anchor diagnostic so that ``achievable`` *is* the
+    ``requested`` tool-frame pose: at engagement the IK target is the measured
+    pose, so the anchor projection is zero by construction. Traces recorded
+    before that fix carry the plant goal frame in ``achievable`` at the anchor
+    rows, so the minimum correction is the explicit identity/convention
+    reconstruction ``achievable := requested`` performed here.
+
+    No joint column is read and no FK is run, so this is **not** an independent
+    saved-q FK check of the anchor. FK of the measured joints stays reserved for
+    ``request_tracking_urdf_tool``, where non-atomic sampling (RPC snapshot vs
+    the 60 Hz SHM joint read) is the dominant error term.
+
     Returns the corrected copy of the achievable arrays.
     """
     reachable = {key: arrays[key].copy() for key in arrays if key.startswith("ach_")}
@@ -219,9 +265,18 @@ def channel_report(
     report: dict[str, Any] = {
         "samples": int(rows.size),
         "policy_tick_ids": [int(value) for value in np.unique(arrays["policy_ticks"][rows])],
+        "anchor_rows_in_selection": [int(row) for row in anchor_rows(arrays, rows)],
         "time_s": [float(arrays["t"][rows].min()), float(arrays["t"][rows].max())],
         "policy_goal_tracking": pose_errors(goal_p, goal_q, exec_p, exec_q),
-        "requested_vs_achievable": pose_errors(req_p, req_q, ach_p, ach_q),
+        "requested_vs_achievable": {
+            **pose_errors(req_p, req_q, ach_p, ach_q),
+            "anchor_provenance": (
+                "anchor rows are reconstructed by identity (achievable := requested) because the "
+                "generator defines the anchor projection as zero by construction (the IK target is "
+                "the measured pose). This correction reads no joint column and runs no FK, so the "
+                "zero at the anchor is a convention reconstruction, not an independent saved-q FK."
+            ),
+        },
         "cross_frame_requested_vs_executed": {
             **pose_errors(req_p, req_q, exec_p, exec_q),
             "valid": False,
@@ -357,14 +412,27 @@ def main() -> None:
         ],
     }
 
-    # --- anchor diagnostic: how large was the run-229 frame-convention artifact?
+    # --- deployed-URDF FK of the measured joints, shared by every channel below
+    active_rows = {name: np.flatnonzero(active_mask(arrays)) for name, arrays in runs.items()}
+    fk_cache: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
+    for name, arrays in runs.items():
+        fk = None
+        if not args.no_urdf_fk:
+            rows = active_rows[name]
+            q = np.stack([arrays[f"q{index}"] for index in range(6)], axis=1)
+            fk = tool_frame_fk(q[rows])
+        fk_cache[name] = fk
+
+    # --- anchor diagnostic: identity reconstruction, and what the frame bug cost
     anchor_report: dict[str, Any] = {}
     for name, arrays in runs.items():
-        rows = np.flatnonzero(active_mask(arrays))
+        rows = active_rows[name]
         anchors = anchor_rows(arrays, rows)
+        request_p = vector(arrays, "req")[anchors]
+        request_q = quaternion(arrays, "req")[anchors]
         before = pose_errors(
-            vector(arrays, "req")[anchors],
-            quaternion(arrays, "req")[anchors],
+            request_p,
+            request_q,
             vector(arrays, "ach")[anchors],
             quaternion(arrays, "ach")[anchors],
         )
@@ -376,30 +444,79 @@ def main() -> None:
             vector(merged, "ach")[anchors],
             quaternion(merged, "ach")[anchors],
         )
+        fk = fk_cache.get(name)
+        if fk is not None:
+            tool_index = np.searchsorted(rows, anchors)
+            measured: dict[str, Any] = {
+                "position_mm": [
+                    float(value)
+                    for value in np.linalg.norm(fk[0][tool_index] - request_p, axis=1) * 1000.0
+                ],
+                "orientation_deg": [
+                    float(quat_angle_deg(fk[1][tool_index][index], request_q[index]))
+                    for index in range(anchors.size)
+                ],
+                "valid_as_ik_projection": False,
+                "reason": (
+                    "FK of the measured joints vs the operator request in the same URDF frame, shown "
+                    "for transparency only. The request comes from the policy tick's state_snapshot "
+                    "RPC and the joints from the 60 Hz SHM read, which are not atomic, so this "
+                    "difference is sampling skew -- it is not IK projection error and is not "
+                    "substituted into requested_vs_achievable."
+                ),
+            }
+        else:
+            measured = {
+                "valid_as_ik_projection": False,
+                "reason": "URDF FK unavailable in this environment (pink/pinocchio not importable)",
+            }
         anchor_report[name] = {
             "rows": [int(row) for row in anchors],
+            "epochs": [float(value) for value in np.unique(arrays["epoch"][anchors])],
+            "anchor_ticks_by_epoch": {
+                str(epoch): int(tick)
+                for epoch, tick in sorted(session_anchor_ticks(arrays).items())
+            },
             "policy_tick_ids": [int(value) for value in np.unique(arrays["policy_ticks"][anchors])],
             "as_recorded": before,
             "corrected_same_urdf_frame": after,
+            "measured_q_fk_at_anchor": measured,
         }
     report["anchor_diagnostic_correction"] = {
         "defect": (
             "quest_reference.anchor() recorded achievable from the plant goal FK while requested was "
             "the deployed URDF tool frame, so the anchor rows carried the ~80 mm / ~100 deg frame "
-            "offset as IK projection error. Fixed in the generator; recomputed here from the saved q."
+            "offset as IK projection error. Fixed in the generator: the anchor achievable pose is "
+            "recorded in the same URDF tool frame, i.e. equal to requested."
+        ),
+        "method": (
+            "identity / convention reconstruction: at every anchor row the recorded achievable pose "
+            "is replaced by the recorded requested pose (achievable := requested). No joint column is "
+            "read and no FK is performed."
+        ),
+        "method_id": "identity_reconstruction",
+        "reads_saved_joint_state": False,
+        "performs_fk": False,
+        "independent_saved_q_fk": False,
+        "expected_anchor_projection": "0 mm / 0 deg by construction (the IK target is the measured pose)",
+        "anchor_identity": (
+            "anchor ticks are resolved per session epoch from the FULL recorded trace (the smallest "
+            "active policy tick of the epoch) and only then intersected with the row selection, so a "
+            "post-anchor selection (tick IDs 2..150) cannot re-label tick 2 as an anchor."
+        ),
+        "measured_q_fk_note": (
+            "measured-joint FK differences at the anchor rows are listed under "
+            "measured_q_fk_at_anchor for transparency only, marked valid_as_ik_projection=false: they "
+            "are dominated by non-atomic sampling. Genuine request tracking stays "
+            "request_tracking_urdf_tool."
         ),
         "runs": anchor_report,
     }
 
     # --- primary: the complete active window, per run
-    fk_cache: dict[str, tuple[np.ndarray, np.ndarray] | None] = {}
     for name, arrays in runs.items():
-        rows = np.flatnonzero(active_mask(arrays))
-        fk = None
-        if not args.no_urdf_fk:
-            q = np.stack([arrays[f"q{index}"] for index in range(6)], axis=1)
-            fk = tool_frame_fk(q[rows])
-        fk_cache[name] = fk
+        rows = active_rows[name]
+        fk = fk_cache[name]
         report["active_window_channels"][name] = channel_report(
             arrays, rows, urdf_fk=fk, urdf_rows=np.arange(rows.size) if fk is not None else None
         )

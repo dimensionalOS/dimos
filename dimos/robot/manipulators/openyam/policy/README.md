@@ -120,6 +120,10 @@ path; replaying the recorded commands open loop reproduces training to
   `requested` (the IK target at engagement is the measured pose, so the
   projection is zero); it must never carry the plant goal frame, or the frame
   offset re-enters the projection channel as a fake ~80 mm / ~100 deg error.
+  The preserved run-229 traces are corrected by identity
+  (`achievable := requested`) — a convention reconstruction, not an FK of the
+  saved joints — and the anchor is resolved per session epoch from the full
+  trace, never as the tick minimum of whatever row selection is being reported.
 * Closed-loop numbers are published over the **complete active window** (every
   recorded sample whose session was active, with counts/mask/finite coverage/
   faults), not over a first-sample-per-tick subset; per-tick figures stay as

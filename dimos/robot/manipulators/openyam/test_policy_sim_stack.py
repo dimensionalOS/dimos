@@ -38,6 +38,12 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints import policy as blueprint
 from dimos.robot.manipulators.openyam.policy.contract import JOINT_ORDER, PolicyContractError
 from dimos.robot.manipulators.openyam.policy.demo_clip_compare import compare
+from dimos.robot.manipulators.openyam.policy.demo_compare_actors import (
+    anchor_rows,
+    channel_report,
+    correct_anchor_achievable,
+    session_anchor_ticks,
+)
 from dimos.robot.manipulators.openyam.policy.quest_reference import (
     QuestReferenceGenerator,
     ReferenceRefusedError,
@@ -223,6 +229,76 @@ def test_anchor_reports_requested_and_achievable_in_one_urdf_frame() -> None:
     next_diagnostics = generator.diagnostics
     assert next_diagnostics is not None
     assert next_diagnostics.projection_error_m == pytest.approx(0.0, abs=1e-12)
+
+
+def _trace_arrays(ticks: list[int], epochs: list[float] | None = None) -> dict[str, np.ndarray]:
+    """Minimal closed-loop trace with the pose columns the comparison report reads."""
+    size = len(ticks)
+    arrays: dict[str, np.ndarray] = {
+        "t": np.arange(size, dtype=np.float64),
+        "epoch": np.asarray(epochs if epochs is not None else [1.0] * size, dtype=np.float64),
+        "active": np.ones(size),
+        "policy_ticks": np.asarray(ticks, dtype=np.float64),
+    }
+    for prefix in ("goal", "exec", "req", "ach"):
+        arrays[f"{prefix}_x"] = np.zeros(size)
+        arrays[f"{prefix}_y"] = np.zeros(size)
+        arrays[f"{prefix}_z"] = np.zeros(size)
+        arrays[f"{prefix}_qw"] = np.ones(size)
+        arrays[f"{prefix}_qx"] = np.zeros(size)
+        arrays[f"{prefix}_qy"] = np.zeros(size)
+        arrays[f"{prefix}_qz"] = np.zeros(size)
+    return arrays
+
+
+def test_anchor_rows_resolve_from_the_full_session_not_the_selection() -> None:
+    """Regression (round-3 review): ``anchor_rows`` took ``min`` of the ticks in the
+    supplied selection, so a post-anchor selection (IDs 2..150) re-labelled tick 2 as
+    an anchor and replaced a genuine 10 mm projection there with 0 mm."""
+    arrays = _trace_arrays([1, 1, 2, 2, 3, 3])
+    full = np.arange(6)
+    np.testing.assert_array_equal(anchor_rows(arrays, full), [0, 1])
+
+    post_anchor = full[arrays["policy_ticks"] > 1]
+    assert anchor_rows(arrays, post_anchor).size == 0
+    assert session_anchor_ticks(arrays) == {1.0: 1}
+
+    # The reviewer's counterexample: 10 mm of real projection on tick 2, which the
+    # helper must preserve once tick 1 is excluded from the selection.
+    tick2 = post_anchor[0]
+    arrays["ach_x"][tick2] = arrays["req_x"][tick2] + 0.01
+    corrected = correct_anchor_achievable(arrays, post_anchor)
+    assert corrected["ach_x"][tick2] - arrays["req_x"][tick2] == pytest.approx(0.01)
+    report = channel_report(arrays, post_anchor, urdf_fk=None)
+    assert report["requested_vs_achievable"]["position_mm"]["max"] == pytest.approx(10.0)
+    # Four post-anchor samples, exactly one of them carrying the 10 mm projection:
+    # the tick-2 rows must not be treated as anchors (that would give 0 mm / 10 mm).
+    assert report["requested_vs_achievable"]["position_mm"]["mean"] == pytest.approx(
+        10.0 / post_anchor.size
+    )
+    assert report["anchor_rows_in_selection"] == []
+
+
+def test_anchor_identity_is_resolved_per_session_epoch() -> None:
+    """A re-engaged session (new epoch) starts a new anchor; a mid-epoch selection
+    still contributes none."""
+    arrays = _trace_arrays([1, 2, 3, 1, 2], epochs=[1.0, 1.0, 1.0, 2.0, 2.0])
+    assert session_anchor_ticks(arrays) == {1.0: 1, 2.0: 1}
+    np.testing.assert_array_equal(anchor_rows(arrays, np.arange(5)), [0, 3])
+    np.testing.assert_array_equal(anchor_rows(arrays, np.array([1, 2, 4])), [])
+
+
+def test_anchor_achievable_is_identity_reconstruction_not_saved_q_fk() -> None:
+    """The anchor correction is ``achievable := requested``: it reads no joint column
+    and runs no FK, so it must not be described as an independent saved-q FK."""
+    arrays = _trace_arrays([1, 1, 2, 2])
+    for index in range(6):
+        arrays[f"q{index}"] = np.full(4, np.nan)  # no usable saved joints at all
+    arrays["ach_x"][:2] = 0.5  # as recorded: plant-frame value at the anchor
+    corrected = correct_anchor_achievable(arrays, np.arange(4))
+    np.testing.assert_array_equal(corrected["ach_x"][:2], arrays["req_x"][:2])
+    # Rows after the anchor keep their recorded value untouched.
+    np.testing.assert_array_equal(corrected["ach_x"][2:], arrays["ach_x"][2:])
 
 
 @pytest.mark.parametrize("dt", [0.05, 0.0167, 0.0, -0.01])
