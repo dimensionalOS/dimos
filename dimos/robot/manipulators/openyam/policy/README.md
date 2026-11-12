@@ -109,11 +109,25 @@ path; replaying the recorded commands open loop reproduces training to
   <0.3% (33.11 ms mean, 33.42 ms max over 149 ticks), while a dropped/doubled
   60 Hz tick is 50% off and is refused.
 * Report the TCP error channels separately and never mix frames: `goal` and
-  `executed` are both the plant `arm_tcp` body (comparable), while `requested`
-  and `achievable` live in the deployed URDF `gripper` frame, which sits
-  ~0.08-0.10 m / ~100 deg away from `arm_tcp`. Cross-frame channels are printed
-  as such and are not tracking error. Orientation is the great-circle
-  quaternion angle from `tcp.quat_angle_deg` (degrees, converted exactly once).
+  `executed` are both the plant `arm_tcp` body (**policy-goal tracking**), while
+  `requested`, `achievable` and the FK of the measured joints live in the
+  deployed URDF `gripper_tip` frame, which sits ~0.08-0.10 m / ~100 deg away from
+  `arm_tcp`. Cross-frame channels are marked `"valid": false` in the comparison
+  JSON and are a measured frame offset, not tracking error. Orientation is the
+  great-circle quaternion angle from `tcp.quat_angle_deg` (degrees, converted
+  exactly once).
+* The anchor diagnostic reports `achievable` in the same URDF frame as
+  `requested` (the IK target at engagement is the measured pose, so the
+  projection is zero); it must never carry the plant goal frame, or the frame
+  offset re-enters the projection channel as a fake ~80 mm / ~100 deg error.
+* Closed-loop numbers are published over the **complete active window** (every
+  recorded sample whose session was active, with counts/mask/finite coverage/
+  faults), not over a first-sample-per-tick subset; per-tick figures stay as
+  labelled secondary diagnostics. The actor-11000 run is 299 samples / 150 ticks:
+  policy-goal tracking 6.24 / 13.66 / 36.65 mm and 1.30 / 3.18 / 9.34 deg
+  (mean / P95 / max), operator-request tracking in the URDF tool frame
+  7.63 / 13.59 / 33.79 mm and 1.25 / 3.15 / 9.34 deg, IK projection
+  2.38 / 5.84 / 5.89 mm.
 * Actor **6000** is the primary artifact; a separate **11000** artifact
   (`actor_a00011000.pt`, ONNX, normalizer, manifest with its own checkpoint
   hash) was exported from the frozen `preeval_a00011000_r000027550.pt` and run

@@ -236,16 +236,25 @@ class QuestReferenceGenerator:
             self._solver.reset()
             self._q_prev = q.copy()
             self._anchor_q = q.copy()
-            self._tcp_anchor = self._fk_frame()
+            self._tcp_anchor = tcp_anchor = self._fk_frame()
             self._controller_anchor = controller_matrix(pose)
             self._t_prev = float(t_now)
+            #: The policy goal is the trained plant's TCP body (``arm_tcp``).
             position, quaternion = self._goal_fk(q)
             self._quat_prev = quaternion
+            # The requested/achievable channel is reported in the deployed URDF
+            # tool frame, exactly like ``update()``. At the anchor the IK target
+            # *is* the measured pose, so the achievable pose is that same tool
+            # frame pose and the projection is zero — not the plant-frame goal,
+            # which would inject the ~0.08 m / ~100 deg frame offset into a
+            # channel that reports IK projection.
+            tool_position = tcp_anchor[:3, 3].copy()
+            tool_quaternion = _quat_wxyz(tcp_anchor)
             self._diagnostics = ReferenceDiagnostics(
-                requested_position=self._tcp_anchor[:3, 3].copy(),
-                requested_quaternion_wxyz=_quat_wxyz(self._tcp_anchor),
-                achievable_position=np.asarray(position, dtype=np.float64).copy(),
-                achievable_quaternion_wxyz=quaternion.copy(),
+                requested_position=tool_position,
+                requested_quaternion_wxyz=tool_quaternion,
+                achievable_position=tool_position.copy(),
+                achievable_quaternion_wxyz=tool_quaternion.copy(),
                 projection_error_m=0.0,
                 projection_error_rad=0.0,
                 dt_s=0.0,

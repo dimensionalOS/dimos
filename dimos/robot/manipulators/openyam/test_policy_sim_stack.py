@@ -194,6 +194,37 @@ def test_reference_is_clipped_into_the_trained_envelope_before_fk_and_dq() -> No
     assert np.isfinite(diagnostics.requested_quaternion_wxyz).all()
 
 
+def test_anchor_reports_requested_and_achievable_in_one_urdf_frame() -> None:
+    """Regression (run 229): the anchor diagnostic took ``achievable`` from the plant
+    goal FK while ``requested`` was the deployed URDF tool frame, so the frame offset
+    (~80 mm / ~100 deg) showed up as IK projection error at every session anchor."""
+    generator, _, fk = _generator(np.zeros(6))
+    q_measured = np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0])
+    generator.anchor(q_measured, _pose(), 0.0)
+    diagnostics = generator.diagnostics
+    assert diagnostics is not None
+    # `_StubSolver.frame_poses` is the URDF tool frame: position == first three joints.
+    np.testing.assert_allclose(diagnostics.requested_position, q_measured[:3], atol=1e-12)
+    np.testing.assert_allclose(
+        diagnostics.achievable_position, diagnostics.requested_position, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        diagnostics.achievable_quaternion_wxyz,
+        diagnostics.requested_quaternion_wxyz,
+        atol=1e-12,
+    )
+    assert diagnostics.projection_error_m == 0.0
+    # The plant-frame policy goal is a *different* pose and must not leak in here.
+    goal_position, _ = fk(q_measured)
+    assert np.linalg.norm(diagnostics.achievable_position - goal_position) > 0.1
+    # The next tick keeps the same convention: the stub IK does not move, so the
+    # operator's request is achievable and the projection stays at zero.
+    generator.update(_pose(), PERIOD, tick_index=1)
+    next_diagnostics = generator.diagnostics
+    assert next_diagnostics is not None
+    assert next_diagnostics.projection_error_m == pytest.approx(0.0, abs=1e-12)
+
+
 @pytest.mark.parametrize("dt", [0.05, 0.0167, 0.0, -0.01])
 def test_reference_refuses_a_tick_that_is_not_one_policy_period(dt: float) -> None:
     generator, _, _ = _generator(np.array([0.1, 0.0, 0.0, 0.0, 0.0, 0.0]))
