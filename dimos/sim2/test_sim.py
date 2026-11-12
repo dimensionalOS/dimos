@@ -14,6 +14,7 @@
 
 
 from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 import subprocess
 import sys
@@ -150,3 +151,16 @@ def test_a_task_that_does_not_report_arming_is_not_something_to_wait_for(coordin
     """Most tasks never arm. A snapshot without `armed` must not hold the world for ever."""
     assert driving(coordinator({"plain": {"active": True}}), None) is True
     assert driving(coordinator({"plain": "not even a mapping"}), None) is True
+
+
+def test_there_is_more_than_one_engine_and_each_one_imports():
+    """A switch with one thing in it is not a switch, and a backend protocol with one
+    implementation is whatever that implementation happens to do.
+
+    Each entry is imported rather than checked for being a string: the dict named an engine that
+    existed on no branch for a while, and a test that only looked at the spelling passed anyway.
+    """
+    assert set(BACKENDS) >= {"mujoco", "dimsim"}
+    for path in BACKENDS.values():
+        module, _, name = path.rpartition(".")
+        assert getattr(import_module(module), name), path

@@ -1,0 +1,85 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+import asyncio
+from collections.abc import AsyncIterator
+import time
+from typing import Any
+
+from dimos_lcm.world_msgs import WorldAction, WorldObservations
+
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.sim2.actions import JointCommand, world_action
+from dimos.sim2.dimsim.backend import BASE_JOINTS
+from dimos.sim2.sim import until_it_stops
+from dimos.sim2.world_observations import WorldMirror
+
+
+class SimKinematicBaseConfig(ModuleConfig):
+    robot_id: str
+    cmd_vel_timeout: float = 0.5
+    odom_rate_hz: float = 50.0
+
+
+class SimKinematicBase(Module):
+    config: SimKinematicBaseConfig
+    cmd_vel: In[Twist]
+    world_observations: In[WorldObservations]
+    actions: Out[WorldAction]
+    odom: Out[PoseStamped]
+    tf: Out[TFMessage]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._expires: float | None = None
+
+    async def main(self) -> AsyncIterator[None]:
+        self._world = WorldMirror()
+        self._world.subscribe(self.world_observations)
+        self._reporting = asyncio.create_task(until_it_stops("the base's odometry", self._report()))
+        yield
+        self._reporting.cancel()
+
+    async def handle_cmd_vel(self, twist: Twist) -> None:
+        self._drive([twist.linear.x, twist.linear.y, twist.angular.z])
+        self._expires = time.monotonic() + self.config.cmd_vel_timeout
+
+    def _drive(self, velocity: list[float]) -> None:
+        command = JointCommand(self.config.robot_id, BASE_JOINTS, velocity=tuple(velocity))
+        self.actions.publish(world_action(self._world, command))
+
+    async def _report(self) -> None:
+        async for _ in self._world.ticks(self.config.odom_rate_hz):
+            if self._expires is not None and time.monotonic() > self._expires:
+                self._expires = None
+                self._drive([0.0, 0.0, 0.0])
+            with self._world.lock:
+                entity = self._world.entity(self.config.robot_id)
+                stamp = self._world.stamp()
+            if entity is None or entity.pose is None:
+                continue
+            odom = PoseStamped(
+                ts=stamp,
+                frame_id="world",
+                position=entity.pose[:3].tolist(),
+                orientation=entity.pose[3:].tolist(),
+            )
+            self.tf.publish(TFMessage(Transform.from_pose("base_link", odom)))
+            self.odom.publish(odom)

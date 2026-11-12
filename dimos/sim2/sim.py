@@ -177,7 +177,10 @@ def driving(mount: Mount, rpc: Any) -> bool:
     return True
 
 
-BACKENDS = {"mujoco": "dimos.sim2.mujoco.sim.MujocoSim"}
+BACKENDS = {
+    "mujoco": "dimos.sim2.mujoco.sim.MujocoSim",
+    "dimsim": "dimos.sim2.dimsim.sim.DimSimSim",
+}
 
 
 def sim_module(backend: str = "mujoco", **config: Any) -> Blueprint:
