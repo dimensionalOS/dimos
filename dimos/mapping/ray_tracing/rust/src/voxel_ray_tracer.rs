@@ -56,7 +56,7 @@ pub fn region_at((x, y, _): (f32, f32, f32), voxel_size: f32, region_m: f32) -> 
 }
 
 #[inline]
-fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
+pub fn voxel_center(key: VoxelKey, voxel_size: f32) -> (f32, f32, f32) {
     let half = voxel_size * 0.5;
     (
         key.0 as f32 * voxel_size + half,
@@ -136,6 +136,9 @@ pub struct Config {
     pub viz_emit_every: u32,
     /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
     pub viz_sweep_cells: u32,
+    /// Publish only what changed since the last publish, on map_update, instead of the whole global
+    /// map; global_map then goes out only on cloud_keyframe_request.
+    pub diff: bool,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
@@ -1309,7 +1312,7 @@ pub fn seed_points(map: &mut VoxelMap, points: &[(f32, f32, f32)], cfg: &Config)
 }
 
 #[inline]
-fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
+pub fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
     (
         (x * inv).floor() as i32,
         (y * inv).floor() as i32,

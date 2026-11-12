@@ -312,6 +312,21 @@ def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
     assert ramp.class_ids is not None
 
 
+def test_lcm_diff_cloud_round_trip() -> None:
+    """A diff cloud's premap and change flags survive an lcm_encode → lcm_decode round trip."""
+    points = np.array([[0.5, 0.5, 0.5], [1.5, 0.5, 0.5], [2.5, 0.5, 0.5]], dtype=np.float32)
+    premap = np.array([1, 0, 1], dtype=np.uint8)
+    change = np.array([1, 1, 0], dtype=np.uint8)
+
+    decoded = PointCloud2.lcm_decode(
+        PointCloud2.from_numpy(points, premap=premap, change=change).lcm_encode()
+    )
+
+    np.testing.assert_array_equal(decoded.premap_u8(), premap)
+    np.testing.assert_array_equal(decoded.change_u8(), change)
+    assert PointCloud2.lcm_decode(PointCloud2.from_numpy(points).lcm_encode()).change_u8() is None
+
+
 def test_seq_round_trips_through_lcm_with_and_without_intensity_and_empty() -> None:
     seq = (3 << 16) | 5
     pts = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)

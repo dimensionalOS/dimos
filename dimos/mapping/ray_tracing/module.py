@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos_lcm.std_msgs import Bool
+
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -90,6 +92,9 @@ class RayTracingVoxelMapConfig(NativeModuleConfig):
     viz_emit_every: int = 0
     # Unchanged cells published per viz tick, round robin.
     viz_sweep_cells: int = 32
+    # Publish only what changed since the last publish, on map_update, instead of the whole
+    # global map; global_map then goes out only on cloud_keyframe_request.
+    diff: bool = False
 
 
 class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
@@ -102,7 +107,12 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # cloud frame_id. Only the first cloud seeds the map.
     loaded_map: In[PointCloud2]
     tf: In[TFMessage]
+    # True publishes the whole map on global_map now, and restarts diffs from it.
+    cloud_keyframe_request: In[Bool]
     global_map: Out[PointCloud2]
+    # In diff mode, the voxels changed since the last publish: a u8 `change` field (1 added,
+    # 0 removed) beside `premap`.
+    map_update: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
