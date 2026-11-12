@@ -19,6 +19,7 @@ import subprocess
 import sys
 
 import pytest
+import tomllib
 
 from dimos.message_codegen import backend
 from dimos.message_codegen.external import AddError, apply, default_module, plan
@@ -211,3 +212,199 @@ def test_overlay_accepts_identical_files(tmp_path: Path) -> None:
     backend._overlay(python_root, project, config)
 
     assert (python_root / "acme_telemetry/py.typed").is_file()
+
+
+COMMA_REQUIREMENT = """\
+[build-system]
+requires = ["setuptools>=70,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+"""
+
+EXTRAS_DEPENDENCY = """\
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+dependencies = ["requests[socks]>=2"]
+"""
+
+MULTILINE_COMMENTED = """\
+[build-system]
+requires = [
+    # Pinned build toolchain, kept as one specifier set.
+    "setuptools>=70,<81",
+    "wheel",  # needed for bdist_wheel
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+dependencies = [
+    "requests[socks]>=2",  # proxy support
+    "numpy>=1.26",
+]
+"""
+
+PROJECT_ONLY = """\
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+"""
+
+
+@pytest.mark.parametrize(
+    ("text", "requires", "dependencies"),
+    [
+        (COMMA_REQUIREMENT, ["setuptools>=70,<81", "wheel", "dimos>=0.0.15"], ["dimos>=0.0.15"]),
+        (
+            EXTRAS_DEPENDENCY,
+            ["setuptools>=70", "wheel", "dimos>=0.0.15"],
+            ["requests[socks]>=2", "dimos>=0.0.15"],
+        ),
+        (
+            MULTILINE_COMMENTED,
+            ["setuptools>=70,<81", "wheel", "dimos>=0.0.15"],
+            ["requests[socks]>=2", "numpy>=1.26", "dimos>=0.0.15"],
+        ),
+        (PROJECT_ONLY, ["setuptools>=70", "wheel", "dimos>=0.0.15"], ["dimos>=0.0.15"]),
+    ],
+    ids=["comma-in-requirement", "extras", "multiline-comments", "no-build-system"],
+)
+def test_supported_pyproject_inputs_keep_requirement_values(
+    tmp_path: Path, text: str, requires: list[str], dependencies: list[str]
+) -> None:
+    """Ordinary PEP 508 strings, comments and missing [build-system] are supported."""
+    project = write_project(tmp_path, text)
+    before = tomllib.loads(text)
+
+    apply(plan(project, dimos_requirement="dimos>=0.0.15"))
+
+    after = tomllib.loads((project / "pyproject.toml").read_text())
+    assert after["build-system"]["requires"] == requires
+    assert after["build-system"]["build-backend"] == "dimos.message_codegen.backend"
+    assert after["project"]["dependencies"] == dependencies
+    assert after["project"]["name"] == before["project"]["name"]
+    assert after["project"]["version"] == before["project"]["version"]
+    assert after["tool"]["dimos"]["messages"] == {"source": "interfaces"}
+    assert after["project"]["entry-points"]["dimos.messages"] == {
+        "acme_telemetry": "acme_telemetry_schemas.provider"
+    }
+    assert (project / "pyproject.toml").read_text().count("[build-system]") == 1
+
+    again = plan(project, dimos_requirement="dimos>=0.0.15")
+    assert not again.changed
+    assert apply(again) == []
+
+
+def test_multiline_arrays_keep_their_comments(tmp_path: Path) -> None:
+    project = write_project(tmp_path, MULTILINE_COMMENTED)
+
+    apply(plan(project, dimos_requirement="dimos>=0.0.15"))
+
+    text = (project / "pyproject.toml").read_text()
+    assert "# Pinned build toolchain, kept as one specifier set." in text
+    assert '"wheel",  # needed for bdist_wheel' in text
+    assert '"requests[socks]>=2",  # proxy support' in text
+    assert '    "dimos>=0.0.15",\n]' in text
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            COMMA_REQUIREMENT.replace(
+                'requires = ["setuptools>=70,<81", "wheel"]', 'requires = "setuptools>=70"'
+            ),
+            r"\[build-system\] requires must be an array",
+        ),
+        (
+            COMMA_REQUIREMENT.replace(
+                'version = "0.1.0"', 'version = "0.1.0"\ndependencies = "requests>=2"'
+            ),
+            r"\[project\] dependencies must be an array",
+        ),
+        (
+            COMMA_REQUIREMENT.replace(
+                'requires = ["setuptools>=70,<81", "wheel"]',
+                'requires = ["setuptools>=70", {name = "wheel"}]',
+            ),
+            "non-string entry",
+        ),
+        (
+            COMMA_REQUIREMENT.replace(
+                'requires = ["setuptools>=70,<81", "wheel"]', 'requires = ["setuptools>=70"'
+            ),
+            "not valid TOML",
+        ),
+        (
+            'project.name = "acme-telemetry"\nproject.version = "0.1.0"\n',
+            "dotted keys",
+        ),
+    ],
+    ids=[
+        "requires-not-array",
+        "dependencies-not-array",
+        "non-string-entry",
+        "unclosed-array",
+        "dotted-project",
+    ],
+)
+def test_unsupported_syntax_is_refused_before_writing(
+    tmp_path: Path, text: str, message: str
+) -> None:
+    project = write_project(tmp_path, text)
+    before = snapshot(project)
+
+    with pytest.raises(AddError, match=message):
+        plan(project, dimos_requirement="dimos>=0.0.15")
+
+    assert snapshot(project) == before
+
+
+def test_cli_add_messages_extends_reviewed_inputs(tmp_path: Path) -> None:
+    """The command users run exercises the same edits end to end."""
+    from typer.testing import CliRunner
+
+    from dimos.cli.dimos import main
+
+    project = write_project(tmp_path, COMMA_REQUIREMENT)
+    runner = CliRunner()
+
+    first = runner.invoke(main, ["package", "add", "messages", "-C", str(project)])
+    assert first.exit_code == 0, first.output
+    after = tomllib.loads((project / "pyproject.toml").read_text())
+    requires = after["build-system"]["requires"]
+    assert requires[:2] == ["setuptools>=70,<81", "wheel"]
+    assert len(requires) == 3 and requires[2].startswith("dimos>=")
+
+    written = (project / "pyproject.toml").read_text()
+    second = runner.invoke(main, ["package", "add", "messages", "-C", str(project)])
+    assert second.exit_code == 0, second.output
+    assert "already set up" in second.output
+    assert (project / "pyproject.toml").read_text() == written
+
+
+def test_cli_refuses_unsupported_input_without_writing(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from dimos.cli.dimos import main
+
+    text = COMMA_REQUIREMENT.replace(
+        'version = "0.1.0"', 'version = "0.1.0"\ndependencies = "requests>=2"'
+    )
+    project = write_project(tmp_path, text)
+
+    result = CliRunner().invoke(main, ["package", "add", "messages", "-C", str(project)])
+
+    assert result.exit_code == 1
+    assert "must be an array" in result.output
+    assert (project / "pyproject.toml").read_text() == text
+    assert not (project / "interfaces").exists()

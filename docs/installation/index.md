@@ -57,3 +57,32 @@ DIMOS_ALLOW_MISSING_COCKPIT=1 pip install /path/to/dimos
 The flag only skips the web UI bundle; messages, native code and the Python API
 are installed as usual. Build the web bundles with `deno task build` in
 `web/sdk` and `web/cockpit` when you need the local relay UI.
+
+### Use the checkout in your own pip builds
+
+The message build backend (`dimos.message_codegen.backend`) belongs to the
+checkout and is not in the released `dimos` on PyPI yet. pip builds a project in
+an isolated environment, so installing the checkout into your active environment
+is not enough: `pip install .` still resolves build requirements from the index.
+Select the checkout explicitly with a build constraint. The
+`--build-constraint` option requires pip 25.3 or newer.
+
+```sh
+python -m pip --version   # 25.3 or newer
+
+# 1. Build one wheel from the checkout (same prerequisites as the source install).
+python -m pip wheel --no-deps --wheel-dir /tmp/dimos-wheel /path/to/dimos
+
+# 2. Point a build constraint at that exact wheel.
+wheel=$(ls /tmp/dimos-wheel/dimos-*.whl | head -n 1)
+echo "dimos @ file://$wheel" > /tmp/dimos-build-constraint.txt
+
+# 3. Install your project; `-e` for an editable install.
+python -m pip install --build-constraint /tmp/dimos-build-constraint.txt .
+python -m pip install --build-constraint /tmp/dimos-build-constraint.txt -e .
+```
+
+A build constraint only affects the isolated environment used to build the
+project; the packages already installed in your environment are not changed.
+Once a release contains the backend, plain `pip install .` works and the
+constraint can be dropped.

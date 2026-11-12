@@ -15,8 +15,19 @@ python demo_external.py
 `setup.py`, no separate `dimos-cdrgen` step and no message-version pin to
 maintain: the build reads the message providers installed in the environment.
 
-During development, `pip install -e .` installs the same package in editable
-mode.
+The message build backend is not in the released `dimos` on PyPI yet, and pip
+builds in an isolated environment that does not see your active environment.
+Until it is released, select the checkout's wheel for the build (pip 25.3 or
+newer):
+
+```sh
+python -m pip install --build-constraint /tmp/dimos-build-constraint.txt .
+python demo_external.py
+```
+
+[Use the checkout in your own pip builds](/docs/installation/index.md#use-the-checkout-in-your-own-pip-builds)
+builds that wheel and constraint file. The same constraint applies to
+`pip install -e .` for an editable install.
 
 `demo_external.py` round-trips a `Reading` message and checks that its nested
 `Header` is the same class as the installed `dimos_messages` type.

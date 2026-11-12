@@ -7,10 +7,14 @@ dimOS.
 
 ## Before you start
 
-- Python 3.12 and `pip`.
+- Python 3.12 and `pip` 25.3 or newer.
 - dimOS installed in the environment you build with. Follow
   [installation](/docs/installation/index.md); against a source checkout, use
   the checkout install described there.
+- The message build backend is not in the released `dimos` on PyPI yet, and pip
+  builds in an isolated environment. Until it is released, pass the checkout's
+  wheel as a build constraint: [Use the checkout in your own pip
+  builds](/docs/installation/index.md#use-the-checkout-in-your-own-pip-builds).
 - Your own project already has a `pyproject.toml` with a `[project]` table, a
   release version such as `0.1.0`, and its own Python modules.
 
@@ -104,16 +108,28 @@ With the dimOS environment active, from `plant-telemetry/`:
 pip install .
 ```
 
+pip builds in an isolated environment, so it does not see the dimOS installed in
+your active environment, and the released `dimos` on PyPI predates this backend.
+Until the version you are reading this for is released, select the checkout's
+wheel for the build (pip 25.3 or newer):
+
+```sh
+python -m pip install --build-constraint /tmp/dimos-build-constraint.txt .
+```
+
+[Use the checkout in your own pip builds](/docs/installation/index.md#use-the-checkout-in-your-own-pip-builds)
+builds that wheel and constraint file, and shows the editable variant.
+
 Every build regenerates the Python message packages under
 `build/message-source` from `interfaces/`, packages them with the project's own
 modules, and registers the schemas. There is no `setup.py`, no manual
 `dimos-cdrgen` step and no version pin to maintain: the build reads the message
 providers installed in its environment.
 
-During development use an editable install instead:
+During development use an editable install instead, with the same constraint:
 
 ```sh
-pip install -e .
+python -m pip install --build-constraint /tmp/dimos-build-constraint.txt -e .
 ```
 
 `build/message-source` is build output. Do not commit it; `interfaces/` is the
@@ -122,8 +138,8 @@ source of truth.
 To build a wheel without installing it:
 
 ```sh
-pip wheel --no-deps --wheel-dir dist .
-pip install --no-deps dist/plant_telemetry-0.1.0-py3-none-any.whl
+python -m pip wheel --build-constraint /tmp/dimos-build-constraint.txt --no-deps --wheel-dir dist .
+python -m pip install --no-deps dist/plant_telemetry-0.1.0-py3-none-any.whl
 ```
 
 ## 4. Read a value back
