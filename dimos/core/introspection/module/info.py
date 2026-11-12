@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import inspect
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, get_type_hints
 
 if TYPE_CHECKING:
     from dimos.core.stream import StreamDirection, TransportSpec
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 INTERNAL_RPCS = {
     "build",
     "dynamic_skills",
+    "get_rpc_signatures",
     "get_skills",
     "get_stream_descriptors",
     "peek_stream",
@@ -56,6 +57,26 @@ class StreamDescriptor(NamedTuple):
     channel: str
     type: type
     transport: TransportSpec
+
+
+class RpcParameter(NamedTuple):
+    name: str
+    annotation: object
+    has_default: bool
+    # The name of its ``inspect.Parameter`` kind, e.g. POSITIONAL_OR_KEYWORD or VAR_KEYWORD.
+    kind: str
+
+
+class RpcSignature(NamedTuple):
+    """One RPC's parameters and return annotation, for a caller in another process.
+
+    An annotation is kept when it is bool, int, float, str, None or a message class. Any
+    other is ``object``, so decoding a signature imports none of the module's dependencies.
+    """
+
+    name: str
+    parameters: tuple[RpcParameter, ...]
+    returns: object
 
 
 @dataclass
@@ -169,6 +190,37 @@ def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
         documentation=inspect.getdoc(fn),
         signature=str(sig),
     )
+
+
+def _portable(annotation: object) -> object:
+    """An annotation as another process can use it without this module's imports."""
+    if annotation is None or annotation is type(None):
+        return None
+    if any(annotation is plain for plain in (bool, int, float, str)):
+        return annotation
+    if isinstance(annotation, type) and callable(getattr(annotation, "lcm_encode", None)):
+        return annotation
+    return object
+
+
+def extract_rpc_signature(name: str, fn: Callable[..., object]) -> RpcSignature:
+    """Describe an RPC for a caller that cannot import its module."""
+    try:
+        hints = get_type_hints(fn)
+    except Exception:
+        # An annotation names something that is imported only for type checking.
+        hints = {}
+    rpc_parameters = tuple(
+        RpcParameter(
+            parameter.name,
+            _portable(hints.get(parameter.name, object)),
+            parameter.default is not inspect.Parameter.empty,
+            parameter.kind.name,
+        )
+        for parameter in inspect.signature(fn).parameters.values()
+        if parameter.name != "self"
+    )
+    return RpcSignature(name, rpc_parameters, _portable(hints.get("return", object)))
 
 
 def extract_skill_info(fn: Callable) -> SkillInfo:  # type: ignore[type-arg]

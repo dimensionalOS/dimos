@@ -18,12 +18,14 @@ import pytest
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
+from dimos.core.introspection.module.info import RpcParameter, RpcSignature
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.testing import MockRobotClient
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.protocol.encode.cbor import decode, encode
 from dimos.robot.unitree.type.odometry import Odometry
 
 
@@ -81,7 +83,7 @@ def test_classmethods(navigation) -> None:
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
     assert "get_stream_descriptors" in class_rpcs
-    assert len(class_rpcs) == 9
+    assert len(class_rpcs) == 10
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -92,6 +94,19 @@ def test_classmethods(navigation) -> None:
         "navigate_to should have __rpc__ attribute"
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
+
+
+def test_rpc_signatures_keep_plain_and_message_types(navigation: Navigation) -> None:
+    signatures = {signature.name: signature for signature in navigation.get_rpc_signatures()}
+
+    navigate_to = RpcSignature(
+        "navigate_to", (RpcParameter("target", Vector3, False, "POSITIONAL_OR_KEYWORD"),), bool
+    )
+    assert signatures["navigate_to"] == navigate_to
+    assert signatures["start"].returns is None
+    # peek_stream returns Any, which a caller in another process is given as object.
+    assert signatures["peek_stream"].returns is object
+    assert decode(encode(navigate_to)) == navigate_to
 
 
 @pytest.mark.self_hosted
