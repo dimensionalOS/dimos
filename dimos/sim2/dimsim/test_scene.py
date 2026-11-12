@@ -16,8 +16,9 @@
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames
-from dimos.robot.assets.usd_assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+from dimos.robot.assets.usd_utils.layers import graft_usd
 from dimos.sim2.assets.logistics import LOGISTICS
 from dimos.sim2.assets.logistics_props import LOGISTICS_PROPS
 from dimos.sim2.assets.toy import toy_robot

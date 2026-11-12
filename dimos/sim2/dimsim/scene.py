@@ -31,7 +31,7 @@ PURPOSES = ["default", "proxy", "render", "guide"]
 def dimsim_bodies(
     usd: "UsdModel", exclude: Iterable[str] = ()
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
-    from dimos.robot.assets.usd import layer_from, load_pxr
+    from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
     pxr = load_pxr()
     stage = pxr.Usd.Stage.Open(layer_from(pxr, usd.usd, "a scene", usd._asset_root()))

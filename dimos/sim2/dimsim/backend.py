@@ -234,7 +234,7 @@ class DimSimBackend:
         return world.end_frame(self._time)
 
     def _robot(self, robot: SimulatedRobot) -> dict[str, Any]:
-        from dimos.robot.assets.usd import layer_from, load_pxr
+        from dimos.robot.assets.usd_utils.pxr import layer_from, load_pxr
 
         pxr = load_pxr()
         stage = pxr.Usd.Stage.Open(
