@@ -12,17 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
-import pytest
-
-# TODO: remove this skip once the pin is cel-expr-python 0.1.4, which supports Python 3.10.
-if sys.version_info < (3, 11):
-    pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
-
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
 from dimos_lcm.sensor_msgs import Image
 from dimos_lcm.std_msgs import Time
+import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.protocol import DimosMsg
