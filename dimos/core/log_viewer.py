@@ -102,7 +102,15 @@ def follow_log(
     generator exits cleanly.
     """
     with open(path) as f:
-        yield from deque(f, maxlen=count)
+        history: deque[str] = deque(maxlen=count)
+        for line in f:
+            if stop is not None and stop():
+                return
+            history.append(line)
+        for line in history:
+            if stop is not None and stop():
+                return
+            yield line
         while stop is None or not stop():
             line = f.readline()
             if line:

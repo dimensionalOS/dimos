@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import closing
+from threading import Event
+
 import pytest
 
 from dimos.core.log_viewer import follow_log
@@ -21,18 +24,48 @@ from dimos.core.log_viewer import follow_log
     ("count", "history"),
     [(None, ["one\n", "two\n", "three\n"]), (2, ["two\n", "three\n"]), (0, [])],
 )
-def test_follow_shows_requested_history_then_appended_lines(tmp_path, count, history):
+def test_follow_shows_requested_history_then_appended_lines(tmp_path, count, history, mocker):
     path = tmp_path / "main.jsonl"
     path.write_text("one\ntwo\nthree\n")
-    appended = False
+    stopped = Event()
 
-    def stop():
-        nonlocal appended
-        if appended:
-            return True
+    def append_line(_delay):
         with path.open("a") as stream:
             stream.write("four\n")
-        appended = True
-        return False
 
-    assert list(follow_log(path, stop=stop, count=count)) == [*history, "four\n"]
+    mocker.patch("dimos.core.log_viewer.time.sleep", side_effect=append_line)
+
+    with closing(follow_log(path, stop=stopped.is_set, count=count)) as lines:
+        assert [next(lines) for _ in history] == history
+        assert next(lines) == "four\n"
+        stopped.set()
+        assert list(lines) == []
+
+
+@pytest.mark.parametrize("count", [None, 3])
+def test_follow_can_stop_during_history_replay(tmp_path, count):
+    path = tmp_path / "main.jsonl"
+    path.write_text("one\ntwo\nthree\n")
+    stopped = Event()
+
+    with closing(follow_log(path, stop=stopped.is_set, count=count)) as lines:
+        assert next(lines) == "one\n"
+        stopped.set()
+        assert list(lines) == []
+
+
+@pytest.mark.parametrize("count", [None, 3, 0])
+def test_follow_can_stop_while_reading_history(tmp_path, count, mocker):
+    stopped = Event()
+
+    def read_lines():
+        yield "one\n"
+        stopped.set()
+        yield "two\n"
+        pytest.fail("Reading history continued after cancellation")
+
+    open_log = mocker.mock_open()
+    open_log.return_value.__iter__.side_effect = read_lines
+    mocker.patch("builtins.open", open_log)
+
+    assert list(follow_log(tmp_path / "main.jsonl", stop=stopped.is_set, count=count)) == []
