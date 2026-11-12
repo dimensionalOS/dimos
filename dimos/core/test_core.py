@@ -18,7 +18,6 @@ import pytest
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.introspection.module.info import RpcParameter, RpcSignature
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.testing import MockRobotClient
@@ -97,15 +96,16 @@ def test_classmethods(navigation) -> None:
 
 
 def test_rpc_signatures_keep_plain_and_message_types(navigation: Navigation) -> None:
-    signatures = {signature.name: signature for signature in navigation.get_rpc_signatures()}
+    infos = {info.name: info for info in navigation.get_rpc_signatures()}
 
-    navigate_to = RpcSignature(
-        "navigate_to", (RpcParameter("target", Vector3, False, "POSITIONAL_OR_KEYWORD"),), bool
-    )
-    assert signatures["navigate_to"] == navigate_to
-    assert signatures["start"].returns is None
-    # peek_stream returns Any, which a caller in another process is given as object.
-    assert signatures["peek_stream"].returns is object
+    navigate_to = infos["navigate_to"]
+    assert [(param.name, param.annotation) for param in navigate_to.params] == [("target", Vector3)]
+    assert navigate_to.return_annotation is bool
+    assert infos["start"].return_annotation is None
+    # Any becomes object.
+    assert infos["peek_stream"].return_annotation is object
+    # The second hint cannot be resolved, and the first still is.
+    assert [param.annotation for param in infos["set_module_ref"].params] == [str, object]
     assert decode(encode(navigate_to)) == navigate_to
 
 

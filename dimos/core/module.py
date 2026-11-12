@@ -40,10 +40,10 @@ from reactivex.scheduler import TimeoutScheduler
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import (
-    RpcSignature,
+    RpcInfo,
     StreamDescriptor,
     extract_module_info,
-    extract_rpc_signature,
+    extract_rpc_info,
 )
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
@@ -373,9 +373,9 @@ class ModuleBase(Configurable, CompositeResource):
         return descriptors
 
     @rpc
-    def get_rpc_signatures(self) -> list[RpcSignature]:
+    def get_rpc_signatures(self) -> list[RpcInfo]:
         """Describe every RPC's parameters and return annotation."""
-        return [extract_rpc_signature(name, fn) for name, fn in self.rpcs.items()]
+        return [extract_rpc_info(fn) for fn in self.rpcs.values()]
 
     @classmethod
     def _io_class(cls, color: bool = True) -> str:
