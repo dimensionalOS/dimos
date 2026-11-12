@@ -34,9 +34,7 @@ from dimos.utils.data import LfsPath
 
 GUIDANCE = (
     "You control one YAM arm with a parallel gripper (about 9.5 cm wide when open). "
-    "Locate objects with the fixed overhead camera and use the manipulation skills. "
-    "The table top is at z=0.75 m in the world frame. For top-down grasps use roll=0, "
-    "pitch=3.14159, yaw=0; lift about 10 cm, since much higher is out of reach that way. "
+    "Locate objects with the perception and camera skills, and use the manipulation skills. "
     "Release the object and move the gripper away when done."
 )
 
@@ -45,7 +43,12 @@ def environment(
     scene: str, bodies: tuple[str, ...], base: tuple[float, float, float]
 ) -> MujocoEnvironment:
     return MujocoEnvironment(
-        blueprint=["openyam-manipulation-sim", "mcp-server", "observe-skill"],
+        blueprint=[
+            "openyam-manipulation-sim",
+            "perception-localize",
+            "mcp-server",
+            "observe-skill",
+        ],
         disable=PERCEPTION_MODULES,
         scene=LfsPath(f"{scene}/scene.xml"),
         tracked_bodies=bodies,
