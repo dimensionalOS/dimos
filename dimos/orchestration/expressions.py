@@ -47,7 +47,6 @@ class ExpressionError(Exception):
 class Expression:
     source: str
     program: cel.Expression
-    result: str
     reads: tuple[str, ...]
 
 
@@ -139,7 +138,7 @@ class Compiler:
             raise ExpressionError(f"`{source}` gives {result}, and {' or '.join(wanted)} is needed")
         serialized: bytes = checked.serialize()
         reads = tuple(path for path, marker in self._markers.items() if marker in serialized)
-        return Expression(source, program, result, reads)
+        return Expression(source, program, reads)
 
 
 def _read(blackboard: Mapping[str, Plain], path: str) -> tuple[bool, Plain]:

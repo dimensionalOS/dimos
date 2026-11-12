@@ -59,7 +59,6 @@ BROKEN: list[tuple[Edits, str]] = [
     ({"Navigating": {"claims": ("arm",)}}, "claims `arm`, which is not a resource"),
     ({"Patrolling": {"initial": "Estopped"}}, "`initial` must name one of its children"),
     ({"Estopped": {"initial": "Patrolling"}}, "node `Estopped` has `initial`, and no children"),
-    ({"Patrolling": {"wind_down": "Navigating"}}, "wind-down nodes are not supported"),
     ({"Estopped": {"outcomes": ("done",)}}, "has `outcomes`, and no nodes inside"),
     ({"NextWaypoint": {"activity": "go_to"}}, "is a switch node, and it has an activity"),
     (

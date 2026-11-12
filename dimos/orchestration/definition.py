@@ -92,7 +92,6 @@ class Node(_Struct):
     children: tuple[str, ...] = ()
     parallel: tuple[str, ...] = ()
     initial: str | None = None
-    wind_down: str | None = None
     outcomes: tuple[Literal["done", "failed"], ...] = ()
 
     @model_validator(mode="after")

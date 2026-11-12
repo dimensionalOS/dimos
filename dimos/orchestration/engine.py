@@ -59,13 +59,6 @@ Timer = AfterTimer | CancelDeadline
 
 
 @dataclass(frozen=True)
-class Pending:
-    leaving: str
-    goto: str
-    waiting: frozenset[str]
-
-
-@dataclass(frozen=True)
 class SignalItem:
     key: str
     value: Plain = None
@@ -94,7 +87,6 @@ class Runtime:
     active: frozenset[str] = frozenset()
     calls: tuple[Call, ...] = ()
     timers: tuple[Timer, ...] = ()
-    pending: tuple[Pending, ...] = ()
     calls_made: int = 0
 
 
@@ -235,7 +227,6 @@ class _Step:
             frozenset(self.active),
             tuple(self.calls),
             tuple(self.timers),
-            (),
             self.calls_made,
         )
         return runtime, self.effects

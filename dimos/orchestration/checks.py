@@ -164,8 +164,6 @@ def _node_problems(tree: Tree) -> Iterator[str]:
             yield f"{where}: `initial` must name one of its children"
         if node.initial is not None and not node.children:
             yield f"{where} has `initial`, and no children"
-        if node.wind_down is not None:
-            yield f"{where} sets `wind_down`, and wind-down nodes are not supported"
         if node.outcomes and not node.inside:
             yield f"{where} has `outcomes`, and no nodes inside"
 
