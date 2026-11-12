@@ -23,6 +23,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
+from dimos.constants import LOG_DIR
 from dimos.core.run_registry import get_most_recent, list_runs
 
 if TYPE_CHECKING:
@@ -35,20 +36,19 @@ _RESET = "\033[0m"
 
 def resolve_log_path(run_id: str = "") -> Path | None:
     """Find the log file: specific run → alive run → most recent."""
+    # A run leaves the registry when it exits, but its log stays in LOG_DIR.
     if run_id:
         for entry in list_runs(alive_only=False):
             if entry.run_id == run_id:
                 return _log_path_if_exists(entry.log_dir)
-        return None
+        return _log_path_if_exists(LOG_DIR / run_id)
 
     # Prefer alive run, fall back to most recent stopped run.
     alive = get_most_recent(alive_only=True)
     if alive is not None:
         return _log_path_if_exists(alive.log_dir)
-    recent = get_most_recent(alive_only=False)
-    if recent is not None:
-        return _log_path_if_exists(recent.log_dir)
-    return None
+    # Timestamped run IDs sort by start time, matching the registry's ordering.
+    return max(LOG_DIR.glob("*/main.jsonl"), key=lambda p: p.parent.name, default=None)
 
 
 def format_line(raw: str, *, json_output: bool = False) -> str:
@@ -109,6 +109,6 @@ def follow_log(path: Path, stop: Callable[[], bool] | None = None) -> Iterator[s
                 time.sleep(0.1)
 
 
-def _log_path_if_exists(log_dir: str) -> Path | None:
+def _log_path_if_exists(log_dir: str | Path) -> Path | None:
     path = Path(log_dir) / "main.jsonl"
     return path if path.exists() else None
