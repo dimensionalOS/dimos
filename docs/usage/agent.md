@@ -56,6 +56,8 @@ In the terminal, `/help` lists the commands, such as `/model` to change the conv
 
 The chat shows the conversation's inputs, answers and tool calls. A message sent while the agent is busy shows as `queued` under the chat, in order, until the agent takes it. With an empty editor, Up brings every queued message of yours back into the editor; Enter queues the edited text again. When the agent reaches the next boundary it takes all queued messages in one turn.
 
+Type `@` followed by a file path to complete files in the conversation's working directory. Tab selects a suggestion and replaces the `@` reference with its ordinary path. Paths with spaces are quoted. Selecting a file does not read its contents or attach it, including images. An uncompleted `@` reference stays as typed; the agent can use its tools to read a path when needed.
+
 The stream sidebar is the column beside the chat. Ctrl+T shows or hides it, and Shift+Tab moves focus between chat and the sidebar. Up and Down select a stream, Left hides its body, Right shows it, and Esc returns to chat. The selected stream scrolls into view.
 
 The sidebar shows the conversation's agent modules and their streams, jobs, and queued notices. It also shows the system's image, point-cloud, and occupancy-grid streams. Expanded previews show the SDK's received rate and age. Pictures use terminal graphics, colored cells, or ASCII, depending on terminal support. The sidebar needs at least 100 terminal columns.

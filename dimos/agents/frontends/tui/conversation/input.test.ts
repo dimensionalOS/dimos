@@ -3,6 +3,10 @@ import { ChatInput, PromptEditor } from "#dimos/agents/frontends/tui/conversatio
 import { ProcessTerminal, TuiMainScreen } from "@earendil-works/pi-tui";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { test } from "node:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 test("Pi editor preserves multiline submissions and never puts credentials into chat history", () => {
   initTheme("dark", false);
@@ -44,4 +48,78 @@ test("credentials cannot return through input undo after auth", () => {
   input.handleInput("\x1f");
   input.handleInput("\x19");
   assert.equal(input.getValue(), "");
+});
+
+test("@ selection inserts ordinary paths and follows the conversation workspace", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "dimos-path-completion-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const directory of ["nested", "quoted dir", "equal=dir", "other"]) await mkdir(join(root, directory));
+  for (const file of [
+    "alpha.txt",
+    "with spaces.txt",
+    "nested/child.txt",
+    "quoted dir/child.txt",
+    "equal=dir/child.txt",
+    "other/another.txt",
+  ])
+    await writeFile(join(root, file), "fixture");
+  initTheme("dark", false);
+  const editor = new PromptEditor(new TuiMainScreen(new ProcessTerminal()), ["help"], root);
+  const complete = async (): Promise<void> => {
+    editor.handleInput("\t");
+    await delay(0);
+    if (editor.isShowingAutocomplete()) editor.handleInput("\t");
+    await delay(0);
+  };
+  for (const [typed, expected] of [
+    ["inspect @al", "inspect alpha.txt "],
+    ["@./al", "./alpha.txt "],
+    [`@${root}/al`, `${root}/alpha.txt `],
+    [`@~/${relative(homedir(), root)}/al`, `~/${relative(homedir(), root)}/alpha.txt `],
+    ["@with", '"with spaces.txt" '],
+    ['@"al', '"alpha.txt" '],
+  ]) {
+    editor.setValue(typed);
+    await complete();
+    assert.equal(editor.getValue(), expected);
+  }
+  for (const [typed, directory, expected] of [
+    ["@nes", "nested/", "nested/child.txt"],
+    ["@quo", '"quoted dir/"', '"quoted dir/child.txt"'],
+    ["@equ", '"equal=dir/"', '"equal=dir/child.txt"'],
+  ]) {
+    editor.setValue(typed);
+    await complete();
+    assert.equal(editor.getValue(), directory);
+    editor.handleInput("ch");
+    await complete();
+    assert.equal(editor.getValue(), expected);
+  }
+  editor.setValue('before\ninspect @"al" after');
+  for (let i = 0; i < '" after'.length; i++) editor.handleInput("\x1b[D");
+  await complete();
+  assert.equal(editor.getValue(), 'before\ninspect "alpha.txt"  after');
+
+  for (const literal of ["@missing/ref", "person@al", '@"alpha.txt"']) {
+    editor.setValue(literal);
+    await complete();
+    assert.equal(editor.getValue(), literal);
+  }
+  editor.setWorkspace(join(root, "other"));
+  editor.setValue("@an");
+  await complete();
+  assert.equal(editor.getValue(), "another.txt ");
+  editor.setValue("/he");
+  await complete();
+  assert.equal(editor.getValue(), "/help ");
+
+  let submitted = "";
+  editor.onSubmit = (value) => {
+    submitted = value;
+  };
+  editor.setValue("inspect @an");
+  await complete();
+  editor.handleInput("@missing/ref");
+  editor.handleInput("\r");
+  assert.equal(submitted, "inspect another.txt @missing/ref");
 });

@@ -1,4 +1,4 @@
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { AutocompleteSuggestions, Component, TUI } from "@earendil-works/pi-tui";
 import { CombinedAutocompleteProvider, Editor, Input, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import { accent } from "#dimos/agents/frontends/tui/style.ts";
 import { getSelectListTheme } from "@earendil-works/pi-coding-agent";
@@ -53,6 +53,33 @@ export class ChatInput implements Component {
   }
 }
 
+class FileAutocomplete extends CombinedAutocompleteProvider {
+  override async getSuggestions(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    options: Parameters<CombinedAutocompleteProvider["getSuggestions"]>[3],
+  ): Promise<AutocompleteSuggestions | null> {
+    const beforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
+    const prefix = /(?:^|[\s([{<`])(@(?:"[^"]*"?|[^\s"()[\]{}<>`]*))$/u.exec(beforeCursor)?.[1];
+    if (prefix === undefined) return super.getSuggestions(lines, cursorLine, cursorCol, options);
+
+    // Quoted normal-path lookup works without the fd dependency of pi-tui's fuzzy @ lookup.
+    const quoted = prefix.startsWith('@"');
+    if (quoted && prefix.length > 2 && prefix.endsWith('"')) return null;
+    const query = `"${prefix.slice(quoted ? 2 : 1)}`;
+    const suggestions = await super.getSuggestions([query], 0, query.length, { ...options, force: true });
+    if (suggestions === null) return null;
+    return {
+      prefix,
+      items: suggestions.items.map((item) => {
+        const path = item.value.slice(1, -1);
+        return { ...item, value: quoted || /[\s"'=()[\]{}<>`]/u.test(path) ? item.value : path };
+      }),
+    };
+  }
+}
+
 /**
  * pi-tui's Editor with slash-command and file autocomplete, an Esc hook and a masked secret mode in which keys go
  * to a disposable ChatInput. Moved from dimcode input.ts.
@@ -72,7 +99,7 @@ export class PromptEditor extends Editor {
   /** File completion follows the attached conversation's directory. */
   setWorkspace(cwd: string): void {
     this.setAutocompleteProvider(
-      new CombinedAutocompleteProvider(
+      new FileAutocomplete(
         this.commands.map((name) => ({ name })),
         cwd,
       ),
