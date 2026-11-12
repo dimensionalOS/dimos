@@ -29,7 +29,7 @@ from dimos.utils.data import LfsPath
 TRACKED = ("orange_cylinder", "red_cube", "blue_bowl")
 
 PERCEPTION_MODULES = (
-    "object-scene-registration-module",
+    "perception-localize",
     "pick-and-place-module",
     "heuristic-grasp-module",
 )

@@ -33,7 +33,7 @@ GradeKind = Literal["lifted"]
 # Same stack as ``mujoco_xarm`` — perception modules off, the arm driven from Python.
 XARM_EVAL_BLUEPRINT = ["xarm-perception-sim", "observe-skill"]
 XARM_EVAL_DISABLE = (
-    "object-scene-registration-module",
+    "perception-localize",
     "pick-and-place-module",
     "heuristic-grasp-module",
 )
