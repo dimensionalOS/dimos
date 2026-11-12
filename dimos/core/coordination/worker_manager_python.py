@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
@@ -30,10 +31,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def _rpc_name(kwargs: dict[str, Any]) -> str | None:
-    return kwargs.get("rpc_name") or kwargs.get("instance_name")
-
-
 class WorkerManagerPython:
     deployment_identifier: str = "python"
 
@@ -43,6 +40,7 @@ class WorkerManagerPython:
         self._workers: list[PythonWorker] = []
         self._closed = False
         self._started = False
+        self._rpc_namespace = f"runs/{uuid4().hex}/modules"
         self._stats_monitor: StatsMonitor | None = None
 
     def start(self) -> None:
@@ -88,8 +86,7 @@ class WorkerManagerPython:
 
         self._ensure_capacity_for_dedicated([(module_class, global_config, kwargs)])
         worker = self._select_worker(dedicated=module_class.dedicated_worker)
-        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class, _rpc_name(kwargs))
+        return self._deploy_on_worker(worker, module_class, global_config, kwargs)
 
     def deploy_fresh(
         self,
@@ -114,8 +111,24 @@ class WorkerManagerPython:
         self._n_workers += 1
         if module_class.dedicated_worker:
             worker.dedicated = True
-        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
-        return RPCClient(actor, module_class, _rpc_name(kwargs))
+        return self._deploy_on_worker(worker, module_class, global_config, kwargs)
+
+    def _deploy_on_worker(
+        self,
+        worker: PythonWorker,
+        module_class: type[ModuleBase],
+        global_config: GlobalConfig,
+        kwargs: dict[str, Any],
+    ) -> RPCClient:
+        # Keep Blueprint identity separate from the RPC address. Every local
+        # run needs its own address, including named instances and restarts.
+        # Hosted fragments already supply an address shared with remote peers.
+        name = kwargs.get("rpc_name") or kwargs.get("instance_name") or module_class.__name__
+        rpc_name = kwargs.get("rpc_name") or f"{self._rpc_namespace}/{name}"
+        actor = worker.deploy_module(
+            module_class, global_config, kwargs={**kwargs, "rpc_name": rpc_name}
+        )
+        return RPCClient(actor, module_class, name, rpc_address=rpc_name)
 
     def undeploy(self, proxy: ModuleProxyProtocol) -> None:
         """Undeploy a module and shut down its worker if it is now empty."""
@@ -169,11 +182,7 @@ class WorkerManagerPython:
 
         def _deploy(item: tuple[PythonWorker, ModuleSpec]) -> ModuleProxyProtocol:
             worker, (module_class, global_config, kwargs) = item
-            return RPCClient(
-                worker.deploy_module(module_class, global_config, kwargs),
-                module_class,
-                _rpc_name(kwargs),
-            )
+            return self._deploy_on_worker(worker, module_class, global_config, kwargs)
 
         try:
             return safe_thread_map(assignments, _deploy)

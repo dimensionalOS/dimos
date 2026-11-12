@@ -172,6 +172,8 @@ class ModuleBase(Configurable, CompositeResource):
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
+        self._module_start_lock = threading.Lock()
+        self._module_started = False
         self._loop_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -223,8 +225,12 @@ class ModuleBase(Configurable, CompositeResource):
 
     @rpc
     def start(self) -> None:
-        self._start_main()
-        self._auto_bind_handlers()
+        with self._module_start_lock:
+            if self._module_started:
+                return
+            self._start_main()
+            self._auto_bind_handlers()
+            self._module_started = True
 
     @rpc
     def stop(self) -> None:

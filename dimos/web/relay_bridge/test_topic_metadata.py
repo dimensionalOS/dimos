@@ -97,9 +97,13 @@ async def test_lifecycle_refresh_skips_own_rpc_and_does_not_require_a_payload_su
     release = mocker.Mock()
     remote_rpc.call_sync.return_value = ([stream], release)
     own_rpc = mocker.Mock()
-    own = RPCClient(None, None, "metadata", ["get_stream_descriptors"], rpc=own_rpc)
-    other = RPCClient(None, None, "custom", ["get_stream_descriptors"], rpc=remote_rpc)
-    publisher = DescriptorPublisher("metadata")
+    own = RPCClient(
+        None, None, "metadata", ["get_stream_descriptors"], rpc=own_rpc, rpc_address="run/metadata"
+    )
+    other = RPCClient(
+        None, None, "custom", ["get_stream_descriptors"], rpc=remote_rpc, rpc_address="run/custom"
+    )
+    publisher = DescriptorPublisher("run/metadata")
     publisher.update([own, other])
     remote_rpc.call_sync.assert_not_called()
     task = asyncio.create_task(publisher.run(session))
@@ -108,7 +112,7 @@ async def test_lifecycle_refresh_skips_own_rpc_and_does_not_require_a_payload_su
         assert catalog.page("", "", 32)[0] == [describe_stream(stream)]
         own_rpc.call_sync.assert_not_called()
         remote_rpc.call_sync.assert_called_once_with(
-            "custom/get_stream_descriptors", ((), {}), rpc_timeout=1
+            "run/custom/get_stream_descriptors", ((), {}), rpc_timeout=1
         )
         release.assert_called_once_with()
 
