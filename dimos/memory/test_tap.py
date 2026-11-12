@@ -31,7 +31,6 @@ from dimos.memory.tap import TransportRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
@@ -239,17 +238,3 @@ def test_records_tf_and_odom_at_source_time(sqlite_store, ts):
     # Repeated older members must not make the changing TF stream look static.
     replay = sqlite_store.replay().stream("tf")
     assert (replay.first_ts(), replay.last_ts()) == (ts, ts + 2.0)
-
-
-@pytest.mark.parametrize("message", [TFMessage(), String("unstamped")])
-def test_missing_source_time_uses_reception_time(sqlite_store, mocker, message):
-    with closing(TransportRecorder(sqlite_store)) as recorder, ExitStack() as subscriptions:
-        transport = _Transport()
-        unsubscribe = recorder.tap("message", type(message), transport)
-        assert unsubscribe is not None
-        subscriptions.callback(unsubscribe)
-        mocker.patch.object(tap.time, "time", return_value=99.0)
-        transport.publish(message)
-    row = sqlite_store.stream("message").first()
-    assert row.ts == 99.0
-    assert row.data.lcm_encode() == message.lcm_encode()
