@@ -27,8 +27,8 @@ from langchain_core.messages.base import BaseMessage
 import pytest
 import requests
 
-from dimos.agents.mcp.constants import DEFAULT_MCP_URL, TOOL_ORIGIN_KEY, TURN_FAILED_KEY
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
+from dimos.agents.mcp.constants import TOOL_ORIGIN_KEY, TURN_FAILED_KEY
 from dimos.agents.testing.mock_model import MockModel
 from dimos.utils.testing.waiting import wait_until
 
@@ -106,17 +106,16 @@ def _mock_session(payload_fn: Callable[[dict[str, object]], dict[str, object]]) 
 
 
 @pytest.mark.flaky(reruns=1)
-def test_server_url_is_configured_else_the_blueprints_server_else_the_default() -> None:
+def test_server_url_is_configured_else_the_blueprints_server_else_none() -> None:
     server = SimpleNamespace(mcp_url=lambda: "http://127.0.0.1:9992/mcp")
-    client = McpClient()
+    client = Agent()
     try:
-        assert client._server_url() == DEFAULT_MCP_URL
-        client._mcp_url = None
+        assert client._server_url() is None
         client._mcp_server = server
         assert client._server_url() == "http://127.0.0.1:9992/mcp"
     finally:
         client.stop()
-    client = McpClient(mcp_server_url="http://configured/mcp")
+    client = Agent(mcp_server_url="http://configured/mcp")
     try:
         client._mcp_server = server
         assert client._server_url() == "http://configured/mcp"
@@ -124,10 +123,25 @@ def test_server_url_is_configured_else_the_blueprints_server_else_the_default() 
         client.stop()
 
 
+def test_agent_without_an_mcp_server_runs_with_no_tools() -> None:
+    client = Agent(model="gpt-4o")
+    client._thread = MagicMock()
+    client._thread.is_alive.return_value = True
+    try:
+        with (
+            patch("langchain.agents.create_agent") as create,
+            patch("dimos.agents.agent.init_model"),
+        ):
+            client.on_system_modules([])
+        assert create.call_args.kwargs["tools"] == []
+    finally:
+        client.stop()
+
+
 @pytest.fixture
-def mcp_client() -> McpClient:
-    """Build an McpClient wired to a mock requests session."""
-    client = McpClient(mcp_server_url="http://localhost:9990/mcp")
+def mcp_client() -> Agent:
+    """Build an Agent wired to a mock requests session."""
+    client = Agent(mcp_server_url="http://localhost:9990/mcp")
     client._http_client = _mock_session(_mock_payload)
     try:
         yield client
@@ -135,7 +149,7 @@ def mcp_client() -> McpClient:
         client.stop()
 
 
-def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
+def test_fetch_tools_from_mcp_server(mcp_client: Agent) -> None:
     tools = mcp_client._fetch_tools()
 
     assert len(tools) == 2
@@ -143,7 +157,7 @@ def test_fetch_tools_from_mcp_server(mcp_client: McpClient) -> None:
     assert tools[1].name == "greet"
 
 
-def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
+def test_tool_invocation_via_mcp(mcp_client: Agent) -> None:
     tools = mcp_client._fetch_tools()
     add_tool = next(t for t in tools if t.name == "add")
     greet_tool = next(t for t in tools if t.name == "greet")
@@ -152,7 +166,7 @@ def test_tool_invocation_via_mcp(mcp_client: McpClient) -> None:
     assert greet_tool.func(name="Alice") == "Hello, Alice!"
 
 
-def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: McpClient) -> None:
+def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: Agent) -> None:
     """An image cannot ride the tool response, so it follows as a HumanMessage
     naming its tool, or chat UIs would show it as typed input."""
     image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
@@ -178,7 +192,7 @@ def test_image_result_follows_as_a_tool_tagged_user_turn(mcp_client: McpClient) 
     ]
 
 
-def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
+def test_mcp_request_error_propagation(mcp_client: Agent) -> None:
     def error_payload(body: dict[str, object]) -> dict[str, object]:
         return {
             "jsonrpc": "2.0",
@@ -195,7 +209,7 @@ def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
         assert "Unknown: bad/method" in str(e)
 
 
-def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -> None:
+def test_tool_stream_notification_becomes_human_message(mcp_client: Agent) -> None:
     """A `notifications/message` delivered over LCM becomes a HumanMessage."""
     notification = {
         "jsonrpc": "2.0",
@@ -214,7 +228,7 @@ def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -
     assert "Person follow stopped: lost track." in str(msg.content)
 
 
-def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
+def test_tool_stream_ignores_unrelated_frames(mcp_client: Agent) -> None:
     """Unknown methods and empty bodies are dropped on the floor."""
 
     mcp_client._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
@@ -229,7 +243,7 @@ def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
         mcp_client._message_queue.get_nowait()
 
 
-def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient) -> None:
+def test_tool_stream_progress_frame_becomes_human_message(mcp_client: Agent) -> None:
     """A `notifications/progress` frame is routed as a HumanMessage."""
 
     progress_frame = {
@@ -249,7 +263,7 @@ def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient)
     assert str(msg.content) == "[tool:follow_person] Found a person"
 
 
-def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
+def test_mcp_tool_call_sends_progress_token(mcp_client: Agent) -> None:
     """Every `tools/call` request carries a `_meta.progressToken`."""
     captured: dict[str, object] = {}
 
@@ -273,7 +287,7 @@ def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
 
 
 @pytest.fixture
-def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch) -> McpClient:
+def configured_mcp_client(mcp_client: Agent, monkeypatch: pytest.MonkeyPatch) -> Agent:
     """Prepare a client for testing agent model initialization."""
     mcp_client.config.model_fixture = None
     mcp_client.config.system_prompt = "System prompt"
@@ -285,7 +299,7 @@ def configured_mcp_client(mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
 
 
 def test_on_system_modules_uses_responses_api_model(
-    configured_mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+    configured_mcp_client: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Production agents use the Responses API required for Luna tool calls."""
     from langchain_openai import ChatOpenAI
@@ -305,7 +319,7 @@ def test_on_system_modules_uses_responses_api_model(
 
 @pytest.mark.parametrize("model_name", ["gpt-4o", "ollama:qwen3:8b", "huggingface:Qwen/Qwen3-8B"])
 def test_on_system_modules_resolves_non_reasoning_models(
-    configured_mcp_client: McpClient, model_name: str
+    configured_mcp_client: Agent, model_name: str
 ) -> None:
     """Models without Responses reasoning support use provider resolution."""
     configured_mcp_client.config.model = model_name
@@ -320,8 +334,34 @@ def test_on_system_modules_resolves_non_reasoning_models(
     init.assert_called_once_with(model=model_name)
 
 
+def test_the_run_log_names_the_model_backend_and_trace_dir(
+    configured_mcp_client: Agent,
+) -> None:
+    """Release tests switch models between runs, so the log must say which one answered."""
+
+    class ChatOllama:
+        pass
+
+    configured_mcp_client.config.model = "ollama:qwen3:8b"
+    configured_mcp_client.config.trace_dir = Path("/eval/case/raw")
+
+    with (
+        patch("langchain.agents.create_agent"),
+        patch("dimos.agents.agent.init_model", return_value=ChatOllama()),
+        patch("dimos.agents.agent.logger") as logger,
+    ):
+        configured_mcp_client.on_system_modules([])
+
+    logger.info.assert_called_once_with(
+        "Agent model ready.",
+        model="ollama:qwen3:8b",
+        backend="ChatOllama",
+        trace_dir="/eval/case/raw",
+    )
+
+
 def test_set_trace_dir_rebuilds_the_model_with_capture(
-    configured_mcp_client: McpClient,
+    configured_mcp_client: Agent,
 ) -> None:
     """Evals repoint raw LLM capture per case; the model must be rebuilt so
     the HTTP hook writes under the new directory. Before the agent exists
@@ -331,7 +371,7 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
 
     with (
         patch("langchain.agents.create_agent") as create_agent,
-        patch("dimos.agents.mcp.mcp_client.init_model", return_value=resolved) as init,
+        patch("dimos.agents.agent.init_model", return_value=resolved) as init,
     ):
         configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
         assert init.call_count == 0
@@ -370,8 +410,8 @@ class _FailsOnceGraph:
 
 
 @pytest.fixture
-def agent_thread(mcp_client: McpClient) -> Iterator[Thread]:
-    """Run McpClient's message loop, which the `mcp_client` fixture doesn't start."""
+def agent_thread(mcp_client: Agent) -> Iterator[Thread]:
+    """Run Agent's message loop, which the `mcp_client` fixture doesn't start."""
     thread = Thread(target=mcp_client._thread_loop, daemon=True)
     thread.start()
     try:
@@ -382,7 +422,7 @@ def agent_thread(mcp_client: McpClient) -> Iterator[Thread]:
 
 
 def _send_first_and_second(
-    mcp_client: McpClient, agent_thread: Thread, graph: Any, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, graph: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Run `graph` on the messages "first" and "second", and wait for "done"."""
     monkeypatch.setattr(mcp_client, "_state_graph", graph)
@@ -403,7 +443,7 @@ def _send_first_and_second(
 
 
 def test_a_failed_turn_does_not_stop_the_agent_thread(
-    mcp_client: McpClient, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     call = AIMessage(content="", tool_calls=[_call("add", "c1")])
     graph = _FailsOnceGraph([call])
@@ -427,7 +467,7 @@ def test_a_failed_turn_does_not_stop_the_agent_thread(
 
 
 def test_only_unanswered_tool_calls_get_a_failure_result(
-    mcp_client: McpClient, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A call that returned keeps its real result, so the model knows it ran."""
     both = AIMessage(content="", tool_calls=[_call("add", "c1"), _call("greet", "c2")])
@@ -444,7 +484,7 @@ def test_only_unanswered_tool_calls_get_a_failure_result(
 
 
 def test_a_tool_call_the_mcp_server_never_answers_does_not_stop_the_agent(
-    mcp_client: McpClient, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
+    mcp_client: Agent, agent_thread: Thread, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failed MCP request escapes the real agent graph; a skill error would be a result."""
     tools = mcp_client._fetch_tools()

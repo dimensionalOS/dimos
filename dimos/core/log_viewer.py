@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections import deque
+from datetime import datetime
 import json
 from pathlib import Path
 import time
@@ -53,7 +54,7 @@ def resolve_log_path(run_id: str = "") -> Path | None:
 def format_line(raw: str, *, json_output: bool = False) -> str:
     """Format a JSONL log line for display.
 
-    Default: ``HH:MM:SS [lvl] logger           event  k=v …``
+    Default: ``HH:MM:SS [lvl] logger           event  k=v …`` in local time.
     """
     if json_output:
         return raw.rstrip()
@@ -63,7 +64,11 @@ def format_line(raw: str, *, json_output: bool = False) -> str:
         return raw.rstrip()
 
     ts = str(rec.get("timestamp", ""))
-    hms = ts[11:19] if len(ts) >= 19 else ts
+    try:
+        # The record stamp is UTC. Print local time, like the console does.
+        hms = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().strftime("%H:%M:%S")
+    except ValueError:
+        hms = ts
     level = str(rec.get("level", "?"))[:3]
     logger = Path(str(rec.get("logger", "?"))).name
     event = str(rec.get("event", ""))

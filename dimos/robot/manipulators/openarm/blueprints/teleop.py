@@ -16,31 +16,30 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.robot.manipulators.openarm.config import (
-    OPENARM_ARM_JOINTS,
-    OPENARM_GRIPPER_JOINTS,
-    OPENARM_JOINTS,
-    openarm_bimanual_model_config,
-    openarm_hardware,
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoTeleopCoordinator,
+    arm_connection,
+    arm_declaration,
+    arm_remaps,
 )
+from dimos.robot.manipulators.openarm.config import openarm_bimanual_model_config
+from dimos.robot.manipulators.openarm.connection import OpenArmConnection
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 OPENARM_WEBXR_TASK_NAME = "teleop_openarm"
+_MODEL = openarm_bimanual_model_config(robot="arm")
 
 _OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
 _OPENARM_JOINT_VELOCITY_LIMITS_RAD_S = {
     joint_name: velocity_limit
     for joint_name, velocity_limit in zip(
-        OPENARM_ARM_JOINTS,
+        _MODEL.joint_names,
         _OPENARM_ARM_VELOCITY_PROFILE_RAD_S * 2,
         strict=True,
     )
@@ -51,52 +50,13 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
-        joint_names=list(OPENARM_JOINTS),
+        joint_names=[
+            *_MODEL.joint_names,
+            *[f"arm/{name}" for name in OpenArmConnection.robot.gripper_joint_names],
+        ],
         priority=priority,
         params={"start_position_tolerance": 0.05},
     )
-
-
-class OpenArmTeleopCoordinatorConfig(ControlCoordinatorConfig):
-    """OpenArm teleop deployment configuration requiring a complete bus pair."""
-
-    left_can_port: str | None = None
-    right_can_port: str | None = None
-
-
-class OpenArmTeleopCoordinator(TeleopControlCoordinator):
-    """Install the fixed OpenArm model and resolved hardware adapter."""
-
-    config: OpenArmTeleopCoordinatorConfig
-
-    def _setup_from_config(self) -> None:
-        self.config.tasks = [
-            replace(
-                task,
-                params={
-                    **task.params,
-                    "robot_model": openarm_bimanual_model_config(),
-                },
-            )
-            if task.name == OPENARM_WEBXR_TASK_NAME
-            else task
-            for task in self.config.tasks
-        ]
-        self.config.hardware = [
-            openarm_hardware(
-                left_can_port=self.config.left_can_port,
-                right_can_port=self.config.right_can_port,
-            )
-        ]
-        super()._setup_from_config()
-
-
-class _OpenArmManipulationModule(ManipulationModule):
-    """Own the fixed OpenArm model outside blueprint CLI configuration."""
-
-    def _initialize_planning(self) -> None:
-        self.config.model = openarm_bimanual_model_config()
-        super()._initialize_planning()
 
 
 _openarm_webxr_pink = PinkKinematicsConfig(
@@ -112,8 +72,9 @@ _openarm_webxr_task = TaskConfig(
     name=OPENARM_WEBXR_TASK_NAME,
     type="teleop_ik",
     priority=20,
-    joint_names=OPENARM_ARM_JOINTS,
+    joint_names=list(_MODEL.joint_names),
     params={
+        "robot_model": _MODEL,
         "bindings": [
             {
                 "hand": "left",
@@ -134,34 +95,50 @@ _openarm_webxr_task = TaskConfig(
     },
 )
 
-# Safe default: both controllers feed one bimanual task backed by in-memory
-# hardware. Supplying both CAN ports selects the physical adapter.
+
+def openarm_teleop_control() -> Blueprint:
+    """The WebXR task set over the OpenArm connection."""
+    return autoconnect(
+        DamiaoTeleopCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenArmConnection)],
+            tasks=[
+                _openarm_webxr_task,
+                # The left jaw is open at its joint's upper end, the right at its lower end.
+                TaskConfig(
+                    name="left_arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/openarm_left_finger_joint1"],
+                    priority=20,
+                    params={"open_at": "upper"},
+                    stream_bind={"gripper_command": "left_gripper_command"},
+                ),
+                TaskConfig(
+                    name="right_arm_gripper",
+                    type="gripper",
+                    joint_names=["arm/openarm_right_finger_joint1"],
+                    priority=20,
+                    params={"open_at": "lower"},
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                _trajectory_task(priority=10),
+            ],
+            zero_stiffness_joints=[],
+        ),
+        arm_connection(OpenArmConnection),
+    ).remappings(arm_remaps(OpenArmConnection, DamiaoTeleopCoordinator))
+
+
+# Both controller grips engage one fourteen-joint task.
 teleop_webxr_openarm = autoconnect(
     ArmTeleopModule.blueprint(),
-    OpenArmTeleopCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[
-            _openarm_webxr_task,
-            TaskConfig(
-                name="left_arm_gripper",
-                type="gripper",
-                joint_names=[OPENARM_GRIPPER_JOINTS[0]],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            TaskConfig(
-                name="right_arm_gripper",
-                type="gripper",
-                joint_names=[OPENARM_GRIPPER_JOINTS[1]],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            _trajectory_task(priority=10),
-        ],
-    ),
-    _OpenArmManipulationModule.blueprint(
-        gripper_tasks={"left_arm": "left_arm_gripper", "right_arm": "right_arm_gripper"},
-        model=openarm_bimanual_model_config(),
+    openarm_teleop_control(),
+    ManipulationModule.blueprint(
+        gripper_tasks={
+            "left_arm": "left_arm_gripper",
+            "right_arm": "right_arm_gripper",
+        },
+        model=_MODEL,
         kinematics=_openarm_webxr_pink,
         visualization={"backend": "viser"},
     ),

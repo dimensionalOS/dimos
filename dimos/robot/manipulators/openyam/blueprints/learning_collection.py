@@ -14,58 +14,57 @@
 
 """Gravity-compensated OpenYAM collection, configured through dimos run."""
 
-from dataclasses import replace
-
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.sensors.camera.module import WebcamModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.profile import CollectionProfile
 from dimos.imitation.collection.recorder import collect
 from dimos.imitation.dataprep.schema import FeatureSpec
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS, openyam_hardware
+from dimos.robot.manipulators.damiao.connection import zero_stiffness_joints
+from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    arm_connection,
+    arm_declaration,
+    arm_remaps,
+)
+from dimos.robot.manipulators.openyam.config import OPENYAM
+from dimos.robot.manipulators.openyam.connection import OpenYamConnection
 from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
+from dimos.robot.manipulators.openyam.joints import (
+    OPENYAM_ARM_JOINTS,
+    OPENYAM_GRIPPER_JOINT,
+)
 
-OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
+# The deployed connection names every joint after its robot, as the coordinator
+# and the recorded state do.
+OPENYAM_TEACH_JOINTS = [
+    *[f"arm/{name}" for name in OPENYAM_ARM_JOINTS],
+    OPENYAM_GRIPPER_JOINT,
+]
 
 
-def _teach_robot() -> Blueprint:
-    hardware = openyam_hardware()
-    if hardware.adapter_type == "openyam_damiao":
-        runtime_config = hardware.adapter_kwargs["runtime_config"]
-        if not isinstance(runtime_config, DamiaoRuntimeConfig):
-            raise TypeError("OpenYAM Damiao hardware requires DamiaoRuntimeConfig")
-        hardware = replace(
-            hardware,
-            adapter_kwargs={
-                **hardware.adapter_kwargs,
-                "runtime_config": replace(
-                    runtime_config, gravity_comp=True, passive_grippers=("gripper",)
-                ),
-            },
-        )
-    hardware = replace(
-        hardware,
-        wb_config=WholeBodyConfig(kp=(0.0,) * len(OPENYAM_JOINTS), kd=OPENYAM_TEACH_DAMPING),
-    )
-    return OpenYamCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[hardware],
-        tasks=[
-            TaskConfig(
-                name="teach_openyam",
-                type="hand_guiding",
-                joint_names=list(OPENYAM_JOINTS),
-                priority=10,
-                auto_start=True,
-            )
-        ],
-    )
+def openyam_teach_control() -> Blueprint:
+    """Zero stiffness, teaching damping and passive jaws over the connection."""
+    return autoconnect(
+        OpenYamCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            connections=[arm_declaration(OpenYamConnection)],
+            tasks=[
+                TaskConfig(
+                    name="teach_openyam",
+                    type="hand_guiding",
+                    joint_names=list(OPENYAM_TEACH_JOINTS),
+                    priority=10,
+                    auto_start=True,
+                )
+            ],
+            zero_stiffness_joints=zero_stiffness_joints(OPENYAM, teach=True),
+        ),
+        arm_connection(OpenYamConnection, teach=True),
+    ).remappings(arm_remaps(OpenYamConnection, OpenYamCoordinator))
 
 
 _state = FeatureSpec(
@@ -73,8 +72,8 @@ _state = FeatureSpec(
     message_type=JointState,
     field="position",
     dtype="float32",
-    shape=(len(OPENYAM_JOINTS),),
-    names=list(OPENYAM_JOINTS),
+    shape=(len(OPENYAM_TEACH_JOINTS),),
+    names=list(OPENYAM_TEACH_JOINTS),
 )
 _profile = CollectionProfile(
     observations={
@@ -95,7 +94,7 @@ _profile = CollectionProfile(
 openyam_teach_collection = autoconnect(
     collect(profile=_profile),
     EpisodeMonitorModule.blueprint(instance_name="episodes"),
-    _teach_robot(),
+    openyam_teach_control(),
     WebcamModule.blueprint(
         instance_name="wrist",
         hardware=WebcamConfig(camera_index=0, fps=30, frame_id_prefix="wrist_image"),

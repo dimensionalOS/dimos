@@ -35,6 +35,7 @@ from dimos.experimental.memory.rust_recorder import RustRecorderConfig, RustStre
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import matching, recording_dir
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -216,13 +217,13 @@ class RustRecordingSession:
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
         }
-        log_level = os.environ.get("DIMOS_LOG_LEVEL", "info").lower()
+        level = os.environ.get("DIMOS_LOG_LEVEL", "info").lower()
         # Readiness is an INFO event; retain DEBUG/TRACE diagnostics when requested.
-        recorder_level = log_level if log_level in {"debug", "trace"} else "info"
+        recorder_level = level if level in {"debug", "trace"} else "info"
         env = {
             **os.environ,
             "DIMOS_TRANSPORT": self.plan.backend,
-            "RUST_LOG": f"{log_level},dimos_memory_recorder={recorder_level}",
+            "RUST_LOG": f"{level},{ZENOH_LOG_DIRECTIVES},dimos_memory_recorder={recorder_level}",
         }
         if self.plan.lcm_url is not None:
             env["LCM_DEFAULT_URL"] = self.plan.lcm_url

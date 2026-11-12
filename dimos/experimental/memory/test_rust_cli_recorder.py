@@ -33,6 +33,7 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
+from dimos.protocol.service.zenohservice import ZENOH_LOG_DIRECTIVES
 
 
 def _lcm(channel: str, payload_type: type[Any] = PoseStamped) -> LCMTransport[Any]:
@@ -394,7 +395,7 @@ def test_launch_keeps_readiness_enabled_at_restrictive_log_levels(
     try:
         session.start()
         assert popen.call_args.kwargs["env"]["RUST_LOG"] == (
-            f"{level},dimos_memory_recorder={recorder_level}"
+            f"{level},{ZENOH_LOG_DIRECTIVES},dimos_memory_recorder={recorder_level}"
         )
     finally:
         session.stop()

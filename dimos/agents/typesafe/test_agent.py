@@ -85,8 +85,10 @@ def test_trigger_drives_inference_and_answers_publish_by_type(
     a, published, calls = agent
     a.text.transport.publish("fix this ASAP")
     assert calls.wait(3)
+    # `published` fills on the nouls transport's LCM thread; `seen` fills on the
+    # inference thread, after the publish. Neither implies the other: wait for both.
     deadline = time.monotonic() + 3
-    while not published and time.monotonic() < deadline:
+    while not (published and a.seen) and time.monotonic() < deadline:
         time.sleep(0.02)
     assert published[0]["urgent"]["noul"] == 0.9  # type: ignore[typeddict-item]
     assert a.seen[0][0] == {"text": "fix this ASAP"}  # type: ignore[attr-defined]
