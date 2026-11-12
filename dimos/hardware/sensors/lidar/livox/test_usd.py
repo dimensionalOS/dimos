@@ -82,7 +82,7 @@ def test_the_defaults_describe_the_frames_the_driver_actually_stamps() -> None:
 
 def test_the_sensor_grafts_onto_the_frame_it_is_bolted_to() -> None:
     pytest.importorskip("pxr")
-    from dimos.robot.assets.usd import graft_usd
+    from dimos.robot.assets.usd_utils.layers import graft_usd
 
     root = """#usda 1.0
 (
