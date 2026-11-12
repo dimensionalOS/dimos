@@ -28,7 +28,7 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_assets import resolve_usd_assets
+from dimos.robot.assets.usd_utils.assets import resolve_usd_assets
 from dimos.robot.usd_manager import ASSET_ROOT, ASSET_RPC, SCENE_RPC, USD, Mount
 from dimos.sim2.spec import SimulatedRobot
 from dimos.sim2.usd_layer import scene_as_files

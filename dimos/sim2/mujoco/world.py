@@ -23,6 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation
 
+from dimos.sim2.mujoco.drives import usd_with_mjc_servos
 from dimos.sim2.mujoco.names import resolved, shorten
 from dimos.sim2.spec import Simulated, SimulatedRobot, Vector, validate
 from dimos.sim2.usd_layer import usd_layer
@@ -67,7 +68,7 @@ def _sliding_friction(layer: Path) -> dict[str, float]:
     """
     if layer.suffix.lower() not in _USD_SUFFIXES:
         return {}
-    from dimos.robot.assets.usd import load_pxr
+    from dimos.robot.assets.usd_utils.pxr import load_pxr
 
     pxr = load_pxr()
     opened = pxr.Sdf.Layer.FindOrOpen(str(layer))
@@ -122,7 +123,7 @@ def compile_world(
         if standing is not None:
             _configure(world, robot, root=world.body(standing), prefix=prefix)
             continue
-        layer = usd_layer(robot.model)
+        layer = usd_layer(robot.model, transform=usd_with_mjc_servos)
         _register_usd_reader(layer)
         spec = mujoco.MjSpec.from_file(str(layer))
         _apply_sliding_friction(spec, layer)

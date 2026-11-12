@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd_assets import hash_of_file
+from dimos.robot.assets.usd_utils.assets import hash_of_file
 
 pytest.importorskip("pxr")
 mujoco = pytest.importorskip("mujoco")

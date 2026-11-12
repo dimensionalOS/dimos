@@ -33,7 +33,8 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames, usd_with_drives
+from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+from dimos.robot.assets.usd_utils.layers import graft_usd
 from dimos.robot.usd_manager import UsdManager
 from dimos.sim2.actions import JointCommand, world_action
 from dimos.sim2.assets.logistics import LOGISTICS
@@ -81,10 +82,9 @@ FRAMES = {"eye": "head", "imu_link": "base", "livox": "head", "l1": "base"}
 
 @pytest.fixture
 def robot_model() -> UsdModel:
-    model = toy_robot().with_frames(
+    return toy_robot().with_frames(
         {frame: (body, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)) for frame, body in FRAMES.items()}
     )
-    return UsdModel.from_layer(usd_with_drives(model.usd, {"neck": (0.01, 0.001, 0.0)}))
 
 
 @pytest.fixture
