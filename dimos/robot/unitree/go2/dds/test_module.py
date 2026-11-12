@@ -24,8 +24,8 @@ RUST_FIXTURE = Path(__file__).parent / "rust" / "tests" / "config.json"
 
 def test_config_fields_match_the_rust_struct():
     """What python sends over stdin is exactly what the rust `Config` declares."""
-    body = re.search(r"pub struct Config \{(.*?)\n\}", RUST_MODULE.read_text(), re.S).group(1)
-    rust = set(re.findall(r"^\s*pub (\w+):", body, re.M))
+    body = re.search(r"pub struct Config \{(.*?)\n\}", RUST_MODULE.read_text(), re.DOTALL).group(1)
+    rust = set(re.findall(r"^\s*pub (\w+):", body, re.MULTILINE))
     assert set(GO2DDSConfig(executable="x").to_config_dict()) == rust
 
 

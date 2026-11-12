@@ -89,6 +89,7 @@ Algorithm settings live in [`occupancy.py`](/dimos/mapping/pointclouds/occupancy
 @dataclass(frozen=True)
 class HeightCostConfig(OccupancyConfig):
     """Config for height-cost based occupancy (terrain slope analysis)."""
+
     can_pass_under: float = 0.6
     can_climb: float = 0.15
     ignore_noise: float = 0.05

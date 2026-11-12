@@ -8,9 +8,11 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.hosted.tags import Tag
 
 app = autoconnect(
-    robot_stack.hosted(tags={"go2": True}), # any Host tagged go2
-    MeshModule.blueprint().hosted(tags={"gpu": True}, prefer=Tag.gpu_mem), # the GPU with most memory
-    viewer, # stays here
+    robot_stack.hosted(tags={"go2": True}),  # any Host tagged go2
+    MeshModule.blueprint().hosted(
+        tags={"gpu": True}, prefer=Tag.gpu_mem
+    ),  # the GPU with most memory
+    viewer,  # stays here
 )
 ```
 

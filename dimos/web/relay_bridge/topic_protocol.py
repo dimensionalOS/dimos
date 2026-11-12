@@ -49,7 +49,7 @@ def _key_bytes(value: str) -> str:
     return value
 
 
-def _integer(value: int | float) -> int | float:
+def _integer(value: float) -> int | float:
     if int(value) != value:
         raise ValueError("expected integer")
     return value

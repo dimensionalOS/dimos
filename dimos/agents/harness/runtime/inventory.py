@@ -435,8 +435,10 @@ def facts(inventory: Inventory) -> list[Fact]:
         [
             (
                 f"stream:{stream.module}.{stream.name}",
-                f"{stream.module}.{stream.name} {stream.direction} {stream.type} "
-                f"channel={stream.channel}",
+                (
+                    f"{stream.module}.{stream.name} {stream.direction} {stream.type} "
+                    f"channel={stream.channel}"
+                ),
             )
             for stream in inventory.runtime.streams
         ],
@@ -462,8 +464,10 @@ def module_text(detail: ModuleDetail) -> str:
         lines += ["", detail.doc.strip()]
     lines += [
         "",
-        f"RPCs ({len(detail.rpcs)}; call as app.get_module({detail.module!r}).RPC(...); "
-        "lifecycle RPCs omitted; add rpc=NAME for the full documentation):",
+        (
+            f"RPCs ({len(detail.rpcs)}; call as app.get_module({detail.module!r}).RPC(...); "
+            "lifecycle RPCs omitted; add rpc=NAME for the full documentation):"
+        ),
     ]
     for rpc in detail.rpcs:
         lines.append(f"  {rpc.signature}")
@@ -471,8 +475,10 @@ def module_text(detail: ModuleDetail) -> str:
             lines.append(f"      {rpc.doc}")
     lines += [
         "",
-        f"Streams ({len(detail.streams)}; a module joins one with a port of the same name "
-        "and type):",
+        (
+            f"Streams ({len(detail.streams)}; a module joins one with a port of the same name "
+            "and type):"
+        ),
     ]
     lines += [
         f"  {stream.module}.{stream.name} {stream.direction} {stream.type} "

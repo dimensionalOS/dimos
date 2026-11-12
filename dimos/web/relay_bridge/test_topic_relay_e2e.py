@@ -838,7 +838,7 @@ async def test_invalid_zenoh_expression_is_rejected_without_losing_the_source(
 
 
 def publish_stream(
-    client: RelayClient, frames: list[tuple[str, str, bytes]], generation: int | float
+    client: RelayClient, frames: list[tuple[str, str, bytes]], generation: float
 ) -> None:
     """Test viewer's binary wire surface; production browser uses SDK publish."""
     session = client._session

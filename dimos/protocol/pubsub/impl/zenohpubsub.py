@@ -320,13 +320,9 @@ class Zenoh(  # type: ignore[misc]
 ):
     """Zenoh pub/sub with LCM encoding for typed DimosMsg."""
 
-    ...
-
 
 class CborZenoh(
     CborEncoderMixin,  # type: ignore[type-arg]
     ZenohPubSubBase,
 ):
     """Zenoh pub/sub with CBOR encoding for Python values without an LCM form."""
-
-    ...

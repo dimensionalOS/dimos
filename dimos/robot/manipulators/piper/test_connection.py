@@ -172,8 +172,10 @@ def piper_like_model(tmp_path: Path) -> RobotModel:
     ]
     grip = '<limit lower="0" upper="0.07" velocity="3" effort="10"/>'
     joints += [
-        '<joint name="gripper" type="prismatic"><parent link="link6"/>'
-        f'<child link="gripper_link"/>{grip}</joint>',
+        (
+            '<joint name="gripper" type="prismatic"><parent link="link6"/>'
+            f'<child link="gripper_link"/>{grip}</joint>'
+        ),
         *(
             f'<joint name="gripper_joint{i}" type="prismatic"><parent link="link6"/>'
             f'<child link="finger{i}"/>{grip}<mimic joint="gripper" multiplier="0.5"/></joint>'

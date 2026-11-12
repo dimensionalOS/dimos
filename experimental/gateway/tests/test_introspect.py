@@ -190,7 +190,7 @@ class NeedsArgs(Module):
 
     @classmethod
     def blueprint(cls, **kwargs):  # type: ignore[no-untyped-def, override]
-        return super().blueprint(**{"must": kwargs["must"]})
+        return super().blueprint(must=kwargs["must"])
 
 
 def test_config_fields_are_read_without_launches_and_its_newer_dimos_imports(

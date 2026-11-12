@@ -136,21 +136,7 @@ class HabitatEnvironment(Sim):
         proc.simulator = None
         proc.global_args = [
             "--record-topics",
-            ",".join(
-                (
-                    "color_image",
-                    "camera_info",
-                    "habitat_scan",
-                    "odometry",
-                    "tf",
-                    "local_map",
-                    "global_map",
-                    "goal",
-                    "path",
-                    "cmd_vel",
-                    "nav_status",
-                )
-            ),
+            "color_image,camera_info,habitat_scan,odometry,tf,local_map,global_map,goal,path,cmd_vel,nav_status",
         ]
         proc.extra_env.update(dict(environment))
 

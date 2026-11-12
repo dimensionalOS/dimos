@@ -67,7 +67,6 @@ class MockController:
 
     def stop(self) -> None:
         """Stop method to satisfy InputController protocol."""
-        pass
 
 
 def _shadow_render_is_slow(model: mujoco.MjModel, data: mujoco.MjData) -> bool:

@@ -53,7 +53,7 @@ class _SyncConfig(ctypes.Structure):
 def _send_trigger_config(hz: int, link_mask: int) -> None:
     """Call ``miivii::MvGmslCamera(sync_out_a_cfg_client_t)``; never destructed, as its destructor crashes."""
     camera = ctypes.create_string_buffer(1 << 16)
-    config = _SyncConfig(bin(link_mask).count("1"), hz, link_mask)
+    config = _SyncConfig((link_mask).bit_count(), hz, link_mask)
     ctypes.CDLL(MIIVII_GMSL_SDK)._ZN6miivii12MvGmslCameraC1E23sync_out_a_cfg_client_t(
         camera, config
     )
