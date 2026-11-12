@@ -18,6 +18,7 @@ pytest.importorskip("cel_expr_python")
 
 from dimos.orchestration.checks import check
 from dimos.orchestration.definition import (
+    Activity,
     Check,
     Event,
     Node,
@@ -40,6 +41,10 @@ BROKEN: list[tuple[Edits, str]] = [
         "`failed` is reserved, and no signal or event",
     ),
     (
+        {TOP: {"signals": (Signal(name="after", stream="A.b"),)}},
+        "`after` is reserved, and no signal or event",
+    ),
+    (
         {TOP: {"signals": (Signal(name="estop", stream="A.b"),)}},
         "`estop` is both a signal and an event",
     ),
@@ -54,6 +59,10 @@ BROKEN: list[tuple[Edits, str]] = [
     ({"+Lost": {}}, "node `Lost` is inside no node"),
     ({"+A": {"children": ["B"]}, "+B": {"children": ["A"]}}, "node `A` is inside itself"),
     ({TOP: {"resources": ()}}, "activity `go_to` uses `base`, which is not a resource"),
+    (
+        {TOP: {"activities": (Activity(name="go_to", start="FakeBase.go_to", uses=("base",)),)}},
+        "activity `go_to` has `uses`, and no `cancel`",
+    ),
     ({"Navigating": {"activity": None}}, "node `Navigating` has `args` or `result`"),
     ({"Navigating": {"activity": "fly"}}, "names `fly`, which is not an activity"),
     ({"Navigating": {"claims": ("arm",)}}, "claims `arm`, which is not a resource"),

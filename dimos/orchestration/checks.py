@@ -32,6 +32,7 @@ from dimos.orchestration.expressions import (
 
 OUTCOMES: tuple[str, ...] = get_args(Outcome)
 RESERVED = ("succeeded", *OUTCOMES)
+RECORD_TRIGGERS = ("after", "requires", "ensures")
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def _name_problems(definition: OrchestratorDefinition) -> Iterator[str]:
             if count > 1:
                 yield f"{kind} `{name}` is defined more than once"
     for name in (*signals, *events):
-        if name in RESERVED:
+        if name in RESERVED or name in RECORD_TRIGGERS:
             yield f"`{name}` is reserved, and no signal or event may have that name"
     for name in sorted(set(signals) & set(events)):
         yield f"`{name}` is both a signal and an event"
@@ -149,6 +150,8 @@ def _nesting_problems(definition: OrchestratorDefinition) -> Iterator[str]:
 def _node_problems(tree: Tree) -> Iterator[str]:
     resources = tree.definition.resources
     for activity in tree.definition.activities:
+        if activity.uses and activity.cancel is None:
+            yield f"activity `{activity.name}` has `uses`, and no `cancel`"
         for resource in activity.uses:
             if resource not in resources:
                 yield f"activity `{activity.name}` uses `{resource}`, which is not a resource"
