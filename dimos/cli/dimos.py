@@ -68,6 +68,7 @@ from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
 from dimos.cli.commands.map import map_app
 from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
+from dimos.cli.commands.package import package_app
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
@@ -145,6 +146,7 @@ main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(top)
 main.add_typer(topic_app, name="topic")
 main.add_typer(map_app, name="map")
+main.add_typer(package_app, name="package")
 
 from dimos.navigation.bench.cli import app as nav_bench_app
 
