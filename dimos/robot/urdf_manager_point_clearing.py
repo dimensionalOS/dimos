@@ -73,6 +73,9 @@ class UrdfManagerPointClearing(UrdfManager):
         kept = self._description.urdf()
         if kept is not None:
             return kept
+        # The root matters: RoboPlan is handed this XML and nothing else, so the mesh names in
+        # it have to be absolute, and they are only because opening the layer anchored at the
+        # USD's own directory is what makes USD resolve them. See the test.
         return LoadedRobotModel(
             usd_to_urdf(self._description.usd, root=self._description._asset_root()),
             self._description.source_path,

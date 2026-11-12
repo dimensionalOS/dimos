@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
+import re
 import threading
 from typing import Any, cast
 from unittest.mock import patch
@@ -561,11 +562,15 @@ def Xform "g1" (
 
 
 class _FakeClient:
-    def __init__(self, *answers: Any, asset_root: str = "") -> None:
+    def __init__(
+        self, *answers: Any, asset_root: str = "", assets: Mapping[str, bytes] | None = None
+    ) -> None:
         self.answers = list(answers)
         self.asked = 0
         self.asset_root = asset_root
         self.chains: list[list[str]] = []
+        self.assets = dict(assets or {})
+        self.asked_for: list[str] = []
 
     def get_usd(self) -> Any:
         self.asked += 1
@@ -577,6 +582,10 @@ class _FakeClient:
     def get_scene(self, visited: list[str] | None = None) -> Any:
         self.chains.append(list(visited or []))
         return self.get_usd()
+
+    def get_asset(self, name: str) -> Any:
+        self.asked_for.append(name)
+        return self.assets[name]
 
     def stop_rpc_client(self) -> None: ...
 
@@ -951,6 +960,25 @@ def test_a_scene_whose_mesh_is_an_unfetched_pointer_is_refused(
 
     assert "arm.stl" in str(error.value)
     assert "git lfs checkout" in str(error.value)
+
+
+def test_a_mesh_a_mounted_scene_already_published_is_fetched_from_it(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """A mount answering get_scene hands back published names; no such file exists here."""
+    pytest.importorskip("pxr")
+    published = "/dimos/assets/fake_arm/visual_0/arm.stl"
+    module = make_manager(mounts={"arm": _FakeG1})
+    subtree = _subtree_usd("fake_arm", "fake_arm_base", mesh=published)
+    module._subtree_clients["_FakeG1"] = cast(
+        "Any", _FakeClient(subtree, assets={published: b"solid arm\n"})
+    )
+
+    _scene(module)
+    name = next(iter(module._published_assets))
+
+    assert _asset(module, name) == b"solid arm\n", "the parent tried to read a name off disk"
+    assert module._subtree_clients["_FakeG1"].asked_for == [published]  # type: ignore[union-attr]
 
 
 def test_a_subtree_mesh_is_rebased_onto_its_module_root_then_published(
@@ -1395,6 +1423,25 @@ def test_a_pre_namespace_rename_also_reaches_this_robots_own_frames(
     assert transform.child_frame_id == "gripper"
 
 
+def test_a_post_namespace_rename_reaches_this_robots_own_frames_too(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """tf_renames names a frame as the rest of the system sees it, mounted or not."""
+    module = make_manager(frame_id_prefix="left", tf_renames={"left/arm": "gripper"})
+
+    (transform,) = module.joint_transforms(JointState(ts=1.0, name=["shoulder"], position=[0.0]))
+
+    assert (transform.frame_id, transform.child_frame_id) == ("left/base", "gripper")
+
+
+def test_a_rename_of_an_own_frame_by_its_bare_name_under_a_prefix_is_refused(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """The bare name is the pre-namespace spelling, and that is the other option's job."""
+    with pytest.raises(ValueError, match="which is neither a link or joint of this robot"):
+        make_manager(frame_id_prefix="left", tf_renames={"arm": "gripper"})
+
+
 def test_renaming_a_joint_leaves_the_name_its_joint_state_arrives_under(
     make_manager: Callable[..., UrdfManager],
 ) -> None:
@@ -1457,6 +1504,24 @@ def test_a_circular_mount_is_recognised_across_a_process_boundary() -> None:
 
 def test_an_ordinary_rpc_failure_is_not_mistaken_for_a_cycle() -> None:
     assert not _is_circular_mount(RuntimeError("circular mount is only a phrase in here"))
+
+
+def test_a_cycle_stays_a_cycle_over_a_second_process_boundary(
+    make_manager: Callable[..., UrdfManager],
+) -> None:
+    """A -> B -> A is recognised at B, and the manager past B has to hear a cycle, not a retry."""
+    from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
+
+    arrived = deserialize_exception(serialize_exception(CircularMountError("a -> b -> a")))
+    module = make_manager(mounts={"arm": _FakeArm})
+    module._subtree_clients["_FakeArm"] = cast("Any", _FakeClient(arrived))
+
+    with pytest.raises(CircularMountError) as raised:
+        _scene(module)
+
+    # What a manager one hop further out would receive, had this been a real RPC.
+    onward = deserialize_exception(serialize_exception(raised.value))
+    assert _is_circular_mount(onward), "the next hop reads a cycle as a mount that is not ready"
 
 
 def test_render_file_request_serves_the_whole_scene_once_one_is_assembled(
@@ -1626,6 +1691,48 @@ def test_point_clearing_converts_a_usd_model_back_to_urdf(scene_file: Path) -> N
         assert 'name="room"' in description.xml
     finally:
         module.dispose()
+
+
+_TETRAHEDRON_STL = """solid tet
+{facets}endsolid tet
+"""
+
+
+def _tetrahedron_stl() -> str:
+    corners = [(0.0, 0.0, 0.0), (0.1, 0.0, 0.0), (0.0, 0.1, 0.0), (0.0, 0.0, 0.1)]
+    faces = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
+    facets = ""
+    for face in faces:
+        facets += "  facet normal 0 0 1\n    outer loop\n"
+        for corner in face:
+            facets += "      vertex {} {} {}\n".format(*corners[corner])
+        facets += "    endloop\n  endfacet\n"
+    return _TETRAHEDRON_STL.format(facets=facets)
+
+
+def test_point_clearing_resolves_a_usd_models_meshes_before_the_filter(tmp_path: Path) -> None:
+    """RoboPlan is handed the XML alone, so a mesh named relative to the USD has to be resolved."""
+    pytest.importorskip("pxr")
+    (tmp_path / "meshes").mkdir()
+    (tmp_path / "meshes" / "arm.stl").write_text(_tetrahedron_stl())
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        '<robot name="meshy"><link name="base"><collision>'
+        '<geometry><mesh filename="meshes/arm.stl"/></geometry>'
+        "</collision></link></robot>"
+    )
+    scene = tmp_path / "robot.usda"
+    scene.write_text(RobotModel.from_file(urdf).to_usd().usd)
+
+    module = UrdfManagerPointClearing(model=UsdModel.from_file(scene))
+    try:
+        named = re.findall(r'filename="([^"]+)"', module._filter_description().xml)
+    finally:
+        module.dispose()
+
+    assert named, "the converted description names no mesh at all"
+    for filename in named:
+        assert Path(filename).is_file(), f"RoboPlan cannot reach {filename} from its own cwd"
 
 
 def test_point_clearing_hands_over_the_urdf_it_already_has(tmp_path: Path) -> None:
