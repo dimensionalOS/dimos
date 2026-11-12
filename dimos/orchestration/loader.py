@@ -48,7 +48,7 @@ class LoadError(Exception):
         super().__init__(f"{path}:\n" + "\n".join(f"  {problem}" for problem in self.problems))
 
 
-def load(path: str | Path) -> OrchestratorDefinition:
+def load_and_check(path: str | Path) -> OrchestratorDefinition:
     """Read an orchestrator file and run the static checks. Raises `LoadError` with every problem."""
     path = Path(path)
     try:
