@@ -133,6 +133,11 @@ class MujocoSim(Module):
     @rpc
     def stop(self) -> None:
         super().stop()
+        # _run waits on this in a worker thread before it steps anything, and cancelling the
+        # task does not reach a thread already blocked in Event.wait -- so a world stopped
+        # before on_system_modules arrives would keep that thread, and the Python worker it
+        # belongs to, alive forever.
+        self._all_started.set()
         if self._publisher is not None:
             self._publisher.close()
             self._publisher = None
