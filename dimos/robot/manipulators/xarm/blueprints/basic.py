@@ -157,7 +157,8 @@ coordinator_xarm7 = autoconnect(
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw)],
     ),
-    *mujoco_if_sim(XARM7_SIM_PATH, len(_coordinator_xarm7_hw.joints)),
+    # dof is the arm joints alone, so the sim drives the gripper through its own range.
+    *mujoco_if_sim(XARM7_SIM_PATH, 7),
 )
 
 _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
