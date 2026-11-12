@@ -13,17 +13,11 @@
 # limitations under the License.
 
 from pathlib import Path
-import sys
 import threading
 import time
 
-import pytest
-
-# TODO: remove this skip once the pin is cel-expr-python 0.1.4, which supports Python 3.10.
-if sys.version_info < (3, 11):
-    pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
-
 from dimos_lcm.actionlib_msgs import GoalID, GoalStatus
+import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
