@@ -26,7 +26,7 @@ subclass): factories return evaluators called with
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 import itertools
 import math
 from typing import TYPE_CHECKING, TypeVar
@@ -365,10 +365,12 @@ def _last_poses(outcome: Outcome, bodies: Sequence[str]) -> dict[str, Transform]
 
 def _local(item: Transform, frame: Transform | None) -> np.ndarray:
     """``item``'s origin in ``frame`` (the world when None)."""
-    position = item.translation.to_numpy()
+    position: np.ndarray = item.translation.to_numpy()
     if frame is None:
         return position
-    return frame.rotation.to_rotation_matrix().T @ (position - frame.translation.to_numpy())
+    rotation: np.ndarray = frame.rotation.to_rotation_matrix()
+    local: np.ndarray = rotation.T @ (position - frame.translation.to_numpy())
+    return local
 
 
 def _axis_up(pose: Transform, axis: int) -> float:
@@ -517,8 +519,8 @@ def spelled(
 
 def set_up(
     board: str,
-    goals: dict[str, Sequence[tuple[float, float, float]]],
-    pieces: dict[str, Sequence[str]],
+    goals: Mapping[str, Sequence[tuple[float, float, float]]],
+    pieces: Mapping[str, Sequence[str]],
     *,
     planar_m: float = 0.028,
     height_m: float = 0.05,

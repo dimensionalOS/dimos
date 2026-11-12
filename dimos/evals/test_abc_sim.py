@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping, Sequence
 import math
 from pathlib import Path
 
@@ -47,7 +48,9 @@ UPSIDE_DOWN = (1.0, 0.0, 0.0, 0.0)  # 180 degrees about x
 ON_EDGE = (math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5))  # 90 degrees about x
 
 
-def _outcome(tmp_path: Path, name: str, frames: list[dict[str, Pose]], dt: float = 1.0) -> Outcome:
+def _outcome(
+    tmp_path: Path, name: str, frames: Sequence[Mapping[str, Pose]], dt: float = 1.0
+) -> Outcome:
     """A recording with one body_poses message per frame of ``{body: pose}``."""
     db = tmp_path / f"{name}.db"
     with SqliteStore(path=str(db)) as store:
@@ -152,9 +155,13 @@ def test_spelled_reads_left_to_right_face_up(tmp_path: Path) -> None:
     face_up = (0.0, math.sqrt(0.5), 0.0, math.sqrt(0.5))  # 90 degrees about y: local x down
     grade = spelled(("C", "A", "T"), rest_z=0.765)
 
-    def score(name: str, ys: tuple[float, ...], quat: tuple[float, ...] = face_up) -> float:
-        frame = {c: ((0.6, y, 0.765), quat) for c, y in zip("CAT", ys, strict=True)}
-        return grade(_outcome(tmp_path, name, [frame]))  # type: ignore[arg-type]
+    def score(
+        name: str, ys: tuple[float, ...], quat: tuple[float, float, float, float] = face_up
+    ) -> float:
+        frame: dict[str, Pose] = {
+            c: ((0.6, y, 0.765), quat) for c, y in zip("CAT", ys, strict=True)
+        }
+        return grade(_outcome(tmp_path, name, [frame]))
 
     assert score("cat", (0.10, 0.06, 0.02)) == 1.0
     assert score("tac", (0.02, 0.06, 0.10)) == 0.0, "reads right to left"
@@ -197,7 +204,7 @@ def test_held_on_tray_needs_a_lift_held_to_the_end(tmp_path: Path) -> None:
     up = {"tray": (0.6, 0.0, 0.85), "ball": (0.62, 0.01, 0.877)}
     dropped = {"tray": (0.6, 0.0, 0.85), "ball": (0.75, 0.0, 0.77)}
 
-    def score(name: str, frames: list[dict[str, Pose]]) -> float:
+    def score(name: str, frames: Sequence[Mapping[str, Pose]]) -> float:
         return grade(_outcome(tmp_path, name, frames, dt=1.0))
 
     assert score("held", [rest, *[up] * 12]) == 1.0
