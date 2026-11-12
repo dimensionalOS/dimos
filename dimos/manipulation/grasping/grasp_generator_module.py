@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared base for grasp generators an agent can ask for grasps on a localized object."""
+"""Shared base for grasp generators an agent can ask for grasps on an object's cloud."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from dimos.core.module import Module
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.localize.spec import LocalizeSpec
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
@@ -42,54 +42,45 @@ def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
 
 
 class GraspGeneratorModule(Module, GraspGenSpec):
-    """A grasp generator that also proposes grasps for a localized object, by its id.
+    """A grasp generator that also proposes grasps in a cone of approach directions.
 
     Subclasses implement ``propose_grasps`` and expose ``propose_grasps_for`` as
     an RPC that calls ``_propose_for``. An agent reaches every module with
     ``propose_grasps_for`` through PickAndPlaceModule's propose_grasps skill.
     """
 
-    # Looks up a localized object's points; a stack without localize has none.
-    _scene: LocalizeSpec | None = None
-
     def _propose_for(
-        self, object_id: str, approach: list[float] | None, max_angle_deg: float, limit: int
+        self, cloud: PointCloud2, approach: list[float] | None, max_angle_deg: float, limit: int
     ) -> dict[str, Any]:
-        """Propose grasps on a localized object that come in from about one direction.
+        """Propose grasps on an object's cloud that come in from about one direction.
 
         The grasps are not checked for reach or collisions; pick_object checks
         the path when it runs one.
 
         Args:
-            object_id: An id from the last localize scan, or a label only one object has.
+            cloud: The object's points, as localize's get_pointcloud gives them.
             approach: Unit vector [x, y, z] in the object point cloud's frame, the
                 direction the gripper moves into the object. None keeps every grasp.
             max_angle_deg: Half-angle of the cone around ``approach``, degrees.
             limit: Most grasps to return, best score first.
 
-        Returns ``generator`` (this module's name), ``object_id``, ``frame`` (the
+        Returns ``generator`` (this module's name), ``frame`` (the
         point cloud's frame, which the poses are in), ``grasps``, ``considered``
         (how many grasps the generator made) and ``nearest_angle_deg`` (the
         smallest angle among those, or None when there were none). Each grasp has
         ``rank`` (0 is best), ``score``, ``angle_deg``, ``position`` ([x, y, z],
         metres), ``orientation`` ([x, y, z, w]) and ``generator``.
 
-        Raises ValueError for an object without points, a stack without
-        localize, an ``approach`` of zero length or a ``limit`` below 1.
+        Raises ValueError for a cloud without points, an ``approach`` of zero
+        length or a ``limit`` below 1.
         """
-        if self._scene is None:
-            raise ValueError("This stack has no localize to look objects up in")
         if limit < 1:
             raise ValueError(f"limit must be at least 1, got {limit}")
         direction = None if approach is None else Vector3(*approach).normalize()
         if direction is not None and not direction.length() > 0.0:
             raise ValueError(f"approach must be a direction, got {approach}")
-        try:
-            cloud = self._scene.get_pointcloud(object_id)
-        except LookupError as exc:
-            raise ValueError(str(exc)) from exc
         if len(cloud) == 0:
-            raise ValueError(f"No points for object {object_id}; localize it from another view")
+            raise ValueError("The object's cloud has no points; localize it from another view")
         candidates = self.propose_grasps(cloud).candidates
         angles = [_approach_angle(c.pose, direction) for c in candidates]
         in_cone = [(c, a) for c, a in zip(candidates, angles, strict=True) if a <= max_angle_deg]
@@ -97,7 +88,6 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         name = self._generator_name()
         return {
             "generator": name,
-            "object_id": object_id,
             "frame": cloud.frame_id,
             "grasps": [
                 {

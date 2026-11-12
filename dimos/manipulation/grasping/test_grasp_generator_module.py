@@ -15,8 +15,6 @@
 from collections.abc import Iterator
 import json
 import math
-from typing import Any
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -54,32 +52,29 @@ class FakeGenerator(GraspGeneratorModule):
         return GraspCandidateArray(Header(1.0, object_pointcloud.frame_id), self.grasps)
 
 
-def _scene(points: list[list[float]] | None) -> Any:
-    """A localize whose every object has these points, in the world frame; None knows no object."""
-    scene = MagicMock()
-    if points is None:
-        scene.get_pointcloud.side_effect = LookupError("No 'cup-9' in the last scan")
-    else:
-        scene.get_pointcloud.return_value = PointCloud2.from_numpy(
-            np.asarray(points, dtype=np.float32).reshape((-1, 3)), frame_id="world", timestamp=1.0
-        )
-    return scene
+def _cloud(points: list[list[float]]) -> PointCloud2:
+    """An object's points, in the world frame."""
+    return PointCloud2.from_numpy(
+        np.asarray(points, dtype=np.float32).reshape((-1, 3)), frame_id="world", timestamp=1.0
+    )
+
+
+CUP = _cloud([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]])
 
 
 @pytest.fixture
 def generator() -> Iterator[FakeGenerator]:
     instance = FakeGenerator()
-    instance._scene = _scene([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]])
     yield instance
     instance.stop()
 
 
 def test_a_straight_down_grasp_is_0_degrees_from_straight_down() -> None:
     heuristic = HeuristicGraspModule()
-    heuristic._scene = _scene([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22], [0.1, 0.0, 0.2]])
+    cup = _cloud([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22], [0.1, 0.0, 0.2]])
     try:
-        down = heuristic._propose_for("cup-1", [0.0, 0.0, -1.0], 30.0, 3)
-        up = heuristic._propose_for("cup-1", [0.0, 0.0, 1.0], 30.0, 3)
+        down = heuristic._propose_for(cup, [0.0, 0.0, -1.0], 30.0, 3)
+        up = heuristic._propose_for(cup, [0.0, 0.0, 1.0], 30.0, 3)
     finally:
         heuristic.stop()
 
@@ -108,7 +103,7 @@ def test_the_cone_keeps_grasps_inside_the_angle_and_drops_the_rest(
     generator.grasps = [_tilted(0.0, 0.9), _tilted(50.0, 0.8), _tilted(20.0, 0.7), _tilted(90.0)]
 
     # Not unit length: the direction is what counts.
-    proposed = generator._propose_for("cup-1", [0.0, 0.0, -2.0], 30.0, 3)
+    proposed = generator._propose_for(CUP, [0.0, 0.0, -2.0], 30.0, 3)
 
     assert [g["angle_deg"] for g in proposed["grasps"]] == pytest.approx([0.0, 20.0], abs=1e-6)
     assert [g["score"] for g in proposed["grasps"]] == [0.9, 0.7]
@@ -118,21 +113,21 @@ def test_the_cone_keeps_grasps_inside_the_angle_and_drops_the_rest(
 def test_the_best_scores_come_first_cut_to_the_limit(generator: FakeGenerator) -> None:
     generator.grasps = [_tilted(5.0, 0.2), _tilted(10.0, 0.9), _tilted(0.0, 0.6)]
 
-    proposed = generator._propose_for("cup-1", [0.0, 0.0, -1.0], 30.0, 2)
+    proposed = generator._propose_for(CUP, [0.0, 0.0, -1.0], 30.0, 2)
 
     assert [(g["rank"], g["score"]) for g in proposed["grasps"]] == [(0, 0.9), (1, 0.6)]
     first = proposed["grasps"][0]
     assert first["position"] == pytest.approx([0.1, 0.0, 0.2])
     assert first["orientation"] == pytest.approx(list(_tilted(10.0).pose.orientation.to_tuple()))
     assert first["generator"] == proposed["generator"] == "FakeGenerator"
-    assert (proposed["object_id"], proposed["frame"]) == ("cup-1", "world")
+    assert proposed["frame"] == "world"
     json.dumps(proposed)
 
 
 def test_an_empty_cone_says_how_near_the_nearest_grasp_is(generator: FakeGenerator) -> None:
     generator.grasps = [_tilted(0.0), _tilted(40.0)]
 
-    proposed = generator._propose_for("cup-1", [0.0, 1.0, 0.0], 30.0, 3)
+    proposed = generator._propose_for(CUP, [0.0, 1.0, 0.0], 30.0, 3)
 
     assert proposed["grasps"] == []
     assert proposed["nearest_angle_deg"] == pytest.approx(50.0)
@@ -142,7 +137,7 @@ def test_an_empty_cone_says_how_near_the_nearest_grasp_is(generator: FakeGenerat
 def test_no_grasps_at_all_has_no_nearest_angle(generator: FakeGenerator) -> None:
     generator.grasps = []
 
-    proposed = generator._propose_for("cup-1", [0.0, 0.0, -1.0], 30.0, 3)
+    proposed = generator._propose_for(CUP, [0.0, 0.0, -1.0], 30.0, 3)
 
     assert (proposed["grasps"], proposed["nearest_angle_deg"], proposed["considered"]) == (
         [],
@@ -154,26 +149,14 @@ def test_no_grasps_at_all_has_no_nearest_angle(generator: FakeGenerator) -> None
 def test_without_an_approach_every_grasp_counts(generator: FakeGenerator) -> None:
     generator.grasps = [_tilted(0.0), _tilted(90.0)]
 
-    proposed = generator._propose_for("cup-1", None, 30.0, 3)
+    proposed = generator._propose_for(CUP, None, 30.0, 3)
 
     assert [g["angle_deg"] for g in proposed["grasps"]] == [0.0, 0.0]
 
 
-@pytest.mark.parametrize("points", [None, []])
-def test_an_object_without_points_is_refused(
-    generator: FakeGenerator, points: list[list[float]] | None
-) -> None:
-    generator._scene = _scene(points)
-
-    with pytest.raises(ValueError, match="cup-9"):
-        generator._propose_for("cup-9", None, 30.0, 3)
-
-
-def test_a_stack_without_localize_is_refused(generator: FakeGenerator) -> None:
-    generator._scene = None
-
-    with pytest.raises(ValueError, match="no localize"):
-        generator._propose_for("cup-1", None, 30.0, 3)
+def test_a_cloud_without_points_is_refused(generator: FakeGenerator) -> None:
+    with pytest.raises(ValueError, match="no points"):
+        generator._propose_for(_cloud([]), None, 30.0, 3)
 
 
 @pytest.mark.parametrize(
@@ -184,4 +167,4 @@ def test_bad_arguments_are_refused(
     generator: FakeGenerator, approach: list[float] | None, limit: int, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        generator._propose_for("cup-1", approach, 30.0, limit)
+        generator._propose_for(CUP, approach, 30.0, limit)

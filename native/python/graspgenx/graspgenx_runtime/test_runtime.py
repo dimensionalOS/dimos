@@ -225,17 +225,15 @@ def test_runtime_implements_the_host_contract() -> None:
     )
 
 
-def test_proposals_by_object_id_name_the_host_module(runtime: Any, mocker: MockerFixture) -> None:
+def test_proposals_name_the_host_module(runtime: Any, mocker: MockerFixture) -> None:
     """This process serves under a private name; callers know the host's."""
     module = GraspGenXRuntimeModule(
         _isolated_python_runtime=True,
         **{**module_args(), "instance_name": "__isolated_python__/GraspGenXModule/abc123"},
     )
-    module._scene = mocker.MagicMock()
-    module._scene.get_pointcloud.return_value = cloud()
     try:
         module.start()
-        proposed = module.propose_grasps_for("cup-1")
+        proposed = module.propose_grasps_for(cloud())
     finally:
         module.stop()
 

@@ -72,7 +72,6 @@ from dimos.perception.localize.rig import (
     RigCamera,
     camera_hz,
 )
-from dimos.perception.localize.spec import LocalizeSpec
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -108,7 +107,7 @@ class PerceptionLocalizeConfig(ModuleConfig):
     scene_exclude_margin_m: float = 0.02
 
 
-class PerceptionLocalize(Module, LocalizeSpec):
+class PerceptionLocalize(Module):
     """Embed the colour feed and answer ``localize`` from the paired depth or lidar.
 
     ``camera_info`` must be stamped in the colour frame, and ``tf`` must reach

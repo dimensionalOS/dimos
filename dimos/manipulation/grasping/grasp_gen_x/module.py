@@ -107,12 +107,12 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
     @rpc
     def propose_grasps_for(
         self,
-        object_id: str,
+        cloud: PointCloud2,
         approach: list[float] | None = None,
         max_angle_deg: float = 30.0,
         limit: int = 3,
     ) -> dict[str, Any]:
-        """Propose grasps on a scanned object of any shape, from a learned grasp model.
+        """Propose grasps on the cloud of a object of any shape, from a learned grasp model.
 
         Grasps come from many directions, so this suits mugs, tools and objects
         held from the side. Needs a GPU and takes about a second for 500
@@ -120,7 +120,7 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
         entry of ``grasps`` to pick_object as ``grasp``.
 
         Args:
-            object_id: An id from the last localize scan, or a label only one object has.
+            cloud: The object's points, as localize's get_pointcloud gives them.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
                 [0, 0, -1] is straight down. None accepts any direction.
@@ -131,4 +131,4 @@ class GraspGenXModule(IsolatedPythonModule, GraspGeneratorModule):
         ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
         made, which says how far off approach is when ``grasps`` is empty.
         """
-        return self._propose_for(object_id, approach, max_angle_deg, limit)
+        return self._propose_for(cloud, approach, max_angle_deg, limit)

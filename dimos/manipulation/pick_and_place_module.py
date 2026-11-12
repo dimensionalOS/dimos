@@ -50,7 +50,7 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
-from dimos.perception.localize.spec import LocalizeSpec
+from dimos.perception.localize.module import PerceptionLocalize
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -129,7 +129,7 @@ class PickAndPlaceModule(Module):
     dedicated_worker = True
 
     config: PickAndPlaceModuleConfig
-    _scene: LocalizeSpec
+    _scene: PerceptionLocalize
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
     # Leaves boxes out of the planner's map; a stack without a map has none.
@@ -162,7 +162,7 @@ class PickAndPlaceModule(Module):
         max_angle_deg: float = 30.0,
         limit: int = 3,
     ) -> dict[str, Any]:
-        """Ask one grasp generator for grasps on a scanned object, coming in from about one direction.
+        """Ask one grasp generator for grasps on a localized object, coming in from about one direction.
 
         Choose the generator for the object. GraspGenXModule is a learned model:
         grasps on any shape from many directions, such as mugs, tools and side
@@ -181,18 +181,19 @@ class PickAndPlaceModule(Module):
             max_angle_deg: Half-angle of the cone around approach, degrees.
             limit: How many grasps to return, best first.
 
-        Returns ``grasps`` (each with position, orientation, score and angle_deg),
-        ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
-        made, which says how far off approach is when ``grasps`` is empty.
+        Returns ``object_id``, ``grasps`` (each with position, orientation, score
+        and angle_deg), ``considered`` and ``nearest_angle_deg``, the angle of the
+        closest grasp made, which says how far off approach is when ``grasps`` is empty.
         """
         chosen = self._grasp_generators.get(generator)
         if chosen is None:
             running = ", ".join(sorted(self._grasp_generators)) or "none"
             raise ValueError(f"No grasp generator named {generator}; running: {running}")
+        cloud = self._scene.get_pointcloud(object_id)
         answer: dict[str, Any] = chosen.propose_grasps_for(
-            object_id=object_id, approach=approach, max_angle_deg=max_angle_deg, limit=limit
+            cloud=cloud, approach=approach, max_angle_deg=max_angle_deg, limit=limit
         )
-        return answer
+        return {"object_id": object_id, **answer}
 
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(

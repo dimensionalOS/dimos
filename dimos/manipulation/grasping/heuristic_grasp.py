@@ -84,19 +84,19 @@ class HeuristicGraspModule(GraspGeneratorModule):
     @rpc
     def propose_grasps_for(
         self,
-        object_id: str,
+        cloud: PointCloud2,
         approach: list[float] | None = None,
         max_angle_deg: float = 30.0,
         limit: int = 3,
     ) -> dict[str, Any]:
-        """Propose a straight-down grasp on a scanned box, can or other upright object.
+        """Propose a straight-down grasp on the cloud of a box, can or other upright object.
 
         Instant and needs no GPU, but it only ever makes one top-down grasp, so an
         approach from the side finds none. The grasps are not checked for reach or
         collisions. Pass one entry of ``grasps`` to pick_object as ``grasp``.
 
         Args:
-            object_id: An id from the last localize scan, or a label only one object has.
+            cloud: The object's points, as localize's get_pointcloud gives them.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
                 [0, 0, -1] is straight down. None accepts any direction.
@@ -107,7 +107,7 @@ class HeuristicGraspModule(GraspGeneratorModule):
         ``considered`` and ``nearest_angle_deg``, the angle of the closest grasp
         made, which says how far off approach is when ``grasps`` is empty.
         """
-        return self._propose_for(object_id, approach, max_angle_deg, limit)
+        return self._propose_for(cloud, approach, max_angle_deg, limit)
 
     def _tip_height(self, low_z: float, high_z: float) -> float:
         """Tool tip height (metres) that puts the closed pads at the object's mid-height.

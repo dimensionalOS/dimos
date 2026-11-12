@@ -683,8 +683,11 @@ def test_propose_grasps_asks_the_generator_the_agent_names(module: PickAndPlaceM
 
     answer = module.propose_grasps("cup-1", "HeuristicGraspModule", approach=[0.0, 0.0, -1.0])
 
-    assert answer == {"generator": "HeuristicGraspModule", "grasps": []}
+    assert answer == {"object_id": "cup-1", "generator": "HeuristicGraspModule", "grasps": []}
     heuristic.propose_grasps_for.assert_called_once_with(
-        object_id="cup-1", approach=[0.0, 0.0, -1.0], max_angle_deg=30.0, limit=3
+        cloud=module._scene.get_pointcloud("cup-1"),
+        approach=[0.0, 0.0, -1.0],
+        max_angle_deg=30.0,
+        limit=3,
     )
     graspgenx.propose_grasps_for.assert_not_called()
