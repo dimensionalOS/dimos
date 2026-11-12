@@ -34,6 +34,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import typer
 
+from dimos.memory.utils.time_window import RecordingWindow
+
 # Heavy dimos imports are deferred (TYPE_CHECKING / inside functions) so that
 # `dimos map --help` stays fast. See test_cli_startup.py.
 if TYPE_CHECKING:
@@ -101,7 +103,8 @@ def pose_fill_db(
     codecs (e.g. jpeg images) keep their original quality. Only the *target*
     stream's pose metadata is rewritten, to the nearest *pose_source* pose (the
     rtree spatial index is rebuilt from it on insert). Returns a per-stream
-    count of observations written.
+    count of observations written. Seek and duration select one half-open window
+    relative to the earliest timestamp in the source, even with a stream subset.
     """
     from dimos.memory.store.sqlite import SqliteStore
 
@@ -124,6 +127,7 @@ def pose_fill_db(
         if missing:
             raise ValueError(f"streams not found in source dataset: {missing}")
 
+        window = RecordingWindow.from_store(src, seek=seek, duration=duration)
         # Validate the full selection before creating a destination that would block retries.
         with SqliteStore(path=str(dest_path)) as dest:
             for name in names:
@@ -136,15 +140,12 @@ def pose_fill_db(
                 # the source blob still resolves); plain metadata for everything else.
                 if name == target:
                     rows: Iterable[Observation[Any]] = pose_fill(
-                        src.stream(name).from_time(seek or None).to_time(duration).order_by("ts"),
-                        src.stream(pose_source)
-                        .from_time(seek or None)
-                        .to_time(duration)
-                        .order_by("ts"),
+                        window.apply(src.stream(name)),
+                        window.apply(src.stream(pose_source)),
                         tolerance=tolerance,
                     )
                 else:
-                    rows = src.stream(name).from_time(seek or None).to_time(duration).order_by("ts")
+                    rows = window.apply(src.stream(name))
 
                 scalar = src_b.data_type in (int, float)
                 n = 0

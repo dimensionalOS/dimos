@@ -32,6 +32,7 @@ from scipy.spatial import cKDTree
 import typer
 
 from dimos.memory.cli.dataset import open_dataset
+from dimos.memory.utils.time_window import RecordingWindow
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
@@ -83,8 +84,9 @@ def run(
     premap_cloud = premap.cloud(0.05)
     world_map = PGOMap(premap=premap)
     matcher = PremapMatcher(premap_cloud)
-    lidar = open_dataset(recording).stream("lidar", PointCloud2).from_time(seek or None)
-    lidar = lidar.to_time(duration)
+    store = open_dataset(recording)
+    recording_window = RecordingWindow.from_store(store, seek=seek, duration=duration)
+    lidar = recording_window.apply(store.stream("lidar", PointCloud2))
 
     wrong = Transform.from_matrix(
         np.array(
