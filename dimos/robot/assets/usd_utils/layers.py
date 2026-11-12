@@ -204,6 +204,11 @@ def _carry_outside_connections(
                 continue
             at = carried.get(str(prim_path))
             if at is None:
+                if sub_layer.GetPrimAtPath(prim_path) is None:
+                    # Nothing to carry: the target is not a prim this layer states, it is
+                    # composed -- an instancing prototype, say -- so leave the arc alone.
+                    moved.append(target)
+                    continue
                 at = _carry_one(pxr, sub_layer, prim_path, root_layer)
                 carried[str(prim_path)] = at
                 pending.append(at)
