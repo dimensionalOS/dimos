@@ -16,6 +16,7 @@
 
 import importlib.util
 from pathlib import Path
+import shutil
 
 SIM_INSTALL_HINT = "Simulation dependencies are not installed. Run `uv sync --extra sim --inexact` to install them."
 
@@ -32,7 +33,11 @@ def menagerie_path() -> Path:
 
 def ensure_menagerie() -> None:
     """Clone the menagerie on first use; a no-op once it is on disk."""
-    if menagerie_path().exists():
+    path = menagerie_path()
+    # git writes .git/index last, so a clone that was killed part-way has a .git without one.
+    if (path / ".git").is_dir() and not (path / ".git" / "index").exists():
+        shutil.rmtree(path)
+    if path.exists():
         return
     # mujoco_playground: 4 s import (torch, jax, mjx), only needed to clone once.
     from mujoco_playground._src import mjx_env
