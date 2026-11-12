@@ -156,7 +156,7 @@ def tool_frame_fk(q: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
         from dimos.robot.manipulators.openyam.policy.quest_reference import TOOL_FRAME
         from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
         from dimos.utils.transform_utils import pose_to_matrix
-    except Exception:  # noqa: BLE001 - any missing extra means "no offline FK here"
+    except Exception:
         return None
 
     model = make_openyam_model_config(robot="arm")
