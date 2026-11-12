@@ -23,8 +23,8 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from dimos.robot.assets.urdf_to_usd import _OUT_OF_PLANE, PASSTHROUGH_KEY
-from dimos.robot.assets.usd import Prim, Pxr, Stage, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.from_urdf import OUT_OF_PLANE, PASSTHROUGH_KEY
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Stage, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -59,10 +59,9 @@ def usd_to_urdf(usd: str, *, name: str | None = None, root: Path | str | None = 
     default_prim = stage.GetDefaultPrim()
     robot_name = name or (default_prim.GetName() if default_prim else "robot")
     robot = ET.Element("robot", name=robot_name)
-    by_group = not _marks_collision(pxr, stage)
 
     for link_name, prim in links.items():
-        _write_link(pxr, robot, link_name, prim, by_group=by_group)
+        _write_link(pxr, robot, link_name, prim)
     joints = joints + _welds_of(pxr, links, joints)
     for joint in joints:
         _write_joint(robot, joint)
@@ -217,7 +216,7 @@ def _joint_of(pxr: Pxr, prim: Prim, world: str | None = None) -> _Joint | None:
 
 def _free_kind(prim: Prim) -> str:
     applied = {str(name) for name in prim.GetAppliedSchemas()}
-    if all(f"PhysicsLimitAPI:{axis}" in applied for axis in _OUT_OF_PLANE):
+    if all(f"PhysicsLimitAPI:{axis}" in applied for axis in OUT_OF_PLANE):
         return "planar"
     return "floating"
 
@@ -265,37 +264,21 @@ def _passthrough_of(prim: Prim) -> list[str]:
     return [str(fragment) for fragment in urdf.get(PASSTHROUGH_KEY.split(":", 1)[1], ())]
 
 
-def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim, *, by_group: bool) -> None:
+def _write_link(pxr: Pxr, root: ET.Element, link_name: str, prim: Prim) -> None:
     element = ET.SubElement(root, "link", name=link_name)
     for child in prim.GetChildren():
         if child.HasAPI(pxr.UsdPhysics.RigidBodyAPI) or child.IsA(pxr.UsdPhysics.Joint):
             continue
-        _write_geometry(pxr, element, child, by_group=by_group)
+        _write_geometry(pxr, element, child)
     for fragment in _passthrough_of(prim):
         _append_fragment(element, fragment)
 
 
-_MJC_COLLISION_GROUP = 3
-
-
-def _marks_collision(pxr: Pxr, stage: Stage) -> bool:
-    return any(prim.HasAPI(pxr.UsdPhysics.CollisionAPI) for prim in stage.Traverse())
-
-
-def _collides(pxr: Pxr, prim: Prim, *, by_group: bool) -> bool:
-    if prim.HasAPI(pxr.UsdPhysics.CollisionAPI):
-        return True
-    if not by_group:
-        return False
-    group = prim.GetAttribute("mjc:group")
-    return bool(group) and group.Get() == _MJC_COLLISION_GROUP
-
-
-def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim, *, by_group: bool) -> None:
+def _write_geometry(pxr: Pxr, link: ET.Element, prim: Prim) -> None:
     shape = _shape_of(pxr, prim)
     if shape is None:
         return
-    tag = "collision" if _collides(pxr, prim, by_group=by_group) else "visual"
+    tag = "collision" if prim.HasAPI(pxr.UsdPhysics.CollisionAPI) else "visual"
     element = ET.SubElement(link, tag)
     xyz, rpy = _placement_of(prim)
     if np.any(xyz) or np.any(rpy):
