@@ -24,11 +24,17 @@ from dimos.core.introspection.module.info import extract_rpc_info
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.orchestration import engine
-from dimos.orchestration.demo.fake_robot import FakeBase, FakeBattery, FakeEstop
+from dimos.orchestration.binding import Deployed, bind
+from dimos.orchestration.demo.fake_robot import (
+    FAILING_GOAL,
+    FakeBase,
+    FakeBaseConfig,
+    FakeBattery,
+    FakeEstop,
+)
 from dimos.orchestration.engine import (
     Effect,
     FaultReport,
-    Limits,
     QueueItem,
     ReturnItem,
     SendCancel,
@@ -39,7 +45,6 @@ from dimos.orchestration.engine import (
     TransitionRecord,
 )
 from dimos.orchestration.loader import load_and_check
-from dimos.orchestration.orchestrator import Deployed, bind
 from dimos.orchestration.plain import to_plain
 
 PATROL = Path(__file__).parent / "patrol.toml"
@@ -76,7 +81,7 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
     assert checked.problems == ()
 
     # The world answers as the fake modules do, on a clock the test owns.
-    limits = Limits(cancel_deadline_s=2.0, transition_cap=100)
+    base = FakeBaseConfig()
     order = itertools.count()
     world: list[tuple[float, int, QueueItem]] = []
     records: list[tuple[str, str | None, str]] = []
@@ -94,25 +99,27 @@ def test_the_patrol_file_runs_one_loop_of_its_route() -> None:
                     later(timer.due, TimerItem(timer))
                 case SendStart(call) if call.rpc == "FakeBase.go_to":
                     goals.append(str(call.args["name"]))
-                    if len(goals) == 2:
+                    if len(goals) == FAILING_GOAL:
                         later(now + 0.01, ReturnItem(call, raised=True))
                         continue
                     goal = f"goal-{len(goals)}"
                     reached = GoalStatus(goal_id=GoalID(id=goal), status=GoalStatus.SUCCEEDED)
                     later(now + 0.01, ReturnItem(call, goal))
-                    later(now + 1.0, SignalItem("nav_status", to_plain(reached)))
+                    later(now + base.arrive_s, SignalItem("nav_status", to_plain(reached)))
+                case SendStart(call) if call.rpc == "FakeBase.spin":
+                    later(now + float(str(call.args["turns"])) * base.spin_s, ReturnItem(call))
                 case SendStart(call) | SendCancel(call):
-                    later(now + (0.5 if call.rpc == "FakeBase.spin" else 0.01), ReturnItem(call))
+                    later(now + 0.01, ReturnItem(call))
                 case FaultReport():
                     pytest.fail(f"the patrol faulted: {effect}")
 
     later(0.1, SignalItem("estop_button", False))
-    runtime, effects = engine.start(checked, 0.0, limits)
+    runtime, effects = engine.start(checked, 0.0)
     perform(effects, 0.0)
     wanted = ["lobby", "lab", "lab", "kitchen", "lobby"]
     while len(goals) < len(wanted):
         now, _, item = heapq.heappop(world)
-        runtime, effects = engine.step(checked, runtime, item, now, limits)
+        runtime, effects = engine.step(checked, runtime, item, now)
         perform(effects, now)
 
     # The second goal fails and is tried again, and the route starts over after its last place.

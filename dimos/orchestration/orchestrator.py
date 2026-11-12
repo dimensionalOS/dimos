@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Orchestrator module, and the checks of a definition against the running blueprint."""
+"""The Orchestrator module."""
 
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping
 from functools import partial
 from pathlib import Path
 import threading
@@ -28,7 +27,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Transport
 from dimos.orchestration import engine
-from dimos.orchestration.checks import CheckedDefinition, check
+from dimos.orchestration.binding import Deployed, bind
+from dimos.orchestration.checks import CheckedDefinition
 from dimos.orchestration.definition import OrchestratorDefinition, Signal
 from dimos.orchestration.engine import (
     DEFAULT_LIMITS,
@@ -47,140 +47,19 @@ from dimos.orchestration.engine import (
     TimerItem,
     TransitionRecord,
 )
-from dimos.orchestration.expressions import UNKNOWN, Shape
 from dimos.orchestration.loader import LoadError, load_and_check
-from dimos.orchestration.plain import field_to_plain, from_plain, shape_of, to_plain
+from dimos.orchestration.plain import field_to_plain, from_plain, to_plain
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 # A start may run for as long as its node is active, so its RPC gets no practical deadline.
 _START_TIMEOUT_S = 365 * 24 * 3600.0
-_VARIADIC = ("VAR_POSITIONAL", "VAR_KEYWORD")
-_BY_NAME = ("POSITIONAL_OR_KEYWORD", "KEYWORD_ONLY")
-
-
-@dataclass(frozen=True)
-class Deployed:
-    """What the running blueprint offers the modules a definition names."""
-
-    modules: frozenset[str]
-    rpcs: Mapping[str, RpcInfo]
-    """By `Module.rpc`."""
-    streams: Mapping[str, type]
-    """Message types by `Module.stream`."""
-
-
-def bind(definition: OrchestratorDefinition, deployed: Deployed) -> CheckedDefinition:
-    """Check a definition against the running blueprint. Its problems hold every one found."""
-    shapes, shape_problems = _shapes(definition, deployed)
-    parameters = {
-        activity.name: {
-            param.name: shape_of(param.annotation) for param in deployed.rpcs[activity.start].params
-        }
-        for activity in definition.activities
-        if activity.start in deployed.rpcs
-    }
-    checked = check(definition, shapes, parameters)
-    problems = [
-        *_activity_problems(definition, deployed),
-        *_args_problems(definition, deployed),
-        *shape_problems,
-        *checked.problems,
-    ]
-    return replace(checked, problems=tuple(dict.fromkeys(problems)))
 
 
 def _topic(target: str) -> str:
     """The RPC name of a target written `Module.rpc`."""
     return target.replace(".", "/", 1)
-
-
-def _missing(deployed: Deployed, target: str, offered: Mapping[str, object], kind: str) -> str:
-    """Why the blueprint does not offer a `Module.name` target. Empty when it does."""
-    module, _, name = target.partition(".")
-    if module not in deployed.modules:
-        return f"names `{target}`, and `{module}` is not a deployed module"
-    if target not in offered:
-        return f"names `{target}`, and `{module}` has no {kind} `{name}`"
-    return ""
-
-
-def _required(info: RpcInfo) -> list[str]:
-    return [p.name for p in info.params if p.default is None and p.kind not in _VARIADIC]
-
-
-def _activity_problems(definition: OrchestratorDefinition, deployed: Deployed) -> Iterator[str]:
-    for activity in definition.activities:
-        for field, target in (("start", activity.start), ("cancel", activity.cancel)):
-            missing = _missing(deployed, target, deployed.rpcs, "RPC") if target else ""
-            if missing:
-                yield f"activity `{activity.name}`: `{field}` {missing}"
-        cancel = deployed.rpcs.get(activity.cancel or "")
-        for name in _required(cancel) if cancel is not None else ():
-            yield (
-                f"activity `{activity.name}`: `cancel` RPC `{activity.cancel}` needs `{name}`, "
-                "and a cancel is called with no arguments"
-            )
-
-
-def _args_problems(definition: OrchestratorDefinition, deployed: Deployed) -> Iterator[str]:
-    starts = {activity.name: activity.start for activity in definition.activities}
-    for node in definition.nodes:
-        target = starts.get(node.activity or "", "")
-        info = deployed.rpcs.get(target)
-        if info is None:
-            continue
-        named = {p.name for p in info.params if p.kind in _BY_NAME}
-        takes_any = any(p.kind == "VAR_KEYWORD" for p in info.params)
-        for name in node.args:
-            if name not in named and not takes_any:
-                yield (
-                    f"node `{node.name}`: `args` names `{name}`, "
-                    f"which is not a parameter of `{target}`"
-                )
-        for name in _required(info):
-            if name not in node.args:
-                yield f"node `{node.name}`: `args` has no entry for `{name}`, which `{target}` needs"
-
-
-def _shapes(
-    definition: OrchestratorDefinition, deployed: Deployed
-) -> tuple[dict[str, Shape], list[str]]:
-    """The shape of every signal and result key, and what is wrong with any of them."""
-    shapes: dict[str, Shape] = {}
-    problems: list[str] = []
-    for signal in definition.signals:
-        missing = _missing(deployed, signal.stream, deployed.streams, "stream")
-        if missing:
-            problems.append(f"signal `{signal.name}`: `stream` {missing}")
-            continue
-        message = deployed.streams[signal.stream]
-        shape = shape_of(message)
-        if signal.field is not None and isinstance(shape, dict) and signal.field not in shape:
-            problems.append(
-                f"signal `{signal.name}`: `field` names `{signal.field}`, "
-                f"which is not a field of `{message.__name__}`"
-            )
-        elif signal.field is not None:
-            shape = shape[signal.field] if isinstance(shape, dict) else UNKNOWN
-        shapes[signal.name] = shape
-
-    starts = {activity.name: activity.start for activity in definition.activities}
-    writers: dict[str, tuple[str, Shape]] = {}
-    for node in definition.nodes:
-        info = deployed.rpcs.get(starts.get(node.activity or "", ""))
-        if node.result is None or info is None:
-            continue
-        shape = shape_of(info.return_annotation)
-        first, earlier = writers.setdefault(node.result, (node.name, shape))
-        if earlier is not UNKNOWN and shape is not UNKNOWN and repr(earlier) != repr(shape):
-            problems.append(
-                f"key `{node.result}` is written by `{first}` and `{node.name}`, "
-                "and their `start` RPCs return different shapes"
-            )
-    shapes.update({key: shape for key, (_, shape) in writers.items()})
-    return shapes, problems
 
 
 class OrchestratorConfig(ModuleConfig):
@@ -293,7 +172,7 @@ class Orchestrator(Module):
                 if self._queue:
                     return self._queue.popleft()
                 due = min((timer.due for timer in self._timers), default=None)
-                self._wake.wait(None if due is None else due - now)
+                self._wake.wait(None if due is None else min(due - now, threading.TIMEOUT_MAX))
             return None
 
     def _add(self, item: QueueItem) -> None:
@@ -399,6 +278,5 @@ class Orchestrator(Module):
         checked = self._checked
         if checked is None:
             return
-        cancels = [activity.cancel for activity in checked.tree.activities.values()]
-        for target in dict.fromkeys(cancel for cancel in cancels if cancel is not None):
+        for target in checked.tree.cancel_rpcs:
             self.rpc.call_nowait(_topic(target), ((), {}))

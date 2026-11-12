@@ -15,7 +15,6 @@
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
-import time
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from reactivex.disposable import Disposable
@@ -28,6 +27,7 @@ from dimos.core.stream import In
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.orchestration.demo.demo_orchestrator import demo_orchestrator
 from dimos.orchestration.loader import load_and_check
+from dimos.utils.testing.waiting import wait_until
 
 PATROL = Path(__file__).parent / "patrol.toml"
 
@@ -94,9 +94,11 @@ def test_the_demo_runs_a_route_loop_and_a_charge_cycle(
     blueprint = autoconnect(demo_orchestrator, Recorder.blueprint())
     coordinator = build(blueprint, {"orchestrator": {"file": str(patrol)}, **FAST})
     recorder = coordinator.get_instance(Recorder)
-    deadline = time.monotonic() + 30.0
-    while not _charge_cycle(recorder.levels(), low, full) and time.monotonic() < deadline:
-        time.sleep(0.1)
+    wait_until(
+        lambda: _charge_cycle(recorder.levels(), low, full),
+        timeout=30.0,
+        message="the battery never went through a charge cycle",
+    )
     arrived: list[str] = recorder.arrived()
     levels: list[float] = recorder.levels()
 

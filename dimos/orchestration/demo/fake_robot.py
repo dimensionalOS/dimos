@@ -26,7 +26,7 @@ from dimos.core.stream import Out
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Float32 import Float32
 
-_FAILING_GOAL = 2
+FAILING_GOAL = 2
 
 
 class FakeBaseConfig(ModuleConfig):
@@ -65,7 +65,7 @@ class FakeBase(Module):
         """Set off for a named place. Returns the id that its status message carries."""
         with self._lock:
             self._goals += 1
-            if self._goals == _FAILING_GOAL:
+            if self._goals == FAILING_GOAL:
                 raise RuntimeError(f"no path to {name}")
             goal = f"goal-{self._goals}"
             reached = GoalStatus(goal_id=GoalID(id=goal), status=GoalStatus.SUCCEEDED)

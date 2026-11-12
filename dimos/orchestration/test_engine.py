@@ -162,6 +162,16 @@ TIMERS = OrchestratorDefinition(
     ],
 )
 
+NEVER = OrchestratorDefinition(
+    root="Top",
+    constants={"rate": 0.0},
+    nodes=[
+        Node(name="Top", children=["Wait", "Go"], initial="Wait"),
+        Node(name="Wait", transitions=[Transition(after="1.0 / rate", goto="Go")]),
+        Node(name="Go", transitions=[Transition(after=5, goto="Wait")]),
+    ],
+)
+
 CHECKS = OrchestratorDefinition(
     root="Top",
     vars={"ready": False, "tidy": False},
@@ -446,6 +456,15 @@ CASES = [
         ],
         [],
         Limits(transition_cap=3),
+    ),
+    Case(
+        "an `after` that is not a finite number is a fault",
+        NEVER,
+        [
+            "fault at Wait on startup: an expression error: "
+            "`1.0 / rate` gave inf, not a finite number",
+        ],
+        [],
     ),
     Case(
         "an expression error is a fault, and a fault clears the timers of earlier steps",

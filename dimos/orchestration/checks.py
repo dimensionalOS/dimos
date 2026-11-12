@@ -39,10 +39,13 @@ RECORD_TRIGGERS = ("after", "requires", "ensures")
 class CheckedDefinition:
     """A definition, what is wrong with it, and its expressions compiled by source."""
 
-    definition: OrchestratorDefinition
     problems: tuple[str, ...]
     expressions: Mapping[str, Expression]
     tree: "Tree"
+
+    @property
+    def definition(self) -> OrchestratorDefinition:
+        return self.tree.definition
 
 
 def check(
@@ -65,7 +68,7 @@ def check(
             *_fallback_problems(tree),
             *_resource_problems(tree),
         ]
-    return CheckedDefinition(definition, tuple(dict.fromkeys(problems)), expressions, tree)
+    return CheckedDefinition(tuple(dict.fromkeys(problems)), expressions, tree)
 
 
 def _listed(names: Iterable[str]) -> str:
@@ -96,6 +99,12 @@ class Tree:
 
     def activity(self, node: Node) -> Activity | None:
         return self.activities.get(node.activity) if node.activity is not None else None
+
+    @property
+    def cancel_rpcs(self) -> tuple[str, ...]:
+        """Every cancel RPC the definition names, once each."""
+        cancels = [activity.cancel for activity in self.activities.values()]
+        return tuple(dict.fromkeys(cancel for cancel in cancels if cancel is not None))
 
 
 def _name_problems(definition: OrchestratorDefinition) -> Iterator[str]:
@@ -313,8 +322,8 @@ def _sources(
         yield f"event `{event.name}`: `when`", event.when, True
     for node in definition.nodes:
         where = f"node `{node.name}`"
-        for check in (*node.requires, *node.ensures):
-            for source in check.expect:
+        for condition in (*node.requires, *node.ensures):
+            for source in condition.expect:
                 yield f"{where}: `expect`", source, True
         wanted = parameters.get(node.activity, {}) if node.activity is not None else {}
         for parameter, source in node.args.items():

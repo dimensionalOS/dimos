@@ -17,6 +17,7 @@
 from collections import deque
 from collections.abc import Callable, Mapping, MutableSequence
 from dataclasses import dataclass, replace
+import math
 from typing import Literal
 
 from dimos.orchestration.checks import CheckedDefinition
@@ -246,8 +247,7 @@ class _Step:
         self.active.clear()
         self.calls.clear()
         self.timers.clear()
-        cancels = [activity.cancel for activity in self.tree.activities.values()]
-        for rpc in dict.fromkeys(cancel for cancel in cancels if cancel is not None):
+        for rpc in self.tree.cancel_rpcs:
             self.calls_made += 1
             call = Call(self.calls_made, None, "cancel", "sent", frozenset(), rpc, {})
             self.effects.append(SendCancel(call))
@@ -483,8 +483,14 @@ class _Step:
 
     def seconds(self, node: Node, source: str) -> float:
         value = self.evaluate(node, source)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise _FaultError(f"an expression error: `{source}` gave {value!r}, not a number", node)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise _FaultError(
+                f"an expression error: `{source}` gave {value!r}, not a finite number", node
+            )
         return value
 
     def holds(self, node: Node, source: str) -> bool:
