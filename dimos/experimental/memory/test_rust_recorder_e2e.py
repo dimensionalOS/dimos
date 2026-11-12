@@ -472,7 +472,13 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
             stack.callback(unsubscribe)
         stack.callback(session.stop)
         session.start()
-        retry_until(batch_written, lambda: publisher.broadcast(None, expected), timeout=5.0)
+        # The recorder writes after 128 results or 100 ms without one: leave it that gap.
+        retry_until(
+            batch_written,
+            lambda: publisher.broadcast(None, expected),
+            timeout=5.0,
+            interval=0.2,
+        )
         wait_until(
             lambda: python_store.list_streams() == ["imu"]
             and python_store.stream("imu").count() > 0,
