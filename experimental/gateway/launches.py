@@ -18,6 +18,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 import inspect
+from itertools import pairwise
 import json
 import os
 from pathlib import Path
@@ -388,22 +389,35 @@ def last_error(output: str) -> str:
 
     Shutdown chatter (`Stopping module...`, `All workers shut down`) follows a crash, so the
     last line alone names the wrong thing. The last recognized cause wins, including shutdown
-    errors. Without a recognized cause, the last line still stands, as before."""
-    lines = [line.rstrip() for line in output.splitlines()[1:] if line.strip()]
+    errors. Without a recognized cause, the last line still stands, as before.
+
+    Rich draws tracebacks and CLI errors in panels. A panel's text is read without its frame,
+    a wrapped message as one line, and a border is never the answer."""
+    lines: list[str] = []
+    framed = False  # the line before was text inside a panel
+    for line in output.splitlines()[1:]:
+        text = line.strip("│ ") if line.startswith("│") else line.rstrip()
+        wrapped, framed = framed, line.startswith("│") and text[:1] not in ("", "╭", "╰")
+        if wrapped and framed:
+            lines[-1] += f" {text}"
+        elif text:
+            lines.append(text)
     cause = None
     in_traceback = False
-    for line in lines:
+    for above, line in pairwise(["", *lines]):
         if line.startswith("Traceback (most recent call last):"):
             in_traceback = True
         elif line.startswith("*** Terminating app") or FATAL_LOG_LINE.match(line):
             cause = line.strip()
-        elif in_traceback and EXCEPTION_LINE.fullmatch(line):
+        # Rich prints the exception right below the panel of frames.
+        elif (in_traceback or above.startswith("╰")) and EXCEPTION_LINE.fullmatch(line):
             # Other workers' output can land between the frames and the exception.
             if re.match(r"(?:DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL|NOTSET):", line):
                 continue
             cause = line.strip()
             in_traceback = False
     if cause is None:
+        lines = [line for line in lines if not line.startswith(("╭", "╰"))]
         return lines[-1].strip() if lines else "dimos exited during startup"
     return cause
 

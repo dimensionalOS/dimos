@@ -72,6 +72,36 @@ CRITICAL = "12:00:00.001 [cri][a.py] out of memory"
         ),
         pytest.param(f"{ERROR}\n{SHUTDOWN}\n", ERROR, id="error-level"),
         pytest.param(f"{CRITICAL}\n{SHUTDOWN}\n", CRITICAL, id="critical-level"),
+        pytest.param(
+            "12:00:00.001 [err][dimos/utils/logging_config.py ] Uncaught exception occurred\n"
+            "╭─ Traceback (most recent call last) ─╮\n"
+            "│ /x/demo.py:3 in                     │\n"
+            "│ start                               │\n"
+            "╰─────────────────────────────────────╯\n"
+            f"RuntimeError: boom\n{SHUTDOWN}\n",
+            "RuntimeError: boom",
+            id="boxed-traceback-after-uncaught-record",
+        ),
+        pytest.param(
+            "╭─ Sub-exception #1 ──────────────────────╮\n"
+            "│ ╭─ Traceback (most recent call last) ─╮ │\n"
+            "│ │ /x/demo.py:3 in                     │ │\n"
+            "│ │ start                               │ │\n"
+            "│ ╰─────────────────────────────────────╯ │\n"
+            "│ RuntimeError: `sudo ifconfig lo0 alias` │\n"
+            "│ failed: a password is required          │\n"
+            "╰─────────────────────────────────────────╯\n",
+            "RuntimeError: `sudo ifconfig lo0 alias` failed: a password is required",
+            id="panel-only-wrapped-exception",
+        ),
+        pytest.param(
+            "Usage: dimos [OPTIONS] COMMAND [ARGS]...\n"
+            "╭─ Error ───────────────╮\n"
+            "│ No such option: --foo │\n"
+            "╰───────────────────────╯\n",
+            "No such option: --foo",
+            id="cli-error-panel",
+        ),
     ],
 )
 def test_last_error(output: str, expected: str) -> None:
