@@ -26,9 +26,12 @@ Wheel installation does not generate code or compile native examples. There is
 no separate `dimos-generated` distribution: the main `dimos` distribution owns
 the built-in messages.
 
-See the [built-in example tutorial](/docs/development/message-source-packages.md)
-for install commands, example commands, and output directories. To add a message
-to the built-in package, follow [Add a message inside the DimOS repository](/docs/development/adding-internal-message.md).
+See [`examples/message-package/README.md`](/examples/message-package/README.md)
+for install commands, example commands and output directories, and
+[`docs/development/message-source-packages.md`](/docs/development/message-source-packages.md)
+for the generator integration. To add a message to the built-in package, add a
+`.msg` file under `interfaces/dimos_msgs/msg` and reinstall; `dimos_msgs` is the
+package DimOS owns, and every other directory under `interfaces` is vendored.
 
 After you change a definition, reinstall the package. Keep the upstream license
 files; generated code and wire formats do not change when only comments change.

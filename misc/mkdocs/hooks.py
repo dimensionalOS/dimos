@@ -29,7 +29,6 @@ import hashlib
 from pathlib import Path
 import posixpath
 import re
-from urllib.parse import unquote
 
 from mkdocs.utils import write_file
 
@@ -56,7 +55,7 @@ SOURCE_ROOTS = (
 
 
 _FENCE = re.compile(r"^(?P<indent>[ \t]*)(?P<ticks>```+|~~~+)(?P<info>[^\n]*)$")
-_LINK = re.compile(r"\]\((?P<target>/[^)\n]+?)(?P<title>\s+\"[^\"]*\")?\)")
+_LINK = re.compile(r"\]\((?P<target>/[^)\s]+)(?P<title>\s+\"[^\"]*\")?\)")
 
 
 def _normalize_fences(markdown: str) -> str:
@@ -131,9 +130,7 @@ def _rewrite_link(match: re.Match[str], src_uri: str) -> str:
         anchor = "#" + anchor
 
     if target.startswith("/docs/"):
-        # Destinations are percent-encoded so a path with spaces stays a link
-        # on github (`%20`); mkdocs needs the decoded path to find the file.
-        page = unquote(target[len("/docs/") :])
+        page = target[len("/docs/") :]
         # A link to a directory means its index page; relpath would otherwise
         # collapse a link to the page's own directory down to ".".
         if page.endswith("/"):

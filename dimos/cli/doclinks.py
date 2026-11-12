@@ -32,7 +32,6 @@ import subprocess
 import sys
 import time
 from typing import Any
-from urllib.parse import unquote
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 
@@ -426,11 +425,6 @@ def process_markdown(
         if "#" in raw_link:
             link_path, frag = raw_link.split("#", 1)
             fragment = "#" + frag
-
-        # A destination may percent-encode characters (e.g. `%20` for a space
-        # in a path) so markdown renderers keep it a link. Match it to the
-        # filesystem by the decoded path.
-        link_path = unquote(link_path)
 
         # .md placeholder: [Text](.md) → doc_index lookup by link text
         if link_path == ".md":

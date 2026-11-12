@@ -623,14 +623,6 @@ class TestLinkResolution:
         assert len(errors) == 0
         assert new_content == content
 
-    def test_validates_percent_encoded_absolute_md_link(self, file_index, doc_index):
-        """A valid link with an encoded space stays a link and validates."""
-        content = "[Library](/docs/use%20dimos%20as%20a%20library/README.md)"
-        new_content, changes, errors = self._process(content, file_index, doc_index)
-
-        assert len(errors) == 0
-        assert new_content == content
-
     def test_reports_broken_absolute_md_link(self, file_index, doc_index):
         """Broken absolute .md link with no match should error."""
         content = "[Foo](/docs/nonexistent/xyzzy_no_match.md)"
