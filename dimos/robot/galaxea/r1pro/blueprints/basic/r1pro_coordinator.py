@@ -138,6 +138,7 @@ rerun_config = {
     # A live viewer needs only a small rolling buffer, and every viewer
     # (re)connect replays the whole buffer before going live.
     "memory_limit": "256MB",
+    "server_memory_limit": "256MB",
     "max_hz": _RERUN_MAX_HZ,
     "visual_override": _RERUN_VISUAL_OVERRIDE,
 }

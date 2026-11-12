@@ -118,6 +118,10 @@ relocalize_mid360 = autoconnect(
     LocalMapRelocalization.blueprint(world_frame=WORLD),
     vis_module(
         "rerun",
-        {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},
+        {
+            "visual_override": {"world/loaded_map": _fine_points},
+            "retained_topics": ["loaded_map"],
+            "blueprint": _view,
+        },
     ),
 ).global_config(n_workers=5, robot_model="relocalize_mid360")

@@ -136,11 +136,11 @@ uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunw
 # Rerun gRPC server running (no viewer opened)
 #
 # Connect a viewer:
-#   dimos-viewer --connect rerun+http://0.0.0.0:9877/proxy --ws-url ws://0.0.0.0:3030/ws
-#   dimos-viewer --connect rerun+http://192.168.123.164:9877/proxy --ws-url ws://192.168.123.164:3030/ws  # eth0
-#   dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://100.88.236.73:3030/ws  # tailscale0
-#   dimos-viewer --connect rerun+http://10.0.0.197:9877/proxy --ws-url ws://10.0.0.197:3030/ws  # wlan0
-#   dimos-viewer --connect rerun+http://172.17.0.1:9877/proxy --ws-url ws://172.17.0.1:3030/ws  # docker0
+#   dimos-viewer --connect rerun+http://0.0.0.0:9877/proxy --ws-url ws://0.0.0.0:3030/ws --memory-limit 1GB
+#   dimos-viewer --connect rerun+http://192.168.123.164:9877/proxy --ws-url ws://192.168.123.164:3030/ws --memory-limit 1GB  # eth0
+#   dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://100.88.236.73:3030/ws --memory-limit 1GB  # tailscale0
+#   dimos-viewer --connect rerun+http://10.0.0.197:9877/proxy --ws-url ws://10.0.0.197:3030/ws --memory-limit 1GB  # wlan0
+#   dimos-viewer --connect rerun+http://172.17.0.1:9877/proxy --ws-url ws://172.17.0.1:3030/ws --memory-limit 1GB  # docker0
 #
 #   hostname: ubuntu
 # ============================================================
@@ -156,7 +156,7 @@ uv venv --python "3.12"
 uvx dimos-viewer --version
 
 # run the connect command. NOTE: the address will be different for you
-uvx dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://100.88.236.73:3030/ws
+uvx dimos-viewer --connect rerun+http://100.88.236.73:9877/proxy --ws-url ws://100.88.236.73:3030/ws --memory-limit 1GB
 ```
 
 The viewer should open up. It'll run in faster-than-real speed until its caught up with reality, then should show what's happening in real time.

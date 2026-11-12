@@ -36,7 +36,7 @@ Needs a G1 in sport mode with dimos installed on it, its Mid-360 and RealSense, 
 # On the G1:
 uv run dimos run unitree-g1-nav-simple --rerunbridgemodule.host 0.0.0.0 --rerunwebsocketserver.host 0.0.0.0
 # On the laptop:
-uv run dimos-viewer --connect rerun+http://<g1-ip>:9877/proxy --ws-url ws://<g1-ip>:3030/ws
+uv run dimos-viewer --connect rerun+http://<g1-ip>:9877/proxy --ws-url ws://<g1-ip>:3030/ws --memory-limit 1GB
 # Stop the nav blueprint, then on the G1:
 uv run dimos run unitree-g1-teleop --network-interface eth0
 # In a second SSH session on the G1:
