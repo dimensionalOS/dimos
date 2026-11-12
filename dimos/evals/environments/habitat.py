@@ -26,6 +26,7 @@ from pydantic import model_validator
 
 from dimos.core.global_config import global_config
 from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.evals.guide import RobotGuide
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.simulation.habitat.server import HabitatProp
 
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 
 
 class HabitatEnvironmentConfig(SimConfig):
+    robot_guide: RobotGuide | None = "navigation"
     # Dataset configuration path, resolved before launching Habitat.
     scene_dataset_config: str | None = None
     # Dataset scene handle or supported asset path in the Habitat subprocess.

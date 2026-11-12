@@ -55,20 +55,6 @@ See the [manipulation Python guide](/docs/capabilities/manipulation/python_api.m
 for arm control from scripts or `dimos shell`, including setup, motion, and
 failure handling.
 
-## Navigation
-
-Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
-arrives or gives up; `app.describe("UnitreeSkillContainer.move_to")` explains its world
-and relative coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
-and `stop_navigation()` cancels the goal:
-
-```python skip
-app.skills.go_to(x=4.0, y=1.5)
-pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
-```
-
-`app.list_streams()` lists each robot's pose and camera streams.
-
 ## Discovering modules and RPCs
 
 Discovery works in both local and remote mode:

@@ -53,7 +53,7 @@ from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.live import LiveEnvironment
-from dimos.evals.guide import PYTHON_API_GUIDE
+from dimos.evals.guide import python_guide
 from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, forbidden_call, summarize
 from dimos.evals.scorers import (
@@ -426,7 +426,9 @@ def test_the_environment_adds_mcp_server_for_agents_that_need_it(
     agent: EvalSubject, environment: LiveEnvironment, added: tuple[str, ...]
 ) -> None:
     assert environment._launch_modules(agent.config.modules, agent.requires_mcp) == added
-    assert environment.python_guide == (None if environment.serves_mcp else PYTHON_API_GUIDE)
+    assert environment.python_guide == (
+        None if environment.serves_mcp else python_guide(environment.config.robot_guide)
+    )
 
 
 def test_attaching_an_agent_that_needs_mcp_requires_a_running_mcp_server(

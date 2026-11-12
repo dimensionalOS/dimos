@@ -15,9 +15,14 @@
 """The Python API guide an eval agent gets as DIMOS.md.
 
 In an eval, dimOS is already running when the agent starts, so the guide covers
-connecting to it. When the API changes, update this guide and docs/usage/python-api.md
-together.
+connecting to it. ``python_guide`` adds the section for the robot's kind. When the
+API changes, update these and the matching docs together: docs/usage/python-api.md
+and docs/capabilities/manipulation/python_api.md.
 """
+
+from typing import Literal
+
+RobotGuide = Literal["manipulation", "navigation"]
 
 PYTHON_API_GUIDE = """\
 # Driving the robot from Python
@@ -83,32 +88,6 @@ from dimos.manipulation.manipulation_spec import ManipulationSpec
 motion = app.find_module_by_spec(ManipulationSpec)
 ```
 
-## Robot arms
-
-For arm motion, use the `Arm` SDK. It picks the arm's planning group and blocks until
-each move finishes, raising `MotionError` when one fails:
-
-```python
-from dimos.manipulation.sdk import Arm
-
-arm = Arm.from_app(app)
-print(arm.info)        # joint names and capabilities
-print(arm.pose())      # the tool pose in the world frame
-help(arm)              # every method
-```
-
-## Mobile robots
-
-Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
-arrives or gives up; `app.describe("UnitreeSkillContainer.move_to")` explains its world
-and relative coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
-and `stop_navigation()` cancels the goal:
-
-```python
-app.skills.go_to(x=4.0, y=1.5)
-pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
-```
-
 ## Streams
 
 `app.list_streams()` lists every stream, with its message type and module.
@@ -130,3 +109,39 @@ unsubscribe()
 
 The client must have the stream's message types installed.
 """
+
+MANIPULATION_GUIDE = """\
+## Robot arms
+
+For arm motion, use the `Arm` SDK. It picks the arm's planning group and blocks until
+each move finishes, raising `MotionError` when one fails:
+
+```python
+from dimos.manipulation.sdk import Arm
+
+arm = Arm.from_app(app)
+print(arm.info)        # joint names and capabilities
+print(arm.pose())      # the tool pose in the world frame
+help(arm)              # every method
+```
+"""
+
+NAVIGATION_GUIDE = """\
+## Mobile robots
+
+Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
+arrives or gives up; `app.describe("UnitreeSkillContainer.move_to")` explains its world
+and relative coordinates. Habitat's `go_to` returns at once, so poll the pose until the robot stops,
+and `stop_navigation()` cancels the goal:
+
+```python
+app.skills.go_to(x=4.0, y=1.5)
+pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
+```
+"""
+
+
+def python_guide(robot: RobotGuide | None) -> str:
+    """The general guide, followed by the section for this kind of robot, if any."""
+    sections = {"manipulation": MANIPULATION_GUIDE, "navigation": NAVIGATION_GUIDE}
+    return PYTHON_API_GUIDE if robot is None else f"{PYTHON_API_GUIDE}\n{sections[robot]}"

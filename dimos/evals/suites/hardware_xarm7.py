@@ -35,6 +35,7 @@ SUITE: Suite = [
         environment=HardwareEnvironment(
             blueprint=["xarm-grasp", "observe-skill"],
             task=TASK,
+            robot_guide="manipulation",
             stop_tool="cancel",
             settle_on_joints=True,
             module_env={"MANIPULATIONMODULE__DEFAULT_SPEED_SCALE": "0.3"},

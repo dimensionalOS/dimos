@@ -35,6 +35,7 @@ SUITE: Suite = [
         environment=HardwareEnvironment(
             blueprint=["unitree-go2", "unitree-skill-container"],
             task=TASK,
+            robot_guide="navigation",
         ),
         grade=human(TASK),
         timeout_s=300.0,
