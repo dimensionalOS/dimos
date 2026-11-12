@@ -113,7 +113,7 @@ async def active_log(
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     if (request.blueprint is None) == (request.module is None):
         raise ApiError(400, "give exactly one of blueprint or module")
-    name = str(request.blueprint or request.module)
+    name = request.module if request.blueprint is None else request.blueprint
     if not name or name.startswith("-"):
         raise ApiError(400, f"bad name: {name}")
     launch_config = launches.parse(request.config)

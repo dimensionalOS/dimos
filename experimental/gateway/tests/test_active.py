@@ -103,6 +103,7 @@ def test_a_bad_config_or_name_is_refused(client: TestClient) -> None:
         == 400
     )
     assert client.post("/active/launch", json={"blueprint": "-x"}).status_code == 400
+    assert client.post("/active/launch", json={"blueprint": ""}).status_code == 400
     bad = client.post(
         "/active/launch", json={"blueprint": "demo", "config": {"global": {"robot_iq": 1}}}
     )
