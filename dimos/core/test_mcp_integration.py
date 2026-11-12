@@ -403,6 +403,19 @@ class TestMCPNoServer:
         assert result.exit_code == 1
         assert "no running" in result.output.lower() or "error" in result.output.lower()
 
+    def test_cli_names_a_running_blueprint_without_mcp_server(self) -> None:
+        """A live run without McpServer is not reported as DimOS not running."""
+        RunEntry(
+            run_id="no-mcp",
+            pid=os.getpid(),
+            blueprint="coordinator-mock",
+            started_at=datetime.now(timezone.utc).isoformat(),
+            log_dir="/tmp/no-mcp",
+        ).save()
+        result = CliRunner().invoke(main, ["mcp", "list-tools"])
+        assert result.exit_code == 1
+        assert "coordinator-mock" in result.output
+
     def test_agent_send_cli_no_server(self) -> None:
         """dimos agent-send with no server should exit with error."""
         result = CliRunner().invoke(main, ["agent-send", "hello"])
