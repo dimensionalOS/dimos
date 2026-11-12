@@ -125,10 +125,15 @@ def test_external_executable_reaches_blueprint_without_source_build(
 
 
 def test_launch_and_cleanup(tmp_path, mocker):
-    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
+    mocker.patch(
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
     proc.extra_env = {}
     mocker.patch(
-        "dimos.evals.environments.sim.McpAdapter"
+        "dimos.evals.environments.live.McpAdapter"
     ).return_value.wait_for_ready.return_value = True
     store = mocker.patch("dimos.memory.store.sqlite.SqliteStore").return_value
     env = environment(scene_id="apt_1")
@@ -162,9 +167,14 @@ def test_launch_and_cleanup(tmp_path, mocker):
 
 
 def test_readiness_failure_releases_resources(tmp_path, mocker):
-    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    proc = mocker.patch("dimos.evals.environments.live.DimosCliCall").return_value
     mocker.patch(
-        "dimos.evals.environments.sim.McpAdapter"
+        "dimos.evals.environments.live.launched_run",
+        return_value=SimpleNamespace(mcp_url="http://x/mcp"),
+    )
+    mocker.patch("dimos.evals.environments.live.wait_connectable")
+    mocker.patch(
+        "dimos.evals.environments.live.McpAdapter"
     ).return_value.wait_for_ready.return_value = True
     store = mocker.patch("dimos.memory.store.sqlite.SqliteStore").return_value
     env = environment()

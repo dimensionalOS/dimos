@@ -13,8 +13,11 @@
 // limitations under the License.
 
 mod adjacency;
+mod bit_grid;
+mod columns;
 mod dijkstra;
 pub mod edges;
+mod goal_status;
 pub mod mls_planner;
 pub mod module;
 mod nodes;

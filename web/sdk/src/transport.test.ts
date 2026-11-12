@@ -154,6 +154,7 @@ describe("ReconnectingTransport", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   function makeTransport(opts: {
@@ -300,6 +301,32 @@ describe("ReconnectingTransport", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(transport.phase.phase).toBe("reconnecting");
     transport.stop();
+  });
+
+  it("an online event runs a pending retry at once", async () => {
+    const events = new EventTarget();
+    vi.stubGlobal("addEventListener", events.addEventListener.bind(events));
+    vi.stubGlobal("removeEventListener", events.removeEventListener.bind(events));
+    let attempts = 0;
+    const transport = makeTransport({
+      fetchInfo: () => {
+        attempts += 1;
+        return Promise.reject(new Error("down"));
+      },
+    });
+    try {
+      transport.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(1);
+      expect(transport.phase).toMatchObject({ phase: "reconnecting", attempt: 1 });
+      events.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(2); // without waiting out the 500 ms
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(attempts).toBe(3); // and the backoff timer keeps working after it
+    } finally {
+      transport.stop();
+    }
   });
 
   it("stop() cancels a pending retry", async () => {

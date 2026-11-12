@@ -553,6 +553,16 @@ class RoboPlanWorld:
 
     def _add_obstacle_to_scene(self, obstacle: Obstacle, obstacle_id: str) -> None:
         scene = self._require_scene()
+        self._add_geometry(scene, obstacle, obstacle_id)
+        # Obstacles are not checked against each other: they never move, and an
+        # overlap (the object and the scene at its edge) would put every robot pose
+        # in collision. The robot is still checked against every obstacle.
+        pairs = [(obstacle_id, other) for other in self._obstacles if other != obstacle_id]
+        pairs += [(obstacle_id, link) for link in obstacle.touch_links]
+        if pairs:
+            scene.setCollisions(pairs, False)
+
+    def _add_geometry(self, scene: Any, obstacle: Obstacle, obstacle_id: str) -> None:
         matrix = pose_to_matrix(obstacle.pose)
         color = np.asarray(obstacle.color, dtype=np.float64)
         if obstacle.obstacle_type == ObstacleType.BOX:
@@ -610,6 +620,10 @@ class RoboPlanWorld:
         validate_obstacle(
             obstacle, pose_to_matrix(obstacle.pose), allow_empty_name=allow_empty_name
         )
+        joints = self.get_prepared_model().description.joints
+        links = {link for joint in joints for link in (joint.parent_link, joint.child_link)}
+        if unknown := sorted(set(obstacle.touch_links) - links):
+            raise ValueError(f"Obstacle touch_links name links the robot does not have: {unknown}")
 
     def _require_dimensions(self, obstacle: Obstacle, n_dims: int) -> None:
         if len(obstacle.dimensions) != n_dims:

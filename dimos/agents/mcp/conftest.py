@@ -19,7 +19,7 @@ from threading import Event
 from langchain_core.messages.base import BaseMessage
 import pytest
 
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.testing.agent_test_runner import AgentTestRunner
 from dimos.core.coordination.blueprints import autoconnect
@@ -31,7 +31,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def agent_setup(request, mcp_url: str, lcm_url: str):
+def agent_setup(request, mcp_port: int, lcm_url: str):
     coordinator = None
     transports: list[pLCMTransport] = []
     unsubs: list = []
@@ -65,7 +65,6 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
 
         client_kwargs: dict = {
             "system_prompt": system_prompt,
-            "mcp_server_url": mcp_url,
         }
 
         if recording or fixture_path.exists():
@@ -73,8 +72,8 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
 
         blueprint = autoconnect(
             *blueprints,
-            McpServer.blueprint(),
-            McpClient.blueprint(**client_kwargs),
+            McpServer.blueprint(port=mcp_port),
+            Agent.blueprint(**client_kwargs),
             AgentTestRunner.blueprint(messages=messages),
         )
 

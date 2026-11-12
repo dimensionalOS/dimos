@@ -5,6 +5,8 @@
 import {
   type ChannelSpec,
   ControlFrameReader,
+  type DataFrame,
+  DataFrameStreamReader,
   decodeDatagram,
   encodeControlFrame,
   encodeDataFrame,
@@ -12,6 +14,8 @@ import {
   type PanelSpec,
   PROTOCOL_VERSION,
   type RobotInfo,
+  TOPIC_GUARD_STREAM_MAGIC,
+  TOPIC_PUBLISH_STREAM_MAGIC,
 } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import type { RelayInfo, WebTransportLike } from "../transport.ts";
@@ -58,7 +62,14 @@ export const ROBOT_B: RobotInfo = { id: "b", name: "B", model: "go2" };
  * push control messages and data frames, so robot lifecycle transitions run
  * over the actual wire encoding while the "connection" stays up. */
 export class FakeRelayEnd {
+  /** Viewer control messages, liveness pings excluded. */
   readonly sent: Msg[] = [];
+  readonly publications: DataFrame[] = [];
+  readonly guards: DataFrame[] = [];
+  /** Refuse this many publish/guard stream opens, like a relay that resets them. */
+  failBinaryStreams = 0;
+  pings = 0;
+  answerPings = true;
   /** Decoded datagrams the viewer sent (the teleop twist path). */
   readonly sentDatagrams: Msg[] = [];
   /** Awaited per decoded viewer message: lets a test react at the exact
@@ -68,6 +79,7 @@ export class FakeRelayEnd {
   readonly wt: WebTransportLike;
   #control!: ReadableStreamDefaultController<Uint8Array>;
   #uni!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
+  #topics = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
 
   constructor() {
     const inbound = new ControlFrameReader();
@@ -79,6 +91,14 @@ export class FakeRelayEnd {
     const writable = new WritableStream<Uint8Array>({
       write: async (chunk) => {
         for (const msg of inbound.push(chunk)) {
+          if (msg.t === "ping") {
+            // The liveness ping: answered like the relay does (and kept out
+            // of `sent`, which tests compare exactly) unless a test holds
+            // the pongs back.
+            this.pings += 1;
+            if (this.answerPings) this.push({ t: "pong", n: msg.n, ts: msg.ts });
+            continue;
+          }
           this.sent.push(msg);
           await this.onMsg?.(msg);
         }
@@ -88,11 +108,37 @@ export class FakeRelayEnd {
     const closed = new Promise<unknown>((resolve) => {
       closeWt = () => resolve({});
     });
+    let openedControl = false;
     this.wt = {
       ready: Promise.resolve(),
       closed,
       close: () => closeWt(),
-      createBidirectionalStream: () => Promise.resolve({ readable, writable }),
+      createBidirectionalStream: () => {
+        if (!openedControl) {
+          openedControl = true;
+          return Promise.resolve({ readable, writable });
+        }
+        if (this.failBinaryStreams > 0) {
+          this.failBinaryStreams -= 1;
+          return Promise.reject(new Error("binary stream refused"));
+        }
+        const frames = new DataFrameStreamReader();
+        let destination: DataFrame[] | null = null;
+        return Promise.resolve({
+          readable: new ReadableStream<Uint8Array>(),
+          writable: new WritableStream<Uint8Array>({
+            write: (bytes) => {
+              if (destination === null) {
+                if (bytes.byteLength !== 4) throw new Error("missing binary stream prefix");
+                const magic = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
+                if (magic === TOPIC_PUBLISH_STREAM_MAGIC) destination = this.publications;
+                else if (magic === TOPIC_GUARD_STREAM_MAGIC) destination = this.guards;
+                else throw new Error("invalid binary stream prefix");
+              } else destination.push(...frames.push(bytes));
+            },
+          }),
+        });
+      },
       incomingUnidirectionalStreams: new ReadableStream<ReadableStream<Uint8Array>>({
         start: (c) => {
           this.#uni = c;
@@ -143,14 +189,25 @@ export class FakeRelayEnd {
   /** One data frame on its own uni stream, arbitrary payload bytes. */
   pushRaw(seq: number, payload: Uint8Array, ch: string, meta?: Record<string, unknown>): void {
     const frame = encodeDataFrame({ ch, seq, ts: seq, delivery: "reliable", meta }, payload);
+    const existing = this.#topics.get(ch);
+    if (existing !== undefined) {
+      existing.enqueue(frame);
+      return;
+    }
     this.#uni.enqueue(
       new ReadableStream<Uint8Array>({
         start: (c) => {
           c.enqueue(frame);
-          c.close();
+          if (ch.startsWith("@t:")) this.#topics.set(ch, c);
+          else c.close();
         },
       }),
     );
+  }
+
+  endTopic(ch: string): void {
+    this.#topics.get(ch)?.close();
+    this.#topics.delete(ch);
   }
 
   /** End the control stream (the session's read loop sees done and treats

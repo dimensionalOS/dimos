@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
-from dimos.core.global_config import global_config
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task, trajectory_task
 from dimos.robot.manipulators.piper.config import (
     make_piper_hardware,
@@ -33,13 +32,12 @@ _xarm6_dual = make_xarm_hardware(
     "xarm_arm",
     6,
     adapter_type="xarm",
-    address=global_config.xarm6_ip,
     canonical_joint_names=[f"xarm_arm/joint{i}" for i in range(1, 7)],
 )
 _piper_dual = make_piper_hardware(
     "piper_arm",
     adapter_type="piper",
-    address=global_config.can_port or "can0",
+    address="can0",
     gripper=True,
     canonical_joint_names=[f"piper_arm/joint{i}" for i in range(1, 7)],
 )
@@ -53,14 +51,13 @@ _xarm6_teleop_hw = make_xarm_hardware(
     "xarm_arm",
     6,
     adapter_type="xarm",
-    address=global_config.xarm6_ip,
     gripper=True,
     canonical_joint_names=[f"xarm_arm/joint{i}" for i in range(1, 7)],
 )
 _piper_teleop_hw = make_piper_hardware(
     "piper_arm",
     adapter_type="piper",
-    address=global_config.can_port or "can0",
+    address="can0",
     gripper=True,
 )
 _xarm6_teleop_model = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")

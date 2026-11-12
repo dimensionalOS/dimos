@@ -71,7 +71,7 @@ function _connect(wsUrl: string): Promise<WebSocket> {
  */
 export async function runEval(workflow: { scene?: string; task?: string }): Promise<DenoEvalResult> {
   const workflowUrl = _resolveWorkflowUrl();
-  const port = parseInt(Deno.env.get("DIMSIM_PORT") || "8090");
+  const port = parseInt(Deno.env.get("GO2CONNECTION__DIMSIM__PORT") || "8090");
   const wsUrl = `ws://localhost:${port}/?ch=control`;
 
   console.log(`[eval] dispatching ${workflowUrl} → ${wsUrl}`);

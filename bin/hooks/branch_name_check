@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Pre-commit hook: branches are named <who>/<type>/<topic>, e.g. paul/feat/add-3d-map.
 
-Runs locally on every commit and in CI through the pre-commit job. CI checks
-out a detached merge commit on pull requests, so the branch name is taken
-from GITHUB_HEAD_REF there and from git everywhere else.
+Runs locally on every commit and in CI through the pre-commit job, which skips
+this hook for pull requests from forks. CI checks out a detached merge commit
+on pull requests, so the branch name is taken from GITHUB_HEAD_REF there and
+from git everywhere else.
 """
 
 import os

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Barrier, Lock
 import time
@@ -29,6 +29,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
+from dimos.manipulation.manipulation_spec import OperationStatus
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
@@ -256,7 +257,7 @@ def executable_gui(monkeypatch, mocker):
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = ("manipulator",)
     gui.state.plan_state = PanelPlanState(
         status=PlanStatus.FRESH,
@@ -348,6 +349,8 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     gui, submissions, _execute = executable_gui
     module = module_factory()
     mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    module._pending_plan = gui.state.plan_state.plan
+    module._state = OperationStatus.HAS_PLAN
     reported = {"state": TrajectoryState.EXECUTING}
 
     def invoke(task, method, args=None):
@@ -369,7 +372,7 @@ def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_
     reported["state"] = TrajectoryState.COMPLETED
     gui._refresh_model_state()
 
-    assert gui.state.manipulation_state == "COMPLETED"
+    assert gui.state.manipulation_state == "IDLE"
     assert gui.state.can_plan() is True
     assert gui.state.can_cancel() is False
     assert gui.state.can_execute() is False
@@ -599,7 +602,7 @@ def test_gui_preview_enters_previewing_before_worker_runs(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = ("manipulator",)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
@@ -636,7 +639,7 @@ def test_gui_selection_change_clears_invalidated_preview(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = (groups[0].id,)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
@@ -672,7 +675,7 @@ def test_gui_selection_change_ignores_invalidated_preview_error(
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
-    gui.state.manipulation_state = "COMPLETED"
+    gui.state.manipulation_state = "HAS_PLAN"
     gui.state.selected_group_ids = (groups[0].id,)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
@@ -784,6 +787,8 @@ def test_execute_rejection_reports_coordinator_reason(executable_gui, module_fac
     gui, submissions, _execute = executable_gui
     module = module_factory()
     mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    module._pending_plan = gui.state.plan_state.plan
+    module._state = OperationStatus.HAS_PLAN
     reason = "Trajectory start for joint arm/j0 differs from current position by 0.1"
     mocker.patch.object(
         module._control_coordinator,
@@ -807,3 +812,64 @@ def test_execute_rejection_reports_coordinator_reason(executable_gui, module_fac
         status="REJECTED",
         reason=reason,
     )
+
+
+@pytest.mark.parametrize(
+    ("lower", "expected_positions", "expected_error"),
+    [
+        (-1.0, [0.0, 0.0], ""),
+        (
+            0.1,
+            [0.5, 0.5],
+            "Cannot apply Zero preset: Joint 'left/j2' position 0.0 is outside [0.1, 1.0]",
+        ),
+    ],
+    ids=["valid-zero", "out-of-range-zero"],
+)
+def test_zero_preset_validates_selected_targets_without_motion(
+    executable_gui, mocker, lower, expected_positions, expected_error
+):
+    gui, operations, execute = executable_gui
+    left = planning_group("left_arm", ("left/j1", "left/j2"))
+    right = planning_group("right_arm", ("right/j1",))
+    names = ["left/j1", "left/j2", "right/j1", "gripper"]
+    gui.scene_info = replace(
+        gui.scene_info,
+        model=replace(
+            gui.scene_info.model,
+            config=gui.get_model_config().model_copy(update={"joint_names": names}),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name,
+                        "revolute",
+                        CoordinateTopology.INTERVAL,
+                        lower if name == "left/j2" else -1.0,
+                        1.0,
+                        1.0,
+                        1.0,
+                    )
+                    for name in names
+                )
+            ),
+        ),
+        planning_groups=(left, right),
+    )
+    gui.state.selected_group_ids = (left.id,)
+    gui._joint_sliders = {(left.id, name): FakeNumericHandle(0.5) for name in left.joint_names}
+    gui.state.group_joint_targets = gui._target_set_from_sliders()
+    gui._refresh_target_joints_from_groups()
+    dropdown = mocker.Mock(spec=["options"], options=())
+    gui._handles["preset"] = dropdown
+    mocker.patch.object(gui._worker, "submit")
+
+    gui._sync_preset_dropdown()
+    gui._apply_preset("Zero")
+
+    assert "Zero" in dropdown.options
+    assert gui.state.target_joints.name == ["left/j1", "left/j2"]
+    assert gui.state.target_joints.position == expected_positions
+    assert [handle.value for handle in gui._joint_sliders.values()] == expected_positions
+    assert gui.state.error == expected_error
+    assert operations == []
+    execute.assert_not_called()

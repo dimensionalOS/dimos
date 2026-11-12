@@ -86,7 +86,7 @@ Then open `http://localhost:7780/` for the cockpit. Things to know:
 - Restart the relay whenever you like. The bridge and the page reconnect on their own.
 - A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
 - `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
-- A second robot on the same relay needs its own `--robot-id`. A synthetic one for testing: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- A second robot on the same relay needs its own `--robot-id`.
 - With several robots on the relay the cockpit lists them. Pick one to watch it, and `switch robot` in the header reopens the list.
 - Another machine needs TLS and the auth file (below), and `--relay-ca` on the robot for a private CA.
 
@@ -96,7 +96,7 @@ Then open `http://localhost:7780/` for the cockpit. Things to know:
 |---|---|---|
 | `/` | the cockpit build, or `--serve-dir` | same origin |
 | `/sdk.js` | the SDK bundle, never cached | wildcard CORS |
-| `/api/info` | `{"wtUrl": ..., "certHash": ..., "v": 7, "rtc": true}`: the WebTransport address, the certificate hash (absent with a real certificate), the protocol version, and `rtc: true` on a relay with `--rtc-file` (absent otherwise) | wildcard CORS, never authenticated |
+| `/api/info` | `{"wtUrl": ..., "certHash": ..., "v": 8, "rtc": true}`: the WebTransport address, the certificate hash (absent with a real certificate), the protocol version, and `rtc: true` on a relay with `--rtc-file` (absent otherwise) | wildcard CORS, never authenticated |
 | `/api/stats` | live counters per robot, channel and viewer (see [Traffic](#traffic)) | wildcard CORS without an auth file. With one, `Authorization: Bearer <viewer token>` and no CORS header |
 
 Served JavaScript modules (`.js`, `.mjs`) get wildcard CORS as well, so a page on another origin can import them. The viewer token, not CORS, is the access boundary.
@@ -118,9 +118,33 @@ A robot that must trust a private CA (mkcert on a LAN) passes it with `--relay-c
 }
 ```
 
-A robot sends its key when it connects (`RELAY_KEY` in its environment or `.env`, bound to its `--robot-id`). A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, so hand tokens out like passwords.
+A robot sends its key when it connects (`--relay-key`, bound to its `--robot-id`). The [Bridge](/docs/web/bridge.md#robot-side-options) page has the environment form. A viewer sends its token: the cockpit asks for it and keeps it in local storage until `log out`, and a page of your own passes `connect({ url, token })`. A viewer token grants everything (view, teleop, publish) on every robot behind the relay, and every raw topic once the relay runs with `--open-topics`, so hand tokens out like passwords.
 
 A wrong or missing secret fails with `auth_failed`, and that is terminal: neither client retries. The relay compares secrets in constant time, never logs one, and reports a malformed file by entry name. Edits to the file need a restart. With auth on, `/api/stats` wants the viewer token as a bearer and the log names viewers (`viewer 1 authenticated as paul`).
+
+## Raw topics
+
+A topic provider connects to the relay like a robot but offers raw Zenoh topics instead of a manifest: a page subscribes to key expressions, lists the catalog, publishes bytes, and drives guarded publishers (see the [web SDK](/docs/web/web_sdk.md#raw-topics)). Run it next to the robot with `python -m dimos.web.relay_bridge.topic_service --config provider.json`. It opens its own Zenoh session, so no blueprint is involved. The config names the `source` a page asks for and the `relay_url`:
+
+```json
+{ "source": "workspace", "relay_url": "http://localhost:7780" }
+```
+
+Optional `read`, `write`, `media` and `guarded_publishers` switches bound what the provider accepts; writes and guarded publishers default to false. `zenoh` selects the session's endpoints, scouting and gossip settings. See [TopicServiceConfig](/dimos/web/relay_bridge/topic_service.py) and the [shared Zenoh configuration](/dimos/protocol/service/zenoh_wire.py). `dimos run ... --topic-metadata` publishes the robot's stream descriptors, which the provider's catalog lists.
+
+Access is relay-wide. A relay without an auth file (the local one `dimos run --local-relay` spawns, or `deno task dev`) has topics open: any provider registers without a key and every page reads and writes every connected source, within what the provider accepts. A relay with `--auth-file` keeps topics closed: it turns providers away with `topics_disabled` and denies every topic operation. Start it with `--open-topics` to open them. The provider then needs the key bound to its source in the file's `topicSources` map, passed as `token` in its config, and every viewer token reads and writes every source:
+
+```json
+{
+  "robots": { "go2-lab": "<key>" },
+  "viewers": { "paul": "<token>" },
+  "topicSources": { "workspace": "<key>" }
+}
+```
+
+Source ids start with a letter or digit and run to 64 letters, digits, `_`, `.` or `-`. A relay serves up to 64 sources at once, as long as their announcement with the providers' capabilities fits one 64 KiB control frame. A topic source is not a robot: it never appears in the robot list or in a Cockpit manifest.
+
+A media route serves up to four encode variants, the settings pages change with `update()`, each at the highest rate among its viewers; the relay keeps every viewer's own rate gate, moves a viewer only once its new variant encodes, and closes a variant nobody uses after two seconds. The fixed profiles stay the ceilings.
 
 ## Binding beyond loopback
 

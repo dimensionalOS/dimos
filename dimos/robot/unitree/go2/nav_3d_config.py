@@ -14,10 +14,7 @@
 
 """The ray tracer and MLS planner settings every Go2 nav_3d blueprint shares."""
 
-from dimos.core.coordination.blueprints import Blueprint
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMapConfig
-from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
-from dimos.mapping.relocalization.lidar.relocalize import GO2_NAV
 from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPlannerNativeConfig
 from dimos.robot.unitree.go2.constants import BASE_LINK_HEIGHT, ROBOT_HEIGHT
 
@@ -28,6 +25,26 @@ ray_tracing_config = RayTracingVoxelMapConfig(
     voxel_size=voxel_size, global_emit_every=50, viz_emit_every=5
 )
 
+# What a nav_3d viewer subscribes to. map_regions carries the voxel map by changed cell, so the
+# whole-map clouds stay out.
+NAV_VIEWER_TOPICS = (
+    "tf",
+    "odometry",
+    "path",
+    "planner_path",
+    "nodes",
+    "node_edges",
+    "surface_map",
+    "map_regions",
+    "goal",
+    "way_point",
+    "goal_reached",
+    # h264 or jpeg, whichever GO2DDS's video_encoding serves
+    "video",
+    "image",
+    "camera_info",
+)
+
 # Every user remaps global_map off. viz_publish_hz is set per blueprint.
 mls_planner_config = MLSPlannerNativeConfig(
     voxel_size=voxel_size,
@@ -35,16 +52,3 @@ mls_planner_config = MLSPlannerNativeConfig(
     start_z_offset_m=BASE_LINK_HEIGHT,
     wall_clearance_m=wall_clearance_m,
 )
-
-
-def relocalization(republish_loaded_map: float) -> Blueprint:
-    """The premap relocalizer every Go2 nav_3d stack shares.
-
-    The republish covers a ray tracer that missed the one-shot loaded_map publish.
-    Zero under zenoh, where loaded_map is a never-drop channel.
-    """
-    return LocalMapRelocalization.blueprint(
-        world_frame="odom",
-        republish_loaded_map=republish_loaded_map,
-        relocalize=GO2_NAV,
-    )

@@ -15,7 +15,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 
 * Specify only what differs from defaults. Don't restate defaults like `tick_rate=100.0`, `publish_joint_state=True`, or default topics (`/cmd_vel`, `/odom`).
 * `.transports({...})` applies to all matching modules, so define a remap once, not twice across sub-blueprints.
-* No lambdas -- they can't be pickled to worker processes. Use named functions.
+* No lambdas -- they can't be sent to worker processes (functions travel by import path). Use module-level named functions.
 * Do no work at import time: no subprocesses, viewers, model parsing, or network. In particular don't call `get_data(...)` (it blocks import until the download finishes) -- use `LfsPath` (resolved at access time) or build the config in `start`/`build`. Any process you start must be managed (shut down when not needed).
 * Blueprint files define blueprints, not modules/classes.
 * Helper blueprints not meant to run alone must start with `_` (the in-repo `all_blueprints.py` generator skips them); demo/non-shared built-in ones get a `demo_` prefix (hidden from `dimos list`). Externally packaged blueprints are not added to `all_blueprints.py`; expose them with `dimos.blueprints` Python package entry points.
@@ -34,7 +34,7 @@ Rules dimos code is expected to follow. They address recurring issues found in c
 ## Configuration
 
 * Don't use environment variables for what the config/CLI system already handles. Config values override from the CLI (`--module.param-name=value`).
-* Don't bake personal/hardware config into source or blueprints: IPs (`192.168.x.x`), interface names (`enp86s0`), default IPs in constructors. Use a `GlobalConfig` field with a sensible default (often `None`) and set it via `.env` or CLI.
+* Don't bake personal/hardware config into source or blueprints: IPs (`192.168.x.x`), interface names (`enp86s0`), default IPs in constructors. Use the owning module config with a sensible default (often `None`) and set it via scoped `.env` or CLI options. Coordinator device addresses belong in its `hardware` list. Keep only shared runtime/composition settings in `GlobalConfig`.
 * Type required fields as required, not `... | None = None`. Then you drop the runtime None-check and the `or default` / `or ""` / `or "can0"` patterns.
 * Listen on `global_config.listen_host` by default, not `0.0.0.0`.
 

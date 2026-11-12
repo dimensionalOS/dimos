@@ -17,19 +17,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.evals.environments.sim import Sim, SimConfig
+from dimos.simulation.dimsim.config import DIMSIM_PORT
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-    from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class DimSimEnvironmentConfig(SimConfig):
     scene: str = "apartment"
+    # Pinned on the launched dimos too, so scene setup reaches that simulator.
+    port: int = DIMSIM_PORT
     setup: Callable[[DimSimClient], None] | None = None
 
 
@@ -38,16 +39,12 @@ class DimSimEnvironment(Sim):
 
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "dimsim"
-        proc.global_args = ["--dimsim-scene", self.config.scene]
+        proc.dimsim_port = self.config.port
+        proc.extra_env["GO2CONNECTION__DIMSIM__SCENE"] = self.config.scene
 
     def setup_scene(self) -> None:
         if self.config.setup is not None:
-            client = DimSimClient()
+            client = DimSimClient(self.config.port)
             self._resources.callback(client.stop)
             client.start()
             self.config.setup(client)
-
-    def latest_pose(self, recording: Store) -> PoseStamped:
-        if "odom" not in recording.streams:
-            raise LookupError("No DimSim odometry recorded")
-        return cast("PoseStamped", recording.streams.odom.last().data)

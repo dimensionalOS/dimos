@@ -18,6 +18,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 from urllib.parse import urlsplit
 
@@ -25,6 +26,9 @@ import pytest
 
 from dimos.evals.agents.conftest import NativeHarness, ScriptedProvider
 from dimos.evals.agents.lib.pi_config import RunPaths
+
+# The Pi and dimcode CLIs are installed on the self-hosted runners only (bin/install-test-clis).
+pytestmark = pytest.mark.self_hosted
 
 
 def test_allowed_tools_execute_and_excluded_tools_do_not(
@@ -62,6 +66,53 @@ def test_allowed_tools_execute_and_excluded_tools_do_not(
     assert result.final_metrics.total_prompt_tokens == 40
     assert result.final_metrics.total_completion_tokens == 20
     assert result.final_metrics.total_cost_usd is not None
+
+
+@pytest.mark.parametrize("harness", ["pi"], indirect=True)
+@pytest.mark.parametrize("provider", ["openai"], indirect=True)
+def test_missing_ripgrep_reports_an_offline_error(
+    harness: NativeHarness,
+    provider: ScriptedProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Keep only Pi's runtime on PATH, with no system rg or cached ~/.pi/agent/bin/rg.
+    node = shutil.which("node")
+    assert node is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "node").symlink_to(node)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    (harness.workspace / "facts.txt").write_text("selected-observation")
+    provider.call("grep", pattern="selected-observation", path=harness.path("facts.txt"))
+
+    result = harness.run(harness.agent(provider, ("grep",)))
+
+    assert result.extra.ended_by == "answer", result.extra
+    assert len(provider.requests) == 2
+    observation = result.steps[-2].observation
+    assert observation is not None
+    assert (
+        "ripgrep (rg) is not available and could not be downloaded"
+        in observation.results[0].content
+    )
+
+
+@pytest.mark.parametrize("harness", ["pi"], indirect=True)
+@pytest.mark.parametrize("provider", ["google"], indirect=True)
+def test_gemini_runs_with_its_output_cap(
+    harness: NativeHarness, provider: ScriptedProvider
+) -> None:
+    provider.call("bash", command=f"printf selected-observation > {harness.path('facts.txt')}")
+    result = harness.run(harness.agent(provider, ("bash",)))
+    assert result.extra.ended_by == "answer", result.extra
+    assert result.final_answer == "OK"
+    assert (harness.workspace / "facts.txt").read_text() == "selected-observation"
+    assert len(provider.requests) == 2
+    for request in provider.requests:
+        config = request["generationConfig"]
+        assert isinstance(config, dict)
+        assert config["maxOutputTokens"] == 1024
 
 
 def test_no_tools_blocks_even_a_provider_requested_call(

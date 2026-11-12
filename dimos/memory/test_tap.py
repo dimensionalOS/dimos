@@ -20,8 +20,10 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.stream import Transport
+from dimos.experimental.memory import rust_cli_recorder
 from dimos.memory import tap
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tap import TransportRecorder
@@ -143,15 +145,17 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
 
 
 def test_recording_fails_loudly_when_no_stream_matches(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
     monkeypatch.setattr(tap, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(global_config, "record", "sqlite")
     monkeypatch.setattr(global_config, "record_topics", "color_image2")
+    coordinator = mocker.Mock(
+        spec=ModuleCoordinator,
+        transports={("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()},
+    )
     with pytest.raises(ValueError, match="matched none of: lidar, odom"):
-        with tap.recording(
-            {("odom", PoseStamped): _Transport(), ("lidar", PoseStamped): _Transport()}
-        ):
+        with tap.recording(coordinator):
             pass
     assert not any(tmp_path.rglob("memory.db"))
 
@@ -159,10 +163,9 @@ def test_recording_fails_loudly_when_no_stream_matches(
 def test_recording_delegates_to_rust_session(
     monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
 ) -> None:
-    from dimos.experimental.memory import rust_cli_recorder
-
     transport = _Transport()
     transports: dict[tuple[str, type], Transport[Any]] = {("odom", PoseStamped): transport}
+    coordinator = mocker.Mock(spec=ModuleCoordinator, transports=transports)
     session = mocker.Mock()
     make_plan = mocker.patch.object(rust_cli_recorder, "make_plan", return_value="plan")
     create_session = mocker.patch.object(
@@ -172,7 +175,7 @@ def test_recording_delegates_to_rust_session(
     monkeypatch.setattr(global_config, "record_engine", "rust")
     monkeypatch.setattr(global_config, "record_topics", "*")
 
-    with tap.recording(transports):
+    with tap.recording(coordinator):
         session.start.assert_called_once_with()
 
     make_plan.assert_called_once_with(transports)

@@ -18,9 +18,10 @@ and /api/info discovery of its WebTransport endpoint."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 import contextlib
 from dataclasses import dataclass, replace
+from ipaddress import ip_address
 import itertools
 import json
 import socket
@@ -53,6 +54,12 @@ from dimos.web.relay_bridge.protocol import (
     Role,
     encode_datagram,
 )
+from dimos.web.relay_bridge.topic_protocol import TopicCapabilities
+from dimos.web.relay_bridge.topic_transport import (
+    LatestTopicWriter,
+    OrderedTopicWriter,
+    TopicByteBudget,
+)
 
 logger = setup_logger()
 
@@ -65,6 +72,14 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # Refuse to queue one; 1100 keeps margin under the real cliff. Robot hellos
 # left datagrams in v5; this guards the viewer hello and send_control.
 _DATAGRAM_MAX_BYTES = 1100
+
+# Application keepalive (start_keepalive): a datagram ping every interval,
+# and the session fails after this many unanswered in a row. Detects a dead
+# or wedged relay in ~9 s where the QUIC idle timeout (IDLE_TIMEOUT_S) is
+# the backstop, and keeps a subscriber-less session's traffic flowing in
+# both directions.
+KEEPALIVE_INTERVAL_S = 3.0
+KEEPALIVE_MISSES = 3
 
 
 class RelayRejectedError(ProtocolError):
@@ -148,9 +163,20 @@ async def _quic_connect(
     on macOS, and that socket then receives the IPv4 server's replies."""
     loop = asyncio.get_running_loop()
     family, _, _, _, addr = (await loop.getaddrinfo(host, port, type=socket.SOCK_DGRAM))[0]
+    loopback = ip_address(addr[0]).is_loopback
+    # Resolve first: a hostname alone must not opt a network path into local
+    # pacing. Packets stay at aioquic's 1200 bytes everywhere: the relay's
+    # QUIC stack reads at most 1472 bytes per datagram on macOS, so larger
+    # loopback packets arrive truncated and the handshake never completes.
+    # Loopback only earns the larger burst; other paths keep the sixteen-packet cap.
     connection = QuicConnection(configuration=replace(configuration, server_name=host))
+    # Connected socket: an ICMP port-unreachable (the relay process died)
+    # then surfaces as error_received instead of being invisible until the
+    # idle timeout.
     transport, protocol = await loop.create_datagram_endpoint(
-        lambda: SessionProtocol(connection), family=family
+        lambda: SessionProtocol(connection, packet_burst=32 if loopback else 16),
+        family=family,
+        remote_addr=(addr[0], addr[1]),
     )
     try:
         protocol.connect(addr)
@@ -178,6 +204,7 @@ class RelayClient:
         self._seq: dict[str, itertools.count[int]] = {}
         self._writers: list[LatestChannelWriter] = []
         self._close_task: asyncio.Task[None] | None = None
+        self._keepalive_task: asyncio.Task[None] | None = None
 
     @classmethod
     async def connect(
@@ -268,7 +295,33 @@ class RelayClient:
         for writer in self._writers:
             writer.stop()
         self._writers.clear()
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
         await self._ctx.__aexit__(None, None, None)
+
+    def start_keepalive(self) -> None:
+        """Ping the relay every KEEPALIVE_INTERVAL_S and fail the session
+        after KEEPALIVE_MISSES unanswered pings in a row. Call once hello
+        succeeded (the relay closes a viewer that sends anything else first).
+        Idempotent; stops with close()."""
+        if self._keepalive_task is None:
+            self._keepalive_task = asyncio.create_task(self._keepalive())
+
+    async def _keepalive(self) -> None:
+        loop = asyncio.get_running_loop()
+        misses = 0
+        while not self._session.closed.is_set():
+            started = loop.time()
+            try:
+                await self.ping(timeout=KEEPALIVE_INTERVAL_S)
+                misses = 0
+            except asyncio.TimeoutError:
+                misses += 1
+                if misses >= KEEPALIVE_MISSES:
+                    self._session.fail_session(f"{misses} keepalive pings unanswered")
+                    self._session.transmit()
+                    return
+            await asyncio.sleep(max(0.0, started + KEEPALIVE_INTERVAL_S - loop.time()))
 
     async def hello(
         self,
@@ -277,6 +330,9 @@ class RelayClient:
         robot: RobotInfo | None = None,
         manifest: RobotManifest | None = None,
         token: str | None = None,
+        topic_source: str | None = None,
+        topic_capabilities: TopicCapabilities | None = None,
+        topics: bool = False,
     ) -> None:
         """Register with the relay; returns once its welcome datagram arrives.
 
@@ -295,7 +351,18 @@ class RelayClient:
         if token is not None and len(token) > MAX_TOKEN_LEN:
             # Before the model: pydantic's error would quote the value.
             raise ProtocolError(f"hello token is {len(token)} characters (limit {MAX_TOKEN_LEN})")
-        msg = Hello(v=PROTOCOL_VERSION, role=self.role, robot=robot, manifest=manifest, token=token)
+        msg = Hello(
+            v=PROTOCOL_VERSION,
+            role=self.role,
+            robot=robot,
+            manifest=manifest,
+            token=token,
+            topicSource=topic_source,
+            topicCapabilities=topic_capabilities,
+            topicsVersion=1 if topics or topic_source is not None else None,
+        )
+        if topic_source is not None:
+            self._session.enable_topic_provider()
         control_payload: bytes | None = None
         if self.role == "robot":
             control_payload = encode_datagram(msg)
@@ -453,6 +520,18 @@ class RelayClient:
         finally:
             closed.cancel()
 
+    def topic_writer(
+        self,
+        route: str,
+        delivery: Delivery,
+        budget: TopicByteBudget,
+        on_error: Callable[[str], None],
+    ) -> OrderedTopicWriter | LatestTopicWriter:
+        """Build an explicitly started writer for an authorized dynamic route."""
+        if delivery == "reliable":
+            return OrderedTopicWriter(self._session, route, budget, on_error)
+        return LatestTopicWriter(self._session, route, budget, on_error)
+
     async def control_messages(self) -> AsyncIterator[Msg | DataFrame]:
         """Control messages pushed by the relay (subs snapshots, robots, ...).
 
@@ -475,6 +554,27 @@ class RelayClient:
                 finally:
                     get.cancel()
                 yield msg
+        finally:
+            closed.cancel()
+
+    async def topic_publications(self, *, guarded: bool = False) -> AsyncIterator[DataFrame]:
+        """Bounded, never-conflated binary puts on the separate bulk stream.
+
+        Only negotiated topic providers use this consumer. Control and
+        watchdog processing never wait behind its Zenoh puts.
+        """
+        closed = asyncio.ensure_future(self._session.wait_closed())
+        queue = self._session.topic_guard_frames if guarded else self._session.topic_publications
+        try:
+            while not self._session.closed.is_set():
+                get = asyncio.ensure_future(queue.get())
+                try:
+                    await asyncio.wait({get, closed}, return_when=asyncio.FIRST_COMPLETED)
+                    if not get.done() or self._session.closed.is_set():
+                        return
+                    yield get.result()
+                finally:
+                    get.cancel()
         finally:
             closed.cancel()
 
@@ -509,6 +609,7 @@ class LatestChannelWriter:
         self._mailbox: asyncio.Queue[tuple[bytes, dict[str, Any] | None, float | None]] = (
             asyncio.Queue(maxsize=1)
         )
+        self._offered = asyncio.Event()
         self._task = asyncio.create_task(self._pump())
         self._task.add_done_callback(self._on_pump_done)
 
@@ -539,6 +640,7 @@ class LatestChannelWriter:
             self._mailbox.get_nowait()
             self.dropped += 1
         self._mailbox.put_nowait((payload, meta, ts))
+        self._offered.set()
 
     def stop(self) -> None:
         self._task.cancel()
@@ -562,18 +664,39 @@ class LatestChannelWriter:
                     self.ch, payload, delivery="latest", meta=meta, ts=ts
                 )
                 self.sent += 1
-                started = time.monotonic()
-                while session.stream_in_flight(stream_id):
-                    if session.closed.is_set():
-                        break
-                    await asyncio.sleep(0.002)
-                    if time.monotonic() - started > self.stale_after and not self._mailbox.empty():
+                if not session.stream_in_flight(stream_id):
+                    continue
+                deadline = time.monotonic() + self.stale_after
+                self._offered.clear()
+                delivered = asyncio.create_task(session.wait_delivered(stream_id, timeout=None))
+                offered = asyncio.create_task(self._offered.wait())
+                try:
+                    if self._mailbox.empty():
+                        # With no replacement, keep this frame even beyond
+                        # its stale deadline. An offer wakes this wait.
+                        await asyncio.wait(
+                            {delivered, offered, closed}, return_when=asyncio.FIRST_COMPLETED
+                        )
+                    if not delivered.done() and not session.closed.is_set():
+                        # A newer frame is waiting. ACKs or the original
+                        # deadline release it; more offers only replace it.
+                        await asyncio.wait(
+                            {delivered, closed},
+                            timeout=max(0.0, deadline - time.monotonic()),
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                    if delivered.done():
+                        delivered.result()  # surface an unexpected delivery failure
+                    elif not session.closed.is_set() and session.stream_in_flight(stream_id):
                         # Stalled with a newer frame waiting: abandon this one.
                         # reset_if_in_flight rechecks membership in this same
                         # event-loop turn (required, see docs/web/protocol.md).
                         if session.reset_if_in_flight(stream_id):
                             self.resets += 1
-                        break
+                finally:
+                    delivered.cancel()
+                    offered.cancel()
+                    await asyncio.gather(delivered, offered, return_exceptions=True)
         finally:
             closed.cancel()
         logger.info(f"latest-wins writer for {self.ch}: session closed, stopping")

@@ -31,7 +31,7 @@ import pytest
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.web.codecs import resolve_encoder
 from dimos.web.relay_bridge import builtin_codecs
-from dimos.web.relay_bridge.builtin_codecs import _VOXEL_RECORD, encode_voxels
+from dimos.web.relay_bridge.builtin_codecs import _VOXEL_RECORD, _zlib_rle, encode_voxels
 from dimos.web.relay_bridge.gen_voxel_fixtures import cloud_msg, voxel_indices
 from dimos.web.relay_bridge.locate import find_web_dir
 
@@ -54,7 +54,7 @@ def unpack(payload: bytes, meta: Mapping[str, Any]) -> list[list[int]]:
 
 @pytest.mark.parametrize("vec", VECTORS, ids=lambda v: v["name"])
 def test_encoder_reproduces_golden_vector(vec: dict[str, Any]) -> None:
-    """Compressed-byte equality pins CPython's bundled zlib at level 6. If a
+    """Compressed-byte equality pins CPython's bundled zlib (RLE, level 1). If a
     future CPython legitimately shifts those bytes, regenerate the fixture
     (gen_voxel_fixtures) - the unpacked-voxel assertions on both sides are the
     actual wire contract."""
@@ -73,7 +73,7 @@ def test_encoder_handles_wire_decoded_cloud() -> None:
     assert unpack(encoded.payload, encoded.meta) == [[0, 0, 0], [20, -10, 2]]
 
 
-EMPTY_FRAME = (zlib.compress(b"", 6), {"res": 0.05, "n": 0, "chunks": 0})
+EMPTY_FRAME = (_zlib_rle(b""), {"res": 0.05, "n": 0, "chunks": 0})
 
 
 def test_empty_cloud_encodes_to_an_empty_frame() -> None:

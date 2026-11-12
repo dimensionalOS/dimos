@@ -84,7 +84,7 @@ def _install_generated_plan(
         name=config.joint_names,
         position=[0.0 for _ in config.joint_names],
     )
-    module._last_plan = GeneratedPlan(
+    module._pending_plan = GeneratedPlan(
         trajectory=JointTrajectory(
             joint_names=config.joint_names,
             points=[
@@ -321,27 +321,27 @@ class TestManipulationPreview:
     def test_clear_planned_path_invalidates_before_dismissing_preview(self, module_factory):
         module = module_factory()
         plan = GeneratedPlan(trajectory=JointTrajectory(), group_ids=("manipulator",), path=[])
-        module._last_plan = plan
+        module._pending_plan = plan
         module._world_monitor = MagicMock()
         plan_during_dismissal: list[GeneratedPlan | None] = []
         module._world_monitor.cancel_preview_animation.side_effect = (
-            lambda: plan_during_dismissal.append(module._last_plan)
+            lambda: plan_during_dismissal.append(module._pending_plan)
         )
 
         assert module.clear_planned_path().succeeded
 
         assert plan_during_dismissal == [None]
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
-        assert module._last_plan is None
+        assert module._pending_plan is None
 
     def test_clear_planned_path_clears_without_a_world_monitor(self, module_factory):
         module = module_factory()
-        module._last_plan = GeneratedPlan(
+        module._pending_plan = GeneratedPlan(
             trajectory=JointTrajectory(), group_ids=("manipulator",), path=[]
         )
 
         assert module.clear_planned_path().succeeded
-        assert module._last_plan is None
+        assert module._pending_plan is None
 
     def test_dismiss_preview_routes_to_monitor(self, module_factory):
         module = module_factory()
@@ -359,5 +359,5 @@ class TestManipulationPreview:
         assert module.preview_plan().succeeded
 
         module._world_monitor.animate_trajectory.assert_called_once_with(
-            module._last_plan.trajectory, None
+            module._pending_plan.trajectory, None
         )
