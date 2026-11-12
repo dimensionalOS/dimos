@@ -27,6 +27,7 @@ subclass): factories return evaluators called with
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import itertools
 import math
 from typing import TYPE_CHECKING, TypeVar
 
@@ -349,6 +350,311 @@ def placed_beside(
             and perp <= perp_max_m
             and end.z - start.z <= placed_z_m
         )
+
+    return grade
+
+
+def _last_poses(outcome: Outcome, bodies: Sequence[str]) -> dict[str, Transform] | None:
+    """Each body's newest recorded pose, or None when any is missing."""
+    with recording(outcome) as store:
+        try:
+            return {body: last_body_transform(store, body) for body in bodies}
+        except LookupError:
+            return None
+
+
+def _local(item: Transform, frame: Transform | None) -> np.ndarray:
+    """``item``'s origin in ``frame`` (the world when None)."""
+    position = item.translation.to_numpy()
+    if frame is None:
+        return position
+    return frame.rotation.to_rotation_matrix().T @ (position - frame.translation.to_numpy())
+
+
+def _axis_up(pose: Transform, axis: int) -> float:
+    """World-z component of the body's local ``axis`` (0 x, 1 y, 2 z)."""
+    return float(pose.rotation.to_rotation_matrix()[2, axis])
+
+
+def all_of(*grades: Callable[[Outcome], float]) -> Callable[[Outcome], float]:
+    """1.0 only when every grade is: the lowest of them."""
+
+    def grade(outcome: Outcome) -> float:
+        return min(g(outcome) for g in grades)
+
+    return grade
+
+
+def in_box(
+    items: Sequence[str],
+    container: str | None,
+    box: Box,
+    *,
+    at_least: int | None = None,
+    outside: Sequence[str] = (),
+) -> Callable[[Outcome], float]:
+    """At least ``at_least`` of ``items`` (default: all) end with their origin in ``box``
+    (centre, half sizes) in ``container``'s frame, or the world's when None, and none of
+    ``outside`` do."""
+    need = len(items) if at_least is None else at_least
+
+    def grade(outcome: Outcome) -> float:
+        poses = _last_poses(outcome, [*items, *outside, *([container] if container else [])])
+        if poses is None:
+            return 0.0
+        frame = poses[container] if container else None
+
+        def inside(body: str) -> bool:
+            return bool(np.all(np.abs(_local(poses[body], frame) - box[0]) <= box[1]))
+
+        return float(
+            sum(inside(item) for item in items) >= need
+            and not any(inside(other) for other in outside)
+        )
+
+    return grade
+
+
+def in_cylinder(
+    items: Sequence[str],
+    container: str | None,
+    centre: tuple[float, float],
+    radius_m: float,
+    height_m: tuple[float, float],
+    *,
+    at_least: int | None = None,
+) -> Callable[[Outcome], float]:
+    """At least ``at_least`` of ``items`` (default: all) end within ``radius_m`` of the
+    vertical axis through ``centre`` and inside ``height_m``, in ``container``'s frame
+    (the world's when None); the axis is the frame's local z."""
+    need = len(items) if at_least is None else at_least
+
+    def grade(outcome: Outcome) -> float:
+        poses = _last_poses(outcome, [*items, *([container] if container else [])])
+        if poses is None:
+            return 0.0
+        frame = poses[container] if container else None
+        count = 0
+        for item in items:
+            x, y, z = _local(poses[item], frame)
+            radial = math.hypot(x - centre[0], y - centre[1])
+            count += radial <= radius_m and height_m[0] <= z <= height_m[1]
+        return float(count >= need)
+
+    return grade
+
+
+def upright(
+    bodies: Sequence[str], *, axis: int = 2, min_up: float = 0.95, max_lift_m: float | None = None
+) -> Callable[[Outcome], float]:
+    """Every body ends with its local ``axis`` within ``acos(min_up)`` of world up and, with
+    ``max_lift_m``, no higher than that above where it started (so not still held)."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            try:
+                start = {body: first_body_transform(store, body) for body in bodies}
+                end = {body: last_body_transform(store, body) for body in bodies}
+            except LookupError:
+                return 0.0
+        for body in bodies:
+            if _axis_up(end[body], axis) < min_up:
+                return 0.0
+            lift = end[body].translation.z - start[body].translation.z
+            if max_lift_m is not None and lift > max_lift_m:
+                return 0.0
+        return 1.0
+
+    return grade
+
+
+def standing(
+    bodies: Sequence[str], *, axis: int = 2, max_up: float = 0.55
+) -> Callable[[Outcome], float]:
+    """Every body ends on edge: its local ``axis`` (a plate's normal) is mostly horizontal."""
+
+    def grade(outcome: Outcome) -> float:
+        poses = _last_poses(outcome, bodies)
+        if poses is None:
+            return 0.0
+        return float(all(abs(_axis_up(poses[b], axis)) <= max_up for b in bodies))
+
+    return grade
+
+
+def spelled(
+    letters: Sequence[str],
+    *,
+    rest_z: float,
+    gap_m: tuple[float, float] = (0.015, 0.060),
+    row_dx_max_m: float = 0.03,
+    z_tolerance_m: float = 0.02,
+    face_up_min: float = 0.85,
+) -> Callable[[Outcome], float]:
+    """The letter blocks, in order, form one row that reads left to right from the operator's
+    side (decreasing world y), each at rest on the table with a letter face (local x) up
+    (abc_sim/task_eval/spell.py)."""
+
+    def grade(outcome: Outcome) -> float:
+        poses = _last_poses(outcome, letters)
+        if poses is None:
+            return 0.0
+        points = [poses[letter].translation for letter in letters]
+        for a, b in itertools.pairwise(points):
+            dy, dx = b.y - a.y, b.x - a.x
+            if not (-gap_m[1] <= dy <= -gap_m[0] and abs(dx) <= row_dx_max_m):
+                return 0.0
+        return float(
+            all(
+                abs(poses[letter].translation.z - rest_z) <= z_tolerance_m
+                and abs(_axis_up(poses[letter], 0)) >= face_up_min
+                for letter in letters
+            )
+        )
+
+    return grade
+
+
+def set_up(
+    board: str,
+    goals: dict[str, Sequence[tuple[float, float, float]]],
+    pieces: dict[str, Sequence[str]],
+    *,
+    planar_m: float = 0.028,
+    height_m: float = 0.05,
+    min_up: float = 0.85,
+) -> Callable[[Outcome], float]:
+    """Every goal square (``goals[kind]``, board-frame centres) holds a standing piece of that
+    kind (any of ``pieces[kind]``: identical pieces are interchangeable), within ``planar_m``
+    across the board and ``height_m`` above it (abc_sim/task_eval/chess.py). The board's
+    local y is its normal."""
+
+    def grade(outcome: Outcome) -> float:
+        bodies = [board, *(p for kind in goals for p in pieces[kind])]
+        poses = _last_poses(outcome, bodies)
+        if poses is None:
+            return 0.0
+        frame = poses[board]
+        for kind, squares in goals.items():
+            free = [p for p in pieces[kind] if _axis_up(poses[p], 2) >= min_up]
+            for square in squares:
+                match = next(
+                    (
+                        p
+                        for p in free
+                        if math.hypot(*(_local(poses[p], frame) - square)[[0, 2]]) <= planar_m
+                        and abs((_local(poses[p], frame) - square)[1]) <= height_m
+                    ),
+                    None,
+                )
+                if match is None:
+                    return 0.0
+                free.remove(match)
+        return 1.0
+
+    return grade
+
+
+def crossed_table(
+    body: str,
+    *,
+    start_sign: float,
+    table_z: float,
+    x_bounds: tuple[float, float],
+    y_bounds: tuple[float, float],
+    min_y_m: float = 0.10,
+    max_height_m: float = 0.10,
+) -> Callable[[Outcome], float]:
+    """``body`` ends at rest on the far half of the table: at least ``min_y_m`` past the
+    centre line from the side ``start_sign`` (+1 left, -1 right) it started on, within the
+    table top and below ``max_height_m`` above it (abc_sim/task_eval/inhand_transfer.py)."""
+
+    def grade(outcome: Outcome) -> float:
+        poses = _last_poses(outcome, [body])
+        if poses is None:
+            return 0.0
+        p = poses[body].translation
+        return float(
+            p.y * start_sign <= -min_y_m
+            and p.z <= table_z + max_height_m
+            and x_bounds[0] <= p.x <= x_bounds[1]
+            and y_bounds[0] <= p.y <= y_bounds[1]
+        )
+
+    return grade
+
+
+def held_on_tray(
+    tray: str,
+    ball: str,
+    *,
+    half_extents_m: tuple[float, float],
+    ball_radius_m: float,
+    lift_m: float = 0.05,
+    hold_s: float = 10.0,
+    dropped_z_m: float = 0.008,
+) -> Callable[[Outcome], float]:
+    """Stricter than abc_sim/task_eval/ball_tray.py, which passes a robot that never moves:
+    for the last ``hold_s`` of the run the tray stays at least ``lift_m`` above where it
+    started, and the ball stays on it (inside the tray's footprint, less its radius, and not
+    below its surface)."""
+
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as store:
+            if "body_poses" not in store.streams:
+                return 0.0
+            frames: list[tuple[float, dict[str, Transform]]] = []
+            for record in store.streams.body_poses.order_by("ts"):
+                found = {t.child_frame_id: t for t in record.data.transforms}
+                if tray in found and ball in found:
+                    frames.append((record.ts, found))
+        if not frames or frames[-1][0] - frames[0][0] < hold_s:
+            return 0.0
+        start_z = frames[0][1][tray].translation.z
+        end = frames[-1][0]
+        window = [poses for ts, poses in frames if ts >= end - hold_s]
+        for poses in window:
+            local = _local(poses[ball], poses[tray])
+            if poses[tray].translation.z - start_z < lift_m:
+                return 0.0
+            if abs(local[0]) > half_extents_m[0] - ball_radius_m:
+                return 0.0
+            if abs(local[1]) > half_extents_m[1] - ball_radius_m:
+                return 0.0
+            if local[2] < ball_radius_m - dropped_z_m:
+                return 0.0
+        return 1.0
+
+    return grade
+
+
+def tower(
+    blocks: Sequence[str],
+    *,
+    table_z: float,
+    levels: int = 3,
+    min_rise_m: float = 0.02,
+    max_offset_m: float = 0.05,
+) -> Callable[[Outcome], float]:
+    """At least ``levels`` blocks end stacked: each one at least ``min_rise_m`` higher than,
+    and within ``max_offset_m`` across of, the one below, the lowest on the table. Upstream
+    ABC has no evaluator for its wood-block tower; this is ours."""
+
+    def grade(outcome: Outcome) -> float:
+        poses = _last_poses(outcome, blocks)
+        if poses is None:
+            return 0.0
+        points = sorted((poses[b].translation.to_numpy() for b in blocks), key=lambda p: p[2])
+        best = 1
+        for i, base in enumerate(points):
+            if base[2] > table_z + 0.06:
+                break
+            height, top = 1, base
+            for p in points[i + 1 :]:
+                if p[2] - top[2] >= min_rise_m and math.hypot(*(p[:2] - top[:2])) <= max_offset_m:
+                    height, top = height + 1, p
+            best = max(best, height)
+        return float(best >= levels)
 
     return grade
 
