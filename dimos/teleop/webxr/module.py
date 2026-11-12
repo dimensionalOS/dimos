@@ -535,7 +535,8 @@ class WebXRTeleopModule(Module):
             name="WebXRTeleopWebServer",
         )
         self._web_server_thread.start()
-        logger.info(f"WebXR teleop web server started on https://0.0.0.0:{self.config.server_port}")
+        for url in self._web_server.get_urls("/teleop", ssl=True):
+            logger.info("WebXR teleop web server started", url=url)
 
     def _stop_server(self) -> None:
         """Shutdown the embedded web server."""

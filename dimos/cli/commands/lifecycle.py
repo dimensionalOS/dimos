@@ -450,7 +450,7 @@ def stop(
 
 def log_cmd(
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
-    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    lines: int = typer.Option(50, "--lines", "-n", min=0, help="Number of lines to show"),
     all_lines: bool = typer.Option(False, "--all", "-a", help="Show full log"),
     json_output: bool = typer.Option(False, "--json", help="Raw JSONL output"),
     run_id: str = typer.Option("", "--run", "-r", help="Specific run ID"),
@@ -463,6 +463,7 @@ def log_cmd(
         typer.echo("No log files found", err=True)
         raise typer.Exit(1)
 
+    count = None if all_lines else lines
     if follow:
         _stop = False
 
@@ -472,12 +473,11 @@ def log_cmd(
 
         prev = signal.signal(signal.SIGINT, _on_sigint)
         try:
-            for line in follow_log(path, stop=lambda: _stop):
+            for line in follow_log(path, stop=lambda: _stop, count=count):
                 typer.echo(format_line(line, json_output=json_output))
         finally:
             signal.signal(signal.SIGINT, prev)
     else:
-        count = None if all_lines else lines
         for line in read_log(path, count):
             typer.echo(format_line(line, json_output=json_output))
 
