@@ -22,7 +22,7 @@ if sys.version_info < (3, 11):
     pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
 
 from dimos.orchestration.definition import OrchestratorDefinition
-from dimos.orchestration.loader import LoadError, load
+from dimos.orchestration.loader import LoadError, load_and_check
 
 PATROL = """\
 root = "Demo"
@@ -145,7 +145,7 @@ def test_the_patrol_file_loads_to_the_patrol_definition(
 ) -> None:
     path = tmp_path / "patrol.toml"
     path.write_text(PATROL)
-    assert load(path) == patrol
+    assert load_and_check(path) == patrol
 
 
 @pytest.mark.parametrize(("old", "new", "problem"), BROKEN)
@@ -154,5 +154,5 @@ def test_broken_files(tmp_path: Path, old: str, new: str, problem: str) -> None:
     path = tmp_path / "patrol.toml"
     path.write_text(PATROL.replace(old, new))
     with pytest.raises(LoadError) as raised:
-        load(path)
+        load_and_check(path)
     assert any(problem in found for found in raised.value.problems), raised.value.problems
