@@ -14,6 +14,8 @@
 
 """Recovery through the actual OpenArm reader configuration and JoyLo guard."""
 
+import math
+
 import pytest
 
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -115,3 +117,40 @@ def test_late_sample_cannot_hide_a_timeout_between_guard_ticks(pipeline):
     tick(reader, profile, 0.42)
     _, aligned = tick(reader, profile, 0.44, ("minus",))
     assert profile.active and aligned.positions == pytest.approx(stopped.positions)
+
+
+@pytest.mark.parametrize("direction", [-1, 1])
+def test_feetech_encoder_wrap_keeps_following_a_small_real_motion(pipeline, direction):
+    reader, profile, read = pipeline
+    # Captured joint-3 wrap: -3.133922749650365 -> pi in 10.8 ms.
+    before = direction * -3.133922749650365
+    after = direction * math.pi
+    read.return_value = {**read.return_value, "joint_3": before}
+    engage(reader, profile)
+    read.return_value = {**read.return_value, "joint_3": after}
+    _, moved = tick(reader, profile, 0.06)
+    assert profile.active
+    assert profile.pause_count == 0
+    assert moved.positions[ARMS[2]] == pytest.approx(0.2 - direction * 0.007669903939428)
+    # Moving back across the boundary must restore the original target.
+    read.return_value = {**read.return_value, "joint_3": before}
+    _, returned = tick(reader, profile, 0.08)
+    assert profile.active
+    assert returned.positions[ARMS[2]] == pytest.approx(0.2)
+
+
+def test_encoder_wrap_after_missing_input_still_requires_realignment(pipeline):
+    reader, profile, read = pipeline
+    read.return_value = {**read.return_value, "joint_3": -3.13}
+    engage(reader, profile)
+    read.return_value = {**read.return_value, "joint_3": 3.14}
+    _, held = tick(reader, profile, 0.4)
+    assert not profile.active
+    assert profile.pause_count == 1
+    assert "timeout" in profile.last_pause_reason
+    assert held.positions == dict.fromkeys(UPPER, 0.2)
+    tick(reader, profile, 0.42)
+    _, aligned = tick(reader, profile, 0.44, ("minus",))
+    assert profile.active
+    assert aligned.positions == pytest.approx(dict.fromkeys(UPPER, 0.2))
+    assert "timeout" in profile.last_pause_reason  # Retain the cause after recovery.

@@ -58,6 +58,9 @@ class JoyloConfig(ModuleConfig):
     yaw_speed: float = Field(default=0.25, gt=0, le=0.5)
     deadzone: float = Field(default=0.15, ge=0, lt=1)
     max_leader_jump: float = Field(default=0.75, gt=0)
+    # Feetech calibrated readings wrap at +/-pi. Unwrap only fresh samples,
+    # before relative alignment and the discontinuity guard; None is nonperiodic.
+    leader_angle_period: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _validate_sides(self) -> "JoyloConfig":
@@ -135,6 +138,8 @@ class JoyloController:
         self.pause_button = "capture" if self.left_only else "home"
         self.authority_index = 0 if self.left_only else 1
         self.active = False
+        self.pause_count = 0
+        self.last_pause_reason: str | None = None
         self.reason = f"Press {self.enable_button} to align and enable"
         self.leader: dict[str, float] = {}
         self.feedback: dict[str, float] = {}
@@ -152,6 +157,9 @@ class JoyloController:
         self.capture_hold = True
 
     def pause(self, reason: str) -> None:
+        if self.active:
+            self.pause_count += 1
+            self.last_pause_reason = reason
         self.capture_hold |= self.active
         self.active = False
         self.reason = reason
@@ -162,21 +170,27 @@ class JoyloController:
             self.pause("Incomplete leader sample")
             self.receipts["leader"] = -math.inf
             return
-        if self.active and now - self.receipts["leader"] > self.config.input_timeout_s:
+        age = now - self.receipts["leader"]
+        period = self.config.leader_angle_period
+        if self.leader and period is not None and age <= self.config.input_timeout_s:
+            positions = {
+                name: self.leader[name] + math.remainder(value - self.leader[name], period)
+                for name, value in positions.items()
+            }
+        if self.active and age > self.config.input_timeout_s:
             # A new sample can arrive before the watchdog tick notices the gap.
             # Recover the reading, but require a fresh enable press to align it.
             self.pause(
                 f"Leader input resumed after timeout; release {self.enable_button} and re-align"
             )
-        elif (
-            self.leader
-            and self.active
-            and any(
-                abs(value - self.leader[name]) > self.config.max_leader_jump
-                for name, value in positions.items()
-            )
-        ):
-            self.pause(f"Leader discontinuity; release {self.enable_button} and re-align")
+        elif self.leader and self.active:
+            joint = max(positions, key=lambda name: abs(positions[name] - self.leader[name]))
+            delta = positions[joint] - self.leader[joint]
+            if abs(delta) > self.config.max_leader_jump:
+                self.pause(
+                    f"Leader discontinuity at {joint}: {delta:+.3f} rad; "
+                    f"release {self.enable_button} and re-align"
+                )
         self.leader = positions.copy()
         self.receipts["leader"] = now
 

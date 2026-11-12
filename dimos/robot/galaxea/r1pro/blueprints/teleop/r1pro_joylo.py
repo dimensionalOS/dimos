@@ -136,6 +136,7 @@ def _robot_blueprint(left_only: bool = False) -> Blueprint:
                 enabled_sides=("left",) if left_only else ("left", "right"),
                 arm_only=left_only,
                 model=MODEL,
+                leader_angle_period=math.tau,
                 torso_link_lengths=TORSO_LINK_LENGTHS,
                 arm_rate=ARM_RATE,
                 torso_rate=TORSO_RATE,

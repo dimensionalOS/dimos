@@ -58,6 +58,22 @@ enable press can re-align without a restart. Input errors still drop samples;
 timeouts, discontinuity stopping, joint limits and rate limits remain enforced.
 Generic OpenArm blueprints retain their reader-side jump guard.
 
+The Feetech reader reports calibrated angles in [-pi, pi]. The JoyLo blueprint
+sets `leader_angle_period=2*pi` so successive fresh samples are unwrapped before
+alignment and jump detection. A captured joint-3 crossing from -3.13392275 to
++pi was only -0.0076699 rad of physical movement, but previously triggered the
+0.75 rad jump guard as a +6.2755 rad discontinuity. Input gaps over 250 ms still
+pause and require re-alignment; no winding is inferred across a missing interval.
+`R1ProJoylo.status()` retains `pause_count` and `last_pause_reason` after recovery,
+and every active-to-paused transition is logged with input ages. Real jumps
+include the offending joint and delta in the reason.
+
+Separate observed input faults remain hardware/transport issues: the Feetech
+SDK decodes motor status bit 1 as an input-voltage error and communication -6
+as no reply. Those samples are rejected, not silently accepted. HID report loss
+also correctly pauses following; wrap handling does not disable either guard.
+
+
 The coordinator owns one trajectory task covering both arms and torso, two
 gripper tasks and one base velocity task. The sim connection uses CC's same
 joint/interface declarations. It converts canonical 0–0.1 m jaw opening into

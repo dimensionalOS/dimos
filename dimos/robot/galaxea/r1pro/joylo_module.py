@@ -30,6 +30,9 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.galaxea.r1pro.joylo import UPPER, JoyloConfig, JoyloController
 from dimos.teleop.joycon.raw import decode_readings
 from dimos.teleop.leader.module import GUARDED_JOINT_FRAME_ID
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 class R1ProJoylo(Module):
@@ -46,6 +49,7 @@ class R1ProJoylo(Module):
         super().__init__(**kwargs)
         self._guard = threading.RLock()
         self._controller: JoyloController | None = None
+        self._logged_pause_count = 0
         self._stamps = {"leader": -math.inf, "joycon": -math.inf}
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
@@ -59,6 +63,7 @@ class R1ProJoylo(Module):
                 limits[joint.name] = (joint.lower, joint.upper)
         with self._guard:
             self._controller = JoyloController(limits, self.config)
+            self._logged_pause_count = 0
             self._stamps = {"leader": -math.inf, "joycon": -math.inf}
         self._done.clear()
         super().start()
@@ -105,6 +110,8 @@ class R1ProJoylo(Module):
                 "active": c.active if c else False,
                 "ready": ready,
                 "reason": reason,
+                "pause_count": c.pause_count if c else 0,
+                "last_pause_reason": c.last_pause_reason if c else None,
                 "arm_locked": c.arm_locked.copy() if c else [False, False],
                 "enabled_sides": self.config.enabled_sides,
                 "arm_only": self.config.arm_only,
@@ -160,6 +167,14 @@ class R1ProJoylo(Module):
         with self._guard:
             c = self._controller
             output = c.step(now, dt) if c else None
+            if c is not None and c.pause_count != self._logged_pause_count:
+                logger.warning(
+                    "JoyLo following paused",
+                    reason=c.last_pause_reason,
+                    pause_count=c.pause_count,
+                    input_age_s={name: now - stamp for name, stamp in c.receipts.items()},
+                )
+                self._logged_pause_count = c.pause_count
             if output is None:
                 self.cmd_vel.publish(Twist.zero())
                 return
