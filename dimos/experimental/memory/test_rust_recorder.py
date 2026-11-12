@@ -33,7 +33,6 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.recording import OnExisting
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.rpc.zenohrpc import ZenohRPC
 
 
 class SampleRustRecorder(RustRecorder):
@@ -61,13 +60,11 @@ TRecorder = TypeVar("TRecorder", bound=RustRecorder)
 
 
 @pytest.fixture
-def make_recorder(mocker) -> Any:
-    mocker.patch.object(ZenohRPC, "start")
-    mocker.patch.object(ZenohRPC, "serve_module_rpc")
+def make_recorder() -> Any:
     recorders: list[RustRecorder] = []
 
     def make(recorder_type: type[TRecorder], **kwargs: Any) -> TRecorder:
-        recorder = recorder_type(rpc_transport=ZenohRPC, **kwargs)
+        recorder = recorder_type(**kwargs)
         recorders.append(recorder)
         return recorder
 
