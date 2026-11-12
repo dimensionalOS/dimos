@@ -93,14 +93,16 @@ def read_log(path: Path, count: int | None = 50) -> list[str]:
     return list(tail)
 
 
-def follow_log(path: Path, stop: Callable[[], bool] | None = None) -> Iterator[str]:
-    """Yield new lines as they appear (``tail -f`` style).
+def follow_log(
+    path: Path, stop: Callable[[], bool] | None = None, *, count: int | None = 50
+) -> Iterator[str]:
+    """Yield the last *count* lines, then new lines (``None`` = all history).
 
     *stop* is an optional callable; when it returns ``True`` the
     generator exits cleanly.
     """
     with open(path) as f:
-        f.seek(0, 2)
+        yield from deque(f, maxlen=count)
         while stop is None or not stop():
             line = f.readline()
             if line:
