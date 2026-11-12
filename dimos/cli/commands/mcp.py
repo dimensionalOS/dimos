@@ -23,6 +23,7 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.core.run_registry import list_runs
 
 mcp_app = typer.Typer(help="Interact with the running MCP server")
 
@@ -32,13 +33,25 @@ def _get_adapter(timeout: int | None = None) -> McpAdapter:
     return McpAdapter.from_run_entry(timeout=timeout)
 
 
+def _no_server_error() -> str:
+    """Why no MCP server answered: nothing is running, or the run has no McpServer."""
+    runs = list_runs()
+    if runs and not any(run.mcp_url for run in runs):
+        return (
+            f"Error: {runs[-1].blueprint} is running, but it has no MCP server. Add one with "
+            "`dimos run <blueprint> mcp-server`, or run an agentic blueprint such as "
+            "unitree-go2-agentic."
+        )
+    return "Error: no running MCP server (is DimOS running?)"
+
+
 @mcp_app.command("list-tools")
 def mcp_list_tools() -> None:
     """List available MCP tools (skills)."""
     try:
         tools = _get_adapter().list_tools()
     except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        typer.echo(_no_server_error(), err=True)
         raise typer.Exit(1)
     except McpError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -99,7 +112,7 @@ def mcp_call_tool(
     try:
         result = _get_adapter(timeout).call_tool(tool_name, arguments)
     except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        typer.echo(_no_server_error(), err=True)
         raise typer.Exit(1)
     except McpError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -119,7 +132,7 @@ def mcp_status() -> None:
     try:
         data = _get_adapter().call_tool_text("server_status")
     except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        typer.echo(_no_server_error(), err=True)
         raise typer.Exit(1)
     except McpError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -137,7 +150,7 @@ def mcp_modules() -> None:
     try:
         data = _get_adapter().call_tool_text("list_modules")
     except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        typer.echo(_no_server_error(), err=True)
         raise typer.Exit(1)
     except McpError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -155,7 +168,7 @@ def agent_send_cmd(
     try:
         text = _get_adapter().call_tool_text("agent_send", {"message": message})
     except requests.ConnectionError:
-        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        typer.echo(_no_server_error(), err=True)
         raise typer.Exit(1)
     except McpError as e:
         typer.echo(f"Error: {e}", err=True)
