@@ -60,8 +60,9 @@ def test_make_connection_webrtc_forwards_aes_128_key(stub_webrtc: MagicMock) -> 
 
 
 def test_make_connection_without_an_ip_names_the_ways_out() -> None:
+    cfg = ConnectionConfig(g=GlobalConfig(replay=False, simulation=""))
     with pytest.raises(ValueError, match="--robot-ip.*--replay.*--simulation"):
-        go2_conn.make_connection(None, ConnectionConfig(g=GlobalConfig()))
+        go2_conn.make_connection(None, cfg)
 
 
 def test_scoped_connection_settings_resolve_sources_and_nested_defaults(tmp_path: Path) -> None:
