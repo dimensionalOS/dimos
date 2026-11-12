@@ -82,6 +82,7 @@ EVALUATED: list[tuple[str, Wanted, dict[str, object], object]] = [
     ("battery_pct < low_battery", True, {"battery_pct": 19.5}, True),
     ("nav_status.goal_id.stamp == nav.goal", True, {}, True),
     ("nav_status.goal_id.stamp == nav.goal", True, {"nav.goal": UNSET}, False),
+    ("nav_status.goal_id.stamp == nav.goal", True, {"nav_status": {"status": 3}}, ERROR),
     ("dock", {"x": 0.0, "y": 0.0}, {}, {"x": 1.0, "y": 2.0}),
     ("route[patrol.index]", "", {}, "lab"),
     ("patrol.index < size(route)", True, {}, True),
