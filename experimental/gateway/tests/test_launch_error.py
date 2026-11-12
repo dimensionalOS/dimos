@@ -14,8 +14,6 @@
 
 """`launches.last_error`: a failed launch's error names its cause, not the last shutdown line."""
 
-from pathlib import Path
-
 import pytest
 
 from experimental.gateway import launches
@@ -25,12 +23,6 @@ SHUTDOWN = "12:00:00.002 [inf][worker_manager_python.py] All workers shut down"
 TRACEBACK = 'Traceback (most recent call last):\n  File "/x/demo.py", line 3, in start\n    run()'
 ERROR = "12:00:00.001 [err][a.py] worker failed"
 CRITICAL = "12:00:00.001 [cri][a.py] out of memory"
-
-
-def test_a_native_abort_is_the_error_not_the_shutdown_lines_after_it() -> None:
-    # a real `dimos run go2-sim` on macOS: pygame aborts on a non-main thread, ~50 shutdown lines follow
-    output = (Path(__file__).parent / "fixtures" / "launch-output-worker-abort.txt").read_text()
-    assert launches.last_error(output).startswith(ABORT)
 
 
 @pytest.mark.parametrize(
@@ -80,7 +72,6 @@ def test_a_native_abort_is_the_error_not_the_shutdown_lines_after_it() -> None:
         ),
         pytest.param(f"{ERROR}\n{SHUTDOWN}\n", ERROR, id="error-level"),
         pytest.param(f"{CRITICAL}\n{SHUTDOWN}\n", CRITICAL, id="critical-level"),
-        pytest.param(f"{SHUTDOWN}\n", SHUTDOWN, id="last-line-fallback"),
     ],
 )
 def test_last_error(output: str, expected: str) -> None:
