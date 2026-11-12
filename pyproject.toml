@@ -139,6 +139,7 @@ dependencies = [
     "lazy_loader",
     "typing_extensions>=4.7; python_version < '3.13'",
     "tomli>=2.0; python_version < '3.11'", # tomllib fallback (cli/bake/discovery.py)
+    "tomlkit>=0.11", # comment-preserving pyproject edits (message_codegen/external.py)
     "plum-dispatch==2.5.7",
     "GitPython>=3.1.45",
     # Logging

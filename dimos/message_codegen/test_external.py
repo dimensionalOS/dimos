@@ -19,7 +19,11 @@ import subprocess
 import sys
 
 import pytest
-import tomllib
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from dimos.message_codegen import backend
 from dimos.message_codegen.external import AddError, apply, default_module, plan
@@ -259,6 +263,51 @@ name = "acme-telemetry"
 version = "0.1.0"
 """
 
+# The reviewer's fixture: valid unrelated mypy configuration that a comma- or
+# bracket-based pyproject edit corrupted or refused. Kept verbatim.
+MYPY_OVERRIDES = """\
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "probe"
+version = "0.1.0"
+
+[tool.mypy]
+overrides = [{module = "optional_sdk.*", ignore_missing_imports = true}]
+"""
+
+NESTED_SCALARS = """\
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acme-telemetry"
+version = "0.1.0"
+
+[tool.mypy]
+strict = true
+overrides = [
+    {module = "optional_sdk.*", ignore_missing_imports = true},
+    {module = "legacy.*", ignore_errors = false},
+]
+
+[tool.coverage.run]
+branch = true
+parallel = false
+
+[tool.pytest.ini_options]
+markers = ["slow: 30", "flaky: 1.5e-3"]
+
+[tool.deploy]
+ports = [8080, 9090.5, -12, true, false]
+nested = [[1, 2], [true, false]]
+"""
+
+UNRELATED_TOOL_TABLES = ("mypy", "coverage", "pytest", "deploy")
+"""Unrelated configuration that must survive ``package add messages`` untouched."""
+
 
 @pytest.mark.parametrize(
     ("text", "requires", "dependencies"),
@@ -314,6 +363,76 @@ def test_multiline_arrays_keep_their_comments(tmp_path: Path) -> None:
     assert '"wheel",  # needed for bdist_wheel' in text
     assert '"requests[socks]>=2",  # proxy support' in text
     assert '    "dimos>=0.0.15",\n]' in text
+
+
+def test_reviewed_mypy_overrides_fixture_is_preserved(tmp_path: Path) -> None:
+    """The exact regression fixture: unrelated boolean inline table in [tool.mypy]."""
+    project = write_project(tmp_path, MYPY_OVERRIDES, name="probe")
+
+    addition = plan(project, dimos_requirement="dimos>=0.0.15")
+    assert addition.changed
+    assert 'overrides = [{module = "optional_sdk.*", ignore_missing_imports = true}]' in (
+        addition.text
+    )
+    apply(addition)
+
+    text = (project / "pyproject.toml").read_text()
+    after = tomllib.loads(text)
+    assert after["tool"]["mypy"] == tomllib.loads(MYPY_OVERRIDES)["tool"]["mypy"]
+    assert after["build-system"]["requires"] == ["setuptools>=70", "wheel", "dimos>=0.0.15"]
+    assert after["build-system"]["build-backend"] == "dimos.message_codegen.backend"
+    assert after["project"]["dependencies"] == ["dimos>=0.0.15"]
+    assert after["project"]["name"] == "probe"
+
+    again = plan(project, dimos_requirement="dimos>=0.0.15")
+    assert not again.changed
+    assert apply(again) == []
+    assert (project / "pyproject.toml").read_text() == text
+
+
+def test_unrelated_boolean_and_numeric_configuration_is_preserved(tmp_path: Path) -> None:
+    """Bare booleans, integers, floats and nested arrays outside our keys survive."""
+    project = write_project(tmp_path, NESTED_SCALARS)
+    before = tomllib.loads(NESTED_SCALARS)
+
+    apply(plan(project, dimos_requirement="dimos>=0.0.15"))
+
+    text = (project / "pyproject.toml").read_text()
+    after = tomllib.loads(text)
+    for table in UNRELATED_TOOL_TABLES:
+        assert after["tool"][table] == before["tool"][table]
+    assert 'overrides = [\n    {module = "optional_sdk.*", ignore_missing_imports = true},' in text
+    assert "ports = [8080, 9090.5, -12, true, false]" in text
+    assert "nested = [[1, 2], [true, false]]" in text
+    assert after["project"]["dependencies"] == ["dimos>=0.0.15"]
+
+    again = plan(project, dimos_requirement="dimos>=0.0.15")
+    assert not again.changed
+    assert apply(again) == []
+    assert (project / "pyproject.toml").read_text() == text
+
+
+def test_unrelated_configuration_survives_the_cli(tmp_path: Path) -> None:
+    """The command users run accepts the reviewed fixture and is byte-idempotent."""
+    from typer.testing import CliRunner
+
+    from dimos.cli.dimos import main
+
+    project = write_project(tmp_path, MYPY_OVERRIDES, name="probe")
+    runner = CliRunner()
+
+    first = runner.invoke(main, ["package", "add", "messages", "-C", str(project)])
+    assert first.exit_code == 0, first.output
+    text = (project / "pyproject.toml").read_text()
+    assert 'overrides = [{module = "optional_sdk.*", ignore_missing_imports = true}]' in text
+    assert tomllib.loads(text)["tool"]["mypy"] == {
+        "overrides": [{"module": "optional_sdk.*", "ignore_missing_imports": True}]
+    }
+
+    second = runner.invoke(main, ["package", "add", "messages", "-C", str(project)])
+    assert second.exit_code == 0, second.output
+    assert "already set up" in second.output
+    assert (project / "pyproject.toml").read_text() == text
 
 
 @pytest.mark.parametrize(

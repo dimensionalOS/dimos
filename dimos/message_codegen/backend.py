@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import sys
 from typing import Any
 
 from dimos_cdrgen import source_package
@@ -159,7 +160,10 @@ def _package_data(project: Path, config: dict[str, Any]) -> dict[str, list[str]]
 
 
 def _declared_package_data(project: Path) -> dict[str, list[str]]:
-    import tomllib
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        import tomli as tomllib
 
     data = tomllib.loads((project / "pyproject.toml").read_text())
     section = data.get("tool", {}).get("setuptools", {}).get("package-data", {})
