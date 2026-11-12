@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from contextlib import closing
+import sqlite3
 import threading
 from typing import Any
 
@@ -107,3 +109,28 @@ def test_source_failure_reports_one_error(
     on_error.assert_called_once_with(error)
     completed.assert_not_called()
     closed.assert_called_once_with()
+
+
+@pytest.mark.parametrize("frame_count", [1, 2])
+def test_completion_can_close_the_source_database(frame_count: int, mocker: MockerFixture) -> None:
+    scheduler = TestScheduler()
+    received: list[str] = []
+    on_error = mocker.Mock()
+
+    with closing(sqlite3.connect(":memory:")) as connection:
+        completed = mocker.Mock(side_effect=connection.close)
+
+        def source() -> Iterator[tuple[float, str]]:
+            return connection.execute(
+                "SELECT 0.0, 'first' UNION ALL SELECT 0.01, 'second' LIMIT ?",
+                (frame_count,),
+            )
+
+        with timed_playback(source).subscribe(
+            received.append, on_error, completed, scheduler=scheduler
+        ):
+            scheduler.advance_by(1)
+
+    assert received == ["first", "second"][:frame_count]
+    completed.assert_called_once_with()
+    on_error.assert_not_called()

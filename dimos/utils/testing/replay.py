@@ -113,14 +113,13 @@ def timed_playback(
         disposed = threading.Event()
         emission_lock = threading.RLock()
         iterator = source()
+        iterator_disposable = Disposable(getattr(iterator, "close", None))
 
         def dispose() -> None:
             disposed.set()
             disp.dispose()
             with emission_lock:
-                close = getattr(iterator, "close", None)
-                if close is not None:
-                    close()
+                iterator_disposable.dispose()
 
         def terminate(error: Exception | None = None) -> None:
             if disposed.is_set():
