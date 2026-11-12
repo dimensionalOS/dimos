@@ -1,4 +1,4 @@
-root = "Patrol"
+root = "Mission"
 resources = ["base"]
 
 [constants]
@@ -11,8 +11,10 @@ route = [
     { x = 6.5, y = 11.3 },
     { x = 3.5, y = 10.0 },
     { x = 3.0, y = 7.1 },
-    { x = 1.0, y = 1.0 },
 ]
+charger = { x = 1.0, y = 1.0 }
+low_battery = 20.0
+full_battery = 95.0
 pause_s = 3.0
 retry_s = 1.0
 PREEMPTED = 2
@@ -26,6 +28,11 @@ ABORTED = 4
 name = "nav_status"
 stream = "MLSPlannerNative.nav_status"
 
+[[signal]]
+name = "battery_pct"
+stream = "FakeBattery.percent"
+field = "data"
+
 [[event]]
 name = "arrived"
 when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
@@ -34,16 +41,38 @@ when = "nav_status.status == SUCCEEDED && nav_status.goal_id.stamp == nav.goal"
 name = "gave_up"
 when = "(nav_status.status == ABORTED || nav_status.status == PREEMPTED) && nav_status.goal_id.stamp == nav.goal"
 
+[[event]]
+name = "battery_low"
+when = "battery_pct < low_battery"
+
+[[event]]
+name = "charged"
+when = "battery_pct >= full_battery"
+
 [[activity]]
 name = "navigate"
 start = "MLSPlannerNative.go_to"
 cancel = "MLSPlannerNative.stop_navigation"
 uses = ["base"]
 
+[[activity]]
+name = "charge"
+start = "FakeBattery.start_charging"
+cancel = "FakeBattery.stop_charging"
+
 [[node]]
-name = "Patrol"
+name = "Mission"
+children = ["Patrolling", "Charging"]
+initial = "Patrolling"
+
+[[node]]
+name = "Patrolling"
 children = ["NextWaypoint", "Navigating", "Retrying", "Pausing"]
 initial = "NextWaypoint"
+
+[[node.transition]]
+trigger = "battery_low"
+goto = "Charging"
 
 [[node]]
 name = "NextWaypoint"
@@ -89,3 +118,46 @@ name = "Pausing"
 [[node.transition]]
 after = "pause_s"
 goto = "NextWaypoint"
+
+[[node]]
+name = "Charging"
+children = ["ReturnToCharger", "ReturnRetry", "OnCharger"]
+initial = "ReturnToCharger"
+outcomes = ["done"]
+
+[[node.transition]]
+trigger = "done"
+goto = "Patrolling"
+
+[[node]]
+name = "ReturnToCharger"
+activity = "navigate"
+args = { x = "charger.x", y = "charger.y" }
+result = "nav.goal"
+
+[[node.transition]]
+trigger = "arrived"
+goto = "OnCharger"
+
+[[node.transition]]
+trigger = "gave_up"
+goto = "ReturnRetry"
+
+[[node.transition]]
+trigger = "failed"
+goto = "ReturnRetry"
+
+[[node]]
+name = "ReturnRetry"
+
+[[node.transition]]
+after = "retry_s"
+goto = "ReturnToCharger"
+
+[[node]]
+name = "OnCharger"
+activity = "charge"
+
+[[node.transition]]
+trigger = "charged"
+goto = "done"

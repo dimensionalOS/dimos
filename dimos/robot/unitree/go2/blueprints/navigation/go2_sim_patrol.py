@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The simulated Go2 walking a route of waypoints, driven by the Orchestrator."""
+"""The simulated Go2 patrolling a route and returning to charge, driven by the Orchestrator."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.orchestration.demo.fake_robot import FakeBattery
 from dimos.orchestration.orchestrator import Orchestrator
 from dimos.robot.unitree.go2.blueprints.navigation.go2_sim_nav import go2_sim_nav
 
 # One worker per module.
 go2_sim_patrol = autoconnect(
     go2_sim_nav,
+    FakeBattery.blueprint(start_pct=60.0, drain_per_s=0.7, charge_per_s=10.0),
     Orchestrator.blueprint(file=Path(__file__).parent / "go2_sim_patrol.toml"),
-).global_config(n_workers=10)
+).global_config(n_workers=11)
