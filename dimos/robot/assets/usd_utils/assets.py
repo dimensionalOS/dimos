@@ -21,7 +21,7 @@ import itertools
 from pathlib import Path
 from typing import Any
 
-from dimos.robot.assets.usd import Prim, Pxr, Spec, layer_from, load_pxr
+from dimos.robot.assets.usd_utils.pxr import Prim, Pxr, Spec, layer_from, load_pxr
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

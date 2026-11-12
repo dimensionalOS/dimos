@@ -25,7 +25,8 @@ import pytest
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.robot.assets.model import UsdModel
-from dimos.robot.assets.usd import graft_usd, prefix_usd_frames, usd_with_drives
+from dimos.robot.assets.usd_utils.frames import prefix_usd_frames
+from dimos.robot.assets.usd_utils.layers import graft_usd
 from dimos.sim2.actions import CborKeyValueCommand, JointCommand, read_actions, world_action
 from dimos.sim2.assets.toy import toy_robot
 from dimos.sim2.mujoco.backend import MujocoBackend
@@ -210,8 +211,34 @@ def test_actions_cross_the_wire_by_id_and_cbor_keys_are_observed_back(scene, rob
     assert seen.world.entity("dog").cbor["note"] == {"a": 1}
 
 
+def _with_a_servo_neck(usd: str, kp: float, kd: float, target: float) -> str:
+    """The toy's neck as a position servo, which is the only robot shape this test can use.
+
+    A joint says its gains twice: UsdPhysics.DriveAPI is what dimos reads for the start pose,
+    and the MjcActuator's affine bias is what MuJoCo servos on -- the backend refuses gains for
+    an actuator that is not one. The toy ships as a torque motor because every other test here
+    drives it by effort, so this test authors the servo it needs.
+    """
+    from pxr import Sdf, Usd, UsdPhysics
+
+    layer = Sdf.Layer.CreateAnonymous(".usda")
+    assert layer.ImportFromString(usd)
+    stage = Usd.Stage.Open(layer)
+    joint = next(p for p in stage.Traverse() if p.IsA(UsdPhysics.Joint) and p.GetName() == "neck")
+    drive = UsdPhysics.DriveAPI.Apply(joint, "angular")
+    drive.CreateStiffnessAttr(kp)
+    drive.CreateDampingAttr(kd)
+    drive.CreateTargetPositionAttr(target)
+    actuator = next(p for p in stage.Traverse() if p.GetTypeName() == "MjcActuator")
+    doubles = Sdf.ValueTypeNames.DoubleArray
+    actuator.CreateAttribute("mjc:gainPrm", doubles).Set([kp, *[0.0] * 9])
+    actuator.CreateAttribute("mjc:biasPrm", doubles).Set([0.0, -kp, -kd, *[0.0] * 7])
+    actuator.CreateAttribute("mjc:biasType", Sdf.ValueTypeNames.Token).Set("affine")
+    return str(layer.ExportToString())
+
+
 def test_a_motor_command_drives_a_servo_with_its_own_gains(scene, robot_model):
-    driven = UsdModel.from_layer(usd_with_drives(robot_model.usd, {"neck": (0.01, 0.001, 0.2)}))
+    driven = UsdModel.from_layer(_with_a_servo_neck(robot_model.usd, 0.01, 0.001, 0.2))
     backend = MujocoBackend(scene, [SimulatedRobot("dog", driven)])
     assert backend.data.qpos[backend.model.joint("dog/neck").qposadr[0]] == pytest.approx(0.2)
     published = _Collect()

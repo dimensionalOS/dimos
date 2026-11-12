@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from dimos.robot.assets.usd import usd_frame_names
+from dimos.robot.assets.usd_utils.frames import usd_frame_names
 
 pytest.importorskip("pxr")
 
