@@ -20,7 +20,7 @@
   reading below absolute zero are listed as unreadable), power rails/supplies/battery, fans, GPUs,
   Wi-Fi (signal, SSID, bitrates, address), routes, network and disk throughput, Pi throttling
 - health_dump: every sample since the last dump, at ``sample_hz``, when an alert starts, the network changes or
-  ``bad_event`` fires
+  ``clip_that`` fires
 - alert: a condition starting (CPU pegged, memory low, weak or no Wi-Fi, something hot, Pi throttled)
 - processes: the busiest processes, every ``process_period_s`` and with every dump
 - dimos_log: one line of the run's *.jsonl logs, parsed
@@ -84,7 +84,7 @@ class SystemLog(NativeModule):
     config: SystemLogConfig
 
     robot_health: In[String]
-    bad_event: In[Bool]
+    clip_that: In[Bool]
     system_log: Out[String]
 
     _resource_stats: PubSubTransport[dict[str, Any]] | None = None

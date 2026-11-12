@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Samples the machine at `sample_hz` into a ring of the last `buffer_s`, publishes one sample every
-//! `publish_period_s` as a "health" record, and when something goes wrong (an alert starting, or `bad_event`)
+//! `publish_period_s` as a "health" record, and when something goes wrong (an alert starting, or `clip_that`)
 //! publishes every sample since the last dump as a "health_dump" along with the busiest processes. It also
 //! publishes the run's *.jsonl logs line by line, and passes `robot_health` through. Every record is a JSON
 //! object with a "type" and "t" (unix seconds) on `system_log`.
@@ -81,7 +81,7 @@ pub struct SystemLog {
     robot_health: Input<std_msgs::String>,
 
     #[input(decode = Bool::decode)]
-    bad_event: Input<Bool>,
+    clip_that: Input<Bool>,
 
     #[output(encode = std_msgs::String::encode)]
     system_log: Output<std_msgs::String>,
@@ -127,9 +127,9 @@ impl SystemLog {
         self.system_log.publish(&msg).await.ok();
     }
 
-    async fn handle_bad_event(&mut self, msg: Bool) {
+    async fn handle_clip_that(&mut self, msg: Bool) {
         if let (true, Some(dumps)) = (msg.data, &self.dumps) {
-            dumps.send("bad_event".into()).ok();
+            dumps.send("clip_that".into()).ok();
         }
     }
 }

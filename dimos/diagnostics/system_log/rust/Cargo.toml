@@ -19,7 +19,7 @@ python = "dimos.diagnostics.system_log.module:SystemLog"
 
 [package.metadata.dimos.module.system_log.inputs]
 robot_health = "std_msgs.String"
-bad_event = "std_msgs.Bool"
+clip_that = "std_msgs.Bool"
 
 [package.metadata.dimos.module.system_log.outputs]
 system_log = "std_msgs.String"
