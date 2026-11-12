@@ -204,6 +204,7 @@ interface Group {
  * is ready, so a settings change on a shared subscription never gaps. */
 interface Move {
   group: Group;
+  queued: PendingUpdate[];
   resolve: (settings: TopicSettings) => void;
   reject: (error: TopicError) => void;
 }
@@ -286,7 +287,7 @@ class Handle implements TopicSubscription {
       });
       return this.ready().then(() => this.settings());
     }
-    return this.owner.update(this, group, options);
+    return this.owner.update(this, options);
   }
   close(): void {
     this.owner.release(this);
@@ -472,7 +473,9 @@ export class TopicClient implements Topics {
     if (move !== null) {
       handle.move = null;
       this.#leave(handle, move.group);
-      move.reject(new TopicError("closed", "rejected"));
+      const error = new TopicError("closed", "rejected");
+      move.reject(error);
+      for (const update of move.queued) update.reject(error);
     }
     const group = handle.group;
     if (group === null) return;
@@ -483,7 +486,7 @@ export class TopicClient implements Topics {
   /** Settings change: in place when the handle owns its group and the relay
    * installed it, after any change still in flight; otherwise make before
    * break through another group. */
-  update(handle: Handle, group: Group, options: TopicOptions): Promise<TopicSettings> {
+  update(handle: Handle, options: TopicOptions): Promise<TopicSettings> {
     const change: TopicSettingsUpdate = {};
     for (const name of TOPIC_SETTING_NAMES) {
       if (options[name] !== undefined) (change as Record<string, unknown>)[name] = options[name];
@@ -493,10 +496,17 @@ export class TopicClient implements Topics {
       return Promise.reject(new TopicError("invalid_topic_options", "rejected"));
     }
     return new Promise((resolve, reject) => {
-      const update = { handle, options: change, resolve, reject };
-      if (group.pending === null) this.#change(group, update);
-      else group.queued.push(update);
+      this.#enqueue({ handle, options: change, resolve, reject });
     });
+  }
+  /** Follow the handle across moves, merging only after the preceding answer. */
+  #enqueue(update: PendingUpdate): void {
+    const { handle } = update;
+    const group = handle.group;
+    if (group === null) update.reject(new TopicError("closed", "rejected"));
+    else if (handle.move !== null) handle.move.queued.push(update);
+    else if (group.pending !== null) group.queued.push(update);
+    else this.#change(group, update);
   }
   /** The acknowledged request with `options` applied. */
   #merge(group: Group, options: TopicSettingsUpdate): Record<string, unknown> {
@@ -523,13 +533,6 @@ export class TopicClient implements Topics {
         return;
       }
     }
-    if (handle.move !== null) {
-      // A newer change supersedes a move still waiting for its group.
-      const previous = handle.move;
-      handle.move = null;
-      this.#leave(handle, previous.group);
-      previous.reject(new TopicError("superseded", "rejected"));
-    }
     const existing = this.#groups.get(signatureOf(group.keyExpr, group.identity, requested));
     const inPlace = group.handles.size === 1 && group.status.phase === "ready" && group.sent &&
       this.#send !== null && (existing === undefined || existing === group);
@@ -554,20 +557,15 @@ export class TopicClient implements Topics {
       return;
     }
     target.handles.add(handle);
-    handle.move = { group: target, resolve: update.resolve, reject: update.reject };
+    handle.move = { group: target, queued: [], resolve: update.resolve, reject: update.reject };
     this.#subscribe(target);
     this.#settle(target);
   }
   /** The relay answered: send the next change, or share the group again. */
   #next(group: Group): void {
-    while (group.pending === null) {
-      const update = group.queued.shift();
-      if (update === undefined) {
-        this.#index(group);
-        return;
-      }
-      this.#change(group, update);
-    }
+    // A change can immediately move the handle and retire this group.
+    for (const update of group.queued.splice(0)) this.#enqueue(update);
+    this.#index(group);
   }
   /** Offer a live group to new consumers under its acknowledged settings,
    * unless a change is in flight or another group already serves them. */
@@ -589,10 +587,16 @@ export class TopicClient implements Topics {
         // A handle whose old group never got ready is ready through this one.
         if (handle.status().phase !== "ready") handle.transition(group.status);
         move.resolve(group.settings);
-      } else if (group.status.phase === "rejected") {
+        for (const update of move.queued) this.#enqueue(update);
+      } else if (group.status.phase === "rejected" || group.status.phase === "interrupted") {
         handle.move = null;
         this.#leave(handle, group);
-        move.reject(group.status.error ?? new TopicError("rejected", "rejected"));
+        const error = group.status.error ?? new TopicError("rejected", "rejected");
+        move.reject(error);
+        for (const update of move.queued) {
+          if (group.status.phase === "interrupted") update.reject(error);
+          else this.#enqueue(update);
+        }
       }
     }
   }
@@ -775,8 +779,9 @@ export class TopicClient implements Topics {
       group.sent = false;
       group.route = null;
       group.keys.clear();
-      this.#failUpdates(group, new TopicError("connection_lost", "interrupted"));
-      this.#transition(group, { phase: "interrupted" });
+      const error = new TopicError("connection_lost", "interrupted");
+      this.#failUpdates(group, error);
+      this.#transition(group, { phase: "interrupted", error });
     }
     for (const id of [...this.#lists.keys()]) {
       this.#rejectList(id, new TopicError("connection_lost", "interrupted"));

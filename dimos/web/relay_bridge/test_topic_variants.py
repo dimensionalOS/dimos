@@ -30,7 +30,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.utils.asyncio_timeout import timeout
-from dimos.web.relay_bridge import topic_transform
+from dimos.web.relay_bridge import topic_service, topic_transform
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
 from dimos.web.relay_bridge.protocol import DataFrame, decode_data_frame
 from dimos.web.relay_bridge.topic_catalog import TopicCatalog
@@ -184,9 +184,13 @@ async def test_variants_share_one_subscription_and_encode_once_each(
     assert encode.call_args_list[0].args[2] != encode.call_args_list[1].args[2]
 
 
-async def test_a_slow_variant_keeps_the_newest_sample_until_its_rate_makes_it_due(
-    harness: Harness,
+@pytest.mark.parametrize(("due_time", "max_hz"), [(110.0, 0.1), (100.1, 30)])
+async def test_a_slow_variant_keeps_the_newest_sample_until_it_is_due(
+    harness: Harness, mocker: MockerFixture, due_time: float, max_hz: float
 ) -> None:
+    # Freeze only the route's clock; asyncio and writer timeouts stay real.
+    clock = mocker.patch.object(topic_service, "time", wraps=time)
+    clock.monotonic.return_value = 100.0
     route = harness.make(normalize_settings(PROFILE, {"maxHz": 30}), max_hz=30)
     await route.start()
     route.set_variant("v2", {"maxHz": 0.1, "quality": 40})
@@ -195,10 +199,11 @@ async def test_a_slow_variant_keeps_the_newest_sample_until_its_rate_makes_it_du
     route._mailbox.offer(sample(1))
     first = [await harness.frame() for _ in range(2)]
     assert {frame.header.meta["variant"] for frame in first} == {"v1", "v2"}
-    # Two more samples inside v2's ten second period: v1 encodes each as it
-    # arrives, v2 holds the newest one.
+    # Each sample is due for v1, while v2 holds the newest one.
+    clock.monotonic.return_value = 100.05
     route._mailbox.offer(sample(2))
     second = await harness.frame()
+    clock.monotonic.return_value = 100.1
     route._mailbox.offer(sample(3))
     third = await harness.frame()
     assert [(f.header.meta["variant"], f.header.meta["headerSeq"]) for f in (second, third)] == [
@@ -206,9 +211,9 @@ async def test_a_slow_variant_keeps_the_newest_sample_until_its_rate_makes_it_du
         ("v1", 3),
     ]
     assert harness.frames.empty()
-    # Raising v2's rate keeps its last encode time, so the held sample is due
-    # now rather than ten seconds after the first one.
-    route.set_variant("v2", {"maxHz": 30, "quality": 40})
+    # The held sample becomes due either at its deadline or at a faster rate.
+    clock.monotonic.return_value = due_time
+    route.set_variant("v2", {"maxHz": max_hz, "quality": 40})
     held = await harness.frame()
     assert (held.header.meta["variant"], held.header.meta["headerSeq"]) == ("v2", 3)
     assert harness.frames.empty()

@@ -726,18 +726,20 @@ describe("topic settings updates", () => {
     owned.push(client);
     const sent: Msg[] = [];
     client.connected((m) => sent.push(m), vi.fn());
-    client.onMessage({
-      t: "topic_sources",
-      v: 1,
-      sources: [{
-        source: "workspace",
-        gen: 1,
-        read: true,
-        write: false,
-        profiles: ["raw", "image.jpeg.low.v1"],
-        profileOptions: OPTIONS,
-      }],
-    });
+    const sources = () =>
+      client.onMessage({
+        t: "topic_sources",
+        v: 1,
+        sources: [{
+          source: "workspace",
+          gen: 1,
+          read: true,
+          write: false,
+          profiles: ["raw", "image.jpeg.low.v1"],
+          profileOptions: OPTIONS,
+        }],
+      });
+    sources();
     const subs = () => sent.filter((m): m is TopicSubMsg => m.t === "topic_sub");
     const updates = () => sent.filter((m): m is TopicUpdateMsg => m.t === "topic_update");
     const ready = (route: string, sub = subs().at(-1)!, settings: TopicSettings = LOW) =>
@@ -773,7 +775,7 @@ describe("topic settings updates", () => {
         },
         payload: new Uint8Array([seq]),
       });
-    return { client, sent, subs, updates, ready, applied, rejected, camera, frame };
+    return { client, sent, sources, subs, updates, ready, applied, rejected, camera, frame };
   }
 
   it("reports the normalized request before acknowledgement and the relay's settings after", async () => {
@@ -897,6 +899,171 @@ describe("topic settings updates", () => {
     h.client.disconnected();
     await expect(lost).rejects.toMatchObject({ code: "connection_lost", outcome: "interrupted" });
     await expect(queued).rejects.toMatchObject({ code: "connection_lost", outcome: "interrupted" });
+  });
+
+  it("resets maxHz in place to the profile default and preserves it on reconnect", async () => {
+    const h = setup();
+    const sub = h.camera({ maxHz: 5 });
+    h.ready("@t:v1", undefined, { ...LOW, maxHz: 5 });
+    const reset = sub.update({ maxHz: null });
+    expect(h.updates()[0].options).toEqual({ maxHz: null });
+    h.applied(1, LOW);
+    await expect(reset).resolves.toEqual(LOW);
+    h.client.disconnected();
+    h.client.connected((m) => h.sent.push(m), vi.fn());
+    h.sources();
+    expect(h.subs().at(-1)?.maxHz).toBe(30);
+  });
+
+  it("resets maxHz on a shared handle to the profile default", async () => {
+    const h = setup();
+    const a = h.camera({ maxHz: 5 });
+    const b = h.camera({ maxHz: 5 });
+    h.ready("@t:v1", undefined, { ...LOW, maxHz: 5 });
+    const reset = b.update({ maxHz: null });
+    expect(h.subs()[1].maxHz).toBe(30);
+    h.ready("@t:v2");
+    await expect(reset).resolves.toEqual(LOW);
+    expect(a.settings()).toEqual({ ...LOW, maxHz: 5 });
+  });
+
+  it("keeps an omitted maxHz and resets raw maxHz to the protocol default", async () => {
+    const h = setup();
+    const sub = h.camera({ profile: "raw", maxHz: 5 });
+    h.ready("@t:v1", undefined, { maxHz: 5 });
+    const unchanged = sub.update({ maxHz: undefined });
+    expect(h.updates()[0].options).toEqual({});
+    h.applied(1, { maxHz: 5 });
+    await expect(unchanged).resolves.toEqual({ maxHz: 5 });
+    h.camera({ profile: "raw", maxHz: 5 });
+    expect(h.subs()).toHaveLength(1);
+    const reset = sub.update({ maxHz: null });
+    expect(h.subs()[1].maxHz).toBe(1000);
+    h.ready("@t:v2", undefined, { maxHz: 1000 });
+    await expect(reset).resolves.toEqual({ maxHz: 1000 });
+  });
+
+  it("queues successive changes while a shared handle waits for its new group", async () => {
+    const h = setup();
+    const a = h.camera();
+    const b = h.camera();
+    h.ready("@t:v1");
+    const first = b.update({ quality: 40 });
+    const firstResult = expect(first).resolves.toEqual({ ...LOW, quality: 40 });
+    const second = b.update({ maxResolution: [320, 240] });
+    const secondResult = expect(second).resolves.toEqual({
+      ...LOW,
+      quality: 40,
+      maxResolution: [320, 240],
+    });
+    expect(h.subs()).toHaveLength(2);
+    expect(h.updates()).toEqual([]);
+    h.ready("@t:v2", h.subs()[1], { ...LOW, quality: 40 });
+    await firstResult;
+    expect(h.updates()).toEqual([{
+      t: "topic_update",
+      id: h.subs()[1].id,
+      revision: 1,
+      options: { maxResolution: [320, 240] },
+    }]);
+    h.applied(1, { ...LOW, quality: 40, maxResolution: [320, 240] });
+    await secondResult;
+    expect(a.settings()).toEqual(LOW);
+    h.camera({ quality: 40, maxResolution: [320, 240] });
+    expect(h.subs()).toHaveLength(2);
+  });
+
+  it("rejects a waiting move and queued changes on disconnect and recovers the original group", async () => {
+    const h = setup();
+    const a = h.camera();
+    const b = h.camera();
+    h.ready("@t:v1");
+    const first = b.update({ quality: 40 });
+    const firstResult = expect(first).rejects.toMatchObject({
+      code: "connection_lost",
+      outcome: "interrupted",
+    });
+    const second = b.update({ maxResolution: [320, 240] });
+    const secondResult = expect(second).rejects.toMatchObject({
+      code: "connection_lost",
+      outcome: "interrupted",
+    });
+    h.client.disconnected();
+    await Promise.all([firstResult, secondResult]);
+    expect(b.settings()).toEqual(LOW);
+    expect(b.status().phase).toBe("interrupted");
+    h.client.connected((m) => h.sent.push(m), vi.fn());
+    h.sources();
+    expect(h.subs()).toHaveLength(3);
+    expect(h.subs()[2]).toMatchObject({ id: h.subs()[0].id });
+    h.ready("@t:recovered");
+    await Promise.all([a.ready(), b.ready()]);
+    const retried = b.update({ quality: 40 });
+    expect(h.subs()).toHaveLength(4);
+    h.ready("@t:retry", undefined, { ...LOW, quality: 40 });
+    await expect(retried).resolves.toEqual({ ...LOW, quality: 40 });
+  });
+
+  it("keeps queued changes when an acknowledged update moves immediately to a ready group", async () => {
+    const h = setup();
+    const a = h.camera();
+    const b = h.camera({ maxHz: 5, quality: 40 });
+    h.ready("@t:v1", h.subs()[0]);
+    h.ready("@t:v2", h.subs()[1], { ...LOW, maxHz: 5, quality: 40 });
+    const first = a.update({ maxHz: 5 });
+    const second = a.update({ quality: 40 });
+    const third = a.update({ maxResolution: [320, 240] });
+    h.applied(1, { ...LOW, maxHz: 5 });
+    await expect(first).resolves.toEqual({ ...LOW, maxHz: 5 });
+    await expect(second).resolves.toEqual({ ...LOW, maxHz: 5, quality: 40 });
+    expect(h.subs()).toHaveLength(3);
+    expect(h.subs()[2]).toMatchObject({
+      maxHz: 5,
+      settings: { quality: 40, maxResolution: [320, 240] },
+    });
+    const settings = { maxHz: 5, quality: 40, maxResolution: [320, 240] as [number, number] };
+    h.ready("@t:v3", h.subs()[2], settings);
+    await expect(third).resolves.toEqual(settings);
+    expect(b.settings()).toEqual({ ...LOW, maxHz: 5, quality: 40 });
+  });
+
+  it("merges a queued change into the original settings after a move is rejected", async () => {
+    const h = setup();
+    h.camera();
+    const sub = h.camera();
+    h.ready("@t:v1");
+    const first = sub.update({ quality: 40 });
+    const second = sub.update({ maxResolution: [320, 240] });
+    h.client.onMessage({
+      t: "topic_error",
+      id: h.subs()[1].id,
+      code: "variant_limit",
+      message: "variant limit",
+      outcome: "rejected",
+    });
+    await expect(first).rejects.toMatchObject({ code: "variant_limit" });
+    expect(h.subs()).toHaveLength(3);
+    expect(h.subs()[2].settings).toEqual({ maxResolution: [320, 240] });
+    const settings: TopicSettings = { ...LOW, maxResolution: [320, 240] };
+    h.ready("@t:v3", undefined, settings);
+    await expect(second).resolves.toEqual(settings);
+  });
+
+  it("rejects a move and its queued changes when the handle closes", async () => {
+    const h = setup();
+    const a = h.camera();
+    const b = h.camera();
+    h.ready("@t:v1");
+    const first = b.update({ quality: 40 });
+    const second = b.update({ maxResolution: [320, 240] });
+    b.close();
+    await expect(first).rejects.toMatchObject({ code: "closed" });
+    await expect(second).rejects.toMatchObject({ code: "closed" });
+    expect(a.status().phase).toBe("ready");
+    expect(a.settings()).toEqual(LOW);
+    expect(h.sent.filter((m) => m.t === "topic_unsub")).toEqual([
+      { t: "topic_unsub", id: h.subs()[1].id },
+    ]);
   });
 
   it("an update onto settings another group serves joins that group instead of displacing it", async () => {
