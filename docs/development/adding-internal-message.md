@@ -10,6 +10,10 @@ built-in messages, rebuilds dimOS, and reads one value back from its CDR bytes.
 - A checkout of this repository on a working branch.
 - A C++ compiler (`gcc` or `clang`).
 
+The runnable examples for the built-in message package, including the Python,
+C++ and Rust roundtrip, are in
+[examples/message-package](/examples/message-package/README.md).
+
 ## 1. Create the definition
 
 Message inputs live under `packages/dimos-messages/interfaces`. `dimos_msgs` is
