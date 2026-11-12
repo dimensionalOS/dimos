@@ -86,7 +86,7 @@ changes only what it is handed. For a `Dataset` case the baseline receives selec
 coordinates and colors as CSV, camera frames as lossless PNG and primitive observations as
 JSON, with timestamps and hashes; no `agent_encode` summaries, labels, semantic tags or the
 original database. For a robot case it receives the raw topics and `ROBOT.md`. Dimcode
-receives the same selected observations through the dimOS store, the robot through MCP, and
+receives the same selected observations through the dimOS store, the robot through `DIMOS.md`, and
 keeps its production tools and skills. Representation and delivery differences between the
 arms are part of the comparison and belong in the report.
 
@@ -436,7 +436,7 @@ go_to_bed = EvalCase(
     id="go_to_bed",
     inputs="go to the bed",
     environment=DimSimEnvironment(
-        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        blueprint=["unitree-go2", "unitree-skill-container"],
         scene="apartment",
     ),
     grade=ended_near_bed,
@@ -461,7 +461,7 @@ from dimos.evals.environments.habitat import HabitatEnvironment
 from dimos.simulation.habitat.constants import HM3D_EXAMPLE_DATASET_CONFIG
 
 habitat_environment = HabitatEnvironment(
-    blueprint=["habitat-nav", "mcp-server", "observe-skill"],
+    blueprint=["habitat-nav", "observe-skill"],
     scene_dataset_config=str(HM3D_EXAMPLE_DATASET_CONFIG),
     scene_id="00861-GLAQ4DNUx5U",
     seed=0,
@@ -499,7 +499,7 @@ lift_apple = EvalCase(
     id="lift_apple",
     inputs="Pick up the apple and hold it in the air above the table.",
     environment=MujocoEnvironment(
-        blueprint=["xarm-perception-sim", "mcp-server"],
+        blueprint=["xarm-perception-sim"],
         disable=("rerun-bridge-module",),
         tracked_bodies=("apple", "orange", "cup"),
     ),
