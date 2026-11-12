@@ -21,17 +21,7 @@ import numpy as np
 import pytest
 
 from dimos.robot.assets.model import RobotModel
-from dimos.robot.assets.urdf_to_usd import PASSTHROUGH_KEY, urdf_to_usd
-from dimos.robot.assets.usd import (
-    graft_usd,
-    prefix_usd_frames,
-    rename_usd_frames,
-    usd_drives,
-    usd_frame_names,
-    usd_with_drives,
-    usd_with_frames,
-)
-from dimos.robot.assets.usd_assets import (
+from dimos.robot.assets.usd_utils.assets import (
     asset_hash,
     describe_unopenable_assets,
     require_asset_hashes,
@@ -39,6 +29,14 @@ from dimos.robot.assets.usd_assets import (
     unhashed_assets,
     unopenable_assets,
 )
+from dimos.robot.assets.usd_utils.frames import (
+    prefix_usd_frames,
+    rename_usd_frames,
+    usd_frame_names,
+    usd_with_frames,
+)
+from dimos.robot.assets.usd_utils.from_urdf import PASSTHROUGH_KEY, urdf_to_usd
+from dimos.robot.assets.usd_utils.layers import graft_usd
 
 pytest.importorskip("pxr")
 
@@ -335,7 +333,7 @@ def test_a_frame_added_to_a_link_is_welded_to_it(toy: Any) -> None:
 def test_a_frame_welded_to_the_world_converts_to_a_joint_on_the_scene_root(toy: Any) -> None:
     import xml.etree.ElementTree as ElementTree
 
-    from dimos.robot.assets.usd_to_urdf import usd_to_urdf
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
 
     scene = usd_with_frames(urdf_to_usd(toy), {"spot": ("toy", (0.3, 0.0, 0.7), (0.0, 0.0, 0.0))})
 
@@ -378,78 +376,6 @@ def test_a_frame_added_to_something_that_is_not_a_link_is_welded_to_the_world(to
     ]
     assert len(welds) == 1, "the frame is held by exactly one weld"
     assert welds[0].GetRelationship("physics:body0").GetTargets() == []
-
-
-def test_a_driven_joint_says_its_gains_in_both_spellings(toy: Any) -> None:
-    from pxr import UsdPhysics
-
-    grown = usd_with_drives(urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25)})
-    stage = _stage(grown)
-
-    joint = next(
-        prim
-        for prim in stage.Traverse()
-        if prim.IsA(UsdPhysics.Joint) and prim.GetName() == "base_to_mount"
-    )
-    drive = UsdPhysics.DriveAPI(joint, "angular")
-    assert drive.GetStiffnessAttr().Get() == pytest.approx(40.0)
-    assert drive.GetDampingAttr().Get() == pytest.approx(2.0)
-    assert drive.GetTargetPositionAttr().Get() == pytest.approx(0.25)
-
-
-def _with_actuator(usd: str, joint: str, *, biased: bool) -> str:
-    from pxr import Sdf, Usd, UsdPhysics
-
-    layer = Sdf.Layer.CreateAnonymous(".usda")
-    assert layer.ImportFromString(usd)
-    stage = Usd.Stage.Open(layer)
-    prim = next(p for p in stage.Traverse() if p.IsA(UsdPhysics.Joint) and p.GetName() == joint)
-    actuator = stage.DefinePrim(f"/toy/Physics/{joint}", "MjcActuator")
-    actuator.CreateRelationship("mjc:target").SetTargets([prim.GetPath()])
-    double = Sdf.ValueTypeNames.Double
-    actuator.CreateAttribute("mjc:ctrlRange:min", double).Set(-23.7)
-    actuator.CreateAttribute("mjc:ctrlRange:max", double).Set(23.7)
-    if biased:
-        actuator.CreateAttribute("mjc:biasType", Sdf.ValueTypeNames.Token).Set("affine")
-    return str(layer.ExportToString())
-
-
-def test_a_motors_control_range_becomes_its_torque_limit(toy: Any) -> None:
-    usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=False)
-
-    stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
-    driven = stage.GetPrimAtPath("/toy/Physics/base_to_mount")
-
-    assert str(driven.GetAttribute("mjc:biasType").Get()) == "affine"
-    assert driven.GetAttribute("mjc:forceRange:max").Get() == pytest.approx(23.7)
-    assert str(driven.GetAttribute("mjc:ctrlLimited").Get()) == "false"
-
-
-def test_an_actuator_that_already_biases_keeps_its_control_range_alone(toy: Any) -> None:
-    usd = _with_actuator(urdf_to_usd(toy), "base_to_mount", biased=True)
-
-    stage = _stage(usd_with_drives(usd, {"base_to_mount": (40.0, 2.0, 0.0)}))
-    driven = stage.GetPrimAtPath("/toy/Physics/base_to_mount")
-
-    assert driven.GetAttribute("mjc:gainPrm").Get()[0] == pytest.approx(40.0)
-    assert not driven.GetAttribute("mjc:forceRange:max").HasAuthoredValue()
-
-
-def test_a_joint_the_layer_does_not_have_cannot_be_driven(toy: Any) -> None:
-    with pytest.raises(ValueError, match="no joint for \\['nowhere'\\]"):
-        usd_with_drives(urdf_to_usd(toy), {"nowhere": (1.0, 0.1, 0.0)})
-
-
-def test_the_drives_read_back_as_they_were_written(toy: Any) -> None:
-    grown = usd_with_drives(
-        urdf_to_usd(toy), {"base_to_mount": (40.0, 2.0, 0.25), "mount_to_arm": (8.0, 0.4, -1.5)}
-    )
-
-    assert usd_drives(grown) == {
-        "base_to_mount": pytest.approx((40.0, 2.0, 0.25)),
-        "mount_to_arm": pytest.approx((8.0, 0.4, -1.5)),
-    }
-    assert "nowhere" not in usd_drives(urdf_to_usd(toy))
 
 
 def test_a_frame_can_hang_off_a_frame_added_in_the_same_call(toy: Any) -> None:

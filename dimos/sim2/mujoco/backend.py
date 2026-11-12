@@ -153,7 +153,7 @@ class MujocoBackend:
         mujoco.mj_forward(self.model, self.data)
 
     def _initial_joints(self) -> dict[str, float]:
-        from dimos.robot.assets.usd import usd_drives
+        from dimos.sim2.mujoco.drives import usd_drives
 
         initial = {}
         for robot in self._robots.values():
