@@ -726,9 +726,9 @@ const PREMAP_FIELD: &str = "premap";
 const CHANGE_FIELD: &str = "change";
 
 /// A cloud's finite xyz points, with its `premap` flags when it has that field.
-fn extract_xyz_premap(
-    msg: &PointCloud2,
-) -> Result<(Vec<(f32, f32, f32)>, Option<Vec<bool>>), ExtractError> {
+type PointsWithPremap = (Vec<(f32, f32, f32)>, Option<Vec<bool>>);
+
+fn extract_xyz_premap(msg: &PointCloud2) -> Result<PointsWithPremap, ExtractError> {
     let Some(field) = msg.fields.iter().find(|f| f.name == PREMAP_FIELD) else {
         let points = extract_xyz(msg)?;
         return Ok((

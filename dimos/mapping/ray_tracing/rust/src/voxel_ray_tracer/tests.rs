@@ -14,6 +14,9 @@
 
 use super::*;
 
+/// `insert_seed`'s flag: the seeded voxel comes from a loaded premap.
+const FROM_PREMAP: bool = true;
+
 /// A xorshift stream, for stable random test inputs.
 fn test_rng(mut state: u64) -> impl FnMut() -> u64 + Copy {
     move || {
@@ -2108,17 +2111,17 @@ fn a_support_crossing_marks_the_neighbors_chunk_only_with_a_gate() {
         let mut map = VoxelMap::with_support_min(support_min);
         // A healthy voxel at the low edge of chunk 1 with three healthy neighbors in chunk 0.
         let edge = (CHUNK_EDGE, 0, 0);
-        map.insert_seed(edge, true);
+        map.insert_seed(edge, FROM_PREMAP);
         for n in [
             (CHUNK_EDGE - 1, 0, 0),
             (CHUNK_EDGE - 1, 1, 0),
             (CHUNK_EDGE - 1, 0, 1),
         ] {
-            map.insert_seed(n, true);
+            map.insert_seed(n, FROM_PREMAP);
         }
         map.take_changed_chunks();
         // The fourth healthy neighbor, in chunk 0, lifts the edge voxel over the gate.
-        map.insert_seed((CHUNK_EDGE - 1, 1, 1), true);
+        map.insert_seed((CHUNK_EDGE - 1, 1, 1), FROM_PREMAP);
         let marked = map.take_changed_chunks();
         assert!(marked.contains(&chunk_of((CHUNK_EDGE - 1, 1, 1))));
         assert_eq!(
@@ -2141,7 +2144,7 @@ fn chunk_points_equal_emit_points_filtered_to_the_chunk() {
         (CHUNK_EDGE + 2, 1, 0),
     ];
     for key in keys {
-        map.insert_seed(key, true);
+        map.insert_seed(key, FROM_PREMAP);
     }
     let chunk = chunk_of((CHUNK_EDGE + 2, 0, 0));
     let mut from_chunk = chunk_points(&map, cfg.voxel_size, &[chunk]);
