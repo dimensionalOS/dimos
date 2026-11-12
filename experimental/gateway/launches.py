@@ -218,7 +218,7 @@ def check_global(values: dict[str, Any]) -> None:
     if unknown:
         raise LaunchConfigError(f"not a dimos GlobalConfig flag: {', '.join(unknown)}")
     try:
-        GlobalConfig.model_validate(
+        validated = GlobalConfig.model_validate(
             {key: value for key, value in values.items() if value is not None}
         )
     except ValidationError as error:
@@ -226,6 +226,10 @@ def check_global(values: dict[str, Any]) -> None:
             f"{'.'.join(map(str, problem['loc']))}: {problem['msg']}" for problem in error.errors()
         )
         raise LaunchConfigError(f"bad GlobalConfig value: {problems}") from error
+    # as GlobalConfig types them (a "true" is True, 3.0 is 3): the flags are spelled from these
+    values.update(
+        {key: getattr(validated, key) for key, value in values.items() if value is not None}
+    )
 
 
 def global_flags(values: dict[str, Any], explicit_bools: bool = False) -> list[str]:
