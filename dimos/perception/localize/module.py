@@ -446,9 +446,13 @@ class PerceptionLocalize(Module):
             return matches[0]
         if matches:
             ids = ", ".join(hit.instance_id for hit in matches)
-            raise ValueError(f"The last scan found {len(matches)} {target!r}: {ids}. Pass one id.")
-        scanned = ", ".join(f"{label} {i}" for i, (label, _) in objects.items()) or "nothing"
-        raise LookupError(f"No {target!r} in the last scan, which found: {scanned}")
+            raise ValueError(
+                f"The last scan found {len(matches)} {target!r}: {ids}. Pass one of these ids."
+            )
+        scanned = ", ".join(f"{label} {i}" for i, (label, _) in objects.items())
+        if not scanned:
+            raise LookupError(f"No {target!r}: nothing has been scanned yet. Scan for it first.")
+        raise LookupError(f"No {target!r} in the last scan. It found: {scanned}.")
 
 
 def as_detection_array(

@@ -230,7 +230,7 @@ class PickAndPlaceModule(Module):
         try:
             pointcloud = self._scene.get_pointcloud(object_id)
         except (LookupError, ValueError) as exc:
-            return SkillResult(f"{exc} Use localize to find objects, then pass an id it returned.")
+            return SkillResult(f"{exc} Did not start the pick.")
         group = self._gripper_group(planning_group)
         if grasp is None:
             source = "provider"

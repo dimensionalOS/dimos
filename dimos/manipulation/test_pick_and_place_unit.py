@@ -106,7 +106,7 @@ def _localized(instance_id: str, cloud: PointCloud2) -> Any:
 
     def get_pointcloud(asked: str) -> PointCloud2:
         if asked != instance_id:
-            raise LookupError(f"No {asked!r} in the last scan, which found: cup {instance_id}")
+            raise LookupError(f"No {asked!r} in the last scan. It found: cup {instance_id}.")
         return cloud
 
     return get_pointcloud
@@ -261,8 +261,7 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
     result = module.pick_object("missing")
 
     assert result.message == (
-        "No 'missing' in the last scan, which found: cup cup-1 "
-        "Use localize to find objects, then pass an id it returned."
+        "No 'missing' in the last scan. It found: cup cup-1. Did not start the pick."
     )
     assert module._selected_grasp is None
 

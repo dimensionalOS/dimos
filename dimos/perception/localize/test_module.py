@@ -143,8 +143,11 @@ def test_objects_of_the_last_scan_are_found_by_id_or_unique_label(localizer, moc
     assert localizer.get_position("cup").x == pytest.approx(0.4)
     with pytest.raises(ValueError, match="block-1, block-2"):
         localizer.get_pointcloud("block")
-    with pytest.raises(LookupError, match="No 'bowl'"):
+    with pytest.raises(LookupError, match=r"No 'bowl' in the last scan\. It found: cup cup-1, "):
         localizer.get_pointcloud("bowl")
+    localizer._objects = {}
+    with pytest.raises(LookupError, match="nothing has been scanned yet"):
+        localizer.get_pointcloud("cup")
 
 
 def test_scene_cloud_merges_the_window_and_leaves_out_the_excluded_object(localizer, mocker):
