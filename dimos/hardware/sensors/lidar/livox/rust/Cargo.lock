@@ -142,6 +142,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-channel"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "924ed96dd52d1b75e9c1a3e6275715fd320f5f9439fb5a4a11fa51f4221158d2"
+dependencies = [
+ "concurrent-queue",
+ "event-listener-strategy",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +332,15 @@ checksum = "cfc320937d09e6de266b31b9afb480f197d7a861be86be7cb2ea7e5d1bfffc5e"
 dependencies = [
  "bytes",
  "memchr",
+]
+
+[[package]]
+name = "concurrent-queue"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
+dependencies = [
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -636,8 +657,9 @@ dependencies = [
 [[package]]
 name = "dimos-module"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
+source = "git+https://github.com/dimensionalOS/dimos?rev=30482d5b99126e5404b3c0a56dd0eddc8fcea6a8#30482d5b99126e5404b3c0a56dd0eddc8fcea6a8"
 dependencies = [
+ "async-channel",
  "dimos-lcm",
  "dimos-module-macros",
  "lcm-msgs",
@@ -656,7 +678,7 @@ dependencies = [
 [[package]]
 name = "dimos-module-macros"
 version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=6663bcb6e5e18f43a6cb9cf77ccbec613e310443#6663bcb6e5e18f43a6cb9cf77ccbec613e310443"
+source = "git+https://github.com/dimensionalOS/dimos?rev=30482d5b99126e5404b3c0a56dd0eddc8fcea6a8#30482d5b99126e5404b3c0a56dd0eddc8fcea6a8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -746,6 +768,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
  "parking",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "event-listener-strategy"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
+dependencies = [
+ "event-listener",
  "pin-project-lite",
 ]
 
