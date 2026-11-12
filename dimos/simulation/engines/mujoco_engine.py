@@ -168,6 +168,7 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        reset_joint_velocities: list[float] | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -176,6 +177,7 @@ class MujocoEngine(SimulationEngine):
         self._spawn_z = spawn_z
         self._spawn_yaw = spawn_yaw
         self._reset_joint_positions = reset_joint_positions
+        self._reset_joint_velocities = reset_joint_velocities
 
         model_path = self._resolve_model_path(config_path)
         binary_model = model_path.suffix.lower() == ".mjb"
@@ -590,12 +592,17 @@ class MujocoEngine(SimulationEngine):
     def _apply_reset_joint_positions_unlocked(self) -> None:
         if self._reset_joint_positions is None:
             return
+        velocities = self._reset_joint_velocities
         for index, position in enumerate(self._reset_joint_positions[: self._num_joints]):
             mapping = self._joint_mappings[index]
             if mapping.qpos_adr is not None:
                 self._data.qpos[mapping.qpos_adr] = float(position)
             if mapping.dof_adr is not None:
-                self._data.qvel[mapping.dof_adr] = 0.0
+                self._data.qvel[mapping.dof_adr] = (
+                    0.0
+                    if velocities is None or index >= len(velocities)
+                    else float(velocities[index])
+                )
         mujoco.mj_forward(self._model, self._data)
 
     def _sim_loop(self) -> None:

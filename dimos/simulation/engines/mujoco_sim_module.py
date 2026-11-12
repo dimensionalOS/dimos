@@ -251,6 +251,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_z: float | None = None
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
+    reset_joint_velocities: list[float] | None = None
     headless: bool = False
     tracked_bodies: list[str] = Field(default_factory=list)
     dof: int = 7
@@ -501,6 +502,7 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            reset_joint_velocities=self.config.reset_joint_velocities,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
