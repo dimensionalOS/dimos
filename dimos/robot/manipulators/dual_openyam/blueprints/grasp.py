@@ -55,7 +55,6 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_model_config,
 )
-from dimos.robot.manipulators.dual_openyam.scene_overlay import SceneOverlayModule
 from dimos.robot.manipulators.dual_openyam.scene_registration import (
     SelfClearedSceneRegistrationModule,
 )
@@ -193,7 +192,6 @@ def dual_openyam_grasp_view() -> Any:
 
     cameras = [
         ("world/color_image", "Overhead"),
-        ("world/overlay_image", "Scene overlay"),
         ("world/left_wrist_color_image", "Left wrist"),
         ("world/right_wrist_color_image", "Right wrist"),
     ]
@@ -226,7 +224,6 @@ def dual_openyam_grasp_view() -> Any:
 # The scene cloud stays off the bridge: streamed to a remote viewer it saturates the link.
 DUAL_OPENYAM_VIEW_TOPICS = [
     "color_image",
-    "overlay_image",
     "camera_info",
     "left_wrist_color_image",
     "right_wrist_color_image",
@@ -239,7 +236,6 @@ DUAL_OPENYAM_VIEW_TOPICS = [
 # remote viewer two cores of JPEG decoding.
 DUAL_OPENYAM_VIEW_MAX_HZ = {
     "world/color_image": 10.0,
-    "world/overlay_image": 10.0,
     "world/left_wrist_color_image": 3.0,
     "world/right_wrist_color_image": 3.0,
 }
@@ -320,9 +316,6 @@ def dual_openyam_grasp_modules(grasp_provider: Blueprint | None = None) -> tuple
         ),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
-        # Ghost of a saved scene over the overhead image, for rebuilding benchmark scenes;
-        # pass-through until --sceneoverlaymodule.scene names a capture in scenes-dir.
-        SceneOverlayModule.blueprint(),
         # The overhead camera sees the arms, so the scene the contact check reads has
         # the robot's returns removed, as the planner's map has.
         SelfClearedSceneRegistrationModule.blueprint(

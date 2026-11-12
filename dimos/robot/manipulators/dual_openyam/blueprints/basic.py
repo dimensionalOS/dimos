@@ -14,11 +14,14 @@
 
 """Dual OpenYAM coordinator and planner through one connection."""
 
+from typing import ClassVar
+
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.damiao.damiao_blueprint import (
+    DamiaoCoordinator,
     arm_connection,
     arm_declaration,
     arm_remaps,
@@ -28,7 +31,17 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.connection import DualOpenYamConnection
-from dimos.robot.manipulators.dual_openyam.coordinator import DualOpenYamCoordinator
+
+
+class DualOpenYamCoordinator(DamiaoCoordinator):
+    """A Damiao coordinator that runs alone in its own worker process.
+
+    Keeps the 100 Hz control loop away from the cameras, the voxel map and the
+    grasp generator, which otherwise share its process and make it miss ticks.
+    """
+
+    dedicated_worker: ClassVar[bool] = True
+
 
 _dual_openyam = dual_openyam_model_config(robot="arm")
 
