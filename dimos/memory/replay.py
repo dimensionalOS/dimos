@@ -88,11 +88,11 @@ class Replay(Configurable):
         return ReplayStream(replay=self, name=name, autocast=autocast)
 
     def first_ts(self) -> float | None:
-        """Earliest first_ts across non-empty streams in the underlying store."""
+        """Earliest source timestamp across non-empty streams in the underlying store."""
         candidates: list[float] = []
         for name in self.store.list_streams():
             try:
-                candidates.append(float(self.store.stream(name).first().ts))
+                candidates.append(float(self.store.stream(name).order_by("ts").first().ts))
             except (LookupError, ImportError, AttributeError):
                 continue
         return min(candidates) if candidates else None
