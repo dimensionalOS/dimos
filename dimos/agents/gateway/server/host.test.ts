@@ -161,7 +161,7 @@ async function startGateway(
   }
 }
 
-test("file paths and literal @ references reach the model as ordinary text", { timeout: 120_000 }, async (t) => {
+test("file and stream references reach the model as ordinary text", { timeout: 120_000 }, async (t) => {
   const { root, paths, remove } = await scratch();
   const secret = `file-content-${randomUUID()}`;
   await writeFile(join(root, "notes.txt"), secret);
@@ -172,7 +172,8 @@ test("file paths and literal @ references reach the model as ordinary text", { t
       "base64",
     ),
   );
-  const text = 'inspect notes.txt "camera.png" @notes.txt @camera.png @missing/ref';
+  const text =
+    'inspect notes.txt "camera.png" stream://camera%2Ffront "stream://camera front" @notes.txt @camera.png @missing/ref';
   const scripted = scriptedModel();
   const faux = scripted.models.getProvider("faux");
   assert(faux !== undefined);
