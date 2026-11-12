@@ -2088,6 +2088,9 @@ dds = [
 drone = [
     { name = "pymavlink" },
 ]
+joycon-teleop = [
+    { name = "hidapi" },
+]
 leader-teleop = [
     { name = "ftservo-python-sdk" },
 ]
@@ -2592,6 +2595,7 @@ requires-dist = [
     { name = "googlemaps", marker = "extra == 'misc'", specifier = ">=4.10.0" },
     { name = "gtsam-extended", marker = "(python_full_version >= '3.11' and platform_machine != 'arm64' and extra == 'mapping') or (python_full_version >= '3.11' and sys_platform != 'darwin' and extra == 'mapping') or (platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mapping')", specifier = ">=4.3a1.post1" },
     { name = "h5py", marker = "extra == 'learning'" },
+    { name = "hidapi", marker = "extra == 'joycon-teleop'", specifier = ">=0.14.0" },
     { name = "httpx", marker = "extra == 'agents'", specifier = ">=0.28" },
     { name = "huggingface-hub", marker = "extra == 'perception'", specifier = ">=0.36" },
     { name = "hydra-core", marker = "extra == 'perception'", specifier = ">=1.3.0" },
@@ -2706,7 +2710,7 @@ requires-dist = [
     { name = "yourdfpy", marker = "(platform_machine != 'aarch64' and extra == 'visualization') or (sys_platform != 'linux' and extra == 'visualization')", specifier = ">=0.0.60" },
     { name = "yourdfpy", marker = "extra == 'planning'", specifier = ">=0.0.60" },
 ]
-provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "leader-teleop", "cpu", "cuda", "sim", "sim-unreal", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
+provides-extras = ["misc", "spot", "visualization", "learning", "agents", "web", "perception", "unitree", "unitree-dds", "control", "planning", "manipulation", "leader-teleop", "joycon-teleop", "cpu", "cuda", "sim", "sim-unreal", "mapping", "drone", "dds", "webrtc", "base", "apriltag", "scene", "all"]
 
 [package.metadata.requires-dev]
 autofix = [{ name = "ruff", specifier = "==0.14.3" }]
@@ -3882,6 +3886,44 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/dd/7ac658d54b9fb7999a0ccb07ad863b413cbaf5cf172f48ebcd9497ec7263/hf_xet-1.2.0-cp37-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:4c1428c9ae73ec0939410ec73023c4f842927f39db09b063b9482dac5a3bb737", size = 3413812, upload-time = "2025-10-24T19:04:24.585Z" },
     { url = "https://files.pythonhosted.org/packages/92/68/89ac4e5b12a9ff6286a12174c8538a5930e2ed662091dd2572bbe0a18c8a/hf_xet-1.2.0-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a55558084c16b09b5ed32ab9ed38421e2d87cf3f1f89815764d1177081b99865", size = 3508920, upload-time = "2025-10-24T19:04:26.927Z" },
     { url = "https://files.pythonhosted.org/packages/cb/44/870d44b30e1dcfb6a65932e3e1506c103a8a5aea9103c337e7a53180322c/hf_xet-1.2.0-cp37-abi3-win_amd64.whl", hash = "sha256:e6584a52253f72c9f52f9e549d5895ca7a471608495c4ecaa6cc73dba2b24d69", size = 2905735, upload-time = "2025-10-24T19:04:35.928Z" },
+]
+
+[[package]]
+name = "hidapi"
+version = "0.15.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/f6/caad9ed701fbb9223eb9e0b41a5514390769b4cb3084a2704ab69e9df0fe/hidapi-0.15.0.tar.gz", hash = "sha256:ecbc265cbe8b7b88755f421e0ba25f084091ec550c2b90ff9e8ddd4fcd540311", size = 184995, upload-time = "2025-12-09T09:48:54.129Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/5a/46620fc194f3fa728dce1966ce977334b080fc33b8b525018ad0e0324b91/hidapi-0.15.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:b0e1781f7fb8b4015e318d839d66fa79e98900d53900e31d04edb336e0103846", size = 70517, upload-time = "2025-12-09T09:44:47.751Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/97/bcbcb89f9461c29d3b12dd32affd29e6312fd521154ee7f394496d0039a9/hidapi-0.15.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:1fa3e792987d4b7ed66d785491307e23d4f09d3636f8a23665a9694c43e92409", size = 70181, upload-time = "2025-12-09T09:44:49.321Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/19/b9f1cd2bce226ed43afa7e7649caeee5552e7ea844e997521d747f0da184/hidapi-0.15.0-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:75c2d3b83a8300953653ddd7f5190d5ee6072d4a6ee5944db47e92d97344ed92", size = 1039531, upload-time = "2025-12-09T09:44:55.735Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/b9/5a6a1a4219ada2da251225c706d450076fd2b3d624000699ff4d329326ab/hidapi-0.15.0-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:91b43099b123363c8935a264acffb4c7e5c8dba3390f9b2bf19ff76597677a31", size = 1573936, upload-time = "2025-12-09T09:44:51.193Z" },
+    { url = "https://files.pythonhosted.org/packages/42/7c/a2df1c993db58f9337d5ee64d3c58f5b9c5127f3ef68907d0c50070d1e50/hidapi-0.15.0-cp310-cp310-manylinux_2_28_i686.whl", hash = "sha256:cea09ccc3efa5b92ab18d3ae8636836edce2c421d67ed4409761da090e230e5a", size = 1654515, upload-time = "2025-12-09T09:44:54.166Z" },
+    { url = "https://files.pythonhosted.org/packages/54/ca/341b3f5c713f72a7e61a942859b003a507f4a7d7cf5135a20da519bbcf05/hidapi-0.15.0-cp310-cp310-musllinux_1_2_aarch64.whl", hash = "sha256:b2de66142cf780ee7c797b7c35e488d67bccdf2de98178ac12a4038c490c44ea", size = 669173, upload-time = "2025-12-09T09:44:57.545Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/55/e5922d48b59959820d976c8e232b14c1f57d65742e416831ce53fda32f6b/hidapi-0.15.0-cp310-cp310-musllinux_1_2_i686.whl", hash = "sha256:e283c3e9255850d66152adbf580744d38c840d399141b98d64d359cb97cbc128", size = 664906, upload-time = "2025-12-09T09:44:58.893Z" },
+    { url = "https://files.pythonhosted.org/packages/50/b2/87683617901cbc5232a1d99cb8e51a967792aae48d462a8e2a842d63ec25/hidapi-0.15.0-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:5b9f6d2f3bc15c718d8e2ce349d2d019a0fcc343ed1a705a91d0f1c7e792d6ea", size = 671123, upload-time = "2025-12-09T09:45:00.828Z" },
+    { url = "https://files.pythonhosted.org/packages/26/cc/03f7d56b82a9dc2abcfcd8d55915504e156b6558fb66926629836e551595/hidapi-0.15.0-cp310-cp310-win32.whl", hash = "sha256:81de6b5fcb4fbbbfc71c6d201a2ac6914d1d86e51930ffde5f96faf50e922473", size = 60160, upload-time = "2025-12-09T09:45:04.472Z" },
+    { url = "https://files.pythonhosted.org/packages/35/20/a39e33a9088d76f98f80d9320f8413bdaeaa0458b42470e63a47ac4ccf94/hidapi-0.15.0-cp310-cp310-win_amd64.whl", hash = "sha256:c36895abaef3a4004af6c5020ca214fcdacb2a491e4cde5576afbb1dad903548", size = 67063, upload-time = "2025-12-09T09:45:02.852Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/c5/3cfa157e7d1fd6af5ad52ea6ea031b1c8da141c61a2506ad5cb3420afa7f/hidapi-0.15.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:53d018e6ac639a217c019c6dcd79a1d30c2401ac7a8147eedd11f2aa29307661", size = 70578, upload-time = "2025-12-09T09:45:05.497Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/7e/a43efc66b3b0a68058e76ad0cb2267ce9b30d9006dce10824f3c8b314b08/hidapi-0.15.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:a11ef4b5ab0a2f36e35f44af394bff41cb645b03ce36c5b2f2c00873f112661f", size = 70233, upload-time = "2025-12-09T09:45:06.826Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/30/d8551d99528e0b7b2962cc76fb9a2b5990ea16aeb1457d1c3c61015d020f/hidapi-0.15.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e47d4fe13ddfc63fd1961974e10f3c7d50a57ae0bb73974e465cfe95dad5da18", size = 1070472, upload-time = "2025-12-09T09:45:16.322Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/26/433fc4e9efdfb9d1beb52e39ccdec265ae02003b1d2f8395aba3022b665b/hidapi-0.15.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:f39917c9e9bea895384b1a8869159d808b4a53561af9b4f7c3148bdf6bfd97a0", size = 1602092, upload-time = "2025-12-09T09:45:08.274Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/13/911b757f6847a197ab5c978fe8dd55181035096a5659cf7183e013ed1ea2/hidapi-0.15.0-cp311-cp311-manylinux_2_28_i686.whl", hash = "sha256:f4d294fcd2551fb5b41d5f478a08e8945382e1d86d7d40320d02594922d6b667", size = 1677973, upload-time = "2025-12-09T09:45:10.357Z" },
+    { url = "https://files.pythonhosted.org/packages/53/3f/cd92833886a15b34225bbd765ed1eb0270bc78b4cf6385e302c0e4bae494/hidapi-0.15.0-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:68cb85467151a3d4aa6ab4e11ca89a87c2404a778dbccb8fb5ae51e998133bb3", size = 699789, upload-time = "2025-12-09T09:45:18.506Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/0e/9cdad5783bf1b2aea6667da37f2435b286750d650071dcc50b42834c8810/hidapi-0.15.0-cp311-cp311-musllinux_1_2_i686.whl", hash = "sha256:06fbcd7696ad768d7e9500b64e2ae742b5d90a2531b5aa8d355c0f049516a09d", size = 695983, upload-time = "2025-12-09T09:45:20.192Z" },
+    { url = "https://files.pythonhosted.org/packages/86/ac/a57bc6e28d0dc1a0aed3dcc24302262ecbf2b723f9c4ba1af4ea51add5b4/hidapi-0.15.0-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:221e3a0c181503061bfc4a672eccd9f86b1da1167b31914be00d919edfd6e1bf", size = 697710, upload-time = "2025-12-09T09:45:21.807Z" },
+    { url = "https://files.pythonhosted.org/packages/53/40/6a45375a52027d8142e7acdaeab182a44ff6b818df41384019662eb4f351/hidapi-0.15.0-cp311-cp311-win32.whl", hash = "sha256:2c35bd9cc62227ec91047e36b260f75bdbf50814f3cf3c3b28648ac3ffabd9d7", size = 60070, upload-time = "2025-12-09T09:45:24.745Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/a9/8ad4e6423c7416eb8dd765327f3be67f083c985b41b9b48ef3061a64c5f2/hidapi-0.15.0-cp311-cp311-win_amd64.whl", hash = "sha256:c5f7ee9ce8e3373fdb7002497f16bc652d9d4acf20c91275877f55165caf6f0c", size = 67296, upload-time = "2025-12-09T09:45:23.313Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/fd/9076aba0736f339b71bda5ee26cb678c02420bf96c7ea5bd9ebcbaf0aa3c/hidapi-0.15.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:0b7eb950214191c936b5bdabaeaf1cab99c0dfc3ae3edc220e3c6d4547296053", size = 70157, upload-time = "2025-12-09T09:45:25.77Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/9c/9335957cb7e1ca1be997e97afe850f62a9ff0708015048b3871b553eed5c/hidapi-0.15.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:27933e7f3da7007e5e8d0b25bcf48a79a74e802555e496bba2c7d87f8a77cd61", size = 69597, upload-time = "2025-12-09T09:45:26.707Z" },
+    { url = "https://files.pythonhosted.org/packages/de/bc/0eb92f4f238adc8edc3decb859662cf87e302b0a6ecdabe0e4d0560eb5fd/hidapi-0.15.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:cfdbc74d5c4b5fdeef58a246d80f7dbf4ca33fe741c889505a4a350dd2eb54fb", size = 1082139, upload-time = "2025-12-09T09:45:32.799Z" },
+    { url = "https://files.pythonhosted.org/packages/03/04/856827cfecaa89091ed470f697e3f9cfb172fc852960e6b902e765d7d650/hidapi-0.15.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:4b7b6207c1c7df3524e9d4019c7196547327636e9924010b9b0bf0c40029e329", size = 1620074, upload-time = "2025-12-09T09:45:28.573Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/63/1338cf0e273d95e07202e391b17198f27bd2cfef71348707eac98cd8db2b/hidapi-0.15.0-cp312-cp312-manylinux_2_28_i686.whl", hash = "sha256:908e4b8c35041aa800b51094fd9fbaa5d6161bfb71e55821f43c6433f54e2865", size = 1689689, upload-time = "2025-12-09T09:45:31.195Z" },
+    { url = "https://files.pythonhosted.org/packages/84/08/28ce99698e14bb6bdf9d0dcf7ab45ab86d8bade894885aa15bb3fa43bcc1/hidapi-0.15.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:f9356fffebf723ccfbf0f9370d3725de37b3e2f1f6bffc40c3466f854542861c", size = 713596, upload-time = "2025-12-09T09:45:34.564Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/16/23e446e2d0ad0d75de149d94f8e6313329aec4d7c18d027e56f5a386779e/hidapi-0.15.0-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:fd082e13ca92bbd7a4ec65d9fbd9ef06ecd71798ce9f036b7144b3d498623a7e", size = 697243, upload-time = "2025-12-09T09:45:36.537Z" },
+    { url = "https://files.pythonhosted.org/packages/af/ef/e2fa4d795235eb09951f806bbfdbd766d1be805df448d67918e828b7cb31/hidapi-0.15.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:35eb5797d86306bd67aee80ad8973ab0a0b4e6d54018d3efb328767d0e8c9373", size = 717599, upload-time = "2025-12-09T09:45:37.825Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/a7/9b7fe9acd09ed90d702f8cc01190ab53e01d5022c21808b079144bc9017d/hidapi-0.15.0-cp312-cp312-win32.whl", hash = "sha256:ce6f99554dae15c48cd89a12d5aede77a92a8bd184b45d0b257a17c97e053cdb", size = 60136, upload-time = "2025-12-09T09:45:40.612Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/35/f9e2d3ead60b573140546b041dd41c78a48c0e6b573d61a03130adccd32e/hidapi-0.15.0-cp312-cp312-win_amd64.whl", hash = "sha256:9abc71a62bf8a8f1d70a6fd3613f86feb37ddb67e05ed934e734df79e27bf4f6", size = 67073, upload-time = "2025-12-09T09:45:39.261Z" },
 ]
 
 [[package]]

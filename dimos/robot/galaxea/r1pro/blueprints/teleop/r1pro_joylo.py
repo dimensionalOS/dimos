@@ -18,7 +18,7 @@ import math
 from typing import Any
 
 from dimos.control.connection.connection_module import ConnectionConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -71,76 +71,90 @@ _transports: dict[tuple[str, type], TransportSpec | Transport[Any]] = {
     )
 }
 
-_operator = autoconnect(
-    LeaderTeleopModule.blueprint(
-        mappings=OPENARM_R1PRO_MAPPINGS, tick_period_s=0.01, command_filter_cutoff_hz=6.0
-    ).remappings(
-        [
-            (LeaderTeleopModule, "leader_joint_command", "leader_readings"),
-            (LeaderTeleopModule, "teleop_buttons", "unused_leader_buttons"),
-            (LeaderTeleopModule, "left_gripper_command", "unused_leader_left_gripper"),
-            (LeaderTeleopModule, "right_gripper_command", "unused_leader_right_gripper"),
-        ]
-    ),
-    JoyConTeleopModule.blueprint(publish_legacy_commands=False).remappings(
-        [
-            (JoyConTeleopModule, "teleop_buttons", "unused_joycon_buttons"),
-            (JoyConTeleopModule, "left_gripper_command", "unused_joycon_left_gripper"),
-            (JoyConTeleopModule, "right_gripper_command", "unused_joycon_right_gripper"),
-            (JoyConTeleopModule, "cmd_vel", "unused_joycon_velocity"),
-        ]
-    ),
-).transports(_transports)
+
+def _operator_blueprint(left_only: bool = False) -> Blueprint:
+    return autoconnect(
+        LeaderTeleopModule.blueprint(
+            mappings=OPENARM_R1PRO_MAPPINGS,
+            tick_period_s=0.01,
+            command_filter_cutoff_hz=6.0,
+            enabled_sides=("left",) if left_only else None,
+        ).remappings(
+            [
+                (LeaderTeleopModule, "leader_joint_command", "leader_readings"),
+                (LeaderTeleopModule, "teleop_buttons", "unused_leader_buttons"),
+                (LeaderTeleopModule, "left_gripper_command", "unused_leader_left_gripper"),
+                (LeaderTeleopModule, "right_gripper_command", "unused_leader_right_gripper"),
+            ]
+        ),
+        JoyConTeleopModule.blueprint(publish_legacy_commands=False).remappings(
+            [
+                (JoyConTeleopModule, "teleop_buttons", "unused_joycon_buttons"),
+                (JoyConTeleopModule, "left_gripper_command", "unused_joycon_left_gripper"),
+                (JoyConTeleopModule, "right_gripper_command", "unused_joycon_right_gripper"),
+                (JoyConTeleopModule, "cmd_vel", "unused_joycon_velocity"),
+            ]
+        ),
+    ).transports(_transports)
+
 
 _declaration = R1ProConnectionConfig()
-_robot = (
-    autoconnect(
-        UrdfManager.blueprint(models={"r1pro": MODEL}),
-        SimModule.blueprint(
-            scene=SCENE,
-            backend=MujocoBackend,
-            dt_ns=5_000_000,
-            controllers=(CONTROL,),
-            joint_ids=JOINTS,
-            observation_hz=200,
-            startup_timeout_s=120,
-        ),
-        SimJointEncoderModule.blueprint(sensor=EncoderConfig(JOINTS, hz=50)),
-        R1ProSimControl.blueprint(coordinator_torso=True),
-        R1ProSimConnection.blueprint(),
-        R1ProJoylo.blueprint(),
-        R1ProJoyloCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            connections=[
-                ConnectionConfig(
-                    source=_declaration.source,
-                    model=_declaration.model,
-                    joint_commands=_declaration.joint_commands,
-                    deadman_timeout_s=_declaration.deadman_timeout_s,
-                )
-            ],
-            tasks=joylo_tasks(),
-        ),
-    )
-    .remappings(
-        [
-            (SimJointEncoderModule, "joint_state", "encoder"),
-            (R1ProSimControl, "joint_state", "encoder"),
-            (UrdfManager, "coordinator_joint_state", "encoder"),
-            (R1ProSimConnection, "joint_state", "robot_feedback"),
-            (R1ProJoyloCoordinator, "r1pro_joint_state", "robot_feedback"),
-            (R1ProSimConnection, "position_command", "r1pro_position_command"),
-            (R1ProSimConnection, "velocity_command", "r1pro_velocity_command"),
-            (R1ProSimControl, "cmd_vel", "servo_velocity"),
-            (R1ProSimControl, "left_gripper_command", "servo_left_gripper"),
-            (R1ProSimControl, "right_gripper_command", "servo_right_gripper"),
-            (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
-        ]
-    )
-    .transports(_transports)
-)
 
-# The receiver can run on macOS; physical input uses Linux's hid-nintendo driver.
+
+def _robot_blueprint(left_only: bool = False) -> Blueprint:
+    return (
+        autoconnect(
+            UrdfManager.blueprint(models={"r1pro": MODEL}),
+            SimModule.blueprint(
+                scene=SCENE,
+                backend=MujocoBackend,
+                dt_ns=5_000_000,
+                controllers=(CONTROL,),
+                joint_ids=JOINTS,
+                observation_hz=200,
+                startup_timeout_s=120,
+            ),
+            SimJointEncoderModule.blueprint(sensor=EncoderConfig(JOINTS, hz=50)),
+            R1ProSimControl.blueprint(coordinator_torso=True),
+            R1ProSimConnection.blueprint(),
+            R1ProJoylo.blueprint(
+                enabled_sides=("left",) if left_only else ("left", "right"), arm_only=left_only
+            ),
+            R1ProJoyloCoordinator.blueprint(
+                instance_name="ControlCoordinator",
+                connections=[
+                    ConnectionConfig(
+                        source=_declaration.source,
+                        model=_declaration.model,
+                        joint_commands=_declaration.joint_commands,
+                        deadman_timeout_s=_declaration.deadman_timeout_s,
+                    )
+                ],
+                tasks=joylo_tasks(),
+            ),
+        )
+        .remappings(
+            [
+                (SimJointEncoderModule, "joint_state", "encoder"),
+                (R1ProSimControl, "joint_state", "encoder"),
+                (UrdfManager, "coordinator_joint_state", "encoder"),
+                (R1ProSimConnection, "joint_state", "robot_feedback"),
+                (R1ProJoyloCoordinator, "r1pro_joint_state", "robot_feedback"),
+                (R1ProSimConnection, "position_command", "r1pro_position_command"),
+                (R1ProSimConnection, "velocity_command", "r1pro_velocity_command"),
+                (R1ProSimControl, "cmd_vel", "servo_velocity"),
+                (R1ProSimControl, "left_gripper_command", "servo_left_gripper"),
+                (R1ProSimControl, "right_gripper_command", "servo_right_gripper"),
+                (R1ProJoyloCoordinator, "twist_command", "cmd_vel"),
+            ]
+        )
+        .transports(_transports)
+    )
+
+
+# macOS uses HIDAPI; Linux keeps its existing hid-nintendo input backend.
+_operator = _operator_blueprint()
+_robot = _robot_blueprint()
 r1pro_joylo_sim2 = _robot.global_config(viewer="none", transport="zenoh", n_workers=6)
 r1pro_joylo_sim2_mock = (
     autoconnect(_robot, JoyloSimInput.blueprint())
@@ -153,3 +167,8 @@ r1pro_openarm_joylo_sim2 = autoconnect(_robot, _operator).global_config(
 teleop_openarm_r1pro_joylo = _operator.global_config(
     viewer="none", transport="zenoh", zenoh_mode="client", serve_coordinator_rpc=False
 )
+
+# One attached leader and one left Joy-Con; all other robot motion stays held.
+r1pro_openarm_joylo_left_sim2 = autoconnect(
+    _robot_blueprint(left_only=True), _operator_blueprint(left_only=True)
+).global_config(viewer="none", transport="zenoh", n_workers=6)

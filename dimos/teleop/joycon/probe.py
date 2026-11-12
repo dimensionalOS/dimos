@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Print every Joy-Con the kernel driver registered and its live key and axis codes.
+"""Print live Joy-Con input: HID labels on macOS, kernel event codes on Linux.
 
     python -m dimos.teleop.joycon.probe [seconds]
 
@@ -29,10 +29,38 @@ import struct
 import sys
 import time
 
+from dimos.teleop.joycon.hid_backend import HidJoyConBackend
 from dimos.teleop.joycon.joycon_module import _EVENT_FORMAT, _EVENT_SIZE, input_device_paths
 
 
+def probe_hid(seconds: float) -> None:
+    backend = HidJoyConBackend()
+    previous: dict[str, tuple[tuple[str, ...], tuple[float, ...]] | None] = {}
+    deadline = time.monotonic() + seconds
+    try:
+        backend.open()
+        print("HID input; press buttons and move sticks; Ctrl-C to stop")
+        while time.monotonic() < deadline:
+            for side, reading in backend.read().items():
+                state = (
+                    (tuple(sorted(reading.pressed)), tuple(round(v, 2) for v in reading.stick))
+                    if reading is not None
+                    else None
+                )
+                if side not in previous or previous[side] != state:
+                    print(f"{side}: {state if state is not None else 'not connected'}")
+                    previous[side] = state
+            time.sleep(0.02)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        backend.close()
+
+
 def main(seconds: float) -> None:
+    if sys.platform == "darwin":
+        probe_hid(seconds)
+        return
     # The driver's IMU device is root-only and carries no buttons.
     devices = {
         name: path

@@ -167,3 +167,50 @@ def test_missing_feedback_and_leader_discontinuity_cannot_command(controller):
     engage(controller)
     feed(controller, 0.04, leader=dict.fromkeys(ARMS, 2.0))
     assert not controller.active and "discontinuity" in controller.reason
+
+
+def test_left_only_needs_no_right_input_and_holds_every_other_robot_joint(controller):
+    solo = JoyloController(controller.limits, JoyloConfig(enabled_sides=("left",), arm_only=True))
+    leader = dict.fromkeys(ARMS[:7], 0.8)
+    feed(solo, leader=leader, right=None)
+    feed(solo, 0.02, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
+    assert solo.active
+    leader[ARMS[0]] += 0.1
+    output = feed(
+        solo,
+        0.04,
+        leader=leader,
+        left=JoyConReading(frozenset({"down", "ZL"}), (1, -1)),
+        right=None,
+    )
+    assert output.positions[ARMS[0]] == pytest.approx(0.005)
+    assert [output.positions[n] for n in (*TORSO, *ARMS[7:])] == [0] * 11
+    assert output.openings[0] < 0.5 and output.openings[1] == 0.5
+    assert output.velocity == (0, 0, 0)
+    feed(solo, 0.06, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
+    assert not solo.active
+
+
+def test_left_only_disconnect_or_incomplete_leader_requires_released_minus(controller):
+    solo = JoyloController(controller.limits, JoyloConfig(enabled_sides=("left",), arm_only=True))
+    leader = dict.fromkeys(ARMS[:7], 0.8)
+    feed(solo, leader=leader, right=None)
+    feed(solo, 0.02, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
+    feed(solo, 0.04, leader=leader, left=None, right=None)
+    assert not solo.active
+    feed(solo, 0.06, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
+    assert not solo.active
+    feed(solo, 0.08, leader=leader, right=None)
+    feed(solo, 0.10, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
+    assert solo.active
+    feed(solo, 0.12, leader=dict.fromkeys(ARMS[:3], 0.8), right=None)
+    assert not solo.active
+
+
+def test_left_only_capture_pauses_even_with_minus_held(controller):
+    solo = JoyloController(controller.limits, JoyloConfig(enabled_sides=("left",), arm_only=True))
+    leader = dict.fromkeys(ARMS[:7], 0.8)
+    feed(solo, leader=leader, right=None)
+    feed(solo, 0.02, leader=leader, left=JoyConReading(frozenset({"minus"})), right=None)
+    feed(solo, 0.04, leader=leader, left=JoyConReading(frozenset({"capture", "minus"})), right=None)
+    assert not solo.active

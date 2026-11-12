@@ -316,6 +316,9 @@ manipulation = [
 leader-teleop = [
     "ftservo-python-sdk",  # teleop/leader/feetech.py
 ]
+joycon-teleop = [
+    "hidapi>=0.14.0",  # macOS Bluetooth Joy-Con reports and stick calibration
+]
 
 cpu = [
     # CPU inference backends. >=1.21 for onnxruntime.preload_dlls().

@@ -14,8 +14,8 @@
 
 """Nintendo Joy-Cons as a teleop input: buttons, gripper openings and a base twist.
 
-Each Joy-Con pairs over Bluetooth and the kernel's hid-nintendo driver shows
-it as its own input device; the module reads those event devices directly.
+Each Joy-Con pairs over Bluetooth as its own device. Linux reads hid-nintendo
+event devices; macOS reads HID reports with the optional joycon-teleop extra.
 Nothing here is specific to a robot: the module publishes the same streams the
 WebXR and keyboard teleop modules do, so the episode monitor and the gripper
 tasks consume it as is.
@@ -28,9 +28,10 @@ import os
 from pathlib import Path
 import re
 import struct
+import sys
 import threading
 import time
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import Field
 
@@ -42,6 +43,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.teleop.joycon.hid_backend import HidJoyConBackend
 from dimos.teleop.joycon.mapping import (
     DEFAULT_AXIS_INDEX,
     DEFAULT_BUTTON_INDEX,
@@ -73,6 +75,8 @@ class JoyConBackend(Protocol):
 
 
 class JoyConTeleopModuleConfig(ModuleConfig):
+    backend: Literal["auto", "evdev", "hid"] = "auto"
+    hid_report_timeout_s: float = Field(default=0.2, gt=0.0, le=0.25)
     tick_period_s: float = Field(default=0.02, gt=0.0)
     # Substring of the input device name the kernel driver registers for each side.
     left_name: str = "Joy-Con (L)"
@@ -253,7 +257,14 @@ class JoyConTeleopModule(Module):
         super().start()
         self._stop_event.clear()
         if self._backend is None:
-            self._backend = EvdevJoyConBackend(self.joycon_config)
+            use_hid = self.config.backend == "hid" or (
+                self.config.backend == "auto" and sys.platform == "darwin"
+            )
+            self._backend = (
+                HidJoyConBackend(self.config.hid_report_timeout_s)
+                if use_hid
+                else EvdevJoyConBackend(self.joycon_config)
+            )
         self._backend.open()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()

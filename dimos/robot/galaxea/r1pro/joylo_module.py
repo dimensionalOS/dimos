@@ -79,7 +79,7 @@ class R1ProJoylo(Module):
 
     @rpc
     def pause(self) -> None:
-        """Latch all JoyLo motion off; enabling requires a fresh X press."""
+        """Latch motion off; enabling requires a fresh profile enable-button press."""
         with self._guard:
             if self._controller is not None:
                 self._controller.pause("Paused by operator")
@@ -88,10 +88,29 @@ class R1ProJoylo(Module):
     def status(self) -> dict[str, Any]:
         with self._guard:
             c = self._controller
+            ages = (
+                {name: time.monotonic() - stamp for name, stamp in c.receipts.items()} if c else {}
+            )
+            ready = bool(
+                c
+                and all(age <= self.config.input_timeout_s for age in ages.values())
+                and all(
+                    c.readings[("left", "right").index(side)] is not None
+                    for side in self.config.enabled_sides
+                )
+            )
+            reason = c.reason if c else "Not started"
+            if c is not None and ready and not c.active and reason.startswith("Waiting for fresh "):
+                reason = f"Ready; release and press {c.enable_button} to align and enable"
             return {
                 "active": c.active if c else False,
-                "reason": c.reason if c else "Not started",
+                "ready": ready,
+                "reason": reason,
                 "arm_locked": c.arm_locked.copy() if c else [False, False],
+                "enabled_sides": self.config.enabled_sides,
+                "arm_only": self.config.arm_only,
+                "enable_button": c.enable_button if c else "",
+                "input_age_s": ages,
             }
 
     def _fresh(self, source: str, stamp: float) -> bool:

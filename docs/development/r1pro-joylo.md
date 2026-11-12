@@ -85,7 +85,7 @@ The leaders are not kinematic twins of R1 Pro: this first implementation maps
 corresponding calibrated joint deltas, with engagement alignment, joint limits
 and rate limits. It is not Cartesian retargeting or IK.
 
-Both seven-joint leaders, both Joy-Cons and robot feedback must be fresh.
+In the two-arm profile, both seven-joint leaders, both Joy-Cons and robot feedback must be fresh.
 Loss of any input for 250 ms latches a pause; reconnecting while X is held
 does not enable. Release and press X again. Input timestamps reject queued
 old commands, so synchronize clocks when using two machines. A leader jump
@@ -123,10 +123,19 @@ once and callers must refresh it. The demo shows that API.
 
 ## Connect the existing leaders
 
-Krishna's physical Joy-Con backend uses Linux `hid-nintendo` event devices.
-Run the operator on Linux and the simulation on macOS or Linux, or use
-`r1pro-openarm-joylo-sim2` for both on one Linux host. Pair both Joy-Cons and
+Joy-Cons work over Bluetooth on macOS and Linux. The reader automatically uses
+HIDAPI on macOS and Krishna's `hid-nintendo` event-device backend on Linux.
+The HID backend reads factory/user stick calibration and the original
+Nintendo Joy-Con's full reports, preserving upright button labels and keeping
+the two sides distinct. Install `--extra joycon-teleop` on macOS. It configures
+the report mode and reads calibration; it does not change pairing or flash.
+`--joyconteleopmodule.backend hid` selects HID explicitly; `evdev` selects the
+Linux reader. Original Joy-Con L/R are supported; Joy-Con 2 is not supported.
+
+Use `r1pro-openarm-joylo-sim2` for both operator and simulation on one machine,
+or split the operator and receiver across machines. Pair both Joy-Cons and
 check their actual labels/axes with `python -m dimos.teleop.joycon.probe 60`.
+Run the probe while the teleop blueprint is stopped so only one reader owns the devices.
 See [the existing input setup guide](/docs/capabilities/manipulation/openarm_mini_teleop.md#joy-cons-instead-of-trigger-servos)
 for pairing and driver details.
 
@@ -139,6 +148,43 @@ root and remove only their `gripper` entry, preserving all seven arm offsets
 and flips; select that root with `--leaderteleopmodule.calibration-root`.
 Joint flips depend on the actual assembled
 leaders and should be verified against one R1 sim joint at a time.
+
+### Left arm only on this Mac
+
+Pair the left Joy-Con in macOS Bluetooth settings and connect the seven-motor
+Feetech leader over USB. Enable power to the entire motor chain. With a separate
+seven-joint calibration under `<calibration-root>/left/calibration.json`:
+
+```bash
+uv sync --extra base --extra manipulation --extra cpu --extra sim \
+  --extra leader-teleop --extra joycon-teleop --all-groups
+source .venv/bin/activate
+dimos run r1pro-openarm-joylo-left-sim2 --daemon \
+  --leaderteleopmodule.port-left /dev/cu.usbmodem<your-port> \
+  --leaderteleopmodule.calibration-root <calibration-root>
+```
+
+Open Controller in DimOS Desktop with fixed frame `world`. This blueprint
+requires only the left leader and left Joy-Con. It starts paused, holds the
+right arm, right jaw, torso and base, and ignores sticks and D-pad movement.
+
+| Left Joy-Con | Effect |
+|---|---|
+| Release, then press Minus | Align and enable; press again to pause |
+| Capture (square button) | Pause |
+| ZL | Toggle the left gripper open/closed |
+| Hold L | Hold the three left wrist joints; release reanchors them |
+
+Move one leader joint at a time to verify direction before larger movements.
+The initial Mac trial uses encoder offsets saved in a separate local calibration
+root; engagement aligns the current leader pose to the current simulated arm.
+Those trial offsets do not establish mechanical joint zero or verify joint signs.
+Missing/stale input pauses following and requires release and a fresh Minus
+press after reconnection. HID silence is detected after 200 ms, in addition to
+the profile's 250 ms stream timeout. `dimos shell` exposes `R1ProJoylo.status()`
+with input ages, readiness and the pause reason; `dimos stop` ends the run.
+
+### Two hosts
 
 For two hosts, start a reachable DimOS Host router on the simulation machine.
 If one is already running, reuse it. Otherwise, in a separate terminal:
@@ -155,7 +201,7 @@ Then use the same domain on both sides:
 dimos --robot-ip 127.0.0.1 --zenoh-mode client --zenoh-domain r1pro-joylo \
   run r1pro-joylo-sim2
 
-# Linux operator host: replace placeholders with actual addresses/ports.
+# Operator host: add --extra joycon-teleop on macOS; replace placeholders.
 uv sync --extra base --extra manipulation --extra leader-teleop --all-groups
 dimos --robot-ip <simulation-host-ip> --zenoh-domain r1pro-joylo \
   run teleop-openarm-r1pro-joylo \
@@ -166,7 +212,7 @@ dimos --robot-ip <simulation-host-ip> --zenoh-domain r1pro-joylo \
 Keep hands stationary for engagement, release X, then press X. Verify each
 arm's joint direction and comfortable range, then wrist/arm locks, jaws,
 torso and base. Home pauses; `dimos stop` terminates a daemonized run. The
-real-controller pass has not yet been performed on this branch.
+full two-arm controller pass has not yet been performed on this branch.
 
 ## Validation of this integration
 
@@ -179,5 +225,8 @@ The focused input/profile/servo tests passed (126), as did the merged CC
 contract/connection/hold regressions (202), scene tests (6), actual sim2 module
 tests with `-m native_e2e` (16), and blueprint registry checks (5). Mypy passed
 for the twelve integration source files. This validates the software path;
-physical calibration, Bluetooth/serial behavior and two-host timing still
-need testing with the actual leaders.
+physical calibration and two-host timing still need testing with the actual
+leaders. The Mac bring-up read the paired left Joy-Con over HID and completed
+100/100 full seven-motor leader reads over USB, then ran the left-only sim2
+blueprint with fresh physical input streams. Direction/range checks and the
+first operator-driven following trial remain interactive checks.

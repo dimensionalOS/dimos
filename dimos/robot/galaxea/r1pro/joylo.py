@@ -22,12 +22,18 @@ Locks hold follower targets in software; they do not energize leader motors.
 from dataclasses import dataclass
 import math
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.core.module import ModuleConfig
 from dimos.robot.galaxea.r1pro.config import R1PRO_GRIPPER_OPENING_RANGE
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS
-from dimos.teleop.joycon.mapping import GripperState, JoyConReading, apply_deadzone, step_gripper
+from dimos.teleop.joycon.mapping import (
+    GripperState,
+    JoyConReading,
+    JoyConSide,
+    apply_deadzone,
+    step_gripper,
+)
 
 SIDES = ("left", "right")
 UPPER = tuple(f"r1pro/{name}" for name in UPPER_BODY_JOINTS)
@@ -38,6 +44,8 @@ TORSO_LINK_M = 0.35
 
 
 class JoyloConfig(ModuleConfig):
+    enabled_sides: tuple[JoyConSide, ...] = ("left", "right")
+    arm_only: bool = False
     input_timeout_s: float = Field(default=0.25, gt=0, allow_inf_nan=False)
     tick_period_s: float = Field(default=0.01, gt=0, le=0.05)
     arm_rate: float = Field(default=0.25, gt=0, le=0.5)
@@ -48,6 +56,12 @@ class JoyloConfig(ModuleConfig):
     yaw_speed: float = Field(default=0.25, gt=0, le=0.5)
     deadzone: float = Field(default=0.15, ge=0, lt=1)
     max_leader_jump: float = Field(default=0.75, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_sides(self) -> "JoyloConfig":
+        if not self.enabled_sides or len(set(self.enabled_sides)) != len(self.enabled_sides):
+            raise ValueError("enabled_sides must name one or two distinct sides")
+        return self
 
 
 def torso_step(
@@ -102,8 +116,19 @@ class JoyloController:
             raise ValueError("JoyLo needs limits for all 18 R1 Pro upper-body joints")
         self.limits = limits
         self.config = config
+        self.arm_names = tuple(
+            n
+            for side in SIDES
+            if side in config.enabled_sides
+            for n in ARMS
+            if n.startswith(f"r1pro/{side}_")
+        )
+        self.left_only = config.enabled_sides == ("left",)
+        self.enable_button = "minus" if self.left_only else "X"
+        self.pause_button = "capture" if self.left_only else "home"
+        self.authority_index = 0 if self.left_only else 1
         self.active = False
-        self.reason = "Press X to align and enable"
+        self.reason = f"Press {self.enable_button} to align and enable"
         self.leader: dict[str, float] = {}
         self.feedback: dict[str, float] = {}
         self.readings: tuple[JoyConReading | None, JoyConReading | None] = (None, None)
@@ -126,7 +151,7 @@ class JoyloController:
         self.enable_released = False
 
     def set_leader(self, positions: dict[str, float], now: float) -> None:
-        if set(positions) != set(ARMS) or not all(map(math.isfinite, positions.values())):
+        if set(positions) != set(self.arm_names) or not all(map(math.isfinite, positions.values())):
             self.pause("Incomplete leader sample")
             self.receipts["leader"] = -math.inf
             return
@@ -138,7 +163,7 @@ class JoyloController:
                 for name, value in positions.items()
             )
         ):
-            self.pause("Leader discontinuity; release X and re-align")
+            self.pause(f"Leader discontinuity; release {self.enable_button} and re-align")
         self.leader = positions.copy()
         self.receipts["leader"] = now
 
@@ -173,27 +198,34 @@ class JoyloController:
             if now - receipt > self.config.input_timeout_s
         ]
         left, right = self.readings
-        healthy = not stale and left is not None and right is not None
+        healthy = not stale and all(
+            self.readings[SIDES.index(side)] is not None for side in self.config.enabled_sides
+        )
         if not healthy:
-            self.pause("Waiting for fresh " + (", ".join(stale) if stale else "both Joy-Cons"))
+            self.pause(
+                "Waiting for fresh "
+                + (", ".join(stale) if stale else "/".join(self.config.enabled_sides) + " Joy-Con")
+            )
             self.previous_buttons = (frozenset(), frozenset())
             if "robot" in stale:
                 return None
         if self.capture_hold:
             self._capture()
-        if healthy and left is not None and right is not None:
+        if healthy:
+            left, right = left or JoyConReading(), right or JoyConReading()
             buttons = (left.pressed, right.pressed)
-            x = "X" in right.pressed
-            if "home" in right.pressed:
-                self.pause("Paused; release X before enabling")
-                if self.capture_hold:
-                    self._capture()
-            elif (
+            authority = buttons[self.authority_index]
+            x = self.enable_button in authority
+            enable_edge = (
                 x
                 and self.enable_released
-                and "X" not in self.previous_buttons[1]
-                and not self.active
-            ):
+                and self.enable_button not in self.previous_buttons[self.authority_index]
+            )
+            if self.pause_button in authority or (self.left_only and self.active and enable_edge):
+                self.pause(f"Paused; release {self.enable_button} before enabling")
+                if self.capture_hold:
+                    self._capture()
+            elif enable_edge and not self.active:
                 self._capture()
                 self.anchor_leader = self.leader.copy()
                 self.anchor_robot = self.target.copy()
@@ -210,7 +242,7 @@ class JoyloController:
                 self._follow(left, right, buttons, dt)
             self.previous_buttons = buttons
         velocity = (0.0, 0.0, 0.0)
-        if self.active and left is not None and right is not None:
+        if self.active and not self.config.arm_only and left is not None and right is not None:
 
             def axis(value: float) -> float:
                 return apply_deadzone(value, self.config.deadzone)
@@ -234,7 +266,13 @@ class JoyloController:
         for i, (side, toggle, wrist) in enumerate(
             zip(SIDES, ("minus", "plus"), ("L", "R"), strict=True)
         ):
-            if toggle in buttons[i] and toggle not in self.previous_buttons[i]:
+            if side not in self.config.enabled_sides:
+                continue
+            if (
+                not self.left_only
+                and toggle in buttons[i]
+                and toggle not in self.previous_buttons[i]
+            ):
                 self.arm_locked[i] = not self.arm_locked[i]
             names = tuple(f"r1pro/{side}_arm_joint{j}" for j in range(1, 8))
             if self.arm_locked[i]:
@@ -247,7 +285,7 @@ class JoyloController:
                 step_gripper(self.grippers[i], down, mode="toggle", slew_per_s=3, dt=dt)
             else:
                 self.grippers[i].trigger_was_down = down
-        for name in ARMS:
+        for name in self.arm_names:
             if name in self.locked and name not in next_locked:
                 self.anchor_leader[name] = self.leader[name]
                 self.anchor_robot[name] = self.target[name]
@@ -260,6 +298,8 @@ class JoyloController:
             delta = self.config.arm_rate * dt
             self.target[name] += max(-delta, min(delta, desired - self.target[name]))
         self.locked = next_locked
+        if self.config.arm_only:
+            return
         lift = float("up" in left.pressed) - float("down" in left.pressed)
         pitch = (
             0.0 if right.stick_pressed else -apply_deadzone(right.stick[1], self.config.deadzone)

@@ -129,6 +129,7 @@ all_blueprints = {
     "r1pro-joylo-sim2-mock": "dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo:r1pro_joylo_sim2_mock",
     "r1pro-manipulation": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation:r1pro_manipulation",
     "r1pro-nav": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav:r1pro_nav",
+    "r1pro-openarm-joylo-left-sim2": "dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo:r1pro_openarm_joylo_left_sim2",
     "r1pro-openarm-joylo-sim2": "dimos.robot.galaxea.r1pro.blueprints.teleop.r1pro_joylo:r1pro_openarm_joylo_sim2",
     "r1pro-planar-preview": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview:r1pro_planar_preview",
     "r1pro-teleop": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_teleop:r1pro_teleop",
