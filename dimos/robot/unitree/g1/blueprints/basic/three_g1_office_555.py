@@ -12,6 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Three G1s standing in office 555, each walking under its own GR00T policy.
+
+Only `main` exposes `cmd_vel` outside its namespace, so the Controller's joystick drives that
+one; `left` and `right` keep private command topics and stand still under their own policies.
+They are not broken controllers -- give one a `cmd_vel` of its own to drive it.
+
+The scene's meshes are Git LFS, and a checkout with `GIT_LFS_SKIP_SMUDGE=1` has them as pointer
+text. The UsdManager that composes this scene refuses those by name before MuJoCo opens one, so a
+run that stops with "git lfs checkout" is telling you to fetch them, not that the scene is wrong.
+"""
 
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
 from dimos.control.coordinator import TaskConfig

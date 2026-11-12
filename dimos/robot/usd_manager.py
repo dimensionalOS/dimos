@@ -38,7 +38,9 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.assets.model import JointDescription, RobotModel, UsdModel
 from dimos.robot.assets.usd_utils.assets import (
     describe_unopenable_assets,
+    is_published_asset,
     publish_usd_assets,
+    referenced_asset_paths,
     require_asset_hashes,
     require_fetched_assets,
     resolve_usd_assets,
@@ -221,6 +223,7 @@ class UsdManager(Module):
         self._scene: str | None = None
         self._subtree_clients: dict[str, RPCClient] = {}
         self._published_assets: dict[str, str] = {}
+        self._asset_mounts: dict[str, Mount] = {}
         try:
             self._check_mounts()
             if not self.config.mounts:
@@ -234,20 +237,30 @@ class UsdManager(Module):
         return self._description.frame_names()
 
     def _renamed_own_frames(self) -> dict[str, str]:
+        """Each own frame that comes out of `frame()` under another name, by its name in the USD.
+
+        The order is the one `_adopt` uses on a mounted subtree: the pre-namespace rename, then
+        the namespace, then `tf_renames`. So `tf_renames` names a frame the way the rest of the
+        system sees it -- `left/arm`, not `arm` -- for this description as much as for a mount.
+        """
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
         renamed = {}
         for name in self._own_frame_names():
-            once = pre.get(name, name)
-            new = post.get(once, once)
+            namespaced = self._namespaced(pre.get(name, name))
+            new = post.get(namespaced, namespaced)
             if new != name:
                 renamed[name] = new
         return renamed
 
+    def _namespaced(self, name: str) -> str:
+        prefix = self.config.frame_id_prefix
+        return f"{prefix}/{name}" if prefix else name
+
     def _matched_own_renames(self) -> set[str]:
         names = self._own_frame_names()
         pre = self.config.tf_renames_pre_namespace
-        after_pre = {pre.get(name, name) for name in names}
+        after_pre = {self._namespaced(pre.get(name, name)) for name in names}
         return (names & set(pre)) | (after_pre & set(self.config.tf_renames))
 
     def _check_mounts(self) -> None:
@@ -336,7 +349,21 @@ class UsdManager(Module):
                 f"published. Ask for a scene before its assets: the names only exist once one "
                 f"has been handed out."
             )
+        mount = self._asset_mounts.get(real)
+        if mount is not None:
+            return await self._asset_from(mount, real)
         return await asyncio.to_thread(self._resolved(real).read_bytes)
+
+    async def _asset_from(self, mount: Mount, name: str) -> bytes:
+        """Ask the mount that published this name for the bytes; nothing here can read it."""
+        client = self._subtree_client(mount)
+        data = await asyncio.to_thread(partial(getattr(client, ASSET_RPC), name))
+        if not isinstance(data, bytes):
+            raise KeyError(
+                f"{name!r} is an asset {mount.remote_name} published, but its "
+                f"{ASSET_RPC}() answered {type(data).__name__}, not bytes"
+            )
+        return data
 
     def _refuse_a_cycle(self, chain: list[str]) -> None:
         if self._scene_identity in chain:
@@ -445,12 +472,24 @@ class UsdManager(Module):
         pre = self.config.tf_renames_pre_namespace
         post = self.config.tf_renames
         where = answer[ASSET_ROOT] or None
+        self._remember_published_assets(answer[USD], where, mount)
         usd = resolve_usd_assets(answer[USD], answer[ASSET_ROOT])
         matched = usd_frame_names(usd, where) & set(pre) if pre else set()
         usd = prefix_usd_frames(rename_usd_frames(usd, pre, where), mount.frame_prefix, where)
         if post:
             matched |= usd_frame_names(usd, where) & set(post)
         return rename_usd_frames(usd, post, where), matched
+
+    def _remember_published_assets(self, usd: str, where: str | None, mount: Mount) -> None:
+        """Note every asset in a subtree that is a name its owner published, not a file here.
+
+        A mount that answers get_scene() hands back a scene whose assets are already published
+        names -- there is no such file on this side of the RPC. Republishing them renames them
+        again, so get_asset has to ask the mount that owns one instead of reading the path.
+        """
+        for asset in referenced_asset_paths(usd, where):
+            if is_published_asset(asset):
+                self._asset_mounts[asset] = mount
 
     def _ask_for_usd(
         self, client: RPCClient, frame_id: str, mount: Mount, chain: list[str]
@@ -462,7 +501,10 @@ class UsdManager(Module):
                 answer = getattr(client, SUBTREE_RPC)()
         except Exception as exc:
             if _is_circular_mount(exc):
-                raise
+                # Raise our own, not the RemoteError we caught: one hop further out that
+                # error's remote_type is RemoteError, and the manager there would read a
+                # cycle as a mount that has not answered yet and ask forever.
+                raise CircularMountError(str(exc)) from exc
             logger.debug(f"{mount.subtree_rpc}() for {frame_id!r} did not answer yet: {exc}")
             return None
         if (
@@ -527,9 +569,9 @@ class UsdManager(Module):
         return self._joint_tf.joint_state_name(joint)
 
     def frame(self, link_or_joint: str) -> str:
-        renamed = self._frames.get(link_or_joint, link_or_joint)
-        prefix = self.config.frame_id_prefix
-        return f"{prefix}/{renamed}" if prefix else renamed
+        # _frames already holds the finished name, namespace included.
+        known = self._frames.get(link_or_joint)
+        return known if known is not None else self._namespaced(link_or_joint)
 
 
 def _is_circular_mount(exc: BaseException) -> bool:

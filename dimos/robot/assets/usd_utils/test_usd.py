@@ -116,6 +116,40 @@ def test_a_link_name_that_is_not_a_usd_identifier_keeps_its_urdf_spelling(toy: A
     assert prim.GetDisplayName() == "arm-1"
 
 
+def test_two_link_names_that_sanitise_alike_still_get_their_own_prims(tmp_path: Path) -> None:
+    """Tf.MakeValidIdentifier is not injective, so the second name needs a prim of its own."""
+    source = tmp_path / "twins.urdf"
+    source.write_text(
+        '<robot name="twins"><link name="base"/><link name="arm-1"/><link name="arm_1"/>'
+        '<joint name="a" type="fixed"><parent link="base"/><child link="arm-1"/></joint>'
+        '<joint name="b" type="fixed"><parent link="base"/><child link="arm_1"/></joint>'
+        "</robot>"
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(source).load()))
+
+    paths = {_prim_by_link(stage, name).GetPath() for name in ("arm-1", "arm_1")}
+    assert len(paths) == 2, f"both links landed on one prim: {paths}"
+
+
+def test_two_joint_names_that_sanitise_alike_still_get_their_own_prims(tmp_path: Path) -> None:
+    source = tmp_path / "twins.urdf"
+    source.write_text(
+        '<robot name="twins"><link name="base"/><link name="mid"/><link name="tip"/>'
+        '<joint name="turn-1" type="fixed"><parent link="base"/><child link="mid"/></joint>'
+        '<joint name="turn_1" type="fixed"><parent link="mid"/><child link="tip"/></joint>'
+        "</robot>"
+    )
+    stage = _stage(urdf_to_usd(RobotModel.from_file(source).load()))
+
+    named = {
+        prim.GetDisplayName(): str(prim.GetPath())
+        for prim in stage.Traverse()
+        if str(prim.GetPath()).startswith("/twins/joints/")
+    }
+    assert set(named) == {"turn-1", "turn_1"}, named
+    assert len(set(named.values())) == 2, named
+
+
 def test_each_link_sits_at_its_urdf_zero_pose(toy: Any) -> None:
     from pxr import UsdGeom
 
@@ -610,6 +644,45 @@ def test_a_planar_joint_locks_the_axes_out_of_its_plane(tmp_path: Path) -> None:
     assert prim.GetAttribute("limit:transZ:physics:high").Get() == 0.0
 
 
+def test_a_planar_joint_moves_in_the_plane_its_normal_names(tmp_path: Path) -> None:
+    """URDF's planar axis is the plane's normal, and the locks USD writes are about joint Z."""
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
+
+    source = tmp_path / "cart.urdf"
+    source.write_text(
+        '<robot name="cart"><link name="world"/><link name="body"/>'
+        '<joint name="planar_base" type="planar"><parent link="world"/>'
+        '<child link="body"/><axis xyz="1 0 0"/></joint></robot>'
+    )
+    recovered = tmp_path / "back.urdf"
+    recovered.write_text(usd_to_urdf(urdf_to_usd(RobotModel.from_file(source).load())))
+
+    joint = RobotModel.from_file(recovered).load().get_joint("planar_base")
+    assert joint is not None
+    np.testing.assert_allclose(joint.axis, [1.0, 0.0, 0.0], atol=1e-6)
+
+
+def test_a_mimic_joint_keeps_following_its_leader(tmp_path: Path) -> None:
+    """USD cannot say "this joint follows that one", so mimic has to travel as passthrough."""
+    from dimos.robot.assets.usd_utils.to_urdf_mask import usd_to_urdf
+
+    source = tmp_path / "gripper.urdf"
+    source.write_text(
+        '<robot name="gripper"><link name="palm"/><link name="left"/><link name="right"/>'
+        '<joint name="lead" type="revolute"><parent link="palm"/><child link="left"/>'
+        '<axis xyz="0 0 1"/><limit lower="0" upper="1" effort="1" velocity="1"/></joint>'
+        '<joint name="follow" type="revolute"><parent link="palm"/><child link="right"/>'
+        '<axis xyz="0 0 1"/><limit lower="0" upper="1" effort="1" velocity="1"/>'
+        '<mimic joint="lead" multiplier="-1" offset="0.5"/></joint></robot>'
+    )
+    recovered = tmp_path / "back.urdf"
+    recovered.write_text(usd_to_urdf(urdf_to_usd(RobotModel.from_file(source).load())))
+
+    joint = RobotModel.from_file(recovered).load().get_joint("follow")
+    assert joint is not None
+    assert joint.mimic == ("lead", -1.0, 0.5), "the follower came back independent"
+
+
 _HASHED_URDF = """<?xml version="1.0"?>
 <robot name="hashy">
   <link name="base_link">
@@ -661,6 +734,19 @@ def test_an_unhashed_asset_is_refused_with_the_hash_it_should_have_had(hashy: An
     assert "the subtree from SomeSensor" in message
     assert "meshes/arm.stl" in message
     assert asset_hash(b"solid arm\nendsolid arm\n") in message
+
+
+def test_a_release_number_in_the_version_field_is_not_taken_for_a_hash(hashy: Any) -> None:
+    """USD's version is free-form, so only a sha256 digest can satisfy the hash requirement."""
+    layer = urdf_to_usd(hashy)
+    posing = layer.replace(
+        next(line for line in layer.splitlines() if "sha256:" in line).strip(),
+        'string version = "1.0"',
+    )
+
+    assert unhashed_assets(posing), "a release number passed as the digest consumers need"
+    with pytest.raises(ValueError, match="no usable hash"):
+        require_asset_hashes(posing, what="the layer")
 
 
 def test_an_unreadable_asset_is_refused_but_says_where_to_hash_it(toy: Any, tmp_path: Path) -> None:
@@ -953,6 +1039,67 @@ def test_a_grafted_subtree_keeps_its_own_shaders_when_the_scene_has_prims_by_the
         "the grafted subtree is wearing the scene's shader instead of its own: a converted "
         "asset keeps its shader networks beside its default prim, and grafting left the "
         "reference pointing at whatever owns that path in the scene"
+    )
+
+
+_SCENE_WIRED_BY_CONNECTION = """#usda 1.0
+(
+    defaultPrim = "room"
+)
+
+def Scope "Shared"
+{
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (1, 0, 0)
+        token outputs:surface
+    }
+}
+
+def Xform "room"
+{
+}
+"""
+
+_SUBTREE_WIRED_BY_CONNECTION = """#usda 1.0
+(
+    defaultPrim = "arm_sub"
+)
+
+def Scope "Shared"
+{
+    def Shader "Surface"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0, 1, 0)
+        token outputs:surface
+    }
+}
+
+def Xform "arm_sub"
+{
+    def Material "paint"
+    {
+        token outputs:surface.connect = </Shared/Surface.outputs:surface>
+    }
+}
+"""
+
+
+def test_a_grafted_material_wired_by_connection_keeps_its_own_shader() -> None:
+    """Not every asset wires its network through a reference; some connect straight to it."""
+    from pxr import Gf
+
+    stage = _stage(graft_usd(_SCENE_WIRED_BY_CONNECTION, {"room": _SUBTREE_WIRED_BY_CONNECTION}))
+
+    paint = stage.GetPrimAtPath("/room/arm_sub/paint").GetAttribute("outputs:surface")
+    connections = paint.GetConnections()
+    assert connections, "the grafted material lost its surface connection"
+    shader = stage.GetPrimAtPath(connections[0].GetPrimPath())
+    assert shader.GetAttribute("inputs:diffuseColor").Get() == Gf.Vec3f(0.0, 1.0, 0.0), (
+        "the grafted subtree is wearing the scene's shader: its connection named a prim "
+        "beside the subtree, and grafting left the absolute path alone"
     )
 
 
