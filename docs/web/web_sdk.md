@@ -266,6 +266,7 @@ How the pieces connect:
 - `Channel("health", Health)` uses `json.v1`, the default for JSON scalars, lists, dicts and plain dataclasses. The browser decodes it without registration.
 - Encoding is lazy. A channel costs nothing until some viewer subscribes, and stops encoding when the last viewer leaves.
 - `cockpit(layout=..., channels=[...])` is fine too. For a pure SDK setup, leave `layout` out and declare only the channels you want to serve.
+- Channels with no `layout` replace the default preset instead of adding to it. This blueprint serves only `health`: the first page's `odom` subscription gets no data from it, and the session reports `unknown_channel`. To keep a built-in stream, declare it with its built-in [encoding](/docs/web/bridge.md#encodings), for example `Channel("odom", PoseStamped, encoding="pose.json.v1")`.
 
 `page/index.html` shows the value:
 
