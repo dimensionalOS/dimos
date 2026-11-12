@@ -226,7 +226,7 @@ class ReplayStream(Generic[T]):
             return None
         return self._decode(obs)
 
-    def observable(self) -> Observable[T]:
+    def observable(self, *, skip_late: bool = True) -> Observable[T]:
         """Timed Observable scheduled against the Replay's shared anchor.
 
         The first subscribe across the whole :class:`Replay` pins
@@ -234,6 +234,11 @@ class ReplayStream(Generic[T]):
         the same anchor and skip past frames already behind wall time.
         Adapted from the legacy ``timed_playback`` (which pinned a fresh
         anchor per subscribe).
+
+        With *skip_late* off nothing is skipped: frames already behind wall
+        time are emitted at once, in order, and the rest keep their timing.
+        For a subscriber that is only behind by its own setup, like a module
+        subscribing every stream right after pinning the anchor.
 
         Disposing cancels pending emissions and waits for an active callback
         before releasing its iterator, so the store can then be closed safely.
@@ -279,7 +284,7 @@ class ReplayStream(Generic[T]):
             # one full pass without finding a forward frame.
             wrap_offset = 0.0
             prev_skip = first_ts
-            while first_ts < now_replay - _LATE_TOLERANCE:
+            while skip_late and first_ts < now_replay - _LATE_TOLERANCE:
                 try:
                     cand_ts, cand_data = next(iterator)
                 except StopIteration:

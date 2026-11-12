@@ -135,8 +135,8 @@ class ReplayModule(Module):
             seek=self.config.seek,
             duration=self.config.duration,
         )
-        # Open every stream before pinning the anchor, so setup time is not
-        # counted as lateness that observable() would skip past.
+        # Open every stream before pinning the anchor, so setup time does not
+        # put the playback behind the wall clock from the start.
         streams: dict[str, ReplayStream[DimosMsg]] = {
             name: replay.stream(name) for name in self.outputs
         }
@@ -156,7 +156,11 @@ class ReplayModule(Module):
                     interval(1.0).subscribe(partial(_republish, port, stream.first()))
                 )
                 continue
-            timed: Observable[DimosMsg] = stream.observable()
+            # Not a late subscriber, just behind by the setup of the streams
+            # subscribed before it (a query, a timer thread and a log line each),
+            # which on a loaded machine exceeds the late tolerance and would
+            # drop its first frames.
+            timed: Observable[DimosMsg] = stream.observable(skip_late=False)
             self.register_disposable(timed.subscribe(port.publish))
 
     @rpc
