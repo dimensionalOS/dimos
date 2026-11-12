@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.memory.store.memory import MemoryStore
+from dimos.memory.store.base import Store
 from dimos.memory.utils.time_window import RecordingWindow
 
 
@@ -32,26 +32,27 @@ from dimos.memory.utils.time_window import RecordingWindow
     ],
 )
 def test_window_uses_earliest_timestamp_across_streams(
+    session: Store,
     seek: float,
     duration: float | None,
     expected_target: list[float],
     expected_late: list[float],
 ) -> None:
-    with MemoryStore() as store:
-        store.stream("empty", str)
-        # Append out of order so insertion order cannot define the recording start.
-        reference = store.stream("reference", str)
-        reference.append("last", ts=200.0)
-        reference.append("first", ts=100.0)
-        target = store.stream("target", str)
-        late = store.stream("late", str)
-        for ts in (102.0, 100.25, 101.0, 101.25, 101.5):
-            target.append(f"target-{ts}", ts=ts)
-        for ts in (102.0, 101.125, 101.25, 101.5):
-            late.append(f"late-{ts}", ts=ts)
+    store = session
+    store.stream("empty", str)
+    # Append out of order so insertion order cannot define the recording start.
+    reference = store.stream("reference", str)
+    reference.append("last", ts=200.0)
+    reference.append("first", ts=100.0)
+    target = store.stream("target", str)
+    late = store.stream("late", str)
+    for ts in (102.0, 100.25, 101.0, 101.25, 101.5):
+        target.append(f"target-{ts}", ts=ts)
+    for ts in (102.0, 101.125, 101.25, 101.5):
+        late.append(f"late-{ts}", ts=ts)
 
-        window = RecordingWindow.from_store(store, seek=seek, duration=duration)
+    window = RecordingWindow.from_store(store, seek=seek, duration=duration)
 
-        assert [obs.ts for obs in window.apply(target)] == expected_target
-        assert [obs.ts for obs in window.apply(late)] == expected_late
-        assert window.apply(store.stream("empty")).to_list() == []
+    assert [obs.ts for obs in window.apply(target)] == expected_target
+    assert [obs.ts for obs in window.apply(late)] == expected_late
+    assert window.apply(store.stream("empty")).to_list() == []

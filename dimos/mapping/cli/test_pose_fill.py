@@ -20,7 +20,9 @@ The end-to-end `dimos map pose-fill` path against a real recording lives in
 
 from __future__ import annotations
 
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -202,3 +204,29 @@ def test_pose_fill_db_empty_recording(tmp_path: Path) -> None:
         store.stream("odom", Transform)
 
     assert pose_fill_db(source, destination, seek=0.25, duration=0.1) == {"lidar": 0, "odom": 0}
+
+
+def test_pose_fill_db_window_includes_unselected_stream_with_unavailable_type(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.db"
+    destination = tmp_path / "destination.db"
+    with SqliteStore(path=str(source)) as store:
+        store.stream("reference", str).append("start", ts=100.0)
+        for ts in (100.75, 101.0, 101.25, 101.5):
+            store.stream("lidar", str).append(f"scan-{ts}", ts=ts)
+            store.stream("odom", Transform).append(Transform(), ts=ts)
+    # Model a recording made with a vendor payload package absent on this machine.
+    with closing(sqlite3.connect(source)) as conn, conn:
+        conn.execute(
+            "UPDATE _streams SET config = json_set(config, '$.payload_module', ?) WHERE name = ?",
+            ("unavailable_robot_vendor.Sample", "reference"),
+        )
+
+    written = pose_fill_db(source, destination, streams=["lidar"], seek=1.0, duration=0.5)
+
+    assert written == {"lidar": 2}
+    with SqliteStore(path=str(destination), must_exist=True) as store:
+        rows = store.stream("lidar").order_by("ts").to_list()
+        assert [obs.ts for obs in rows] == [101.0, 101.25]
+        assert [obs.data for obs in rows] == ["scan-101.0", "scan-101.25"]

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
@@ -40,13 +40,8 @@ class RecordingWindow:
         """Resolve bounds from the earliest timestamp, including unselected streams."""
         if seek == 0.0 and duration is None:
             return cls(float("-inf"), float("inf"))
-        starts: list[float] = []
-        for name in store.list_streams():
-            stream: Stream[Any] = store.stream(name)
-            first = next(iter(stream.order_by("ts").limit(1)), None)
-            if first is not None:
-                starts.append(first.ts)
-        start = min(starts, default=0.0) + seek
+        first_ts = store.first_ts()
+        start = (first_ts if first_ts is not None else 0.0) + seek
         end = start + duration if duration is not None else float("inf")
         return cls(start, end)
 
