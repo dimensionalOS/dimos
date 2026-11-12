@@ -41,6 +41,24 @@ Module booleans require an explicit value (`--go2connection.replay-exit true` or
 
 ## Commands
 
+### `dimos imitation`
+
+| Command | Purpose |
+| --- | --- |
+| `dimos imitation control` | Attach one panel for available episode and policy controls |
+| `dimos imitation prepare RECORDING_DIR --output DATASET_DIR` | Convert saved episodes to a new LeRobot dataset directory |
+| `dimos imitation inspect ARTIFACT [--verbose] [--json]` | Inspect a recording or prepared dataset |
+| `dimos imitation visualize DATASET_DIR --episode 0` | View a local LeRobot episode in Rerun |
+| `dimos imitation train [LEROBOT_ARGS...]` | Forward arguments to isolated `lerobot-train`, including `--help` |
+
+The panel discovers episode and rollout controls in a stack launched with
+`dimos run`. Q detaches. **Stop stack…** requests shutdown after confirmation;
+an active episode must first be saved or discarded. `dimos stop` also shuts down
+the runtime.
+
+See [Imitation learning](/docs/capabilities/manipulation/imitation-learning.md)
+for tutorials, task guides, and compatibility limits.
+
 ### `dimos run`
 
 Start one or more robot blueprints. Built-in dimOS blueprints use bare names such as
@@ -366,12 +384,12 @@ Works with any agentic blueprint. Does not require MCP. Publishes directly to th
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `McpClient` in the blueprint find the endpoint themselves).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcpserver.port` / `--mcpserver.host` after the blueprint name to override; `dimos mcp` and an `Agent` in the blueprint find the endpoint themselves).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `Agent.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
-from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.agent import Agent
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.coordination.blueprints import autoconnect
 
@@ -379,7 +397,7 @@ from dimos.core.coordination.blueprints import autoconnect
 my_mcp_blueprint = autoconnect(
     # my_robot_stack,
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    Agent.blueprint(),
     # my_skill_containers,
 )
 ```
@@ -489,5 +507,5 @@ dimos rerun-bridge --help
 | Path | Contents |
 |------|----------|
 | `~/.local/state/dimos/runs/<run-id>.json` | Run registry (PID, blueprint, args, ports). Used by `status`/`stop`/`restart`. Cleaned up when processes exit. |
-| `~/.local/state/dimos/logs/<run-id>/main.jsonl` | Structured logs (main process + all workers) |
+| `logs/<run-id>/main.jsonl` (Git checkout) or `~/.local/state/dimos/logs/<run-id>/main.jsonl` (installed package) | Structured logs (main process + all workers) |
 | `.env` | Local config overrides (`ROBOT_IP=192.168.123.161`) |

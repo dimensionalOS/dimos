@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Operator hold through the coordinator: request, preempt, reject, publish, acknowledge.
+"""Operator hold through the coordinator: request, preempt, reject, publish, e-stop, acknowledge.
 
 A rig wires one mock arm, one mock twist base, the canonical trajectory task
 and the hold task into a real, unmodified coordinator, then ticks it by hand
@@ -22,6 +22,7 @@ so every assertion is deterministic.
 from __future__ import annotations
 
 from collections.abc import Iterator
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,6 +33,7 @@ from dimos.control.components import (
     make_joints,
     make_twist_base_joints,
 )
+from dimos.control.contract.keys import Interface
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.task import (
     BaseControlTask,
@@ -51,6 +53,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
+)
+from dimos.control.tasks.velocity_task.velocity_task import (
+    JointVelocityTask,
+    JointVelocityTaskConfig,
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.drive_trains.spec import TwistBaseAdapter
@@ -155,6 +161,8 @@ class Rig:
             task_lock=self.coordinator._task_lock,
             joint_to_hardware=self.coordinator._joint_to_hardware,
         )
+        # The coordinator reads joint positions from its tick loop's last tick.
+        self.coordinator._tick_loop = self._loop
 
     def tick(self) -> None:
         self._loop._tick()
@@ -190,12 +198,12 @@ class TestRequest:
         assert status.on and status.route == "manual" and status.reason == "arm stuck"
         assert status.started_at > 0.0
         rig.tick()
-        assert rig.hold_task.claim().joints == frozenset(ARM_JOINTS) | frozenset(BASE_JOINTS)
+        assert rig.hold_task.claim().joints == frozenset([*ARM_JOINTS, *BASE_JOINTS])
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
-        # A base "joint" is a velocity, so holding it means zero, not its odometry.
-        assert rig.base_writes()[-1] == [0.0, 0.0, 0.0]
+        # Truthful odometry does not make a velocity-only resource position-held.
+        assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
 
-    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig):
+    def test_keeps_the_first_positions_if_the_arm_drifts(self, rig, monkeypatch):
         rig.request()
         rig.tick()
         rig.arm.read_joint_positions.return_value = [0.15, 0.2, 0.3]
@@ -203,6 +211,15 @@ class TestRequest:
         rig.tick()
 
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+        monkeypatch.setattr(rig.coordinator._hardware["arm"], "ready_for_control", lambda: False)
+        snapshot, _ = rig._loop._read_all_hardware()
+        assert not set(ARM_JOINTS) & snapshot.joint_positions.keys()
+        assert snapshot.joint_command_interfaces[ARM_JOINTS[0]] == {
+            Interface.POSITION,
+            Interface.VELOCITY,
+        }
+        rig.tick()
+        assert rig.hold_task.claim().joints == frozenset([*ARM_JOINTS, *BASE_JOINTS])
 
     def test_unknown_route_raises_and_holds_nothing(self, rig):
         with pytest.raises(ValueError):
@@ -223,6 +240,7 @@ class TestRequest:
 
 class TestWhileHeld:
     def test_running_trajectory_is_preempted(self, rig):
+        rig.tick()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED
@@ -250,6 +268,51 @@ class TestWhileHeld:
         assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)  # the arm did not move
 
 
+def test_velocity_stream_is_preempted_through_hold_estop_clear_and_ack(rig: Rig) -> None:
+    velocity = JointVelocityTask(
+        "velocity", JointVelocityTaskConfig(joint_names=BASE_JOINTS, priority=50, timeout=10.0)
+    )
+    velocity.on_preempted = MagicMock(wraps=velocity.on_preempted)
+    assert rig.coordinator.add_task(velocity)
+    moving = [0.4, -0.2, 0.1]
+    assert velocity.set_velocities(moving, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == moving
+
+    rig.request()
+    rig.tick()
+    assert rig.arm_writes()[-1] == pytest.approx(ARM_POSITIONS)
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+    velocity.on_preempted.assert_called_once_with(
+        by_task=OPERATOR_HOLD_TASK_NAME, joints=frozenset(BASE_JOINTS)
+    )
+    # Live updates cannot drive through a hold.
+    assert velocity.set_velocities(moving, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+
+    assert rig.coordinator.set_estop(True)
+    assert not velocity.set_velocities(moving, time.perf_counter())
+    assert rig.acknowledge().on  # Cannot release while e-stop is latched.
+    writes_at_stop = len(rig.base_writes())
+    rig.tick()
+    assert len(rig.base_writes()) == writes_at_stop
+    assert not rig.hold_task.claim().joints
+    assert rig.coordinator.set_estop(False)
+    assert not velocity.is_streaming()  # Cached pre-stop intent was discarded.
+    rig.tick()
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+    # Fresh post-clear streaming is still preempted until the operator acknowledges.
+    assert velocity.set_velocities(moving, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+    assert rig.acknowledge().on is False
+    fresh = [-0.3, 0.1, 0.0]
+    assert velocity.set_velocities(fresh, time.perf_counter())
+    rig.tick()
+    assert rig.base_writes()[-1] == fresh
+
+
 class TestStatus:
     def test_first_tick_publishes(self, rig):
         rig.request(route="failsafe", reason="fault")
@@ -265,7 +328,8 @@ class TestStatus:
     def test_repeats_once_per_second_while_on(self, rig):
         rig.request(route="agent", reason="need help")
         snapshot = JointStateSnapshot(
-            joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True))
+            joint_positions=dict(zip(ARM_JOINTS, ARM_POSITIONS, strict=True)),
+            joint_command_interfaces={name: frozenset({Interface.POSITION}) for name in ARM_JOINTS},
         )
 
         for t_now in (0.0, 0.5, 0.99, 1.0, 1.5, 2.0, 2.5, 3.0):
@@ -280,6 +344,40 @@ class TestStatus:
         rig.request()
         assert rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status").on is True
         assert rig.statuses == []
+
+
+class TestEstop:
+    def test_estop_cancels_the_trajectory_and_turns_the_hold_on(self, rig):
+        rig.tick()
+        rig.coordinator.execute_trajectory(_trajectory())
+        rig.tick()
+        writes_before = len(rig.arm_writes())
+
+        assert rig.coordinator.set_estop(True)
+        rig.tick()
+
+        assert rig.trajectory_task.get_state() is TrajectoryState.ABORTED
+        status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
+        assert status.on and status.route == "failsafe" and status.reason == "e-stop"
+        assert status.estopped
+        assert rig.statuses[-1].estopped
+        assert len(rig.arm_writes()) == writes_before  # nothing commands the arm while stopped
+
+    def test_clear_holds_the_arm_where_it_is_then_until_acknowledged(self, rig):
+        rig.coordinator.set_estop(True)
+        rig.tick()
+        rig.arm.read_joint_positions.return_value = [0.15, 0.25, 0.35]
+
+        assert rig.coordinator.set_estop(False)
+        rig.tick()
+
+        status = rig.coordinator.task_invoke(OPERATOR_HOLD_TASK_NAME, "get_status")
+        assert status.on and status.route == "failsafe" and not status.estopped
+        assert rig.arm_writes()[-1] == pytest.approx([0.15, 0.25, 0.35])
+        assert rig.base_writes()[-1] == [0.0] * len(BASE_JOINTS)
+
+        assert rig.acknowledge().on is False
+        assert not rig.hold_task.is_active()
 
 
 class TestAcknowledge:
@@ -301,6 +399,7 @@ class TestAcknowledge:
     def test_autonomy_does_not_resume_but_teleop_can_take_over(self, rig):
         teleop = TeleopStub([0.4, 0.5, 0.6])
         rig.coordinator.add_task(teleop)
+        rig.tick()
         assert (
             rig.coordinator.execute_trajectory(_trajectory()).status
             is TrajectoryExecutionStatus.ACCEPTED

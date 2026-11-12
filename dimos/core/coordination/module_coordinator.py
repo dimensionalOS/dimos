@@ -27,17 +27,17 @@ import time
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
+from dimos.constants import RUNTIME_MODULES_DIR
 from dimos.core.coordination.blueprint_config.values import deep_merge, plain
-from dimos.core.coordination.blueprints import TransportSpec, transport_config_name
+from dimos.core.coordination.blueprints import transport_config_name
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.worker_manager import WorkerManager
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import StreamDescriptor
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
-from dimos.core.o3dpickle import register_picklers
 from dimos.core.resource import Resource
-from dimos.core.stream import Transport
+from dimos.core.stream import Transport, TransportSpec
 from dimos.core.transport import (
     LCMTransport,
     PubSubTransport,
@@ -46,7 +46,12 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport, zenoh_prefix
-from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
+from dimos.spec.utils import (
+    is_spec,
+    spec_annotation_compliance,
+    spec_methods_without_rpc,
+    spec_structural_compliance,
+)
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
@@ -99,7 +104,10 @@ class ModuleCoordinator(Resource):
         self._shutdown_event = threading.Event()
 
     def start(self) -> None:
-        register_picklers()
+        # A worker gets the coordinator's sys.path when it starts, so add this first.
+        RUNTIME_MODULES_DIR.mkdir(parents=True, exist_ok=True)
+        if str(RUNTIME_MODULES_DIR) not in sys.path:
+            sys.path.append(str(RUNTIME_MODULES_DIR))
         for m in self._managers.values():
             m.start()
         self._started = True
@@ -373,8 +381,10 @@ class ModuleCoordinator(Resource):
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
         for module in modules:
-            if hasattr(module, "on_system_modules"):
-                module.on_system_modules(modules)
+            # Only an @rpc counts: a plain method would be fetched over the worker
+            # pipe as a bound method, which cannot cross it.
+            if "on_system_modules" in getattr(module, "rpcs", ()):
+                cast("Any", module).on_system_modules(modules)
 
     def _connect_streams(
         self, blueprint: Blueprint, transports: Mapping[tuple[str, type], Transport[Any]]
@@ -614,24 +624,17 @@ class ModuleCoordinator(Resource):
 
         proxy = self._deployed_modules[name]
 
-        try:
-            proxy.stop()
-        except Exception:
-            logger.error(
-                "Error stopping module during unload",
-                module=name,
-                exc_info=True,
-            )
-
+        # The worker owns module.stop() and undeploy waits for it. A fire-and-forget
+        # stop RPC here would race that stop, and a NativeModule short-circuits the
+        # second stop() call, so the worker would report the module gone while the
+        # old instance still answers on the RPC name its replacement is about to use.
         python_wm = cast("WorkerManagerPython", self._managers["python"])
+        # Propagate failures so restart cannot replace an instance that may still be running.
+        python_wm.undeploy(proxy)
         try:
-            python_wm.undeploy(proxy)
+            proxy.stop_rpc_client()
         except Exception:
-            logger.error(
-                "Error undeploying module from worker",
-                module=name,
-                exc_info=True,
-            )
+            logger.error("Error closing module RPC client", module=name, exc_info=True)
 
         del self._deployed_modules[name]
         del self._instance_classes[name]
@@ -819,12 +822,12 @@ def _coerce_transport_to_backend(transport: Transport[Any]) -> Transport[Any]:
     """
     want = global_config.transport
     prefix = zenoh_prefix(global_config)
-    is_pickled = type(transport) in (pLCMTransport, pZenohTransport)
+    is_untyped = type(transport) in (pLCMTransport, pZenohTransport)
     is_lcm = type(transport) in (LCMTransport, pLCMTransport)
     is_zenoh = type(transport) in (ZenohTransport, pZenohTransport)
     if not isinstance(transport, PubSubTransport) or not (is_lcm or is_zenoh):
         return transport
-    if is_pickled:
+    if is_untyped:
         raw, msg_type = transport.topic, None
     else:
         raw, msg_type = transport.topic.topic, transport.topic.lcm_type
@@ -852,7 +855,7 @@ def _materialize_transports(
     WebRTC transports get a freshly constructed provider config from the
     resolved ``transports.<name>.*`` overrides; everything else builds from the
     spec as-is, then gets coerced to the active pubsub backend. Returns
-    ready-to-use instances pickled into module workers.
+    ready-to-use instances sent into module workers.
     """
     materialized: dict[tuple[str, type], Transport[Any]] = {}
     for key, spec in blueprint.transport_map.items():
@@ -1113,6 +1116,19 @@ def _resolve_single_ref(
         return candidate.module if isinstance(candidate, BlueprintAtom) else candidate
 
     def result_of(candidate: Any) -> Any:
+        """The resolved provider, once a proxy can call every spec method on it."""
+        if not is_class_ref:
+            missing = spec_methods_without_rpc(module_of(candidate), spec)
+            if missing:
+                raise Exception(
+                    _ref_msg(
+                        m,
+                        module_ref,
+                        s,
+                        f"{module_of(candidate).__name__} has {', '.join(missing)} without @rpc, "
+                        "and a module reference can only call @rpc methods. Add @rpc to them.",
+                    )
+                )
         return candidate.name if isinstance(candidate, BlueprintAtom) else candidate
 
     def display(candidate: Any) -> str:

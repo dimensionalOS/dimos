@@ -30,7 +30,7 @@ from dimos.memory.store.base import Store
 from dimos.memory.stream import Stream
 
 if TYPE_CHECKING:
-    from dimos.evals.agents.base import Agent
+    from dimos.evals.agents.base import EvalSubject
 
 
 class DatasetConfig(EnvironmentConfig):
@@ -56,7 +56,7 @@ class Dataset(Environment):
     def has_robot(self) -> bool:
         return bool(self.config.mcp_url)
 
-    def preflight(self, agent: Agent) -> None:
+    def preflight(self, agent: EvalSubject) -> None:
         if agent.config.modules and self.config.mcp_url:
             raise RuntimeError(
                 f"Dataset({self.config.name!r}) already attaches to {self.config.mcp_url}; "
@@ -68,7 +68,7 @@ class Dataset(Environment):
             for select in self.config.select:
                 select(store)
 
-    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+    def start(self, modules: Sequence[str], *, requires_mcp: bool = False) -> RunningEnvironment:
         mcp_url = self.config.mcp_url
         if modules:
             proc = DimosCliCall()

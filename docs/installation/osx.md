@@ -28,7 +28,7 @@ Use these steps if you need to install without the guided script.
 # Install Homebrew first if it is not installed.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 eval "$(/opt/homebrew/bin/brew shellenv)"
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config
+brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit libsndfile pkg-config
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```

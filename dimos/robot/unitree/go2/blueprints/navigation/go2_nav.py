@@ -28,7 +28,7 @@ from dimos.navigation.global_planner.viz import nav_static, nav_visual_override
 from dimos.navigation.local_planner.native import LocalPlannerNative
 from dimos.navigation.local_planner.viz import motion_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.trajectory_follower.fancy.native import TrajectoryFollowerNative
+from dimos.navigation.trajectory_follower.native import TrajectoryFollowerNative
 from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
 from dimos.robot.unitree.go2.nav_3d_config import ray_tracing_config, voxel_size
 
@@ -84,9 +84,11 @@ def go2_nav_static() -> dict[str, Callable[[ModuleType], list[Archetype]]]:
     return nav_static(ROBOT_LENGTH, ROBOT_WIDTH, ROBOT_HEIGHT, WALL_CLEARANCE_M)
 
 
-def go2_nav_overrides() -> dict[str, VisualOverride]:
+def go2_nav_overrides(static_regions: bool = True) -> dict[str, VisualOverride]:
     """Bridge overrides for the navigation maps, paths, goal and planner debug entities."""
     return {
-        **nav_visual_override(planner_viz_hz, voxel_size, WALL_CLEARANCE_M),
+        **nav_visual_override(
+            planner_viz_hz, voxel_size, WALL_CLEARANCE_M, static_regions=static_regions
+        ),
         **motion_visual_override(embodiment=GO2, body_dilate_m=BODY_DILATE_M),
     }

@@ -31,8 +31,9 @@ from typing import Any
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import TransportSpec
 from dimos.core.transport import ZenohTransport
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
@@ -191,8 +192,9 @@ def r1pro_control(
             joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
             TaskConfig(
                 name="vel_chassis",
-                type="velocity",
+                type="twist_velocity",
                 joint_names=_chassis_joints,
+                params={"axes": ["linear.x", "linear.y", "angular.z"]},
                 priority=10,
             ),
         ]

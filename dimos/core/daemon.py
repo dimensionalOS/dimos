@@ -109,7 +109,7 @@ def redirect_stdio_to_devnull() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
 
-    devnull = open(os.devnull)
+    devnull = open(os.devnull, "r+")
     os.dup2(devnull.fileno(), sys.stdin.fileno())
     os.dup2(devnull.fileno(), sys.stdout.fileno())
     os.dup2(devnull.fileno(), sys.stderr.fileno())

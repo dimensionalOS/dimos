@@ -12,20 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
 import threading
 import time
 from typing import TYPE_CHECKING
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.agents.annotation import skill
-from dimos.core.coordination.python_worker import PythonWorker
+from dimos.core.coordination.python_worker import (
+    Actor,
+    MethodCallProxy,
+    PythonWorker,
+    _handle_request,
+    _WorkerState,
+)
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
+from dimos.core.coordination.worker_messages import UndeployModuleRequest
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.encode.cbor import decode, encode
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import WorkerStats
@@ -55,7 +65,7 @@ class SimpleModule(Module):
         return global_config.robot_ip
 
     @rpc
-    def unpicklable(self) -> threading.Lock:
+    def unencodable(self) -> threading.Lock:
         return threading.Lock()
 
     @rpc
@@ -147,6 +157,54 @@ def test_worker_manager_basic(create_worker_manager):
     module.stop()
 
 
+def test_undeploy_keeps_instance_until_stop_succeeds(mocker: MockerFixture) -> None:
+    module = mocker.Mock(spec=Module)
+    module.stop.side_effect = [RuntimeError("stop failed"), RuntimeError("stop failed"), None]
+    state = _WorkerState(instances={7: module}, worker_id=1)
+    request = UndeployModuleRequest(module_id=7)
+
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="stop failed"):
+            _handle_request(request, state)
+        assert state.instances == {7: module}
+
+    response = _handle_request(request, state)
+
+    assert response.result is True
+    assert state.instances == {}
+    assert module.stop.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "exitcode, expectation, remaining",
+    [
+        (None, pytest.raises(EOFError, match="worker pipe closed"), 1),
+        (-15, nullcontext(), 0),
+    ],
+    ids=["unconfirmed-exit", "confirmed-exit"],
+)
+def test_undeploy_after_pipe_failure_requires_confirmed_worker_exit(
+    mocker, monkeypatch, exitcode, expectation, remaining
+):
+    worker = PythonWorker()
+    process = mocker.Mock(exitcode=None)
+    conn = mocker.Mock()
+    actor = Actor(conn, SimpleModule, worker.worker_id, 7, threading.Lock())
+    monkeypatch.setattr(worker, "_process", process)
+    monkeypatch.setattr(worker, "_conn", conn)
+    monkeypatch.setattr(worker, "_modules", {7: actor})
+
+    def disconnect():
+        process.exitcode = exitcode
+        raise EOFError("worker pipe closed")
+
+    conn.recv_bytes.side_effect = disconnect
+
+    with expectation:
+        worker.undeploy_module(7)
+    assert worker.module_count == remaining
+
+
 def test_worker_manager_stops_workers_concurrently_and_only_once(mocker, monkeypatch):
     manager = WorkerManagerPython(g=GlobalConfig(n_workers=0))
     workers = [PythonWorker(), PythonWorker()]
@@ -188,29 +246,29 @@ def test_worker_shutdown_kills_and_reaps_a_process_that_ignores_terminate(mocker
     assert worker.pid is None
 
 
-def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
-    """An RPC result that cannot pickle comes back as the error, not a dead worker."""
+def test_unencodable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot be encoded comes back as the error, not a dead worker."""
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
 
-    with pytest.raises(TypeError, match="cannot pickle"):
-        module.unpicklable()
+    with pytest.raises(TypeError, match="Cannot CBOR-encode"):
+        module.unencodable()
 
     assert module.increment() == 1
 
     module.stop()
 
 
-def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
-    """A response the worker pipe cannot pickle errors out; the worker lives on."""
+def test_unencodable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot encode errors out; the worker lives on."""
     worker_manager = create_worker_manager(n_workers=1)
     module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
     module.make_lock()
 
     # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
-    with pytest.raises(RuntimeError, match="(?i)pickle"):
+    with pytest.raises(RuntimeError, match="Cannot CBOR-encode"):
         module.actor_instance.lock  # noqa: B018
 
     assert module.increment() == 1
@@ -510,3 +568,12 @@ def test_module_can_opt_out_of_input_warm_up(create_worker_manager):
 
     assert _wait_for_warm_up(module) == (None, "warmup-UnwarmedInputsModule")
     module.stop()
+
+
+def test_actor_and_method_call_proxy_cross_processes_as_ids() -> None:
+    actor = Actor(None, SimpleModule, worker_id=3, module_id=7, lock=threading.Lock())
+    restored = decode(encode(MethodCallProxy(actor)))
+    assert type(restored) is MethodCallProxy
+    inner = restored._actor
+    assert (inner._worker_id, inner._module_id) == (3, 7)
+    assert inner._conn is None and inner._cls is None and inner._lock is None

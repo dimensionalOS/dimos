@@ -36,8 +36,8 @@ uv run dimos run lite6-planner-coordinator
 
 * Keyboard teleop: in the "Keyboard Teleop" window hold W and the arm moves in +X in Viser. Press [ and ] to open and close the gripper.
 * Planner: drag the target gizmo in Viser, click Plan, then Execute.
-* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper`, `keyboard-teleop-a750` and `keyboard-teleop-a1z`. Repeat the planner check with `a1z-planner-coordinator`, `openarm-planner-coordinator` and `dual-openyam-planner-coordinator`, adding `--visualization.backend viser`.
-* The single OpenYAM blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`. Add `--visualization.backend viser` to the last two.
+* Repeat the keyboard check with `keyboard-teleop-xarm6`, `keyboard-teleop-lite6`, `keyboard-teleop-piper`, `keyboard-teleop-a750` and `keyboard-teleop-a1z`. Repeat the planner check with `a1z-planner-coordinator`, adding `--visualization.backend viser`.
+* The OpenYAM and OpenArm blueprints are mocks only under `--simulation`. Run them as `uv run dimos --simulation run <blueprint>`. Do the keyboard check with `keyboard-teleop-openyam` and `keyboard-teleop-openyam-planner`, and the planner check with `openyam-planner-coordinator`, `dual-openyam-planner-coordinator` and `openarm-planner-coordinator`. Add `--visualization.backend viser` to `keyboard-teleop-openyam-planner` and the three planner blueprints.
 
 Expected result: each blueprint starts without an arm and the model moves in Viser.
 
@@ -95,19 +95,19 @@ Expected result: the end effector follows the controller while the grip is held,
 
 ## 3.6 Imitation learning data collection
 
-Needs the `learning` extra and a WebXR headset on the same network. The arm and its camera run in MuJoCo.
+Needs the `learning` extra and a WebXR headset on the same network. The arm and its camera run in MuJoCo. `--recording` must name a new directory. The first `prepare` builds the isolated LeRobot environment, about 3 GB of downloads.
 
 ```bash
-uv run dimos --simulation run learning-collect-webxr-xarm7 --db-path recordings/collect.db --mujocosimmodule.fps 30
-uv run dimos dataprep inspect recordings/collect.db
-uv run dimos dataprep build --source recordings/collect.db --config dimos/imitation/dataprep/example_config.json
-uv run dimos dataprep inspect data/datasets/session
+uv run dimos --simulation run learning-collect-webxr-xarm7 --recording recordings/collect --mujocosimmodule.fps 30
+uv run dimos imitation inspect recordings/collect
+uv run dimos imitation prepare recordings/collect --output data/datasets/collect
+uv run dimos imitation inspect data/datasets/collect
 ```
 
 * Open https://<host-ip>:8443/teleop in the headset, accept the certificate, tap Connect and hold the right grip to move the arm.
 * Press B, move the arm for a few seconds and press B again. The HUD shows SAVED 001. Then press Ctrl+C.
 
-Expected result: the recording holds one saved episode with the `color_image`, `coordinator_joint_state` and `status` streams, the build prints "wrote dataset to data/datasets/session", and the dataset has one episode.
+Expected result: the recording inspect shows one saved episode and the `color_image`, `coordinator_joint_state` and `status` streams, `prepare` prints "Wrote dataset: .../data/datasets/collect", and the dataset inspect shows "Episodes 1".
 
 ## 3.7 R1 Pro planar-base planning
 

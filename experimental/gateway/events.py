@@ -26,7 +26,7 @@ import watchfiles
 
 from dimos.core import run_registry
 from dimos.utils.logging_config import setup_logger
-from experimental.gateway import constants, launches, store
+from experimental.gateway import constants, launches, shared_config, store
 
 if TYPE_CHECKING:
     from experimental.gateway.process_stats import ProcessStats
@@ -34,8 +34,8 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def resolve_namespace(given: str | None) -> str | None:
-    namespace = given or store.setting("zenoh", "namespace")
+def resolve_namespace() -> str | None:
+    namespace = shared_config.shared_config().zenoh_namespace
     if not namespace:
         return None
     if any(chunk == "" for chunk in namespace.split("/")) or re.search(r"[*?#$]", namespace):
@@ -43,11 +43,10 @@ def resolve_namespace(given: str | None) -> str | None:
     return namespace
 
 
-def resolve_connect(given: str | None) -> list[str]:
+def resolve_connect() -> list[str]:
     from dimos.core.global_config import global_config
 
-    configured = store.setting("zenoh", "connect")
-    value = given if given is not None else configured or global_config.zenoh_connect
+    value = shared_config.shared_config().zenoh_connect or global_config.zenoh_connect
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
@@ -74,6 +73,7 @@ class Bus:
         self.namespace = namespace
         self.put = put
         self.launch_key: tuple[Any, ...] | None = None
+        self.live_run_id: str | None = None
 
     def send(self, event: dict[str, Any]) -> None:
         if self.put is None or self.namespace is None:
@@ -81,10 +81,16 @@ class Bus:
         self.put(f"{self.namespace}/dimos/events/{event['type']}", json.dumps(event).encode())
 
     def launch(self, launch: dict[str, Any] | None) -> None:
-        key = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
+        launch_part = (launch["blueprint"], launch["phase"], launch["runId"]) if launch else None
+        key = (launch_part, self.live_run_id)
         if key != self.launch_key:
             self.launch_key = key
             self.send({"type": "launch", "launch": launch})
+
+    def active(self, active: dict[str, Any]) -> None:
+        """launches.active()'s view: a run started outside the gateway (a terminal) starting or ending is news too."""
+        self.live_run_id = active["runId"]
+        self.launch(active["launch"])
 
 
 async def set_on_changes(
@@ -154,7 +160,7 @@ async def watch_launch(
     try:
         while True:
             try:
-                bus.launch(await asyncio.to_thread(launches.current_launch))
+                bus.active(await asyncio.to_thread(launches.active))
                 if stats is not None:
                     await asyncio.to_thread(stats.stop_if_nothing_runs)
                 failure = ""
@@ -166,6 +172,40 @@ async def watch_launch(
     finally:
         launches.exit_listeners.remove(child_exited)
         file_watch.cancel()
+
+
+async def watch_logs(
+    bus: Bus, dimos_dir: Path, debounce_ms: int = constants.FILE_EVENT_DEBOUNCE_MS
+) -> None:
+    """Publishes a `log` event when a run's main.jsonl or the launch output grows (`run`: its id, or `launch`)."""
+    from experimental.gateway import logs
+
+    launch_dir = store.logs_dir()
+    run_roots = logs.logs_dirs(dimos_dir)
+    for directory in (launch_dir, *run_roots):
+        directory.mkdir(parents=True, exist_ok=True)
+    launch_file = launches.launch_log().resolve()
+    resolved_roots = [root.resolve() for root in run_roots]
+
+    def subject(path: str) -> str | None:
+        changed = Path(path)
+        if changed == launch_file:
+            return "launch"
+        if changed.name == "main.jsonl" and changed.parent.parent in resolved_roots:
+            return changed.parent.name
+        return None
+
+    try:
+        async for changes in watchfiles.awatch(
+            launch_dir,
+            *run_roots,
+            watch_filter=lambda _change, path: subject(path) is not None,
+            debounce=debounce_ms,
+        ):
+            for name in sorted({run for _, path in changes if (run := subject(path)) is not None}):
+                bus.send({"type": "log", "run": name})
+    except Exception:
+        logger.exception("watching the logs failed")
 
 
 def is_blueprint_source(_change: watchfiles.Change, path: str) -> bool:

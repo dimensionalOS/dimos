@@ -1,0 +1,997 @@
+{
+  "vectors": [
+    {
+      "name": "invalid_rate_update_0",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": null
+      }
+    },
+    {
+      "name": "invalid_rate_update_1",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": true
+      }
+    },
+    {
+      "name": "invalid_rate_update_2",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": 0
+      }
+    },
+    {
+      "name": "invalid_rate_update_3",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": -1
+      }
+    },
+    {
+      "name": "invalid_rate_update_4",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": 1001
+      }
+    },
+    {
+      "name": "invalid_rate_update_5",
+      "message": {
+        "t": "topic_activate",
+        "route": "@t:v2",
+        "gen": 3,
+        "maxHz": "30"
+      }
+    },
+    {
+      "name": "invalid_guard_handle",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@t:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "guard_handle_newline",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1\n",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "boolean_guard_ticket",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": true,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "zero_guard_ticket",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 0,
+        "timeoutMs": 400
+      }
+    },
+    {
+      "name": "fractional_guard_timeout",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 400.5
+      }
+    },
+    {
+      "name": "unbounded_guard_timeout",
+      "message": {
+        "t": "topic_guard_ready",
+        "id": "drive",
+        "handle": "@p:1",
+        "gen": 3,
+        "ticket": 1,
+        "timeoutMs": 1001
+      }
+    },
+    {
+      "name": "invalid_capabilities_0",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": null
+      }
+    },
+    {
+      "name": "invalid_capabilities_1",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": 1,
+          "write": false,
+          "profiles": [
+            "raw"
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid_capabilities_2",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw",
+            "raw"
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid_capabilities_3",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "boolean_version",
+      "message": {
+        "t": "topic_sources",
+        "v": true,
+        "sources": []
+      }
+    },
+    {
+      "name": "boolean_hello_version",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "viewer",
+        "topicsVersion": true
+      }
+    },
+    {
+      "name": "null_hello_source",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "topicSource": null
+      }
+    },
+    {
+      "name": "empty_key",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "long_unicode_key",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "βββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββββ",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "bad_source",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "../workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "source_cr",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace\r",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "source_lf",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace\n",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "source_unicode_line_end",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace ",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "negative_rate",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": -1
+      }
+    },
+    {
+      "name": "boolean_rate",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": true
+      }
+    },
+    {
+      "name": "unknown_delivery",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "datagram",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "empty_profile",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "long_id",
+      "message": {
+        "t": "topic_sub",
+        "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000
+      }
+    },
+    {
+      "name": "literal_key_route",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "demo/a",
+        "gen": 3
+      }
+    },
+    {
+      "name": "route_cr",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2\r",
+        "gen": 3
+      }
+    },
+    {
+      "name": "route_unicode_line_end",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2 ",
+        "gen": 3
+      }
+    },
+    {
+      "name": "negative_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": -1
+      }
+    },
+    {
+      "name": "fractional_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 1.5
+      }
+    },
+    {
+      "name": "boolean_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": true
+      }
+    },
+    {
+      "name": "unsafe_gen",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 9007199254740992
+      }
+    },
+    {
+      "name": "unknown_option",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxBitrate": 1
+        }
+      }
+    },
+    {
+      "name": "negative_keep_every",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "keepEvery": -1
+        }
+      }
+    },
+    {
+      "name": "fractional_quality",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "quality": 75.5
+        }
+      }
+    },
+    {
+      "name": "boolean_quality",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "quality": true
+        }
+      }
+    },
+    {
+      "name": "short_resolution",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxResolution": [
+            640
+          ]
+        }
+      }
+    },
+    {
+      "name": "string_resolution",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxResolution": [
+            "640",
+            360
+          ]
+        }
+      }
+    },
+    {
+      "name": "zero_rate_option",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "maxHz": 0
+        }
+      }
+    },
+    {
+      "name": "duplicate_fields",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "fields": [
+            "color",
+            "color"
+          ]
+        }
+      }
+    },
+    {
+      "name": "numeric_fields",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": {
+          "fields": [
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "null_options",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 2,
+        "options": null
+      }
+    },
+    {
+      "name": "unsafe_revision",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 9007199254740992,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "negative_revision",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": -1,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "fractional_revision",
+      "message": {
+        "t": "topic_update",
+        "id": "c1",
+        "revision": 1.5,
+        "options": {
+          "maxHz": 7.5,
+          "maxResolution": null,
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "null_setting_in_force",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": {
+          "maxHz": 7.5,
+          "quality": null
+        }
+      }
+    },
+    {
+      "name": "settings_without_rate",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": {
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "null_settings",
+      "message": {
+        "t": "topic_applied",
+        "id": "c1",
+        "revision": 2,
+        "settings": null
+      }
+    },
+    {
+      "name": "variant_zero",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v0",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_beyond_bound",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v5",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_prefix",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "w1",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_newline",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v1\n",
+        "settings": {
+          "maxHz": 7.5,
+          "maxResolution": [
+            640,
+            360
+          ],
+          "quality": 40
+        }
+      }
+    },
+    {
+      "name": "variant_null_settings",
+      "message": {
+        "t": "topic_variant",
+        "route": "@t:p2",
+        "gen": 3,
+        "variant": "v2",
+        "settings": null
+      }
+    },
+    {
+      "name": "sub_settings_scalar",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000,
+        "settings": 5
+      }
+    },
+    {
+      "name": "sub_settings_null",
+      "message": {
+        "t": "topic_sub",
+        "id": "s1",
+        "source": "workspace",
+        "keyExpr": "demo/β/**",
+        "delivery": "reliable",
+        "profile": "raw",
+        "maxHz": 1000,
+        "settings": null
+      }
+    },
+    {
+      "name": "sub_settings_reset",
+      "message": {
+        "t": "topic_sub",
+        "id": "c1",
+        "source": "workspace",
+        "keyExpr": "sensor/β/camera",
+        "delivery": "latest",
+        "profile": "image.jpeg.low.v1",
+        "maxHz": 15.5,
+        "settings": {
+          "quality": null
+        }
+      }
+    },
+    {
+      "name": "ready_null_settings",
+      "message": {
+        "t": "topic_ready",
+        "id": "s1",
+        "source": "workspace",
+        "route": "@t:v2",
+        "gen": 3,
+        "settings": null
+      }
+    },
+    {
+      "name": "error_null_revision",
+      "message": {
+        "t": "topic_error",
+        "id": "s1",
+        "code": "source_offline",
+        "message": "Source interrupted",
+        "outcome": "interrupted",
+        "revision": null
+      }
+    },
+    {
+      "name": "invalid_profile_options_0",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxHz": {
+                "kind": "ratio",
+                "default": 30
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_1",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxHz": {
+                "kind": "number",
+                "min": "0"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_2",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "fields": {
+                "kind": "enum",
+                "values": [
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color",
+                  "color"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_3",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxResolution": {
+                "kind": "size",
+                "default": [
+                  640,
+                  360,
+                  1,
+                  2,
+                  3,
+                  4,
+                  5,
+                  6,
+                  7,
+                  8,
+                  9,
+                  10,
+                  11,
+                  12,
+                  13,
+                  14,
+                  15
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_profile_options_4",
+      "message": {
+        "t": "hello",
+        "v": 8,
+        "role": "robot",
+        "token": "provider-token-fixture-0123456789",
+        "topicSource": "workspace",
+        "topicsVersion": 1,
+        "topicCapabilities": {
+          "read": true,
+          "write": false,
+          "profiles": [
+            "raw"
+          ],
+          "profileOptions": {
+            "raw": {
+              "maxHz": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "oversized_page",
+      "message": {
+        "t": "topic_list",
+        "id": "l1",
+        "source": "workspace",
+        "prefix": "demo/",
+        "cursor": "",
+        "limit": 33
+      }
+    },
+    {
+      "name": "fractional_limit",
+      "message": {
+        "t": "topic_list",
+        "id": "l1",
+        "source": "workspace",
+        "prefix": "demo/",
+        "cursor": "",
+        "limit": 1.5
+      }
+    },
+    {
+      "name": "negative_credit",
+      "message": {
+        "t": "topic_credit",
+        "route": "@t:v2",
+        "gen": 3,
+        "frames": 40,
+        "bytes": -1
+      }
+    },
+    {
+      "name": "boolean_credit",
+      "message": {
+        "t": "topic_credit",
+        "route": "@t:v2",
+        "gen": 3,
+        "frames": true,
+        "bytes": 13000
+      }
+    },
+    {
+      "name": "unknown_outcome",
+      "message": {
+        "t": "topic_error",
+        "id": "s1",
+        "code": "source_offline",
+        "message": "Source interrupted",
+        "outcome": "probably"
+      }
+    },
+    {
+      "name": "bad_descriptors",
+      "message": {
+        "t": "topic_page",
+        "id": "l1",
+        "source": "workspace",
+        "gen": 3,
+        "entries": [
+          {
+            "key": "a",
+            "type": "",
+            "encoding": "",
+            "availability": "live"
+          }
+        ],
+        "cursor": ""
+      }
+    }
+  ]
+}

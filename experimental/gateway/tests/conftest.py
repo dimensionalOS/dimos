@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from dimos.core import run_registry
-from experimental.gateway import events, launches, logs, store
+from experimental.gateway import events, launches, logs, shared_config, store
 from experimental.gateway.app import create_app
 from experimental.gateway.state import State, new_state
 
@@ -48,7 +48,9 @@ run_id = time.strftime("%Y%m%d-%H%M%S-") + blueprint + "-" + str(os.getpid())
 registry = pathlib.Path(os.environ["FAKE_REGISTRY_DIR"])
 registry.mkdir(parents=True, exist_ok=True)
 entry = dict(run_id=run_id, pid=os.getpid(), blueprint=blueprint, started_at="2026-01-01T12:00:00+00:00", log_dir="/tmp")
-(registry / (run_id + ".json")).write_text(json.dumps(entry))
+# atomically, like RunEntry.save: the gateway's polling deletes an entry it reads half written
+(registry / (run_id + ".tmp")).write_text(json.dumps(entry))
+(registry / (run_id + ".tmp")).replace(registry / (run_id + ".json"))
 time.sleep(60)
 """
 
@@ -61,9 +63,11 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(logs, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launches, "LOG_DIR", tmp_path / "logs")
     # no ~/.dimos/config.yaml of the machine running the tests
-    monkeypatch.setenv("DIMOS_HOME", str(tmp_path / "dimos_home"))
-    # nor its DTOP, which a launch passes on
-    monkeypatch.delenv(launches.DTOP_ENV, raising=False)
+    monkeypatch.setenv("DIMOS_APP", json.dumps({"home": str(tmp_path / "dimos_home")}))
+    shared_config.shared_config.cache_clear()
+    # nor its DTOP or ZENOH_GOSSIP, which a launch passes on as it does the rest of the environment
+    monkeypatch.delenv("DTOP", raising=False)
+    monkeypatch.delenv("ZENOH_GOSSIP", raising=False)
     # nor a git repo the temp dir happens to be inside
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     return tmp_path

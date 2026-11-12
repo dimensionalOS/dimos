@@ -13,13 +13,15 @@
 # limitations under the License.
 
 from collections.abc import Callable
-import pickle
+import importlib
+import sys
 import threading
 from types import MappingProxyType
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.core._test_future_annotations_helper import (
     FutureModuleIn,
@@ -38,6 +40,7 @@ from dimos.core.coordination.module_coordinator import (
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
+    resolve_module_refs,
     stream_name_types,
     verify_no_name_conflicts,
 )
@@ -52,6 +55,7 @@ from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.encode.cbor import decode, encode
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -130,6 +134,9 @@ class NestedConfiguredTransport(PubSubTransport[bytes]):
     ) -> None:
         super().__init__(topic)
         self._config = config or self._config_cls(**config_kwargs)
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return {"topic": self.topic, "config": self._config}
 
     def start(self) -> None:
         pass
@@ -836,11 +843,49 @@ def test_check_requirements_failure(mocker) -> None:
         _check_requirements(bp)
 
 
-def test_restart_module_basic(dynamic_coordinator) -> None:
+@pytest.mark.parametrize("dedicated", [False, True], ids=["pool-worker", "dedicated-worker"])
+def test_module_saved_in_modules_dir_after_start_loads(
+    dedicated: bool, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("dimos.core.coordination.module_coordinator.RUNTIME_MODULES_DIR", tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=1, viewer="none"))
+    coordinator.start()
+    try:
+        package = f"saved_after_start_{'dedicated' if dedicated else 'pool'}"
+        (tmp_path / package).mkdir()
+        (tmp_path / package / "__init__.py").write_text("")
+        (tmp_path / package / "greeter.py").write_text(
+            "from dimos.core.core import rpc\n"
+            "from dimos.core.module import Module\n\n\n"
+            "class Greeter(Module):\n"
+            f"    dedicated_worker = {dedicated}\n\n"
+            "    @rpc\n"
+            "    def greet(self) -> str:\n"
+            "        return 'hello from RUNTIME_MODULES_DIR'\n"
+        )
+        importlib.invalidate_caches()
+        greeter = importlib.import_module(f"{package}.greeter").Greeter
+
+        coordinator.load_module(greeter)
+
+        assert coordinator.get_instance(greeter).greet() == "hello from RUNTIME_MODULES_DIR"
+    finally:
+        coordinator.stop()
+
+
+@pytest.mark.parametrize("worker_exited", [False, True], ids=["running-worker", "dead-worker"])
+def test_restart_module_basic(dynamic_coordinator, worker_exited) -> None:
     """restart_module replaces the deployed proxy with a fresh one."""
     dynamic_coordinator.load_module(ModuleA)
     old_proxy = dynamic_coordinator.get_instance(ModuleA)
     assert old_proxy is not None
+
+    worker = dynamic_coordinator._managers["python"].workers[0]
+    if worker_exited:
+        worker._process.terminate()
+        worker._process.join(timeout=5)
+    assert worker.has_exited is worker_exited
 
     new_proxy = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
 
@@ -848,6 +893,38 @@ def test_restart_module_basic(dynamic_coordinator) -> None:
     assert new_proxy is not old_proxy
     assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
     assert new_proxy.get_name() == "A, Module A"
+
+
+def test_restart_module_aborts_when_undeploy_fails(
+    dynamic_coordinator: ModuleCoordinator, mocker: MockerFixture
+) -> None:
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleA.blueprint(), ModuleB.blueprint()))
+    old_proxy = dynamic_coordinator.get_instance(ModuleA)
+    consumer = dynamic_coordinator.get_instance(ModuleB)
+    assert old_proxy is not None
+    assert consumer is not None
+    undeploy = mocker.patch.object(
+        WorkerManagerPython, "undeploy", side_effect=RuntimeError("stop failed")
+    )
+    deploy_fresh = mocker.spy(WorkerManagerPython, "deploy_fresh")
+    close_client = mocker.spy(old_proxy, "stop_rpc_client")
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+
+    deploy_fresh.assert_not_called()
+    close_client.assert_not_called()
+    assert dynamic_coordinator.get_instance(ModuleA) is old_proxy
+    assert consumer.what_is_as_name() == "A, Module A"
+
+    mocker.stop(undeploy)
+    new_proxy = dynamic_coordinator.restart_module(ModuleA, reload_source=False)
+
+    assert new_proxy is not old_proxy
+    assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
+    assert consumer.module_a is new_proxy
+    assert consumer.data1.transport.topic == new_proxy.data1.transport.topic
+    assert consumer.what_is_as_name() == "A, Module A"
 
 
 def test_restart_module_preserves_stream_wiring(dynamic_coordinator) -> None:
@@ -1151,11 +1228,12 @@ def test_deploy_two_instances_of_same_class(dynamic_coordinator) -> None:
     assert descriptors["robot0/namedmodule"].class_name == "NamedModule"
 
 
-def test_rpc_client_pickle_preserves_remote_name(dynamic_coordinator) -> None:
-    """Proxies pickled into workers (set_module_ref) must keep the instance RPC name."""
+def test_rpc_client_roundtrip_preserves_remote_name(dynamic_coordinator) -> None:
+    """Proxies sent into workers (set_module_ref) must keep the instance RPC name."""
     proxy = dynamic_coordinator.deploy(NamedModule, instance_name="robot0/namedmodule")
-    restored = pickle.loads(pickle.dumps(proxy))
+    restored = decode(encode(proxy))
     try:
+        assert restored.actor_instance is None
         assert restored.remote_name == "robot0/namedmodule"
         assert restored.whoami() == "robot0/namedmodule"
     finally:
@@ -1304,3 +1382,23 @@ def test_shutdown_unblocks_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     looper.join(timeout=5)
     assert not looper.is_alive()
     assert stopped.is_set()
+
+
+class PlainPingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
+
+
+class PlainPingProvider(Module):
+    def ping(self) -> str:  # satisfies the spec structurally, but a proxy cannot call it
+        return "pong"
+
+
+class PlainPingConsumer(Module):
+    _provider: PlainPingSpec
+
+
+def test_spec_provider_without_rpc_fails_to_resolve() -> None:
+    blueprint = autoconnect(PlainPingProvider.blueprint(), PlainPingConsumer.blueprint())
+
+    with pytest.raises(Exception, match="PlainPingProvider has ping without @rpc"):
+        resolve_module_refs(blueprint)

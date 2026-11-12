@@ -2,6 +2,215 @@
 # docs, required, kind: recording (+ streams), choices [{value, label}], when: {<key>: <value>}; a pick's choices `set:` several.
 # A blueprint's recommended_config overrides its robot's defaults. Blueprints named coordinator-*, *test*, *benchmark* are hidden.
 
+# What robots can do (relocalization, loop closure, arm control, …): a module has the abilities `modules:` gives it, and
+# a blueprint the abilities of the modules it runs (the catalog's modules and blueprints say which; GET /catalog the labels).
+abilities:
+  lidar-odometry:
+    label: Lidar-inertial odometry
+    description: Tracks the robot's pose from its lidar and IMU (Point-LIO, FAST-LIO2), the pose maps and navigation build on.
+  visual-slam:
+    label: Visual SLAM
+    description: Tracks the robot's pose from its cameras and IMU (dimSLAM, cuVSLAM fused with other odometry by a Kalman filter).
+  mapping:
+    label: 3D mapping
+    description: Builds a 3D voxel map of what the lidar or depth camera sees as the robot moves.
+  loop-closure:
+    label: Loop closure
+    description: Corrects drift when the robot comes back to a place it has seen, so the global map stays consistent (pose-graph optimization).
+  relocalization:
+    label: Relocalization
+    description: Finds where the robot is on a map made earlier (a premap), by matching its live lidar against it.
+  costmap:
+    label: Costmap
+    description: Turns the 3D map into a 2D map of where the robot can and can't drive.
+  navigation:
+    label: Navigation
+    description: Plans a path to a goal and drives it there, avoiding obstacles (click a spot, or an agent sends a goal).
+  exploration:
+    label: Autonomous exploration
+    description: Explores unknown space on its own, driving to the edges of what it has mapped.
+  patrolling:
+    label: Patrolling
+    description: Patrols an area on its own, on a route or to cover the map.
+  outdoor-navigation:
+    label: GPS and map navigation
+    description: Goes to places by GPS, street address or OpenStreetMap.
+  arm-control:
+    label: Arm control
+    description: Moves a robot arm by joint, end-effector pose or twist, through the control coordinator.
+  motion-planning:
+    label: Arm motion planning
+    description: Plans collision-free arm motion against a model of the robot and its surroundings.
+  grasping:
+    label: Grasping and pick-and-place
+    description: Finds grasps on objects it sees and picks them up and places them.
+  object-detection:
+    label: Object detection
+    description: Finds objects in the camera image, in 2D or placed in 3D.
+  object-tracking:
+    label: Object and person tracking
+    description: Keeps track of an object or person across frames as they move.
+  person-following:
+    label: Person following
+    description: Follows a person around.
+  object-localization:
+    label: Finding things it saw
+    description: Answers where something it saw is, from a memory of what the camera saw and the depth or lidar with it.
+  fiducial-markers:
+    label: Fiducial markers
+    description: Detects AprilTag/ArUco markers and publishes their poses.
+  depth-estimation:
+    label: Depth from a camera
+    description: Estimates depth from a color camera, calibrated against the lidar.
+  spatial-memory:
+    label: Spatial and semantic memory
+    description: Remembers what it saw and where, and answers questions about it (search by text or image, events over time).
+  agent:
+    label: AI agent
+    description: An AI agent you can talk to that uses the robot's skills.
+  mcp-skills:
+    label: Skills over MCP
+    description: Serves the robot's skills over MCP, for an agent (Claude Code, the dimos agent) to call.
+  voice:
+    label: Voice
+    description: Listens for speech and talks back.
+  keyboard-teleop:
+    label: Keyboard driving
+    description: Drive the robot, or jog an arm, from this computer's keyboard.
+  phone-teleop:
+    label: Phone driving
+    description: Drive the robot from a phone's touch controls or motion.
+  vr-teleop:
+    label: VR teleoperation
+    description: Drive the robot or its arms and hands from a VR headset (WebXR), with its camera in the headset.
+  remote-teleop:
+    label: Remote teleoperation
+    description: Drive the robot over the internet, with its video, map and an E-stop, from a hosted operator page.
+  recording:
+    label: Recording
+    description: Records the robot's streams to a file to replay later.
+  data-collection:
+    label: Data collection for learning
+    description: Records teleoperated demonstrations, split into episodes, for training a policy.
+  learned-policy:
+    label: Learned policy
+    description: Runs a trained policy (LeRobot) that turns camera and joint state into joint targets.
+  simulation:
+    label: Simulation
+    description: Runs a simulated robot and world (MuJoCo, Habitat) in place of the real one.
+
+# Per module (all_modules names), what reflection can't know: the abilities it gives a blueprint that runs it.
+modules:
+  arm-command-module: {abilities: [arm-control]}
+  arm-pose-coordinator: {abilities: [arm-control]}
+  arm-pose-twist-coordinator: {abilities: [arm-control]}
+  arm-teleop-module: {abilities: [vr-teleop]}
+  arm-twist-coordinator: {abilities: [arm-control]}
+  basic-path-follower: {abilities: [navigation]}
+  camera-mux-module: {abilities: [remote-teleop]}
+  cartesian-motion-controller: {abilities: [arm-control]}
+  cloud-relocalization: {abilities: [relocalization]}
+  collection-recorder: {abilities: [data-collection]}
+  cost-mapper: {abilities: [costmap]}
+  dan-holonomic-tc: {abilities: [navigation]}
+  dan-local-planner: {abilities: [navigation]}
+  depth2-depth-cloud: {abilities: [depth-estimation]}
+  detection2-d-module: {abilities: [object-detection]}
+  detection3-d-module: {abilities: [object-detection]}
+  dim-slam: {abilities: [visual-slam]}
+  drone-tracking-module: {abilities: [object-tracking]}
+  episode-monitor-module: {abilities: [data-collection]}
+  fast-lio2: {abilities: [lidar-odometry]}
+  fast-lio2-recorder: {abilities: [recording]}
+  g1-collection-recorder: {abilities: [data-collection]}
+  g1-manipulation-module: {abilities: [motion-planning]}
+  g1-recorder: {abilities: [recording]}
+  g1-sim-connection: {abilities: [simulation]}
+  go2-audio-bridge-module: {abilities: [remote-teleop]}
+  go2-command-module: {abilities: [remote-teleop]}
+  go2-l1-lidar: {abilities: [lidar-odometry]}
+  go2-memory: {abilities: [recording]}
+  go2-mid360-recorder: {abilities: [recording]}
+  go2-teleop-module: {abilities: [vr-teleop]}
+  google-maps-skill-container: {abilities: [outdoor-navigation]}
+  gps-nav-skill-container: {abilities: [outdoor-navigation]}
+  grasp-gen-x-module: {abilities: [grasping]}
+  grasping-module: {abilities: [grasping]}
+  habitat-connection: {abilities: [simulation]}
+  hand-teleop-module: {abilities: [vr-teleop]}
+  heuristic-grasp-module: {abilities: [grasping]}
+  hosted-stats-module: {abilities: [remote-teleop]}
+  joint-trajectory-controller: {abilities: [arm-control]}
+  joystick-module: {abilities: [keyboard-teleop]}
+  keyboard-teleop: {abilities: [keyboard-teleop]}
+  keyboard-teleop-module: {abilities: [keyboard-teleop]}
+  le-robot-policy-module: {abilities: [learned-policy]}
+  lidar-window-relocalization: {abilities: [relocalization]}
+  local-map-relocalization: {abilities: [relocalization]}
+  local-planner-native: {abilities: [navigation]}
+  manipulation-module: {abilities: [arm-control, motion-planning]}
+  manipulation-skills: {abilities: [grasping]}
+  map-compress-module: {abilities: [remote-teleop]}
+  marker-detection-stream-module: {abilities: [fiducial-markers]}
+  marker-tf-module: {abilities: [fiducial-markers]}
+  mcp-client: {abilities: [agent]}
+  mcp-server: {abilities: [mcp-skills]}
+  mesh-module: {abilities: [mapping]}
+  mid360-pcap-recorder: {abilities: [recording]}
+  mid360-realsense-recorder: {abilities: [recording]}
+  mls-planner-native: {abilities: [navigation]}
+  mujoco-sim-module: {abilities: [simulation]}
+  navigation-skill-container: {abilities: [navigation]}
+  object-db-module: {abilities: [object-detection]}
+  object-scene-registration-module: {abilities: [object-detection]}
+  object-tracker2-d: {abilities: [object-tracking]}
+  object-tracker3-d: {abilities: [object-tracking]}
+  object-tracking: {abilities: [object-tracking]}
+  osm-skill: {abilities: [outdoor-navigation]}
+  patrolling-module: {abilities: [patrolling]}
+  perceive-loop-skill: {abilities: [object-detection]}
+  perception-localize: {abilities: [object-localization]}
+  person-follow-skill-container: {abilities: [person-following]}
+  person-tracker: {abilities: [object-tracking]}
+  pgo-voxel-mapper: {abilities: [mapping, loop-closure]}
+  phone-teleop-module: {abilities: [phone-teleop]}
+  pick-and-place-module: {abilities: [grasping]}
+  point-lio: {abilities: [lidar-odometry]}
+  point-nav-skill-container: {abilities: [navigation]}
+  pointlio-recorder: {abilities: [recording]}
+  r1-pro-lio: {abilities: [lidar-odometry]}
+  ray-tracing-voxel-map: {abilities: [mapping]}
+  recorder: {abilities: [recording]}
+  reid-module: {abilities: [object-tracking]}
+  relocalization-module: {abilities: [relocalization]}
+  replanning-a-star-planner: {abilities: [navigation]}
+  robo-plan-point-cloud-self-filter: {abilities: [motion-planning]}
+  rust-recorder: {abilities: [recording]}
+  security-module: {abilities: [patrolling]}
+  semantic-search: {abilities: [spatial-memory]}
+  sim-go2-world: {abilities: [simulation]}
+  simple-phone-teleop: {abilities: [phone-teleop]}
+  spatial-memory: {abilities: [spatial-memory]}
+  speak-skill: {abilities: [voice]}
+  spot-recorder: {abilities: [recording]}
+  teleop-control-coordinator: {abilities: [arm-control]}
+  teleop-recorder: {abilities: [recording]}
+  temporal-memory: {abilities: [spatial-memory]}
+  trajectory-follower: {abilities: [navigation]}
+  trajectory-follower-native: {abilities: [navigation]}
+  twist-teleop-module: {abilities: [vr-teleop]}
+  type-safe-agent: {abilities: [agent]}
+  type-safe-navigation-agent: {abilities: [agent]}
+  video-arm-teleop-module: {abilities: [vr-teleop]}
+  virtual-mid360: {abilities: [simulation]}
+  vlm-agent: {abilities: [agent]}
+  voice-input: {abilities: [voice]}
+  voxel-grid-mapper: {abilities: [mapping]}
+  wavefront-frontier-explorer: {abilities: [exploration]}
+  web-xr-teleop-module: {abilities: [vr-teleop]}
+  world-belief-module: {abilities: [spatial-memory]}
+  world-belief-recorder: {abilities: [recording]}
+
 robots:
   # Robot types in launcher order; a robot's `type` is one of these, or null (listed under Other).
   types:
@@ -128,18 +337,6 @@ robots:
           title: Several Go2s, keyboard driving
           description: Several Go2s, with a keyboard driving window per robot.
           recommended_config: *fleet_config
-        unitree-go2-nav-3d:
-          title: Go2 3D navigation (Mid-360)
-          description: '3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.'
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization:
-          title: Go2 3D navigation in a saved map
-          description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-          recommended_config: *robot_ip_only
-        unitree-go2-nav-3d-relocalization-replay:
-          title: Go2 3D navigation in a saved map (replay)
-          description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-          recommended_config: *robot_ip_only
         unitree-go2-map:
           title: Go2 with a permanent map
           description: Map and navigation with live loop closure, kept in a map file that's loaded, extended and saved.
@@ -213,9 +410,15 @@ robots:
         go2-sim:
           title: 'Go2 in simulation (keyboard)'
           description: 'The Go2 with its Mid-360 lidar in a generated office, driven from the keyboard. No robot needed.'
+          recommended_config: []
         go2-sim-nav:
           title: 'Go2 in simulation (navigation)'
           description: 'The simulated Go2 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+          recommended_config: []
+        go2-sim-nav-episode:
+          title: 'Go2 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated Go2 navigation stack. Run by dimos nav-bench.'
+          hidden: true
         go2-localize:
           title: 'Go2 with object localization'
           description: 'The Go2 plus perception that places what its camera detects in 3D, using the lidar.'
@@ -294,6 +497,12 @@ robots:
         unitree-g1-record:
           title: G1 recording
           description: Drive a G1 and record what it sees (needs the Unitree SDK).
+        unitree-g1-replay-mesh:
+          title: G1 RGB-D mesh replay
+          description: 'Replays a G1 recording and reconstructs a colored 3D triangle mesh from its RealSense RGB-D stream: no robot needed.'
+          recommended_config:
+          - <<: *recording
+            streams: [[color_image], [realsense_depth_image], [realsense_camera_info], [tf]]
         unitree-g1-teleop:
           title: G1 VR teleop + recording
           description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
@@ -384,14 +593,24 @@ robots:
       manufacturer: DeepRobotics
       dirs: [dimos/robot/deeprobotics/m20]
       blueprints:
-        deeprobotics-m20-kronknav-control:
-          title: M20 3D navigation
-          description: 'Runs on the M20: ray-traced voxel map, MLS planning and holonomic control.'
+        m20:
+          title: 'M20: navigation'
+          description: 'Runs on the M20: ray-traced voxel map, MLS planning, local planner and trajectory follower, plus named map locations kept under the premap frame by the relocalizer.'
           recommended_config:
           - module: m20connection
             field: basic_server_host
             label: M20 control host
             placeholder: 10.21.31.103
+          - module: localmaprelocalization
+            field: map_file
+            label: Premap (.db/.mcap)
+        m20-sim-nav:
+          title: 'M20 in simulation (navigation)'
+          description: 'The simulated M20 with the navigation stack: click a spot and it plans its way there. No robot needed.'
+        m20-sim-nav-episode:
+          title: 'M20 in simulation (nav-bench episode)'
+          description: 'One nav-bench case driven against the simulated M20 navigation stack. Run by dimos nav-bench.'
+          hidden: true
     alfred:
       name: Alfred
       description: A DIY mobile base with a Mid-360 and a RealSense mast.
@@ -441,6 +660,10 @@ robots:
           title: xArm pick and place
           description: Perception, grasping and pick-and-place on a real xArm with a RealSense.
           starter: 18
+          recommended_config: &xarm7_connection_config
+          - *robot_or_simulator
+          - <<: &xarm7_connection_ip {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+            when: {simulation: ''}
         keyboard-teleop-xarm7:
           title: xArm7 keyboard driving
           description: Move an xArm7 with this computer's keyboard.
@@ -464,25 +687,61 @@ robots:
             placeholder: 192.168.1.185
             required: false
             when: {simulation: ''}
+        xarm7-teleop:
+          title: xArm7 teleop
+          description: Move a real xArm7's end and its gripper from the Desktop Manipulation app, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm7 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-teleop:
+          title: xArm6 teleop
+          description: Move a real xArm6's end and its gripper from the Desktop Manipulation app, through XArmConnection.
+          recommended_config:
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
         xarm-perception-sim-agent:
           title: xArm pick and place agent (sim)
           description: The simulated pick-and-place stack plus an AI agent with manipulation skills.
           recommended_config: []
+        hybrid-teleop-sim:
+          title: xArm pick and place with operator hold (sim)
+          description: 'Simulated xArm7 pick and place that an operator can hold, jog by hand, release and e-stop: no robot needed.'
+          recommended_config: []
+        hybrid-teleop-sim-collect:
+          title: xArm pick and place with operator hold, recording (sim)
+          description: The simulated xArm7 operator-hold stack that also records the wrist camera and joint positions into episodes.
+          recommended_config: []
         xarm-grasp-agent:
           title: xArm pick and place agent
           description: Pick-and-place on a real xArm plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_connection_config
         xarm-grasp-graspgenx:
           title: xArm pick and place (GraspGenX)
           description: The xArm grasping stack with GraspGenX grasp generation.
+          recommended_config: *xarm7_connection_config
         xarm-grasp-graspgenx-agent:
           title: xArm GraspGenX agent
           description: GraspGenX grasping plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_connection_config
+        xarm6-grasp:
+          title: xArm6 pick and place
+          description: Perception, grasping and pick-and-place on a real xArm6 with a RealSense.
+          recommended_config: &xarm6_connection_config
+          - {module: xarmconnection, field: ip, label: xArm6 IP, placeholder: 192.168.1.185, required: true}
+        xarm6-grasp-graspgenx:
+          title: xArm6 pick and place (GraspGenX)
+          description: The xArm6 grasping stack with GraspGenX grasp generation.
+          recommended_config: *xarm6_connection_config
         xarm7-planner-coordinator:
           title: xArm7 motion planning
           description: Motion planning and execution for an xArm7.
+          recommended_config: &xarm7_hardware_config [*xarm7_connection_ip]
         xarm7-planner-coordinator-agent:
           title: xArm7 planning agent
           description: xArm7 motion planning plus an AI agent with manipulation skills.
+          recommended_config: *xarm7_hardware_config
+        xarm6-planner-coordinator:
+          title: xArm6 motion planning
+          description: Motion planning and execution for an xArm6.
+          recommended_config: *xarm6_connection_config
         lite6-planner-coordinator:
           title: Lite6 motion planning
           description: Motion planning and execution for a Lite6.
@@ -606,6 +865,44 @@ robots:
           title: Piper demonstration recording
           description: Teleoperate a Piper in VR and record episodes for imitation learning.
           recommended_config: [{module: controlcoordinator, field: addresses.arm, label: CAN port}]
+        piper-teleop:
+          title: Piper teleop
+          description: Move a real Piper's end and its gripper from the Desktop Manipulation app, through PiperConnection.
+          recommended_config:
+          - {module: piperconnection, field: can_port, label: CAN port, placeholder: can0, required: true}
+    makermods_metal:
+      name: MakerMods Metal
+      description: The six-joint Metal arm and gripper, over CAN.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: metalconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
+      blueprints:
+        makermods-metal-connection-control:
+          title: Metal connection control
+          description: Direct CAN connection and joint trajectory control for a Metal arm; requires a CAN selector; use simulation for a mock connection.
+        coordinator-makermods-metal:
+          title: Metal coordinator
+          description: Metal trajectory and gripper control through its connection module.
+        makermods-metal-planner-coordinator:
+          title: Metal motion planning
+          description: Motion planning, execution, and Viser for a Metal arm.
+    dual_makermods_metal:
+      name: Dual MakerMods Metal
+      description: Two Metal arms in one planning and collision world.
+      type: arm
+      manufacturer: MakerMods
+      dirs: [dimos/robot/manipulators/dual_makermods_metal]
+      defaults:
+        recommended_config:
+        - {module: dualmetalconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
+        - {module: dualmetalconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
+      blueprints:
+        dual-makermods-metal-planner-coordinator:
+          title: Dual Metal motion planning
+          description: Coordinated motion planning, execution, and Viser for two Metal arms.
     openyam:
       name: OpenYAM
       description: The OpenYAM arm, over CAN.
@@ -613,8 +910,29 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/openyam]
       defaults:
-        recommended_config: *can_arm_config
+        recommended_config:
+        - *robot_or_simulator
+        - {module: openyamconnection, field: can_port, label: CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openyam-connection-control:
+          title: OpenYAM connection control
+          description: Direct CAN connection and joint trajectory control for an OpenYAM arm; requires a CAN selector; use simulation for a mock connection.
+        openyam-teach-collection:
+          title: OpenYAM hand-guided recording
+          description: Guide an OpenYAM arm by hand and record demonstrations.
+          recommended_config:
+          - *robot_or_simulator
+          - module: openyamteachconnection
+            field: can_port
+            label: CAN port or USB serial
+            placeholder: can0
+            when: {simulation: ''}
+        openyam-lerobot-rollout:
+          title: OpenYAM policy rollout
+          description: Run a trained LeRobot policy on an OpenYAM arm.
+        openyam-lerobot-quest-rollout:
+          title: OpenYAM VR policy rollout
+          description: Run a trained policy with VR control for an OpenYAM arm.
         keyboard-teleop-openyam:
           title: OpenYAM keyboard driving
           description: Move an OpenYAM arm with this computer's keyboard.
@@ -627,6 +945,9 @@ robots:
         coordinator-openyam:
           title: OpenYAM coordinator
           description: An OpenYAM arm behind a ControlCoordinator (a building block).
+        openyam-quest-collection:
+          title: OpenYAM demonstration recording
+          description: Teleoperate an OpenYAM arm in VR and record demonstrations.
         teleop-webxr-openyam:
           title: OpenYAM VR teleop
           description: Move an OpenYAM arm with a VR headset's right controller.
@@ -637,6 +958,9 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/manipulators/dual_openyam]
       blueprints:
+        dual-openyam-quest-collection:
+          title: Dual OpenYAM demonstration recording
+          description: Teleoperate two OpenYAM arms in VR and record demonstrations.
         dual-openyam-planner-coordinator:
           title: Dual OpenYAM motion planning
           description: Motion planning for the two-arm OpenYAM.
@@ -652,7 +976,15 @@ robots:
       type: arm
       manufacturer: null
       dirs: [dimos/robot/manipulators/openarm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - {module: openarmconnection, field: left_can_port, label: Left CAN port or USB serial, when: {simulation: ''}}
+        - {module: openarmconnection, field: right_can_port, label: Right CAN port or USB serial, when: {simulation: ''}}
       blueprints:
+        openarm-connection-control:
+          title: OpenArm connection control
+          description: Direct CAN connections and joint trajectory control for OpenArm; requires both CAN selectors; use simulation for a mock connection.
         openarm-planner-coordinator:
           title: OpenArm motion planning
           description: Motion planning and execution for the bimanual OpenArm.
@@ -661,7 +993,28 @@ robots:
           description: The OpenArm behind a ControlCoordinator (a building block).
         teleop-webxr-openarm:
           title: OpenArm VR teleop
-          description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
+          description: Both VR controllers drive the bimanual OpenArm; requires both CAN selectors, or simulation for a mock connection.
+    seeed_b601_dm:
+      name: Seeed reBot B601-DM
+      description: Seeed's 6-axis arm with a gripper, over the Damiao USB-CAN box it ships with or SocketCAN.
+      type: arm
+      manufacturer: Seeed Studio
+      dirs: [dimos/robot/manipulators/seeed_b601_dm]
+      defaults:
+        recommended_config:
+        - *robot_or_simulator
+        - module: b601dmconnection
+          field: can_port
+          label: CAN port
+          placeholder: /dev/ttyACM0
+          when: {simulation: ''}
+      blueprints:
+        seeed-b601-dm-planner-coordinator:
+          title: B601-DM motion planning
+          description: Motion planning and execution for a Seeed reBot B601-DM arm.
+        coordinator-seeed-b601-dm:
+          title: B601-DM coordinator
+          description: A B601-DM behind a ControlCoordinator (a building block).
     a1z:
       name: Galaxea A1Z
       description: Galaxea's A1Z arm, over CAN.
@@ -753,10 +1106,6 @@ robots:
       manufacturer: null
       dirs: [dimos/robot/assembly, dimos/hardware/sensors]
       blueprints:
-        mid360-fastlio:
-          title: Mid-360 SLAM (FAST-LIO)
-          description: Live SLAM from a Livox Mid-360 lidar.
-          starter: 20
         real-sense-camera-vis:
           title: RealSense viewer
           description: A RealSense's color, depth and RGBD cloud in Rerun.
@@ -768,12 +1117,6 @@ robots:
         mid360:
           title: Mid-360 lidar
           description: A Livox Mid-360's point cloud and IMU.
-        mid360-fastlio-voxels:
-          title: Mid-360 FAST-LIO + voxel map
-          description: FAST-LIO SLAM feeding a voxel grid map.
-        mid360-fastlio-voxels-native:
-          title: Mid-360 FAST-LIO voxels (native)
-          description: FAST-LIO with its own native voxel map.
         mid360-pointlio:
           title: Mid-360 SLAM (Point-LIO)
           description: Live Point-LIO SLAM from a Livox Mid-360.
@@ -789,9 +1132,6 @@ robots:
         demo-mid360-pcap-replay:
           title: Mid-360 pcap replay
           description: Replays a Mid-360 capture (DIMOS_MID360_PCAP names the .pcap) through the live driver.
-        demo-virtual-mid360-fastlio:
-          title: Virtual Mid-360 + FAST-LIO
-          description: FAST-LIO fed by a virtual Mid-360 replaying a capture.
         demo-virtual-mid360-pointlio:
           title: Virtual Mid-360 + Point-LIO
           description: Point-LIO fed by a virtual Mid-360 replaying a capture.
@@ -804,7 +1144,10 @@ robots:
         relocalize-mid360:
           title: Mid-360 relocalization (recording)
           description: Relocalization against a saved map, driven by a recording instead of a robot.
-          recommended_config: [*recording]
+          recommended_config:
+          - {module: recordingplayer, field: dataset, label: Recording, kind: recording, streams: [[pointlio_lidar], [tf]], placeholder: the SF office recording}
+          # the map made from the player's default recording, so a launch with nothing filled in relocalizes
+          - {module: localmaprelocalization, field: map_file, label: Saved map, required: true, default: go2_mid360_sf_office_outdoors_2026-05-29}
         demo-dim-slam-realsense:
           title: dimSLAM on a RealSense
           description: dimSLAM visual SLAM on a RealSense stereo camera.

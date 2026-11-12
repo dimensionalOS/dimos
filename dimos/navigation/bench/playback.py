@@ -1,0 +1,181 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Plays an episode back: its body motion in a MuJoCo viewer, its replay file in Rerun."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from pathlib import Path
+import subprocess
+import time
+
+import mujoco
+import numpy as np
+from numpy.typing import NDArray
+
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.navigation.bench.driver import ROBOT_FILE, TERMINAL_FILE
+from dimos.navigation.bench.runner import (
+    RECORDING_FILE,
+    REPLAY_FILE,
+    RUNS_INDEX,
+    SUITE_FILE,
+    selects,
+)
+from dimos.navigation.bench.suite import Manifest
+from dimos.simulation.scenes.procedural import Scene
+from dimos.simulation.sim_world.world import ROOT_QUAT, load_display_spec, open_viewer, scene_model
+
+
+@dataclass(frozen=True)
+class Frame:
+    """The body at one recorded instant."""
+
+    t: float
+    position: NDArray[np.float64]
+    quaternion: NDArray[np.float64]
+    joints: dict[str, float]
+
+
+def frames(recording: Path) -> list[Frame]:
+    """Recorded body poses paired with the joint state nearest in time."""
+    store = SqliteStore(path=str(recording))
+    store.start()
+    try:
+        poses = store.stream("ground_truth", PoseStamped).to_list()
+        joints = store.stream("joint_state", JointState).to_list()
+        if not poses or not joints:
+            raise ValueError(f"{recording} holds no ground_truth and joint_state streams")
+        joint_t = np.array([float(j.ts) for j in joints])
+        out = []
+        for pose in poses:
+            t = float(pose.ts)
+            k = int(np.clip(np.searchsorted(joint_t, t), 0, len(joints) - 1))
+            if k > 0 and abs(joint_t[k - 1] - t) < abs(joint_t[k] - t):
+                k -= 1
+            state = joints[k].data
+            q = pose.data.orientation
+            out.append(
+                Frame(
+                    t,
+                    np.array(tuple(pose.data.position), dtype=np.float64),
+                    np.array([q.w, q.x, q.y, q.z], dtype=np.float64),
+                    dict(zip(state.name, state.position, strict=True)),
+                )
+            )
+    finally:
+        store.stop()
+    return out
+
+
+class Puppet:
+    """The scene's model posed from frames, with physics left out."""
+
+    def __init__(self, scene: Scene, robot: Path) -> None:
+        self.model = scene_model(scene, load_display_spec(robot))
+        self.data = mujoco.MjData(self.model)
+        self._trunk = int(self.model.jnt_bodyid[0])
+        self._qpos_adr = {
+            mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_JOINT, j): int(
+                self.model.jnt_qposadr[j]
+            )
+            for j in range(self.model.njnt)
+            if self.model.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE
+        }
+
+    def pose(self, frame: Frame) -> None:
+        self.data.qpos[0:3] = frame.position
+        self.data.qpos[ROOT_QUAT] = frame.quaternion
+        for name, angle in frame.joints.items():
+            self.data.qpos[self._qpos_adr[name]] = angle
+        mujoco.mj_forward(self.model, self.data)
+
+    def trunk_position(self) -> NDArray[np.float64]:
+        position: NDArray[np.float64] = self.data.xpos[self._trunk].copy()
+        return position
+
+
+def find_episode(name: str) -> Path:
+    """An episode directory as given, or the newest run's episode whose case id starts with name."""
+    given = Path(name).expanduser()
+    if given.is_dir():
+        return given
+    runs = RUNS_INDEX.read_text().splitlines() if RUNS_INDEX.exists() else []
+    for run_dir in map(Path, reversed(runs)):
+        if not run_dir.is_dir():
+            continue
+        found = sorted(
+            d for d in run_dir.iterdir() if selects(name, d.name) and (d / TERMINAL_FILE).exists()
+        )
+        if found:
+            return found[0]
+    raise FileNotFoundError(f"no episode directory or recorded case named {name}")
+
+
+def episode_scene(episode_dir: Path) -> Scene:
+    """The scene of the case the episode ran, from the suite its run saved."""
+    return Manifest.load(episode_dir.parent / SUITE_FILE).case(episode_dir.name).scene()
+
+
+def paced(items: list[Frame], speed: float) -> Iterator[Frame]:
+    """Frames on the wall clock at the recorded pace times speed."""
+    start, t0 = time.monotonic(), items[0].t
+    for frame in items:
+        delay = (frame.t - t0) / speed - (time.monotonic() - start)
+        if delay > 0:
+            time.sleep(delay)
+        yield frame
+
+
+def open_rerun(replay: Path) -> subprocess.Popen[bytes]:
+    """The Rerun viewer on a replay file, our own build when it is installed."""
+    for command in ("dimos-viewer", "rerun"):
+        try:
+            return subprocess.Popen(
+                [command, "--new", str(replay)], stdin=subprocess.DEVNULL, start_new_session=True
+            )
+        except FileNotFoundError:
+            continue
+    raise FileNotFoundError("no rerun viewer on PATH")
+
+
+def play(episode_dir: Path, speed: float = 1.0, loop: bool = True, rerun: bool = True) -> None:
+    """Move the recorded body through the episode's scene, with its replay open in Rerun."""
+    robot = episode_dir / ROBOT_FILE
+    if not robot.exists():
+        raise FileNotFoundError(
+            f"{episode_dir} has no {ROBOT_FILE} to draw. Open its {REPLAY_FILE} in Rerun instead."
+        )
+    puppet = Puppet(episode_scene(episode_dir), robot)
+    recorded = frames(episode_dir / RECORDING_FILE)
+    puppet.pose(recorded[0])
+    replay = episode_dir / REPLAY_FILE
+    if rerun and replay.exists():
+        open_rerun(replay)
+    viewer = open_viewer(puppet.model, puppet.data, puppet.trunk_position())
+    try:
+        while viewer.is_running():
+            for frame in paced(recorded, speed):
+                if not viewer.is_running():
+                    return
+                puppet.pose(frame)
+                viewer.sync()
+            if not loop:
+                return
+    finally:
+        viewer.close()

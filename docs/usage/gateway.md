@@ -26,9 +26,11 @@ ran (`/history`). Desktop starts it from dimos.yaml's `start:` and serves it at 
 
 | | |
 | -- | -- |
-| `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema |
+| `/catalog` | `blueprints`, `modules`, `rpcs`, `robots`, `config` (global schema), `scan`, each `{name}/config` schema and `{name}/source` (its .py file; a module's `?blueprint=` reads it from that blueprint's live run's checkout) |
 | `/active` | the running blueprint; `launch`, `exec`, `relaunch`, `stop`, `log`, `blueprint`, `modules/{id}` (+ `restart`, `stop`, `rpcs/{name}`, `streams`), `skills`, `streams` (+ `{name}/peek`), `stats` |
 | `/history` | every run with a log; `{runId}` (or `latest`), `{runId}/logs`, `recordings` (its directory) |
+| `/cloud` | `account`, `login` (a device login; `?after=<state>` waits for it to leave that state; DELETE cancels it, or logs out with none pending), `login/page` (a login page apps embed), `uploads` (queue a recording, retry, cancel) |
+| views | `msgs.js` (decoders for dimos messages), `msgs.d.ts` (its types) |
 | other | `info`, `extras` (+ `install`), `jobs/{job}`, `docs/search`, `server/stop` |
 
 ## Examples
@@ -45,8 +47,22 @@ await post("active/modules/unitreeskillcontainer/rpcs/execute_sport_command", { 
 const page = await (await fetch(`${gateway}/active/log?level=warning&limit=200`)).json() // then ?after=${page.offset}
 ```
 
-Live launch phases (and added or removed blueprints) also arrive on zenoh at `<namespace>/dimos/events/<type>`
-(`getZenoh().subscribeDimos("launch", ...)` from `dim-app/mod.js`).
+Live launch phases (a run started in a terminal starting or ending too; and added or removed blueprints, and upload progress) also arrive on zenoh at `<namespace>/dimos/events/<type>`. The types are `launch`, `blueprints`,
+`upload`, `uploads`, `upload-removed`, `cloud-account`, `cloud-login`, `stats` and `log`.
+
+`stats` and `log` say something changed and carry no data, so a page refetches instead of polling. `stats` fires on each
+dtop sample (re-read `GET /active/stats`); `log` fires when a log grows, with `run` set to the run's id, or `launch` for
+the gateway's launch log. To wait for a device login, `GET /cloud/login?after=<state>` answers once the login
+leaves that state.
+
+Decode dimos messages in a page with `msgs.js` (Deno and editors pick up its types, `msgs.d.ts`, from its
+`X-TypeScript-Types` header):
+
+```js
+const { decodeChannel, geometry_msgs } = await import(`${gateway}/msgs.js`)
+const odom = decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes) // bytes: one message off zenoh or LCM
+const twist = geometry_msgs.Twist.encode({ linear: { x: 0.3 }, angular: { z: 0.5 } }) // a Uint8Array to publish
+```
 
 ## Running it yourself
 
@@ -55,8 +71,10 @@ Live launch phases (and added or removed blueprints) also arrive on zenoh at `<n
 .venv/bin/python -m experimental.gateway --port 8123   # in the foreground, also on --host (default 127.0.0.1):8123
 ```
 
-- Settings come from `~/.dimos/config.yaml` (or `$DIMOS_HOME/config.yaml`): `dimos-gateway.socket`, `zenoh.namespace`,
-  `zenoh.connect`, `zenoh.gossip`, `recordings.dir`. Flags (`--socket`, `--zenoh-namespace`, ...) win.
+- Settings come from `DIMOS_APP` (`socket`, `recordingsDir`, `zenohNamespace`, `zenohConnect`), else `<home>/config.yaml`
+  (`home` from `DIMOS_APP`, else `~/.dimos`): `dimos-gateway.socket`, `zenoh.namespace`, `zenoh.connect`,
+  `zenoh.gossip`, `topics.enabled` and `recordings.dir`, read once at start: Desktop writes that file and restarts the
+  gateway when they change.
 - Its tuning numbers are in `experimental/gateway/constants.py`; robot and blueprint descriptions in
   `experimental/gateway/annotations.yaml`.
 - Anything that imports a blueprint runs in a child process, so a blueprint that hangs or crashes can't take it down.

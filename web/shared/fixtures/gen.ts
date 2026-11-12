@@ -45,6 +45,22 @@ const sdpAnswer = "v=0\r\no=- 7 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BU
   "a=rtpmap:96 H264/90000\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 0.0.0.0\r\n" +
   "a=mid:1\r\na=recvonly\r\na=rtpmap:96 H264/90000\r\n";
 
+// The settings a media provider advertises per profile (PLAN_2a), as
+// dimos/web/relay_bridge/topic_profiles.py derives them from its table.
+const topicProfileOptions = {
+  raw: { maxHz: { kind: "number", max: 1000, default: 1000 } },
+  "image.jpeg.low.v1": {
+    maxHz: { kind: "number", max: 1000, default: 30 },
+    maxResolution: { kind: "size", min: 16, max: 4096, default: [640, 360] },
+    quality: { kind: "int", min: 1, max: 100, default: 60 },
+  },
+  "cloud.q16.low.v1": {
+    maxHz: { kind: "number", max: 1000, default: 5 },
+    keepEvery: { kind: "int", min: 1, max: 64, default: 4 },
+    fields: { kind: "enum", values: ["intensity", "color"], default: ["intensity", "color"] },
+  },
+} as const;
+
 const controlMsgs: Record<string, Msg> = {
   hello_robot: {
     t: "hello",
@@ -92,6 +108,223 @@ const controlMsgs: Record<string, Msg> = {
     token: "viewer-token-fixture-0123456789abcdef",
   },
   welcome: { t: "welcome", v: PROTOCOL_VERSION },
+  hello_topic_source: {
+    t: "hello",
+    v: PROTOCOL_VERSION,
+    role: "robot",
+    token: "provider-token-fixture-0123456789",
+    topicSource: "workspace",
+    topicsVersion: 1,
+    topicCapabilities: {
+      read: true,
+      write: false,
+      profiles: ["raw", "depth.lossless.v1"],
+      guardedPublishers: false,
+    },
+  },
+  // A media provider advertises the settings each profile accepts; the
+  // profile value is the default and the ceiling (floor for keepEvery).
+  hello_topic_source_options: {
+    t: "hello",
+    v: PROTOCOL_VERSION,
+    role: "robot",
+    topicSource: "workspace",
+    topicsVersion: 1,
+    topicCapabilities: {
+      read: true,
+      write: false,
+      profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
+      guardedPublishers: false,
+      profileOptions: topicProfileOptions,
+    },
+  },
+  topic_sources: {
+    t: "topic_sources",
+    v: 1,
+    sources: [{
+      source: "workspace",
+      gen: 3,
+      read: true,
+      write: false,
+      profiles: ["raw"],
+      guardedPublishers: false,
+    }],
+  },
+  topic_sources_options: {
+    t: "topic_sources",
+    v: 1,
+    sources: [{
+      source: "workspace",
+      gen: 3,
+      read: true,
+      write: false,
+      profiles: ["raw", "image.jpeg.low.v1", "cloud.q16.low.v1"],
+      guardedPublishers: false,
+      profileOptions: topicProfileOptions,
+    }],
+  },
+  topic_sub: {
+    t: "topic_sub",
+    id: "s1",
+    source: "workspace",
+    keyExpr: "demo/β/**",
+    delivery: "reliable",
+    profile: "raw",
+    maxHz: 1000,
+  },
+  // Initial settings beyond the rate: a sparse request, normalized by the relay.
+  topic_sub_settings: {
+    t: "topic_sub",
+    id: "c1",
+    source: "workspace",
+    keyExpr: "sensor/β/camera",
+    delivery: "latest",
+    profile: "image.jpeg.low.v1",
+    maxHz: 15.5,
+    settings: { maxResolution: [320, 240], quality: 50 },
+  },
+  topic_open: {
+    t: "topic_open",
+    route: "@t:p1",
+    gen: 3,
+    keyExpr: "demo/β/**",
+    delivery: "reliable",
+    profile: "raw",
+    maxHz: 1000,
+  },
+  // The route's first variant (v1) rides the open with its full settings.
+  topic_open_settings: {
+    t: "topic_open",
+    route: "@t:p2",
+    gen: 3,
+    keyExpr: "sensor/β/camera",
+    delivery: "latest",
+    profile: "image.jpeg.low.v1",
+    maxHz: 15.5,
+    settings: { maxHz: 15.5, maxResolution: [320, 240], quality: 50 },
+  },
+  topic_opened: { t: "topic_opened", route: "@t:p1", gen: 3 },
+  topic_ready: { t: "topic_ready", id: "s1", source: "workspace", route: "@t:v2", gen: 3 },
+  topic_ready_settings: {
+    t: "topic_ready",
+    id: "c1",
+    source: "workspace",
+    route: "@t:v3",
+    gen: 3,
+    settings: { maxHz: 15.5, maxResolution: [320, 240], quality: 50 },
+  },
+  topic_activate: { t: "topic_activate", route: "@t:v2", gen: 3 },
+  topic_rate_update: { t: "topic_activate", route: "@t:p1", gen: 3, maxHz: 30 },
+  topic_close: { t: "topic_close", route: "@t:p1", gen: 3 },
+  topic_credit: { t: "topic_credit", route: "@t:v2", gen: 3, frames: 40, bytes: 13000 },
+  topic_unsub: { t: "topic_unsub", id: "s1" },
+  // Settings updates (PLAN_2a): null resets one key to the profile default,
+  // the acknowledgement carries the normalized settings in force.
+  topic_update: {
+    t: "topic_update",
+    id: "c1",
+    revision: 2,
+    options: { maxHz: 7.5, maxResolution: null, quality: 40 },
+  },
+  topic_update_cloud: {
+    t: "topic_update",
+    id: "c2",
+    revision: 1,
+    options: { keepEvery: 2, fields: ["color"] },
+  },
+  topic_applied: {
+    t: "topic_applied",
+    id: "c1",
+    revision: 2,
+    settings: { maxHz: 7.5, maxResolution: [640, 360], quality: 40 },
+  },
+  topic_variant: {
+    t: "topic_variant",
+    route: "@t:p2",
+    gen: 3,
+    variant: "v2",
+    settings: { maxHz: 7.5, maxResolution: [640, 360], quality: 40 },
+  },
+  topic_variant_ready: {
+    t: "topic_variant_ready",
+    route: "@t:p2",
+    gen: 3,
+    variant: "v2",
+    settings: { maxHz: 7.5, maxResolution: [640, 360], quality: 40 },
+  },
+  topic_variant_cloud: {
+    t: "topic_variant",
+    route: "@t:p3",
+    gen: 3,
+    variant: "v1",
+    settings: { maxHz: 2.5, keepEvery: 4, fields: ["color"] },
+  },
+  topic_variant_close: { t: "topic_variant_close", route: "@t:p2", gen: 3, variant: "v2" },
+  topic_update_rejected: {
+    t: "topic_error",
+    id: "c1",
+    revision: 3,
+    code: "option_out_of_range",
+    message: "calitate în afara intervalului β",
+    outcome: "rejected",
+  },
+  topic_guard_ready: {
+    t: "topic_guard_ready",
+    id: "drive",
+    handle: "@p:1",
+    gen: 3,
+    ticket: 1,
+    timeoutMs: 400,
+  },
+  topic_guard_heartbeat: { t: "topic_guard_heartbeat", handle: "@p:1", gen: 3, ticket: 1 },
+  topic_guard_ticket: { t: "topic_guard_ticket", handle: "@p:1", gen: 3, ticket: 2 },
+  topic_guard_stop: { t: "topic_guard_stop", handle: "@p:1", gen: 3 },
+  topic_guard_closed: { t: "topic_guard_closed", handle: "@p:1", gen: 3, code: "guard_expired" },
+  topic_guard_result: {
+    t: "topic_guard_result",
+    handle: "@p:1",
+    gen: 3,
+    seq: 10,
+    outcome: "accepted",
+    code: "",
+    providerTs: 100.5,
+  },
+  topic_error: {
+    t: "topic_error",
+    id: "s1",
+    code: "source_offline",
+    message: "Source interrupted",
+    outcome: "interrupted",
+  },
+  topic_list: {
+    t: "topic_list",
+    id: "l1",
+    source: "workspace",
+    prefix: "demo/",
+    cursor: "",
+    limit: 32,
+  },
+  topic_page: {
+    t: "topic_page",
+    id: "l1",
+    source: "workspace",
+    gen: 3,
+    entries: [{
+      key: "demo/β/clock",
+      encoding: "application/json",
+      type: "",
+      availability: "observed",
+    }],
+    cursor: "",
+  },
+  topic_pub_result: {
+    t: "topic_pub_result",
+    id: "w1",
+    outcome: "accepted",
+    code: "",
+    message: "",
+    providerTs: 1752576000.5,
+  },
   ping: { t: "ping", n: 7, ts: 1752576000.5 },
   pong: { t: "pong", n: 7, ts: 1752576000.5 },
   error_version: {
@@ -201,6 +434,59 @@ const teleopMsgs: Record<string, Msg> = {
 };
 
 const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> = {
+  topic_sample: {
+    header: {
+      ch: "@t:v2",
+      seq: 9,
+      ts: 1752576000.75,
+      delivery: "reliable",
+      meta: {
+        key: "demo/β/clock",
+        encoding: "application/octet-stream",
+        gen: 3,
+        ingressTs: 1752576000.5,
+        sourceTs: 1752576000.25,
+      },
+    },
+    payload: new Uint8Array([0, 255, 128, 1]),
+  },
+  // A media sample stamped with its encode variant; the relay dispatches on
+  // meta.variant and strips it before forwarding to the viewer.
+  topic_variant_sample: {
+    header: {
+      ch: "@t:p2",
+      seq: 10,
+      ts: 1752576000.75,
+      delivery: "latest",
+      meta: {
+        key: "sensor/β/camera",
+        encoding: "image/jpeg",
+        gen: 3,
+        ingressTs: 1752576000.5,
+        variant: "v2",
+        w: 320,
+        h: 240,
+        quality: 40,
+      },
+    },
+    payload: new Uint8Array([255, 216, 255, 217]),
+  },
+  topic_publish: {
+    header: {
+      ch: "@put",
+      seq: 1,
+      ts: 1752576000.75,
+      delivery: "reliable",
+      meta: {
+        id: "w1",
+        source: "workspace",
+        gen: 3,
+        key: "demo/β/command",
+        encoding: "application/octet-stream",
+      },
+    },
+    payload: new Uint8Array([255, 0, 1, 128]),
+  },
   odom_reliable: {
     header: { ch: "odom", seq: 42, ts: 1752576000.5, delivery: "reliable" },
     payload: new TextEncoder().encode('{"x":1.5,"y":-2.5,"yaw":0.75}'),
@@ -846,12 +1132,154 @@ const manifests = {
 };
 
 const dir = new URL(".", import.meta.url);
+const invalidTopics = {
+  vectors: [
+    ...[null, true, 0, -1, 1001, "30"].map((maxHz, i) => ({
+      name: `invalid_rate_update_${i}`,
+      message: { ...controlMsgs.topic_activate, maxHz },
+    })),
+    ...[
+      ["invalid_guard_handle", { handle: "@t:1" }],
+      ["guard_handle_newline", { handle: "@p:1\n" }],
+      ["boolean_guard_ticket", { ticket: true }],
+      ["zero_guard_ticket", { ticket: 0 }],
+      ["fractional_guard_timeout", { timeoutMs: 400.5 }],
+      ["unbounded_guard_timeout", { timeoutMs: 1001 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_guard_ready, ...fields as Record<string, unknown> },
+    })),
+    ...[null, { read: 1, write: false, profiles: ["raw"] }, {
+      read: true,
+      write: false,
+      profiles: new Array(17).fill("raw"),
+    }, { read: true, write: false, profiles: [""] }].map((topicCapabilities, i) => ({
+      name: `invalid_capabilities_${i}`,
+      message: { ...controlMsgs.hello_topic_source, topicCapabilities },
+    })),
+    { name: "boolean_version", message: { t: "topic_sources", v: true, sources: [] } },
+    {
+      name: "boolean_hello_version",
+      message: { t: "hello", v: PROTOCOL_VERSION, role: "viewer", topicsVersion: true },
+    },
+    {
+      name: "null_hello_source",
+      message: { t: "hello", v: PROTOCOL_VERSION, role: "robot", topicSource: null },
+    },
+    ...[
+      ["empty_key", { keyExpr: "" }],
+      ["long_unicode_key", { keyExpr: "β".repeat(513) }],
+      ["bad_source", { source: "../workspace" }],
+      ["source_cr", { source: "workspace\r" }],
+      ["source_lf", { source: "workspace\n" }],
+      ["source_unicode_line_end", { source: "workspace\u2028" }],
+      ["negative_rate", { maxHz: -1 }],
+      ["boolean_rate", { maxHz: true }],
+      ["unknown_delivery", { delivery: "datagram" }],
+      ["empty_profile", { profile: "" }],
+      ["long_id", { id: "x".repeat(65) }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_sub, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["literal_key_route", { route: "demo/a" }],
+      ["route_cr", { route: "@t:v2\r" }],
+      ["route_unicode_line_end", { route: "@t:v2\u2029" }],
+      ["negative_gen", { gen: -1 }],
+      ["fractional_gen", { gen: 1.5 }],
+      ["boolean_gen", { gen: true }],
+      ["unsafe_gen", { gen: 9007199254740992 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_ready, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["unknown_option", { options: { maxBitrate: 1 } }],
+      ["negative_keep_every", { options: { keepEvery: -1 } }],
+      ["fractional_quality", { options: { quality: 75.5 } }],
+      ["boolean_quality", { options: { quality: true } }],
+      ["short_resolution", { options: { maxResolution: [640] } }],
+      ["string_resolution", { options: { maxResolution: ["640", 360] } }],
+      ["zero_rate_option", { options: { maxHz: 0 } }],
+      ["duplicate_fields", { options: { fields: ["color", "color"] } }],
+      ["numeric_fields", { options: { fields: [1] } }],
+      ["null_options", { options: null }],
+      ["unsafe_revision", { revision: 9007199254740992 }],
+      ["negative_revision", { revision: -1 }],
+      ["fractional_revision", { revision: 1.5 }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_update, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["null_setting_in_force", { settings: { maxHz: 7.5, quality: null } }],
+      ["settings_without_rate", { settings: { quality: 40 } }],
+      ["null_settings", { settings: null }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_applied, ...fields as Record<string, unknown> },
+    })),
+    ...[
+      ["variant_zero", { variant: "v0" }],
+      ["variant_beyond_bound", { variant: "v5" }],
+      ["variant_prefix", { variant: "w1" }],
+      ["variant_newline", { variant: "v1\n" }],
+      ["variant_null_settings", { settings: null }],
+    ].map(([name, fields]) => ({
+      name,
+      message: { ...controlMsgs.topic_variant, ...fields as Record<string, unknown> },
+    })),
+    { name: "sub_settings_scalar", message: { ...controlMsgs.topic_sub, settings: 5 } },
+    { name: "sub_settings_null", message: { ...controlMsgs.topic_sub, settings: null } },
+    {
+      name: "sub_settings_reset",
+      message: { ...controlMsgs.topic_sub_settings, settings: { quality: null } },
+    },
+    { name: "ready_null_settings", message: { ...controlMsgs.topic_ready, settings: null } },
+    { name: "error_null_revision", message: { ...controlMsgs.topic_error, revision: null } },
+    ...[{ maxHz: { kind: "ratio", default: 30 } }, { maxHz: { kind: "number", min: "0" } }, {
+      fields: { kind: "enum", values: new Array(17).fill("color") },
+    }, {
+      maxResolution: {
+        kind: "size",
+        default: [640, 360, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      },
+    }, {
+      maxHz: null,
+    }].map((ranges, i) => ({
+      name: `invalid_profile_options_${i}`,
+      message: {
+        ...controlMsgs.hello_topic_source,
+        topicCapabilities: {
+          read: true,
+          write: false,
+          profiles: ["raw"],
+          profileOptions: { raw: ranges },
+        },
+      },
+    })),
+    { name: "oversized_page", message: { ...controlMsgs.topic_list, limit: 33 } },
+    { name: "fractional_limit", message: { ...controlMsgs.topic_list, limit: 1.5 } },
+    { name: "negative_credit", message: { ...controlMsgs.topic_credit, bytes: -1 } },
+    { name: "boolean_credit", message: { ...controlMsgs.topic_credit, frames: true } },
+    { name: "unknown_outcome", message: { ...controlMsgs.topic_error, outcome: "probably" } },
+    {
+      name: "bad_descriptors",
+      message: {
+        ...controlMsgs.topic_page,
+        entries: [{ key: "a", type: "", encoding: "", availability: "live" }],
+      },
+    },
+  ],
+};
 for (
   const [file, obj] of [
     ["control_frames.json", control],
     ["datagrams.json", datagrams],
     ["data_frames.json", data],
     ["manifests.json", manifests],
+    ["topics_invalid.json", invalidTopics],
   ] as const
 ) {
   await Deno.writeTextFile(new URL(file, dir), JSON.stringify(obj, null, 2) + "\n");

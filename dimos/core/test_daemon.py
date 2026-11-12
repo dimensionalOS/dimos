@@ -21,6 +21,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 from unittest import mock
 import uuid
@@ -120,6 +121,28 @@ class TestRunEntryCRUD:
         entry = _make_entry()
         entry.save()
         assert entry.registry_path.exists()
+
+    def test_a_reader_never_sees_an_entry_half_saved(self, tmp_registry: Path) -> None:
+        entry = _make_entry()
+        entry.save()
+        done = threading.Event()
+        listed: list[int] = []
+
+        def read() -> None:
+            while not done.is_set():
+                listed.append(len(list_runs(alive_only=True)))
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            for _ in range(2000):
+                entry.save()
+        finally:
+            done.set()
+            reader.join(timeout=10)
+        # list_runs deletes an entry it can't parse, so one read half written would be gone for good
+        assert set(listed) == {1}
+        assert [path.name for path in tmp_registry.iterdir()] == [entry.registry_path.name]
 
     def test_remove_idempotent(self, tmp_registry: Path):
         entry = _make_entry()
@@ -313,6 +336,18 @@ class TestForkDaemon:
         # write_daemon_status must swallow it.
         write_daemon_status(write_fd, {"ok": True})
         os.close(write_fd)
+
+    def test_stdout_is_writable_after_redirect_to_devnull(self):
+        # A worker started after the daemon detached (load, restart) flushes stdout first.
+        code = (
+            "import sys\n"
+            "from dimos.core.daemon import redirect_stdio_to_devnull\n"
+            "redirect_stdio_to_devnull()\n"
+            "print('after detach')\n"
+            "sys.stdout.flush()\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
+        assert result.returncode == 0
 
 
 class TestSignalHandler:

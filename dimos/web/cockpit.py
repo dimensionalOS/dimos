@@ -82,11 +82,19 @@ def _check_rate(name: str, value: float) -> None:
 class _FrozenDict(dict[str, Any]):
     """Read-only dict for Channel.params: a frozen dataclass must not leak a
     mutable mapping whose edits would change what a later cockpit() emits.
-    A dict subclass (not mappingproxy) so it stays picklable and
-    json.dumps-able."""
+    A dict subclass (not mappingproxy) so it stays json.dumps-able and
+    copyable: __reduce__ serves copy.deepcopy (blueprint config values are
+    deep-copied before deployment), cbor_encode the worker pipe."""
 
     def __reduce__(self) -> tuple[Any, ...]:
         return (_FrozenDict, (dict(self),))
+
+    def cbor_encode(self) -> dict[str, Any]:
+        return dict(self)
+
+    @classmethod
+    def cbor_decode(cls, data: dict[str, Any]) -> _FrozenDict:
+        return cls(data)
 
     def __setitem__(self, key: str, value: Any) -> None:
         raise TypeError("Channel params are immutable")
@@ -550,9 +558,9 @@ class Teleop(Panel):
 @dataclass(frozen=True)
 class Chat(Panel):
     """Agent conversation: the humancli contract as a panel. Typed text
-    goes out on `input` (McpClient.human_input); the LangChain transcript
-    comes back on `messages` (McpClient.agent, one chat.json.v1 frame per
-    message, none dropped) and `idle` (McpClient.agent_idle) drives the
+    goes out on `input` (Agent.human_input); the LangChain transcript
+    comes back on `messages` (Agent.agent, one chat.json.v1 frame per
+    message, none dropped) and `idle` (Agent.agent_idle) drives the
     thinking spinner. The composer's push-to-talk mic ships recordings as
     audio.json.v1 chunks on `audio` (VoiceInput.audio_in); the transcript
     joins the conversation like typed text. A grid panel next to video/map;
@@ -609,7 +617,7 @@ class Stats(Panel):
     """dtop as a page: per-process CPU, memory, thread, fd and child stats
     of the running system, one row per worker. The bridge subscribes the
     resource monitor's /resource_stats topic (dimos/core/resource_monitor/,
-    a pickled dict at 1 Hz; the monitor publishes nowhere else) and
+    a plain dict at 1 Hz; the monitor publishes nowhere else) and
     re-encodes it as stats.json.v1. Meant for `pages=`; works in the grid
     too. The monitor runs only under GlobalConfig.dtop, so cockpit()
     switches that on whenever a Stats panel is present (a page that stays

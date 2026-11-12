@@ -32,7 +32,7 @@ def vis_module(
 
     Bundles the Rerun viewer module together with the ``RerunWebSocketServer``
     so that remote viewer clicks and teleop work out of the box. ``websocket_vis``
-    adds the browser command center on port 7779.
+    adds the socket.io server and Rerun dashboard page on port 7779.
 
     Example usage::
 
