@@ -98,5 +98,5 @@ For example:
 
 ```bash
 uv run dimos mcp call get_robot_state
-uv run dimos mcp call scan_objects --json-args '{"prompts": ["cup"]}'
+uv run dimos mcp call localize --json-args '{"objects": "cup"}'
 ```

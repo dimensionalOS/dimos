@@ -53,7 +53,7 @@ def gripper(module: PickAndPlaceModule) -> MagicMock:
     state: Any = module._manipulation.get_state.return_value
     state.groups["arm/tool"].joints = JointState(name=["j1", "j2"], position=[0.1, 0.2])
     scene: Any = module._scene
-    scene.get_full_scene_pointcloud.return_value = _table()
+    scene.scene_cloud.return_value = _table()
     module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1, 0.9), _candidate(0.12, 0.5)]
     )

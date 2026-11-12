@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared base for grasp generators an agent can ask for grasps on a scanned object."""
+"""Shared base for grasp generators an agent can ask for grasps on a localized object."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from dimos.core.module import Module
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.perception.localize.spec import LocalizationSpec
 
 
 def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
@@ -42,26 +42,26 @@ def _approach_angle(pose: Pose, approach: Vector3 | None) -> float:
 
 
 class GraspGeneratorModule(Module, GraspGenSpec):
-    """A grasp generator that also proposes grasps for a scanned object, by its id.
+    """A grasp generator that also proposes grasps for a localized object, by its id.
 
     Subclasses implement ``propose_grasps`` and expose ``propose_grasps_for`` as
     an RPC that calls ``_propose_for``. An agent reaches every module with
     ``propose_grasps_for`` through PickAndPlaceModule's propose_grasps skill.
     """
 
-    # Looks up a scanned object's points; a stack without a scene has none.
-    _scene: ObjectSceneRegistrationSpec | None = None
+    # Looks up a localized object's points; a stack without localize has none.
+    _scene: LocalizationSpec | None = None
 
     def _propose_for(
         self, object_id: str, approach: list[float] | None, max_angle_deg: float, limit: int
     ) -> dict[str, Any]:
-        """Propose grasps on a scanned object that come in from about one direction.
+        """Propose grasps on a localized object that come in from about one direction.
 
         The grasps are not checked for reach or collisions; pick_object checks
         the path when it runs one.
 
         Args:
-            object_id: ID from the latest scan_objects call.
+            object_id: An object id a localize call returned.
             approach: Unit vector [x, y, z] in the object point cloud's frame, the
                 direction the gripper moves into the object. None keeps every grasp.
             max_angle_deg: Half-angle of the cone around ``approach``, degrees.
@@ -74,20 +74,21 @@ class GraspGeneratorModule(Module, GraspGenSpec):
         ``rank`` (0 is best), ``score``, ``angle_deg``, ``position`` ([x, y, z],
         metres), ``orientation`` ([x, y, z, w]) and ``generator``.
 
-        Raises ValueError for an object without points, a stack without a
-        scene, an ``approach`` of zero length or a ``limit`` below 1.
+        Raises ValueError for an object without points, a stack without
+        localize, an ``approach`` of zero length or a ``limit`` below 1.
         """
         if self._scene is None:
-            raise ValueError("This stack has no scene to look objects up in")
+            raise ValueError("This stack has no localize to look objects up in")
         if limit < 1:
             raise ValueError(f"limit must be at least 1, got {limit}")
         direction = None if approach is None else Vector3(*approach).normalize()
         if direction is not None and not direction.length() > 0.0:
             raise ValueError(f"approach must be a direction, got {approach}")
-        cloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        localization = self._scene.get_object(object_id)
+        cloud = None if localization is None else localization.point_cloud
         if cloud is None or len(cloud) == 0:
             raise ValueError(
-                f"No points for object {object_id}; use an id from the latest scan_objects call"
+                f"No points for object {object_id}; use an id a localize call returned"
             )
         candidates = self.propose_grasps(cloud).candidates
         angles = [_approach_angle(c.pose, direction) for c in candidates]

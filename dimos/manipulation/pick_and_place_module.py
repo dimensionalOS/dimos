@@ -50,7 +50,7 @@ from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
-from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.perception.localize.spec import LocalizationSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -122,14 +122,14 @@ def _target_box(pointcloud: PointCloud2) -> TargetBox | None:
 
 
 class PickAndPlaceModule(Module):
-    """Coordinate scene registration, grasp generation, and manipulation execution."""
+    """Pick and place objects that localize found: grasp generation and manipulation execution."""
 
     # Checking grasps for contact takes seconds; a module sharing this process,
     # such as ControlCoordinator, would stall for as long.
     dedicated_worker = True
 
     config: PickAndPlaceModuleConfig
-    _scene: ObjectSceneRegistrationSpec
+    _scene: LocalizationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
     # Leaves boxes out of the planner's map; a stack without a map has none.
@@ -137,7 +137,6 @@ class PickAndPlaceModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._objects: dict[str, dict[str, Any]] = {}
         self._grasp_candidates = GraspCandidateArray()
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
@@ -146,38 +145,6 @@ class PickAndPlaceModule(Module):
         self._contact_checkers: dict[PlanningGroupID, GraspContactChecker] = {}
         # The running grasp generators, by module name.
         self._grasp_generators: dict[str, RPCClient] = {}
-
-    @skill
-    def scan_objects(self, prompts: list[str]) -> SkillResult:
-        """Scan the latest RGB-D frame for prompted objects.
-
-        Args:
-            prompts: Object labels to detect. Use an ID from this scan with pick_object.
-        """
-        prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
-        if not prompts:
-            raise ValueError("At least one object prompt is required")
-        if not self._holding_object:
-            self._clear_selection()
-        self._objects = {}
-        detections = self._scene.scan_scene(text=prompts)
-        objects = [
-            {
-                "object_id": str(detection.id),
-                "name": str(detection.results[0].hypothesis.class_id),
-            }
-            for detection in detections.detections
-            if detection.id and detection.results
-        ]
-        self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
-        return SkillResult(
-            f"Detected {detections.detections_length} object(s)",
-            metadata={"prompts": prompts, "objects": list(self._objects.values())},
-        )
-
-    @rpc
-    def get_object(self, object_id: str) -> dict[str, Any] | None:
-        return self._objects.get(object_id)
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
@@ -206,7 +173,7 @@ class PickAndPlaceModule(Module):
         of ``grasps`` to pick_object as ``grasp``.
 
         Args:
-            object_id: ID from the latest scan_objects call.
+            object_id: An object id a localize call returned.
             generator: Name of the grasp generator to ask, such as GraspGenXModule.
             approach: Unit vector [x, y, z] in the arm's base frame: the direction
                 the gripper moves in, from the operator's hand into the object.
@@ -234,7 +201,7 @@ class PickAndPlaceModule(Module):
         planning_group: PlanningGroupID | None = None,
         grasp: dict[str, Any] | None = None,
     ) -> SkillResult:
-        """Pick one object from the latest scan.
+        """Pick one object that localize found.
 
         To choose the grasp, get one from propose_grasps and pass it as
         ``grasp``: the pick tries that grasp, exactly where it is, and no other.
@@ -248,7 +215,7 @@ class PickAndPlaceModule(Module):
         the planner found no path to any grasp tried.
 
         Args:
-            object_id: Exact object ID returned by the latest scan_objects call.
+            object_id: An object id a localize call returned.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
             grasp: One entry of propose_grasps's ``grasps``; only ``position``
                 and ``orientation`` are needed.
@@ -259,17 +226,13 @@ class PickAndPlaceModule(Module):
                 f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_selection()
-        if object_id not in self._objects:
-            scanned = ", ".join(self._objects) or "none"
+        localization = self._scene.get_object(object_id)
+        if localization is None:
             return SkillResult(
-                f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
-                "Use scan_objects to refresh the list."
+                f"No object with id {object_id}. Use localize to find objects, and pass an id "
+                "it returned."
             )
-        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
-        if pointcloud is None:
-            return SkillResult(
-                f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
-            )
+        pointcloud = localization.point_cloud
         group = self._gripper_group(planning_group)
         if grasp is None:
             source = "provider"
@@ -343,7 +306,7 @@ class PickAndPlaceModule(Module):
         """Drop the grasps the arm cannot reach, that touch the target off the pads, or hit the scene.
 
         Args:
-            object_id: The object to grasp, from the latest scan.
+            object_id: The object to grasp, an id a localize call returned.
             pointcloud: The target's points, planning frame, metres.
             candidates: The provider's grasps, same frame.
             group: Planning group whose tool tip the grasps pose.
@@ -358,7 +321,7 @@ class PickAndPlaceModule(Module):
         robot = self.config.robot
         if robot is None or robot.gripper is None or not candidates.candidates:
             return candidates, {}
-        scene = self._scene.get_full_scene_pointcloud(exclude_object_id=object_id)
+        scene = self._scene.scene_cloud(exclude_instance_id=object_id)
         if scene is None or not scene.frame_id == pointcloud.frame_id == candidates.header.frame_id:
             return candidates, {
                 "contact_check_skipped": "no scene point cloud in the grasps' frame"

@@ -43,6 +43,7 @@ from typing import Any, Literal
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
+import numpy as np
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
@@ -71,6 +72,7 @@ from dimos.perception.localize.rig import (
     RigCamera,
     camera_hz,
 )
+from dimos.perception.localize.spec import LocalizationSpec
 from dimos.perception.localize.types import Localization, LocalizeParams
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
@@ -99,9 +101,14 @@ class PerceptionLocalizeConfig(ModuleConfig):
     segmenter: str = "edgetam"
     # the rig's params, set on the blueprint; localize() can override fields per call
     params: LocalizeParams = LocalizeParams()
+    # scene_cloud: cell size of the merged cloud, and the farthest depth it keeps, metres
+    scene_voxel_m: float = 0.01
+    scene_depth_trunc_m: float = 2.0
+    # scene_cloud: what an excluded object's box grows by on each side, metres
+    scene_exclude_margin_m: float = 0.02
 
 
-class PerceptionLocalize(Module):
+class PerceptionLocalize(Module, LocalizationSpec):
     """Embed the colour feed and answer ``localize`` from the paired depth or lidar.
 
     ``camera_info`` must be stamped in the colour frame, and ``tf`` must reach
@@ -129,6 +136,8 @@ class PerceptionLocalize(Module):
         self._camera_seen = threading.Event()
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
+        # Every instance a localize call answered, by instance_id; the newest answer wins.
+        self._objects: dict[str, Localization] = {}
         # Unsubscribe inputs before closing the stores they write to.
         subscriptions = self.register_disposable(CompositeDisposable())
         self._memento = Memento()
@@ -287,34 +296,12 @@ class PerceptionLocalize(Module):
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         queries = [q.strip() for q in objects.split(",") if q.strip()]
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        hi = lo + duration
-        # frames older than the feed's memory can no longer be asked for
-        self._memento.forget(first)
-        index = self.index.time_range(lo, hi)
-        for cam in self.rig.cameras.values():
-            if cam.hz is None:
-                cam.hz = camera_hz(self._color_feed)
-        rig = self.rig
-        if rig.lidar is not None:
-            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
         overrides = json.loads(params) if params.strip() else None
-        results = self.detector.localize(
-            queries,
-            index=index,
-            window=(lo, hi),
-            head=head,
-            rig=rig,
-            params=self.config.params,
-            fields=overrides,
-            memento=self._memento,
-        )
-        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        results, (lo, hi, first, head, frames) = self._localize(queries, start, duration, overrides)
 
         lines: list[str] = [
             f"window {lo - first:.1f}s to {hi - first:.1f}s of "
-            f"{head - first:.1f}s of feed, {index.count()} frames"
+            f"{head - first:.1f}s of feed, {frames} frames"
         ]
         for query, hits in zip(queries, results, strict=True):
             if not hits:
@@ -328,6 +315,110 @@ class PerceptionLocalize(Module):
                     f"first {max(0.0, head - hit.first_seen_timestamp):.0f}s ago"
                 )
         return "\n".join(lines)
+
+    @rpc
+    def localize_objects(
+        self,
+        queries: list[str],
+        start: float = -10.0,
+        duration: float = 10.0,
+        params: dict[str, Any] | None = None,
+    ) -> list[list[Localization]]:
+        """The ``localize`` skill's answer as data: every verified instance per query.
+
+        Each instance stays answerable by ``get_object`` under its ``instance_id``.
+        Raises RuntimeError until ``state`` reads ready.
+        """
+        if not self._ready.is_set():
+            raise RuntimeError(f"localize cannot answer yet: {self._stage}")
+        return self._localize(queries, start, duration, params)[0]
+
+    @rpc
+    def get_object(self, instance_id: str) -> Localization | None:
+        """The newest answer for an instance a localize call returned, cloud included."""
+        return getattr(self, "_objects", {}).get(instance_id)
+
+    @rpc
+    def scene_cloud(
+        self,
+        exclude_instance_id: str | None = None,
+        start: float = -5.0,
+        duration: float = 5.0,
+    ) -> PointCloud2 | None:
+        """Every embedded depth view in a window of memory, merged into one world-frame cloud.
+
+        ``start`` and ``duration`` name the window as in ``localize``. The
+        cloud is ``scene_voxel_m`` cells, cut at ``scene_depth_trunc_m``. An
+        ``exclude_instance_id`` leaves out that object's box, grown by
+        ``scene_exclude_margin_m``. None when nothing in the window has depth.
+        """
+        ready = getattr(self, "_ready", None)
+        if ready is None or not ready.is_set() or self.config.geometry != "depth":
+            return None
+        first, head = self.index.get_time_range()
+        lo = max(first, head + start if start < 0 else first + start)
+        views = []
+        for obs in self.index.time_range(lo, lo + duration):
+            for frame in self.rig.cameras:
+                cloud = self.rig.backdrop(obs.ts, frame, self.config.scene_depth_trunc_m)
+                if cloud is not None and len(cloud):
+                    views.append(cloud)
+        if not views:
+            return None
+        merged = PointCloud2.from_numpy(
+            np.concatenate([view.points_f32() for view in views]),
+            frame_id=self.rig.world_frame,
+            timestamp=max((view.ts or 0.0) for view in views),
+        ).voxel_downsample(self.config.scene_voxel_m)
+        excluded = self._objects.get(exclude_instance_id) if exclude_instance_id else None
+        if excluded is None:
+            return merged
+        target = excluded.point_cloud.points_f32()
+        if not len(target):
+            return merged
+        margin = self.config.scene_exclude_margin_m
+        low, high = target.min(axis=0) - margin, target.max(axis=0) + margin
+        points = merged.points_f32()
+        outside = ~np.all((points >= low) & (points <= high), axis=1)
+        return PointCloud2.from_numpy(
+            points[outside], frame_id=merged.frame_id, timestamp=merged.ts
+        )
+
+    def _localize(
+        self,
+        queries: list[str],
+        start: float,
+        duration: float,
+        overrides: dict[str, Any] | None,
+    ) -> tuple[list[list[Localization]], tuple[float, float, float, float, int]]:
+        """One localize call: the instances per query, and the window it read."""
+        first, head = self.index.get_time_range()
+        lo = max(first, head + start if start < 0 else first + start)
+        hi = lo + duration
+        # frames older than the feed's memory can no longer be asked for
+        self._memento.forget(first)
+        index = self.index.time_range(lo, hi)
+        for cam in self.rig.cameras.values():
+            if cam.hz is None:
+                cam.hz = camera_hz(self._color_feed)
+        rig = self.rig
+        if rig.lidar is not None:
+            rig = replace(rig, lidar=rig.lidar.time_range(lo, hi))
+        results = self.detector.localize(
+            queries,
+            index=index,
+            window=(lo, hi),
+            head=head,
+            rig=rig,
+            params=self.config.params,
+            fields=overrides,
+            memento=self._memento,
+        )
+        self.detections.publish(as_detection_array(queries, results, rig.world_frame))
+        for hits in results:
+            for hit in hits:
+                self._objects[hit.instance_id] = hit
+        return results, (lo, hi, first, head, index.count())
 
 
 def as_detection_array(

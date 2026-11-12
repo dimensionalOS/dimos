@@ -76,12 +76,14 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.execute.return_value = COMPLETED
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
-    instance._objects = {"cup-1": {"object_id": "cup-1", "name": "cup"}}
     # The cup's points: a 4 cm cube centred on the grasp at (0.1, 0.0, 0.2).
-    instance._scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
-        np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
-        frame_id="world",
-        timestamp=1.0,
+    instance._scene.get_object.side_effect = _localized(
+        "cup-1",
+        PointCloud2.from_numpy(
+            np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
+            frame_id="world",
+            timestamp=1.0,
+        ),
     )
     instance._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1)]
@@ -99,29 +101,20 @@ def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
 
 
+def _localized(instance_id: str, cloud: PointCloud2) -> Any:
+    """A localize get_object that knows one instance, with this cloud."""
+
+    def get_object(asked: str) -> Any:
+        return SimpleNamespace(point_cloud=cloud) if asked == instance_id else None
+
+    return get_object
+
+
 def _candidate(x: float, score: float = 1.0) -> GraspCandidate:
     return GraspCandidate(
         Pose(Vector3(x, 0.0, 0.2), Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0))),
         score,
     )
-
-
-def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
-    scene: Any = module._scene
-    scene.scan_scene.return_value = SimpleNamespace(
-        detections_length=1,
-        detections=[
-            SimpleNamespace(
-                id="cup-1", results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))]
-            )
-        ],
-    )
-
-    result = module.scan_objects([" cup "])
-
-    assert result.message == "Detected 1 object(s)"
-    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
-    scene.scan_scene.assert_called_once_with(text=["cup"])
 
 
 def test_pick_object_uses_first_provider_candidate(
@@ -245,18 +238,6 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
     assert module._selected_grasp is None
 
 
-def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None:
-    scene: Any = module._scene
-    module._selected_grasp = PoseStamped(frame_id="world")
-    scene.scan_scene.side_effect = RuntimeError("No aligned RGB-D frame")
-
-    with pytest.raises(RuntimeError, match="No aligned RGB-D frame"):
-        module.scan_objects(["cup"])
-
-    assert module._selected_grasp is None
-    assert module.get_object("cup-1") is None
-
-
 def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._holding_object = True
@@ -278,8 +259,7 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
     result = module.pick_object("missing")
 
     assert result.message == (
-        "No object with id missing in the latest scan. Scanned ids: cup-1. "
-        "Use scan_objects to refresh the list."
+        "No object with id missing. Use localize to find objects, and pass an id it returned."
     )
     assert module._selected_grasp is None
 
@@ -542,8 +522,9 @@ def test_a_release_whose_retract_stops_still_clears_the_box(module: PickAndPlace
 def test_an_empty_target_cloud_sets_no_box(module: PickAndPlaceModule) -> None:
     box_filter: Any = module._box_filter
     scene: Any = module._scene
-    scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
-        np.zeros((0, 3), dtype=np.float32), frame_id="world", timestamp=1.0
+    scene.get_object.side_effect = _localized(
+        "cup-1",
+        PointCloud2.from_numpy(np.zeros((0, 3), dtype=np.float32), frame_id="world", timestamp=1.0),
     )
 
     assert module.pick_object("cup-1").message == "Pick complete"

@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import threading
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from reactivex.disposable import Disposable
 
 from dimos.memory.store.memory import MemoryStore
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.localize.memento import Memento
 from dimos.perception.localize.module import PerceptionLocalize
 
@@ -102,3 +105,59 @@ def test_stop_after_start_releases_resources_once(localizer, mocker):
     localizer.camera_info.subscribe.return_value.assert_called_once_with()
     close.assert_called_once_with(localizer._memento)
     assert not localizer._thread.is_alive()
+
+
+def _cloud(points):
+    return PointCloud2.from_numpy(np.asarray(points, dtype=np.float32), frame_id="world")
+
+
+def _ready(module, mocker, views):
+    """A started module whose index holds one frame per view and whose rig backdrops them."""
+    module._ready = threading.Event()
+    module._ready.set()
+    module._objects = {}
+    module.index = mocker.Mock()
+    module.index.get_time_range.return_value = (0.0, 10.0)
+    module.index.time_range.return_value = [SimpleNamespace(ts=float(i)) for i in range(len(views))]
+    module.rig = mocker.Mock(cameras={"camera_color_optical_frame": None}, world_frame="world")
+    module.rig.backdrop.side_effect = lambda ts, frame, trunc: views[int(ts)]
+
+
+def test_get_object_answers_what_a_localize_call_returned(localizer, mocker):
+    _ready(localizer, mocker, [])
+    cup = SimpleNamespace(instance_id="cup-1", point_cloud=_cloud([[0.0, 0.0, 0.0]]))
+    localizer._objects["cup-1"] = cup
+
+    assert localizer.get_object("cup-1") is cup
+    assert localizer.get_object("cup-2") is None
+
+
+def test_scene_cloud_merges_the_window_and_leaves_out_the_excluded_object(localizer, mocker):
+    table = [[x, y, 0.0] for x in (0.0, 0.5, 1.0) for y in (0.0, 0.5, 1.0)]
+    _ready(localizer, mocker, [_cloud(table), _cloud([[0.5, 0.5, 0.05]])])
+    localizer._objects["cup-1"] = SimpleNamespace(point_cloud=_cloud([[0.5, 0.5, 0.05]]))
+    localizer.config.scene_voxel_m = 0.001
+
+    full = localizer.scene_cloud(start=-5.0, duration=5.0)
+    without_cup = localizer.scene_cloud("cup-1", start=-5.0, duration=5.0)
+
+    assert len(full) == 10
+    # Only the cup goes: the table 5 cm under it is outside its box grown by 2 cm.
+    assert len(without_cup) == 9
+    assert localizer.index.time_range.call_args.args == (5.0, 10.0)
+
+
+def test_scene_cloud_is_none_before_ready_or_without_depth(localizer, mocker):
+    assert localizer.scene_cloud() is None
+    _ready(localizer, mocker, [_cloud([[0.0, 0.0, 0.0]])])
+    localizer.config.geometry = "lidar"
+
+    assert localizer.scene_cloud() is None
+
+
+def test_localize_objects_refuses_until_ready(localizer):
+    localizer._ready = threading.Event()
+    localizer._stage = "loading weights"
+
+    with pytest.raises(RuntimeError, match="loading weights"):
+        localizer.localize_objects(["cup"])

@@ -15,18 +15,18 @@
 from typing import Protocol
 
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.localize.types import Localization
 from dimos.spec.utils import Spec
 
 
-class ObjectSceneRegistrationSpec(Spec, Protocol):
-    def set_prompts(self, text: list[str] | None = None) -> None: ...
-    def scan_scene(self, text: list[str] | None = None) -> Detection3DArray: ...
-    def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None: ...
-    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None: ...
-    def get_full_scene_pointcloud(
+class LocalizationSpec(Spec, Protocol):
+    """Objects a localize call found, and the scene around them, as world-frame clouds."""
+
+    def get_object(self, instance_id: str) -> Localization | None: ...
+
+    def scene_cloud(
         self,
-        exclude_object_id: str | None = None,
-        depth_trunc: float = 2.0,
-        voxel_size: float = 0.01,
+        exclude_instance_id: str | None = None,
+        start: float = -5.0,
+        duration: float = 5.0,
     ) -> PointCloud2 | None: ...
