@@ -102,9 +102,11 @@ class MujocoBackend:
             joint = self.model.joint(name)
             if kp and self.model.jnt_limited[joint.id]:
                 bounded = np.clip(position, *joint.range)
-                # USD degrees -> URDF radians -> decimal text can round a
-                # boundary slightly beyond the native importer's limit.
-                if abs(position - bounded) > 1e-10:
+                # Policies commonly emit float32 targets. A rounded endpoint
+                # may exceed the native double-precision bound by one float32
+                # ULP; clamp that representation error, not an actual overrun.
+                tolerance = max(1e-10, abs(float(np.spacing(np.float32(bounded)))))
+                if abs(position - bounded) > tolerance:
                     raise ValueError(f"target outside joint limits: {name}")
                 row[0] = bounded
             aid = self._drives[name]

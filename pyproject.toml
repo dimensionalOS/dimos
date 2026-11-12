@@ -183,6 +183,8 @@ dimos = "dimos.cli.entry:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.cli.doclinks:main"
 dtop = "dimos.cli.dtop:main"
+dimos-r1-policyik-demo = "dimos.robot.galaxea.r1pro.demo_policyik:main"
+dimos-r1-policyik-prepare = "dimos.robot.galaxea.r1pro.policyik_prepare:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"

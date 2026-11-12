@@ -357,6 +357,7 @@ all_modules = {
     "point-cloud-box-filter": "dimos.mapping.pointclouds.box_filter.PointCloudBoxFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
+    "policy-ik-sim-module": "dimos.robot.galaxea.r1pro.policyik_sim2.PolicyIKSimModule",
     "premap-module": "dimos.mapping.relocalization.module.PremapModule",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "r1-pro-lio": "dimos.robot.galaxea.r1pro.lio.R1ProLio",

@@ -1,5 +1,7 @@
 # sim2 Option G: body state, actions and independent sensors
 
+For the coordinated upper-body inference preview, see [R1 Pro PolicyIK](/docs/development/sim2/r1-policyik.md).
+
 SimModule owns time, stepping and command validity. PhysicsBackend implements
 engine operations. There is no separate Runtime/Simulation execution layer.
 

@@ -88,6 +88,21 @@ def test_motor_law_applies_velocity_gains_and_feedforward_each_step(backend, mot
     )
 
 
+def test_float32_policy_endpoint_is_accepted_without_widening_joint_limits(backend, motor_commands):
+    # Revolute USD limits are degrees; native radians need not fit float32.
+    backend.model.joint("left/slide_x").range[1] = np.pi / 4
+    limit = backend.model.joint("left/slide_x").range[1]
+    rounded = float(np.float32(limit))
+    assert rounded > limit
+    backend.apply_action(motor_commands(positions=(rounded,), kp=100), [])
+    aid = backend.model.actuator("left/slide_x").id
+    assert backend.data.ctrl[aid] == 100 * limit
+    before = backend.data.ctrl.copy()
+    with pytest.raises(ValueError, match="target outside joint limits"):
+        backend.apply_action(motor_commands(positions=(rounded + 1e-5,), kp=100), [])
+    np.testing.assert_array_equal(backend.data.ctrl, before)
+
+
 def test_sample_is_owned_and_complete(backend, poses, motor_commands):
     sample = poses()
     before = sample.lcm_encode()
