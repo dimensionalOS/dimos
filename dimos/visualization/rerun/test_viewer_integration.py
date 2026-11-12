@@ -49,11 +49,16 @@ class TestViewerBinaryInstallation:
 
 
 class TestViewerLaunch:
-    def test_custom_viewer_connects_without_sdk_version_check(self, mocker, monkeypatch, tmp_path):
+    @pytest.mark.parametrize("beside_interpreter", [True, False])
+    def test_custom_viewer_connects_without_sdk_version_check(
+        self, mocker, monkeypatch, tmp_path, beside_interpreter
+    ):
         monkeypatch.delenv("RUST_LOG", raising=False)
         # The viewer beside the interpreter is launched, whatever PATH holds.
+        # With none there, the bare name is left to PATH.
         viewer = tmp_path / "dimos-viewer"
-        viewer.touch()
+        if beside_interpreter:
+            viewer.touch()
         monkeypatch.setattr("sys.executable", str(tmp_path / "python"))
         reaped = threading.Event()
         process = mocker.Mock(spec=subprocess.Popen)
@@ -67,7 +72,7 @@ class TestViewerLaunch:
 
         launch.assert_called_once_with(
             [
-                str(viewer),
+                str(viewer) if beside_interpreter else "dimos-viewer",
                 "--connect",
                 server_uri,
                 "--ws-url",
