@@ -160,7 +160,11 @@ def make_connection(
 
         return DimSimConnection(cfg.dimsim, transport=cfg.g.transport)
     elif mode == "webrtc":
-        assert ip is not None, "IP address must be provided"
+        if ip is None:
+            raise ValueError(
+                "No robot IP specified. Set ROBOT_IP or --robot-ip, "
+                "or run without a robot using --replay or --simulation."
+            )
         return UnitreeWebRTCConnection(
             ip,
             aes_128_key=aes_128_key,
