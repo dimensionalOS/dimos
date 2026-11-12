@@ -46,6 +46,67 @@ dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 ```
 
+## Control path
+
+`R1ProConnection` is a connection module: the coordinator talks to it
+directly, with no transport adapters in between. `position_command` carries
+all 18 upper-body joints' targets (rad, `r1pro/<joint>`, positions only;
+the vendor tracker's speed is a tracking-speed cap, not a velocity command),
+`velocity_command` carries a velocity-only `JointState` for body resources
+`r1pro/base_forward`, `r1pro/base_lateral`, `r1pro/base_turn` (bounded by
+±1/±1 m/s and ±2 rad/s, rejected rather than clipped). These are actuator
+rates, not planar generalized coordinates. Upper-body planning and the
+geometric `R1PRO_PLANAR_BASE` helper retain their ordinary position semantics.
+
+Chassis speeds flow `/cmd_vel` → coordinator `twist_command` → the registered
+`twist_velocity` task `vel_chassis` → ordinary joint arbitration →
+`r1pro_velocity_command`. Explicit axes are `linear.x`, `linear.y`, `angular.z`.
+The native body command reaches the SDK unchanged, with no yaw read, frame
+roundtrip, or odometry prerequisite. The 0.2 s operator-input timeout remains.
+
+**Measured feedback.** The deployed `/motion_control/chassis_speed`
+(`geometry_msgs/TwistStamped`) input is unchanged. Every valid measured sample,
+including the first, publishes native body rates on `joint_state` in `base_link`,
+with no positions. Only valid subsequent intervals integrate local wheel
+odometry on the separate `odometry` (`nav_msgs/Odometry`) port. Its pose is in
+`odom`, its twist in `base_link`; pose, twist and optional `odom`/TF outputs
+retain the actual sample timestamp. This is relative dead reckoning, not map
+localization, and never integrates commands.
+
+Source timestamp validation (0.2 s age limit) remains. Invalid samples clear
+the integration time anchor; backwards/duplicate timestamps and gaps over 1 s
+rebase it without inventing motion or resetting accumulated pose. These
+odometry checks do not gate native body writes. Arms, sensors and deadman
+lifecycle remain unchanged. Hardware timing/accuracy are not validated here.
+
+**Deadman.** While the coordinator runs it sends a complete command every
+tick, so the deadman stays quiet. When commands stop, estop, or the
+coordinator going down, `R1ProConnection` halts within
+`deadman_timeout_s` (0.1 s): the chassis is told zero speed once and the
+arms are held where they were last measured. Stale feedback
+(`reading_timeout_s`, 0.2 s) also stops commands until fresh readings
+return. This replaces the old adapter path, where an estopped robot simply
+kept its last position command with no deadman. After clearing software E-stop,
+fresh operator velocity input is required; pre-stop intent is not replayed.
+
+**Grippers.** Each jaw (`r1pro/left_gripper`, `r1pro/right_gripper`) is an
+ordinary position joint in metres over the vendor's 0–100 mm range. Each uses
+the unchanged gripper task and a separate input binding. Both measured jaw
+positions are required for initial coordinator readiness. The R1Pro connection
+owns feedback/fault checks, millimetre conversion and duplicate suppression;
+an initial hold at the measured opening does not issue a vendor target.
+Stale or faulted feedback blocks vendor writes. An interrupted target is not
+replayed merely because feedback returns; replace it with a different target.
+The generic task's readback remains its last measurement, not a freshness signal.
+
+**Stop is not a cancel.** `stop()`/`halt()` and the deadman only stop *us*
+from sending new targets. They are not a vendor cancel and not a physical
+E-stop: a jaw target the vendor controller already accepted keeps executing
+on the vendor side, and we have no verified way to recall it. The safety
+guarantee ends at "we never re-send an interrupted intent" — not at "the
+jaw stops moving". For a real emergency stop use the robot's own E-stop
+hardware.
+
 ## Point-LIO
 
 Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on

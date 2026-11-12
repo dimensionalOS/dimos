@@ -42,6 +42,13 @@ Two 7-joint arms on a 4-joint torso, on a wheeled base. The base can drive and t
 3. Hold the soft switch until the blue light goes off.
 4. Turn the power switch off.
 
+## Software stop behavior
+
+`dimos run` software estop stops commands at the coordinator; the connection
+module then halts the robot within 0.1 s: the chassis is told zero speed and
+the arms are held where they were last measured. The arms are **held by
+software**, not braked. Treat the hardware E-stop as the real stop.
+
 ## After an E-stop
 
 The R1 Pro needs a full restart after its E-stop (button or SWD) has been used. Releasing it is not enough; carrying on without a restart makes the robot misbehave.

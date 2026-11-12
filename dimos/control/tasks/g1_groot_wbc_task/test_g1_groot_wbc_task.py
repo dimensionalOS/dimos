@@ -30,13 +30,12 @@ import numpy as np
 import pytest
 
 from dimos.control.components import make_humanoid_joints
-from dimos.control.task import CoordinatorState, JointStateSnapshot
+from dimos.control.task import CoordinatorState, JointStateSnapshot, SensorStateSnapshot
 from dimos.control.tasks.g1_groot_wbc_task import g1_groot_wbc_task
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTask,
     G1GrootWBCTaskConfig,
 )
-from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
 
 
@@ -96,26 +95,12 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.fixture
-def stub_adapter() -> MagicMock:
-    adapter = MagicMock()
-    adapter.read_imu.return_value = IMUState(
-        quaternion=(1.0, 0.0, 0.0, 0.0),
-        gyroscope=(0.0, 0.0, 0.0),
-        accelerometer=(0.0, 0.0, -9.81),
-        rpy=(0.0, 0.0, 0.0),
-    )
-    return adapter
-
-
-@pytest.fixture
 def joints_29() -> list[str]:
     return make_humanoid_joints("g1")
 
 
 @pytest.fixture
-def task(
-    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> Iterator[G1GrootWBCTask]:
+def task(patched_ort: list[str], joints_29: list[str]) -> Iterator[G1GrootWBCTask]:
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -127,7 +112,7 @@ def task(
             auto_arm=True,
             default_ramp_seconds=0.0,
         ),
-        adapter=stub_adapter,
+        hardware_id="g1",
     )
     try:
         yield task
@@ -136,9 +121,7 @@ def task(
 
 
 @pytest.fixture
-def unarmed_task(
-    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> Iterator[G1GrootWBCTask]:
+def unarmed_task(patched_ort: list[str], joints_29: list[str]) -> Iterator[G1GrootWBCTask]:
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -150,7 +133,7 @@ def unarmed_task(
             auto_arm=False,
             default_ramp_seconds=0.0,
         ),
-        adapter=stub_adapter,
+        hardware_id="g1",
     )
     try:
         yield task
@@ -168,6 +151,19 @@ def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
         ),
         t_now=t_now,
         dt=0.002,
+        sensors=SensorStateSnapshot(
+            readings={
+                "g1/imu": {
+                    "qw": 1.0,
+                    "qx": 0.0,
+                    "qy": 0.0,
+                    "qz": 0.0,
+                    "gx": 0.0,
+                    "gy": 0.0,
+                    "gz": 0.0,
+                }
+            }
+        ),
     )
 
 
@@ -324,6 +320,48 @@ def test_reset_runtime_state_clears_policy_state_and_rearms(
 
     task.compute(_state_at(101.0, joints_29))
     assert task.state_snapshot()["armed"]
+
+
+def test_factory_resolves_canonical_connection_and_preserves_sim_imu(patched_ort, joints_29):
+    from dimos.control.connection_source import ConnectionSource
+    from dimos.control.coordinator import TaskConfig
+    from dimos.control.tasks.registry import control_task_registry
+    from dimos.hardware.whole_body.spec import IMUState
+    from dimos.robot.unitree.g1.wholebody_connection import G1WholeBodyConnectionConfig
+
+    source = ConnectionSource(
+        G1WholeBodyConnectionConfig(), ["position_command"], ["joint_state", "imu"], 0.2
+    )
+    cfg = TaskConfig(
+        name="wbc",
+        type="g1_groot_wbc",
+        joint_names=joints_29[:15],
+        priority=50,
+        params={
+            "hardware_id": "g1",
+            "model_path": "/fake",
+            "auto_arm": True,
+            "default_ramp_seconds": 0.0,
+            "decimation": 1,
+        },
+    )
+    task = control_task_registry.create(cfg.type, cfg, connections={"g1": source})
+    try:
+        task.start()
+        state = _state_at(10.0, joints_29)
+        state.sensors.readings.clear()
+        state.imu = {"other": IMUState()}
+        assert task.compute(state) is None
+        assert patched_ort == []
+        state.imu["g1"] = IMUState()
+        assert task.compute(state) is not None
+        assert patched_ort == ["balance"]
+        state.imu.clear()
+        state.sensors = _state_at(11.0, joints_29).sensors
+        assert task.compute(state) is not None
+        assert patched_ort == ["balance", "balance"]
+    finally:
+        task.stop()
 
 
 def test_projected_gravity_matches_reference_quaternion_order() -> None:
