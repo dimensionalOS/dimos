@@ -11,11 +11,12 @@ const NOW = epochMs(1_760_700_000_000);
 function ref(module: string, name: string, type: string, direction: "out" | "inout"): StreamRef {
   return {
     source: { module: module as ModuleInstance, name, direction, type: type as MsgType },
-    encoding:
+    encoding: "application/x-lcm",
+    profile:
       new Map([
-        ["Image", "jpeg.v1"],
-        ["PointCloud2", "voxels.zlib.v1"],
-        ["OccupancyGrid", "costmap.zlib.v1"],
+        ["Image", "image.jpeg.balanced.v1"],
+        ["PointCloud2", "cloud.q16.balanced.v1"],
+        ["OccupancyGrid", "raw"],
       ]).get(type) ?? "json.v1",
     channel: `${module}.${name}` as Channel,
   };
@@ -75,8 +76,13 @@ test("a subscribed channel that has not received data has unknown freshness", ()
   assert.equal(groups[0]?.cards[0]?.level, null);
 });
 
-test("an authored relay channel has a preview without module inventory metadata", () => {
-  const camera: StreamRef = { channel: "front-camera" as Channel, encoding: "jpeg.v1", source: null };
+test("a topic profile supplies a preview without module inventory metadata", () => {
+  const camera: StreamRef = {
+    channel: "front-camera" as Channel,
+    encoding: "application/x-lcm",
+    profile: "image.jpeg.balanced.v1",
+    source: null,
+  };
   const { groups, others } = systemGroups([camera], [], new Set(), new Map(), NOW);
   assert.equal(others, 0);
   assert.equal(groups[0]?.title, "Relay");

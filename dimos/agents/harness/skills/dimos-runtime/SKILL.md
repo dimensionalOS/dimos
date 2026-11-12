@@ -13,17 +13,15 @@ Discovery goes from summary to detail. Read only what the task needs:
 2. `inventory module=NAME` gives the module's documentation, its RPC signatures with the first paragraph of each doc, and its streams with the import of each message type.
 3. `inventory module=NAME rpc=NAME` gives one RPC's full documentation.
 
-`inventory` with no arguments describes the whole system, its agent modules, and `environment.relay`, which is null or `{url, robot}`. Discovery is live on every call.
+`inventory` with no arguments describes the whole system, its agent modules, and `environment.relay`, which is null or `{url, source}`. Discovery is live on every call.
 
 An RPC is a module's Python API, and a `@skill` is an RPC too. A `Dimos.connect()` client calls it as `app.get_module(MODULE).RPC(...)`, and a module calls it through an attribute typed with that module's Spec. A stream is read once with `stream_get`, or continuously by a module with an `In` port of the same name and type.
 
-`stream_get op=list` lists the relay manifest's readable channels and encodings. Read one with `stream_get op=read channel=ID`, using the exact returned ID. Authored channels can have arbitrary names. Newly discovered outputs use `module.port`. Native topics from `inventory` are for Python ports, not relay subscriptions. `mode=latest` returns the SDK's current value or waits if none is available. `mode=next` waits for a value newer than the one present when the read starts. `timeout_s` defaults to 5. A timeout or unavailable channel is an error, not a new observation.
+`stream_get op=list` lists all current wired output topics and their wire encodings. Read one with `stream_get op=read channel=KEY`, using the exact returned Zenoh key, including custom remappings. `mode=next` waits for the first sample after subscribing. `mode=latest` first waits for a fresh sample; after two seconds it can return a previous read's sample with `stale=true`, provided the source generation still matches. A caller timeout or cancellation takes precedence. `timeout_s` defaults to 5.
 
-Each call closes its SDK subscription when the read ends. `export=true` saves and renders an image, point-cloud, or grid preview at the relay's preview resolution. Use a module's native `In` port or the Python API when you need the original message data.
+Each read closes its topic subscription. `export=true` saves and renders an image, point-cloud, or grid preview. The provider uses preview profiles for images and clouds. Use a module's native `In` port or Python API for original message data.
 
-The loader starts `RelayBridgeModule` when needed and reuses an existing bridge. The bridge resolves its own configuration and advertises the endpoint through inventory. No separate Zenoh bridge setup is needed.
-
-Automatically loaded bridges use `rtc=False`, `open_browser=False`, and `web_build=False`. An existing authored bridge using RTC with an SFU must set `rtc=False` to provide Node image previews. Existing bridge configuration stays under its owner's control. The SDK reports an explanatory error for an RTC source.
+The loader starts `TopicMetadataModule` and `HarnessRuntime`. HarnessRuntime starts the existing read-only Zenoh topic provider and owns a local relay unless `RELAY_URL` or `HARNESSRUNTIME__RELAY_URL` selects an external relay. `HARNESSRUNTIME__SOURCE` selects the source identity, and `HARNESSRUNTIME__TOKEN` supplies a provider token when required. Inventory advertises its endpoint. Existing bridges retain their own lifecycle and configuration.
 
 Work that continues without you, such as a watcher, a follower or a control loop, is an agent module. It is one Python file that defines one subclass of `dimos.agents.harness.runtime.agent_module.AgentModule`, which is a `dimos.core.module.Module`. It runs on its own worker under its class name, which no running module may already use, and it stops when the system stops.
 

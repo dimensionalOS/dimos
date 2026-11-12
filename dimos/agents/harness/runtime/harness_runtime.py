@@ -16,14 +16,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 import json
 from pathlib import Path
 import threading
 from typing import Any, Literal, TypeAlias, TypeVar
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import current_skill_context, skill
@@ -49,14 +51,13 @@ from dimos.agents.harness.runtime.inventory import (
     environment,
     facts,
     module_text,
-    relay_endpoint,
     rpc_text,
 )
 from dimos.agents.mcp.tool_stream import TOOL_STREAM_TOPIC
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import HARNESS_STATE_DIR, RUNTIME_MODULES_DIR
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
 from dimos.core.transport import PubSubTransport
@@ -64,7 +65,10 @@ from dimos.core.transport_factory import make_transport
 from dimos.msgs.agent_msgs.AgentNotice import AgentNotice
 from dimos.msgs.agent_msgs.AgentStep import AgentStep
 from dimos.porcelain.dimos import Dimos
+from dimos.protocol.service.zenohservice import ZenohConfig
 from dimos.utils.logging_config import setup_logger
+from dimos.web.relay_bridge.relay_process import RelayProcess
+from dimos.web.relay_bridge.topic_service import TopicServiceConfig, serve
 
 R = TypeVar("R")
 
@@ -92,9 +96,16 @@ class TrajectoryStep(BaseModel):
     ts: float
 
 
+class HarnessRuntimeConfig(ModuleConfig):
+    relay_url: str = ""
+    source: str = "harness"
+    token: SecretStr | None = None
+
+
 class HarnessRuntime(Module):
     """Discovers the system, runs agent modules, forwards notices and publishes trajectories."""
 
+    config: HarnessRuntimeConfig
     dedicated_worker = True
     agent_notice: In[AgentNotice]
     agent_step: Out[AgentStep]
@@ -102,6 +113,7 @@ class HarnessRuntime(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._logger = setup_logger()
+        self._relay_endpoint: dict[str, str] | None = None
         self._app_lock = threading.Lock()
         self._app: Dimos | None = None
         self._tool_streams_lock = threading.Lock()
@@ -112,6 +124,53 @@ class HarnessRuntime(Module):
             connect=self._connect,
             reconnect=self._reconnect,
         )
+
+    async def main(self) -> AsyncIterator[None]:
+        external = self.config.relay_url or self.config.g.relay_url
+        relay = None if external else RelayProcess()
+        stop = asyncio.Event()
+        provider: asyncio.Task[None] | None = None
+        try:
+            url = external or ""
+            if relay is not None:
+                url = (await asyncio.to_thread(relay.start)).open_url
+            config = TopicServiceConfig(
+                source=self.config.source,
+                relay_url=url,
+                token=self.config.token,
+                read=True,
+                write=False,
+                zenoh=ZenohConfig().to_wire(),
+            )
+            provider = asyncio.create_task(self._serve(config, stop, relay))
+            provider.add_done_callback(self._provider_done)
+            self._relay_endpoint = {"url": url, "source": self.config.source}
+            await asyncio.sleep(0)
+            if provider.done():
+                provider.result()
+            yield
+        finally:
+            self._relay_endpoint = None
+            stop.set()
+            if provider is not None:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.wait_for(provider, 10)
+            elif relay is not None:
+                await asyncio.to_thread(relay.stop)
+
+    async def _serve(
+        self, config: TopicServiceConfig, stop: asyncio.Event, relay: RelayProcess | None
+    ) -> None:
+        try:
+            await serve(config, stop)
+        finally:
+            self._relay_endpoint = None
+            if relay is not None:
+                await asyncio.to_thread(relay.stop)
+
+    def _provider_done(self, task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            self._logger.error("Harness topic provider stopped", error=str(error))
 
     @rpc
     def start(self) -> None:
@@ -162,7 +221,7 @@ class HarnessRuntime(Module):
 
         An RPC is its module's Python API. A Dimos.connect() client calls it as
         app.get_module(MODULE).RPC(...); a module calls it through an attribute typed with
-        the module's Spec. The harness's stream_get tool reads a relay-exposed stream once.
+        the module's Spec. The harness's stream_get tool reads a wired output topic once.
         A module reads native messages continuously through an In port of the same name
         and type.
 
@@ -185,7 +244,7 @@ class HarnessRuntime(Module):
         runtime = self._discover(describe_runtime)
         deployed = deployed_revisions([(entry.instance, entry.path) for entry in runtime.modules])
         agent_modules = self._modules.list(deployed)
-        inventory = Inventory(environment(self._discover(relay_endpoint)), runtime, agent_modules)
+        inventory = Inventory(environment(self._relay_endpoint), runtime, agent_modules)
         if compact:
             return SkillResult(metadata={"facts": [fact.to_json() for fact in facts(inventory)]})
         return SkillResult(metadata=inventory.to_json())

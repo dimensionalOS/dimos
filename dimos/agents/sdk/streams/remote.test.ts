@@ -1,157 +1,231 @@
-import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
+import { test, type TestContext } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { deflateSync } from "node:zlib";
-import { test } from "node:test";
-import type { TestContext } from "node:test";
-import type { ChannelSpec, Slot } from "@dimos/sdk";
-import type { FrameRecord } from "#dimos/agents/sdk/streams/base.ts";
-import type { Channel } from "#dimos/agents/shared/protocol/streams.ts";
-import { connect, createDecoderRegistry, TRACK_ENCODING } from "@dimos/sdk";
-import { PROTOCOL_VERSION } from "@dimos/shared";
+import sharp from "sharp";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import sharp from "sharp";
-import { FakeRelayEnd, INFO, manifest, ROBOT_A, spec } from "@dimos/sdk/testing/fakeRelay";
-import { epochMs } from "#dimos/agents/shared/protocol/time.ts";
-import { channelFor } from "#dimos/agents/sdk/relay.ts";
-import { RemoteFrames, toFrame } from "#dimos/agents/sdk/streams/remote.ts";
+import type { TopicSample, TopicDescriptor } from "@dimos/sdk";
+import type { FrameRecord } from "#dimos/agents/sdk/streams/base.ts";
+import { InventorySchema } from "#dimos/agents/shared/protocol/runtime/inventory.ts";
+import { StreamRefSchema } from "#dimos/agents/shared/protocol/streams.ts";
+import { openRelay, readTopic, topicStreams, toFrame } from "#dimos/agents/sdk/relay.ts";
+import { RemoteFrames } from "#dimos/agents/sdk/streams/remote.ts";
 
-const CHANNEL = Value.Parse(Type.Unsafe<Channel>(Type.String({ minLength: 1 })), "preview");
-const AT = epochMs(1234);
-const decoders = createDecoderRegistry();
-const PYTHON =
-  process.env.DIMOS_RELAY_TEST_PYTHON ?? fileURLToPath(new URL("../../../../.venv/bin/python", import.meta.url));
-
-function previewSpec(encoding = "json.v1", params = {}): ChannelSpec {
-  return spec({ ch: "preview", encoding, params });
+const stream = Value.Parse(StreamRefSchema, {
+  channel: "custom/remapped/key",
+  encoding: "application/cbor",
+  source: { module: "Sensor", name: "value", direction: "out", type: "int" },
+});
+function sample(payload: Uint8Array, encoding = "application/cbor", metadata = {}): TopicSample {
+  return {
+    key: stream.channel,
+    payload,
+    encoding,
+    source: "adapter-test",
+    generation: 1,
+    sequence: 1,
+    ingressTs: 1,
+    sentTs: 1,
+    metadata,
+  };
 }
-
-function slot(spec: ChannelSpec, bytes: Uint8Array, meta = {}): Slot {
-  const decode = decoders.resolve(spec);
-  assert.ok(decode);
-  return { ...decode(bytes, { ch: spec.ch, seq: 1, ts: 1, delivery: "reliable", meta }), seq: 1, ts: 1, version: 1 };
-}
-
-async function until(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5_000;
-  while (!check()) {
-    assert.ok(Date.now() < deadline, "adapter did not reach the expected state");
-    await delay(5);
+async function until(check: () => boolean | Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  while (!(await check())) {
+    assert.ok(Date.now() < deadline, "topic adapter did not reach expected state");
+    await delay(10);
   }
 }
 
-test("decoded SDK slots become images, signed grids, clouds and bounded values", async () => {
+test("topic samples decode into images, clouds and typed bounded values", async () => {
   const jpeg = await sharp({ create: { width: 12, height: 8, channels: 3, background: "red" } })
     .jpeg()
     .toBuffer();
-  const imageSpec = previewSpec("jpeg.v1");
-  const image = await toFrame(CHANNEL, imageSpec, slot(imageSpec, jpeg), AT);
-  assert.deepEqual(image, { kind: "image", channel: CHANNEL, at: AT, width: 12, height: 8, jpeg });
-  assert.ok(image.kind === "image" && image.jpeg === jpeg, "JPEG bytes are reused");
-
-  const gridSpec = previewSpec("costmap.zlib.v1");
-  assert.deepEqual(
-    await toFrame(
-      CHANNEL,
-      gridSpec,
-      slot(gridSpec, deflateSync(Uint8Array.of(255, 0, 100, 50)), {
-        w: 2,
-        h: 2,
-        res: 0.1,
-        origin: [1, 2, 0.5],
-      }),
-      AT,
-    ),
-    {
-      kind: "grid",
-      channel: CHANNEL,
-      at: AT,
-      width: 2,
-      height: 2,
-      resolution: 0.1,
-      origin: [1, 2, 0.5],
-      cells: Int8Array.of(-1, 0, 100, 50),
-    },
+  const header = { frameId: "camera", acquisitionTs: 1, headerSeq: 1 };
+  const image = await toFrame(
+    { ...stream, profile: "image.jpeg.balanced.v1" },
+    sample(jpeg, "image/jpeg", { ...header, w: 12, h: 8 }),
   );
-
-  const chunk = new Uint8Array(524);
-  chunk[12] = 1;
-  const cloudSpec = previewSpec("voxels.zlib.v1");
-  assert.deepEqual(
-    await toFrame(CHANNEL, cloudSpec, slot(cloudSpec, deflateSync(chunk), { res: 1, n: 1, chunks: 1 }), AT),
-    {
-      kind: "cloud",
-      channel: CHANNEL,
-      at: AT,
-      xyz: Float32Array.of(0.5, 0.5, 0.5),
-    },
-  );
-
-  const lcmSpec = previewSpec("example.Count.lcm.v1", {
-    lcm: { type: "example.Count", fp: "0000000000000000", structs: { "example.Count": [["count", "int32_t", null]] } },
-  });
-  const lcm = Buffer.alloc(12);
-  lcm.writeInt32BE(42, 8);
-  const value = await toFrame(CHANNEL, lcmSpec, slot(lcmSpec, lcm), AT);
-  assert.ok(value.kind === "value" && value.text.includes("count: 42"));
-  const long = await toFrame(
-    CHANNEL,
-    previewSpec(),
-    slot(previewSpec(), Buffer.from(JSON.stringify("x".repeat(300)))),
-    AT,
-  );
-  assert.ok(long.kind === "value" && long.text.length === 200);
-});
-
-test("conversion errors and unsupported encodings produce error records", async () => {
-  const gridSpec = previewSpec("costmap.zlib.v1");
-  const bad = await toFrame(
-    CHANNEL,
-    gridSpec,
-    slot(gridSpec, Uint8Array.of(1, 2, 3), {
-      w: 1,
-      h: 1,
-      res: 1,
+  assert.deepEqual(image, { kind: "image", channel: stream.channel, at: 1000, width: 12, height: 8, jpeg });
+  const cloud = await toFrame(
+    { ...stream, profile: "cloud.q16.balanced.v1" },
+    sample(deflateSync(Uint8Array.of(1, 0, 2, 0, 3, 0)), "application/vnd.dimos.cloud.q16.zlib.v1", {
+      ...header,
+      count: 1,
+      sourceCount: 1,
+      intensity: false,
+      color: false,
       origin: [0, 0, 0],
+      scale: 0.5,
     }),
-    AT,
   );
-  assert.equal(bad.kind, "error");
-  assert.equal(
-    (await toFrame(CHANNEL, previewSpec("future.v1"), { value: undefined, seq: 1, ts: 1, version: 1 }, AT)).kind,
-    "error",
+  assert.deepEqual(cloud, { kind: "cloud", channel: stream.channel, at: 1000, xyz: Float32Array.of(0.5, 1, 1.5) });
+  const bytes = Buffer.alloc(12);
+  bytes.writeInt32BE(42, 8);
+  const lcm = {
+    type: "example.Count",
+    fp: "0000000000000000",
+    structs: { "example.Count": [["count", "int32_t", null]] },
+  };
+  const value = await toFrame({ ...stream, encoding: "application/x-lcm", lcm }, sample(bytes, "application/x-lcm"));
+  assert.ok(value.kind === "value" && value.text.includes("count: 42"));
+  const gridStream = Value.Parse(StreamRefSchema, { ...stream, source: { ...stream.source, type: "OccupancyGrid" } });
+  const grid = await toFrame(
+    gridStream,
+    sample(
+      Buffer.from(
+        "omRpbmZvpGV3aWR0aAJmaGVpZ2h0AmpyZXNvbHV0aW9u+z+5mZmZmZmaZm9yaWdpbqJocG9zaXRpb26iYXgBYXkCa29yaWVudGF0aW9upGF4AGF5AGF6AGF3AWRkYXRhhCAAGGQYMg==",
+        "base64",
+      ),
+    ),
+  );
+  assert.deepEqual(grid, {
+    kind: "grid",
+    channel: stream.channel,
+    at: 1000,
+    width: 2,
+    height: 2,
+    resolution: 0.1,
+    origin: [1, 2, 0],
+    cells: Int8Array.of(-1, 0, 100, 50),
+  });
+  const text = Buffer.from("x".repeat(300));
+  const long = await toFrame(stream, sample(Buffer.concat([Buffer.from([0x79, 1, 44]), text])));
+  assert.ok(long.kind === "value" && long.text.length === 200);
+  await assert.rejects(toFrame(stream, sample(Uint8Array.of(0xff))), /CBOR/);
+  await assert.rejects(
+    toFrame({ ...stream, encoding: "future/encoding" }, sample(bytes, "future/encoding")),
+    /Unsupported/,
   );
 });
 
-test("channel lookup uses exact manifest IDs without source metadata", async (t) => {
-  const relay = new FakeRelayEnd();
-  const session = connect({ robot: ROBOT_A.id }, { fetchInfo: async () => INFO, createWebTransport: () => relay.wt });
+test("real topic provider discovery, reads, cancellation and preview lifecycle", { timeout: 90_000 }, async (t) => {
+  const relay = await topicFixture(t);
+  const session = await openRelay(relay.endpoint);
+  const frames = new RemoteFrames();
   t.after(() => {
-    relay.endControl();
+    frames.close();
     session.close();
   });
-  assert.equal(channelFor(session, CHANNEL), undefined);
-  await until(() => relay.sent.some((message) => message.t === "hello"));
-  relay.push({ t: "welcome", v: PROTOCOL_VERSION });
-  relay.push({ t: "robots", robots: [ROBOT_A] });
-  relay.pushManifest(ROBOT_A.id, manifest([previewSpec()]));
-  await until(() => session.status.get().manifest !== null);
-  assert.equal(channelFor(session, CHANNEL)?.ch, "preview");
-  relay.pushManifest(ROBOT_A.id, manifest([previewSpec(), spec({ ch: "sensor.number", encoding: "json.v1" })]));
-  await until(() => channelFor(session, "sensor.number") !== undefined);
-  assert.equal(channelFor(session, "dimos/number/int"), undefined);
-  relay.pushManifest(ROBOT_A.id, manifest([previewSpec(TRACK_ENCODING)]));
-  await until(() => session.status.get().manifest?.channels[0].encoding === TRACK_ENCODING);
-  assert.equal(channelFor(session, "sensor.number"), undefined);
-  assert.throws(() => channelFor(session, CHANNEL), /rtc=false/);
+  const entries = Array.from({ length: 45 }, (_, i) => ({
+    key: i === 0 ? stream.channel : `topic/${String(i).padStart(2, "0")}`,
+    encoding: "application/cbor",
+    type: "int",
+    availability: "known" as const,
+  }));
+  await relay.descriptors(entries);
+  const inventory = Value.Parse(InventorySchema, {
+    environment: {
+      python: "",
+      dimos_root: "",
+      dimos_version: null,
+      dimos_commit: null,
+      transport: "zenoh",
+      robot_ip: null,
+      robot_ips: null,
+      zenoh_connect: null,
+      zenoh_scouting: false,
+      python_api_guide: null,
+      relay: relay.endpoint,
+    },
+    runtime: {
+      modules: [],
+      streams: entries.map((entry) => ({
+        module: "Sensor",
+        name: entry.key,
+        direction: "out",
+        type: "int",
+        channel: entry.key,
+      })),
+    },
+    agent_modules: [],
+  });
+  let streams = await topicStreams(session, inventory, AbortSignal.timeout(10_000));
+  assert.equal(streams.length, 45, "all catalog pages are read");
+  assert.ok(streams.some((s) => s.channel === stream.channel && s.source?.module === "Sensor"));
+  const selected = streams.find((s) => s.channel === stream.channel);
+  assert.ok(selected);
+  async function receive(mode: "next" | "latest", n: number) {
+    const ready = session.topics.subscribe(stream.channel, { profile: selected!.profile }, () => {});
+    try {
+      await ready.ready();
+      const [result] = await Promise.all([
+        readTopic(session, selected!, mode, AbortSignal.timeout(5_000)),
+        relay.frame(stream.channel, Uint8Array.of(n)),
+      ]);
+      return result;
+    } finally {
+      ready.close();
+    }
+  }
+  assert.equal((await receive("latest", 1)).sample.payload[0], 1);
+  assert.equal((await receive("next", 2)).sample.payload[0], 2, "next ignores earlier cached data");
+  const cached = await readTopic(session, selected, "latest", AbortSignal.timeout(5_000));
+  assert.equal(cached.stale, true);
+  await assert.rejects(readTopic(session, selected, "latest", AbortSignal.timeout(30)), { name: "TimeoutError" });
+  const abort = new AbortController();
+  const pending = readTopic(session, selected, "latest", abort.signal);
+  abort.abort();
+  await assert.rejects(pending, { name: "AbortError" });
+  await assert.rejects(
+    readTopic(session, { ...selected, profile: "invalid.profile" }, "next", AbortSignal.timeout(5_000)),
+  );
+
+  const records: FrameRecord[] = [];
+  frames.onRecord((record) => records.push(record));
+  frames.want(new Set([stream.channel]));
+  frames.configure(relay.endpoint, streams);
+  async function preview(n: number) {
+    await until(async () => {
+      if (records.some((r) => r.kind === "value" && r.text === String(n))) return true;
+      await relay.frame(stream.channel, Uint8Array.of(n));
+      return false;
+    });
+  }
+  await preview(3);
+  await until(() =>
+    records.some((r) => r.kind === "rates" && r.sample.counts.some((c) => c.hz > 0 && c.ageS !== null)),
+  );
+  frames.want(new Set());
+  const before = records.filter((r) => r.kind === "value").length;
+  await relay.frame(stream.channel, Uint8Array.of(4));
+  await delay(100);
+  assert.equal(records.filter((r) => r.kind === "value").length, before);
+  inventory.runtime.streams = inventory.runtime.streams.filter((s) => s.channel !== stream.channel);
+  streams = await topicStreams(session, inventory, AbortSignal.timeout(5_000));
+  assert.equal(streams.length, 44, "historical observed descriptors do not outlive live wiring");
+  frames.configure(relay.endpoint, streams);
+  frames.want(new Set([stream.channel]));
+  await relay.frame(stream.channel, Uint8Array.of(5));
+  await delay(100);
+  assert.equal(records.filter((r) => r.kind === "value").length, before);
+  frames.configure(relay.endpoint, [selected]);
+  await preview(6);
+  const generation = session.topics.sources()[0].gen;
+  await relay.disconnect();
+  await until(() => session.topics.sources().some((s) => s.gen !== generation));
+  await assert.rejects(readTopic(session, selected, "latest", AbortSignal.timeout(2_300)), { name: "TimeoutError" });
+  await preview(7);
+  await relay.restart();
+  await preview(8);
+  frames.configure(null);
+  frames.configure(relay.endpoint, [selected]);
+  frames.close();
+  frames.close();
+  const closed = records.length;
+  await delay(200);
+  assert.equal(records.length, closed, "close suppresses pending connection and decoding work");
 });
 
-async function realRelay(t: TestContext) {
+const PYTHON =
+  process.env.DIMOS_RELAY_TEST_PYTHON ?? fileURLToPath(new URL("../../../../.venv/bin/python", import.meta.url));
+
+async function topicFixture(t: TestContext) {
   const child = spawn(PYTHON, [fileURLToPath(new URL("./demo_relay.py", import.meta.url))], {
     env: {
       ...process.env,
@@ -176,184 +250,21 @@ async function realRelay(t: TestContext) {
   async function response() {
     for (;;) {
       const { value, done } = await replies.next();
-      assert.ok(!done, "relay fixture exited before replying");
+      assert.ok(!done, "topic fixture exited before replying");
       if (value.startsWith("{")) return JSON.parse(value);
     }
   }
-  const endpoint = Value.Parse(Type.Object({ url: Type.String(), robot: Type.String() }), await response());
+  const endpoint = Value.Parse(Type.Object({ url: Type.String(), source: Type.String() }), await response());
   async function command(value: unknown): Promise<void> {
     child.stdin.write(`${JSON.stringify(value)}\n`);
     await response();
   }
   return {
     endpoint,
-    manifest: (channels: ChannelSpec[]) => command({ kind: "manifest", channels }),
-    disconnect: () => command({ kind: "disconnect" }),
+    descriptors: (entries: TopicDescriptor[]) => command({ kind: "descriptors", entries }),
     restart: () => command({ kind: "restart" }),
-    frame: (bytes: Uint8Array, meta = {}) =>
-      command({ kind: "frame", channel: "preview", bytes: Buffer.from(bytes).toString("base64"), meta }),
+    disconnect: () => command({ kind: "disconnect" }),
+    frame: (key: string, bytes: Uint8Array, encoding = "application/cbor") =>
+      command({ kind: "frame", key, bytes: Buffer.from(bytes).toString("base64"), encoding }),
   };
 }
-
-test("real relay adapter lifecycle", { skip: !existsSync(PYTHON), timeout: 60_000 }, async (t) => {
-  const relay = await realRelay(t);
-  await relay.manifest([previewSpec()]);
-  const records: FrameRecord[] = [];
-  const errors: unknown[] = [];
-  const frames = new RemoteFrames((error) => errors.push(error));
-  t.after(() => frames.close());
-  frames.onRecord((record) => records.push(record));
-  frames.want(new Set([CHANNEL]));
-  frames.configure(relay.endpoint);
-
-  async function receive(value: number): Promise<void> {
-    for (let i = 0; i < 60; i++) {
-      await relay.frame(Buffer.from(JSON.stringify({ value })));
-      if (records.some((record) => record.kind === "value" && record.text.includes(String(value)))) return;
-      await delay(50);
-    }
-    assert.fail(`no preview for ${value}`);
-  }
-
-  await t.test("receives frames and SDK rates, cancels and restores wanted channels", async () => {
-    await receive(101);
-    await until(() =>
-      records.some((r) => r.kind === "rates" && r.sample.counts.some((c) => c.hz > 0 && c.ageS !== null)),
-    );
-    frames.configure({ ...relay.endpoint });
-    frames.want(new Set());
-    const before = records.filter((r) => r.kind === "value").length;
-    await relay.frame(Buffer.from("102"));
-    await delay(600);
-    assert.equal(records.filter((r) => r.kind === "value").length, before);
-    frames.want(new Set([CHANNEL]));
-    await receive(103);
-  });
-
-  await t.test("manifest removal and reappearance resume wanted channels on the same producer", async () => {
-    await relay.manifest([]);
-    await until(
-      () => records.at(-1)?.kind === "rates" && records.some((r) => r.kind === "rates" && r.sample.counts.length === 0),
-    );
-    const before = records.filter((record) => record.kind === "value").length;
-    await relay.frame(Buffer.from("106"));
-    await delay(100);
-    assert.equal(records.filter((record) => record.kind === "value").length, before);
-    await relay.manifest([previewSpec()]);
-    await receive(107);
-  });
-
-  await t.test("producer reconnection restores subscriptions and accepts restarted sequences", async () => {
-    await relay.disconnect();
-    await delay(600);
-    await relay.manifest([previewSpec()]);
-    await receive(104);
-  });
-
-  await t.test("relay restart reconnects without recreating RemoteFrames", async () => {
-    await relay.restart();
-    await relay.manifest([previewSpec()]);
-    await receive(105);
-  });
-
-  for (const action of ["coalesce", "cancel", "disconnect"] as const) {
-    await t.test(`async image conversion handles ${action}`, async () => {
-      await relay.manifest([previewSpec("jpeg.v1")]);
-      frames.want(new Set([CHANNEL]));
-      const jpeg = await sharp({ create: { width: 12, height: 8, channels: 3, background: "red" } })
-        .jpeg()
-        .toBuffer();
-      const before = records.filter((record) => record.kind === "image").length;
-      let release = () => {};
-      let started = false;
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const metadata = t.mock.method(sharp.prototype, "metadata", async () => {
-        started = true;
-        await gate;
-        return { width: 12, height: 8 };
-      });
-      try {
-        for (let i = 0; i < 40 && !started; i++) {
-          await relay.frame(jpeg);
-          await delay(50);
-        }
-        assert.ok(started);
-        if (action === "coalesce") {
-          for (let i = 0; i < 5; i++) await relay.frame(jpeg);
-          await delay(600);
-          release();
-          await until(() => records.filter((record) => record.kind === "image").length === before + 2);
-          assert.equal(metadata.mock.callCount(), 2);
-        } else {
-          if (action === "cancel") frames.want(new Set());
-          else {
-            await relay.disconnect();
-            await until(() => {
-              const last = records.at(-1);
-              return last?.kind === "rates" && last.sample.counts.length === 0;
-            });
-          }
-          release();
-          await delay(100);
-          assert.equal(records.filter((record) => record.kind === "image").length, before);
-        }
-      } finally {
-        release();
-        metadata.mock.restore();
-      }
-    });
-  }
-
-  await t.test("endpoint replacement and close suppress pending connection work", async () => {
-    frames.configure(null);
-    frames.configure(relay.endpoint);
-    frames.configure(null);
-    frames.configure(relay.endpoint);
-    frames.close();
-    const before = records.length;
-    await delay(600);
-    assert.equal(records.length, before);
-    assert.deepEqual(errors, []);
-  });
-
-  await t.test("raw session receives data and repeated close lets its process exit", async () => {
-    await relay.manifest([previewSpec()]);
-    const source = `
-      import { openRelay } from ${JSON.stringify(new URL("../relay.ts", import.meta.url).href)};
-      const session = await openRelay(${JSON.stringify(relay.endpoint)});
-      const deadline = setTimeout(() => { session.close(); process.exitCode = 1; }, 10000);
-      session.subscribe("preview", ({slot}) => {
-        if (slot?.value?.answer !== 42) return;
-        clearTimeout(deadline);
-        session.close(); session.close();
-      });
-    `;
-    const child = spawn(
-      process.execPath,
-      [
-        "--import",
-        fileURLToPath(new URL("../../test/web-sdk.mjs", import.meta.url)),
-        "--input-type=module",
-        "-e",
-        source,
-      ],
-      { stdio: "inherit" },
-    );
-    const exit = once(child, "exit");
-    const kill = setTimeout(() => child.kill("SIGKILL"), 12_000);
-    const send = setInterval(() => {
-      void relay.frame(Buffer.from('{"answer":42}'));
-    }, 100);
-    try {
-      const [code, signal] = await exit;
-      assert.equal(signal, null, "the Node provider leaked a handle after close");
-      assert.equal(code, 0);
-    } finally {
-      clearTimeout(kill);
-      clearInterval(send);
-      if (child.exitCode === null) child.kill("SIGKILL");
-    }
-  });
-});

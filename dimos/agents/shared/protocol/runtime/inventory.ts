@@ -23,7 +23,7 @@ export const InventorySchema = Type.Object({
     zenoh_scouting: Type.Boolean(),
     /** Path of `docs/usage/python-api.md`. */
     python_api_guide: nullable(Type.String()),
-    relay: nullable(Type.Object({ url: Type.String(), robot: Type.String() })),
+    relay: nullable(Type.Object({ url: Type.String(), source: Type.String() })),
   }),
   runtime: Type.Object({
     modules: Type.Array(
@@ -42,6 +42,7 @@ export const InventorySchema = Type.Object({
         direction: nullable(Type.Union([Type.Literal("in"), Type.Literal("out"), Type.Literal("inout")])),
         type: Type.String(),
         channel: nullable(Type.String()),
+        lcm: Type.Optional(Type.Unknown()),
       }),
     ),
   }),

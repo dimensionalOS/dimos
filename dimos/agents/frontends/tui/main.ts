@@ -243,6 +243,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
       ui.connection.value.state === "live" && ui.gateway.link.value.state === "up" && view?.current
         ? view.inventory.environment.relay
         : null,
+      ui.gateway.streams.value,
     );
   };
   const sidebar = new Sidebar(sidebarSource, frames, requestRender, () => device.rows);
@@ -915,6 +916,7 @@ async function terminal(options: TerminalOptions, ui: Ui): Promise<number> {
 
   const stops = [
     ui.gateway.link.subscribe(configureFrames),
+    ui.gateway.streams.subscribe(configureFrames),
     listen(
       [
         ui.gateway.link,

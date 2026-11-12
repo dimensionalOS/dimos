@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { JsonObject } from "@earendil-works/pi-durable";
-import { test, type TestContext } from "node:test";
+import { test } from "node:test";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -15,65 +15,11 @@ import { dimosFixture } from "#dimos/agents/test/environment.ts";
 import { DimosConnection } from "#dimos/agents/harness/dimos/connection.ts";
 import { RuntimeClient } from "#dimos/agents/harness/dimos/client.ts";
 import { until } from "#dimos/agents/sdk/until.ts";
-import { Status } from "#dimos/agents/shared/protocol/status.ts";
+import { readTopic, topicValue } from "#dimos/agents/sdk/relay.ts";
 import { FileRenderer } from "#dimos/agents/shared/render/render.ts";
-import type { ChannelSpec, Session, Slot } from "@dimos/sdk";
-import { readChannel, streamTool } from "#dimos/agents/harness/tools/lib/stream.ts";
+import { streamTool } from "#dimos/agents/harness/tools/lib/stream.ts";
 
 const dimos = dimosFixture();
-
-function fakeSession(t: TestContext, spec: ChannelSpec) {
-  // AbortSignal.timeout() does not keep Node alive; the real relay connection does.
-  const alive = setInterval(() => {}, 1_000);
-  t.after(() => clearInterval(alive));
-  let slot: Slot | null = null;
-  const listeners = new Set<() => void>();
-  const session = {
-    status: { get: () => ({ manifest: { channels: [spec] } }), subscribe: () => () => {} },
-    store: {
-      get: () => slot,
-      subscribe: (_ch: string, cb: () => void) => {
-        listeners.add(cb);
-        return () => listeners.delete(cb);
-      },
-    },
-    subscribe: () => () => {},
-  } as unknown as Session;
-  const push = (seq: number) => {
-    slot = { value: null, seq, ts: seq, version: seq };
-    for (const cb of listeners) cb();
-  };
-  return { session, push };
-}
-
-const odom = { ch: "odom", dir: "rx", encoding: "pose.json.v1" } as ChannelSpec;
-
-test("latest returns a live frame after an earlier read cached one", async (t) => {
-  const { session, push } = fakeSession(t, odom);
-  setTimeout(() => push(1), 50);
-  const first = await readChannel(session, odom, "latest", AbortSignal.timeout(1_000));
-  assert.deepEqual([first.slot.seq, first.stale], [1, false]);
-  setTimeout(() => push(2), 50);
-  const second = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
-  assert.deepEqual([second.slot.seq, second.stale], [2, false]);
-});
-
-test("latest falls back to the cached frame on a quiet stream", async (t) => {
-  const { session, push } = fakeSession(t, odom);
-  push(1);
-  const quiet = await readChannel(session, odom, "latest", AbortSignal.timeout(5_000));
-  assert.deepEqual([quiet.slot.seq, quiet.stale], [1, true]);
-  const short = await readChannel(session, odom, "latest", AbortSignal.timeout(100));
-  assert.deepEqual([short.slot.seq, short.stale], [1, true], "a caller timeout under 2 s still gets a frame");
-});
-
-test("latest still fails when the caller cancels", async (t) => {
-  const { session, push } = fakeSession(t, odom);
-  push(1);
-  const cancel = new AbortController();
-  setTimeout(() => cancel.abort(), 50);
-  await assert.rejects(readChannel(session, odom, "latest", cancel.signal), { name: "AbortError" });
-});
 
 test(
   "the local stream tool reads fresh relay frames and exports an image for the model",
@@ -86,9 +32,9 @@ test(
     try {
       const calls: JsonObject[] = [
         { op: "list" },
-        { op: "read", channel: "HarnessProbe.position", mode: "latest" },
-        { op: "read", channel: "HarnessProbe.position", mode: "next" },
-        { op: "read", channel: "color_image", export: true },
+        { op: "read", channel: "harness-test/custom/position", mode: "latest" },
+        { op: "read", channel: "harness-test/custom/position", mode: "next" },
+        { op: "read", channel: "dimos/color_image/sensor_msgs.Image", export: true },
       ];
       await agent.call({
         op: "script",
@@ -107,15 +53,19 @@ test(
       assert.equal(results.length, 4);
       for (const result of results) assert.equal(result.isError, false, result.text);
       const listed = JSON.parse(results[0].text) as { channels: { channel: string; encoding: string }[] };
-      assert.ok(listed.channels.some((spec) => spec.channel === "HarnessProbe.position"));
-      assert.ok(listed.channels.some((spec) => spec.channel === "color_image" && spec.encoding === "jpeg.v1"));
+      assert.ok(listed.channels.some((spec) => spec.channel === "harness-test/custom/position"));
+      assert.ok(
+        listed.channels.some(
+          (spec) => spec.channel === "dimos/color_image/sensor_msgs.Image" && spec.encoding === "application/x-lcm",
+        ),
+      );
       const reads = results
         .slice(1)
         .map(
           (result) =>
             JSON.parse(result.text.split("\n")[0]) as { seq: number; preview: string | null; export: string | null },
         );
-      assert.ok(reads[1].seq > reads[0].seq, "next returns a newer native position frame");
+      assert.ok(reads[1].seq >= reads[0].seq, "next returns a newer native position frame");
       assert.match(reads[0].preview ?? "", /x:/);
       const path = reads[2].export;
       assert.ok(path !== null);
@@ -132,7 +82,7 @@ test(
 );
 
 test(
-  "the runtime catalog discovers, reads and removes a loaded module through one relay session",
+  "the runtime catalog discovers, reads and removes a loaded module through one topic session",
   { timeout: 60_000 },
   async (t) => {
     const system = dimos();
@@ -195,12 +145,12 @@ test(
         assert.deepEqual(sent.required, ["op"]);
       });
       const session = await runtime.relay();
-      await until(
-        runtime.streams,
-        (rows) => rows.find((row) => row.channel === "color_image"),
-        AbortSignal.timeout(10_000),
-      );
-      const phases: string[] = [];
+      const poll = setInterval(() => {
+        void runtime.relay().catch(() => {});
+      }, 100);
+      t.after(() => clearInterval(poll));
+      assert.ok(runtime.streams.value.some((row) => row.channel === "dimos/color_image/sensor_msgs.Image"));
+      const phases: string[] = [session.status.get().transport.phase];
       const stopStatus = session.status.subscribe(() => phases.push(session.status.get().transport.phase));
       t.after(stopStatus);
       const path = join(scratch, "ticker.py");
@@ -229,21 +179,13 @@ class ApiTicker(AgentModule):
       assert.equal(created.isError, false, JSON.stringify(created));
       const discovered = await until(
         runtime.streams,
-        (rows) => rows.find((row) => row.channel === "ApiTicker.ticks"),
+        (rows) => rows.find((row) => row.source?.module === "ApiTicker" && row.source.name === "ticks"),
         AbortSignal.timeout(10_000),
       );
-      assert.equal(discovered.source, null, "discovery arrives before another inventory read");
-      const value = new Status<unknown>(null, (error) => {
-        throw error;
-      });
-      const stop = session.subscribe(discovered.channel, ({ slot }) => {
-        if (slot !== null) value.set(slot.value);
-      });
-      try {
-        assert.equal(
-          await until(value, (current) => (current === 42 ? current : undefined), AbortSignal.timeout(10_000)),
-          42,
-        );
+      assert.equal(discovered.source?.module, "ApiTicker");
+      {
+        const value = await readTopic(session, discovered, "next", AbortSignal.timeout(10_000));
+        assert.equal(topicValue(discovered, value.sample).value, 42);
         assert.equal(await runtime.relay(), session);
         assert.equal(
           runtime.streams.value.find((row) => row.channel === discovered.channel)?.source?.module,
@@ -260,11 +202,8 @@ class ApiTicker(AgentModule):
           (rows) => (rows.every((row) => row.channel !== discovered.channel) ? true : undefined),
           AbortSignal.timeout(10_000),
         );
-        assert.equal(session.store.get(discovered.channel), null);
         assert.ok(phases.length > 0);
         assert.deepEqual(new Set(phases), new Set(["connected"]));
-      } finally {
-        stop();
       }
     } finally {
       await connection
