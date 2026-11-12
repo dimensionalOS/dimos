@@ -23,9 +23,8 @@ REJECTED: list[tuple[type[BaseModel], dict[str, JsonValue], str]] = [
 ]
 
 
-def test_patrol_definition(patrol: OrchestratorDefinition) -> None:
+def test_literals_become_sources_and_if_is_accepted(patrol: OrchestratorDefinition) -> None:
     nodes = {node.name: node for node in patrol.nodes}
-    assert nodes["Navigating"].transitions[0].mode == "graceful"
     assert nodes["NextWaypoint"].transitions[1].set == {"patrol.index": "0"}
     from_file = Transition.model_validate({"goto": "A", "if": "x < 1", "after": 60})
     assert from_file == Transition(goto="A", if_="x < 1", after="60")

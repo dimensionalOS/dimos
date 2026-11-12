@@ -17,8 +17,9 @@
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from typing import get_args
 
-from dimos.orchestration.definition import Activity, Node, OrchestratorDefinition
+from dimos.orchestration.definition import Activity, Node, OrchestratorDefinition, Outcome
 from dimos.orchestration.expressions import (
     NUMBER,
     UNKNOWN,
@@ -29,7 +30,7 @@ from dimos.orchestration.expressions import (
     Wanted,
 )
 
-OUTCOMES = ("done", "failed")
+OUTCOMES: tuple[str, ...] = get_args(Outcome)
 RESERVED = ("succeeded", *OUTCOMES)
 
 
@@ -46,7 +47,7 @@ class CheckedDefinition:
 def check(
     definition: OrchestratorDefinition, shapes: Mapping[str, Shape] | None = None
 ) -> CheckedDefinition:
-    """Run every loader check. `shapes` gives the shape of signals and results.
+    """Run every static check. `shapes` gives the shape of signals and results.
 
     Problems with names or nesting are returned alone, since the other checks need a sound tree.
     """
@@ -273,7 +274,7 @@ def _activity_needs(tree: Tree, node: Node) -> frozenset[str]:
 
 
 def _needs(tree: Tree, name: str) -> set[str]:
-    """Every resource a node and the nodes inside it could need."""
+    """Every resource a node and the nodes inside it could need, cancel RPCs included."""
     node = tree.nodes[name]
     needs = {*node.claims, *_activity_needs(tree, node)}
     for inner in node.inside:

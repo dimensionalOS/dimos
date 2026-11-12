@@ -23,6 +23,9 @@ from dimos.orchestration.checks import CheckedDefinition
 from dimos.orchestration.definition import Check, Node, Transition
 from dimos.orchestration.expressions import ExpressionError, Plain, evaluate, evaluate_bool
 
+CallKind = Literal["start", "cancel"]
+CallPhase = Literal["held", "sent"]
+
 
 @dataclass(frozen=True)
 class Call:
@@ -30,8 +33,8 @@ class Call:
 
     id: int
     node: str | None
-    kind: Literal["start", "cancel"]
-    phase: Literal["held", "sent"]
+    kind: CallKind
+    phase: CallPhase
     uses: frozenset[str]
     rpc: str
     args: Mapping[str, Plain]
@@ -120,8 +123,7 @@ class ClearTimer:
 class TransitionRecord:
     """One transition taken, or one redirect to a fallback.
 
-    `trigger` is None for a switch node's, `after` for a timer's, and `requires` or `ensures`
-    for a redirect.
+    `trigger` is None for a switch, `after` for a timer, and the check kind for a redirect.
     """
 
     node: str
@@ -210,15 +212,15 @@ class _Step:
         self.timers = list(runtime.timers)
         self.calls_made = runtime.calls_made
         self.effects: list[Effect] = []
-        self.raised: deque[tuple[str, Node]] = deque()
+        self.events: deque[tuple[str, Node]] = deque()
         self.taken = 0
 
-    def run(self, event: str, first: Callable[[], None]) -> tuple[Runtime, list[Effect]]:
+    def run(self, event: str, action: Callable[[], None]) -> tuple[Runtime, list[Effect]]:
         try:
-            first()
+            action()
             self.drain()
             if self.blackboard != self.before.blackboard or self.active != self.before.active:
-                while self.walk(self.root, self.offer_events, first=True):
+                while self.walk(self.root, self.offer_events, stop_at_first=True):
                     self.drain()
         except _FaultError as fault:
             self.fault(fault, event)
@@ -255,7 +257,7 @@ class _Step:
         match item:
             case SignalItem(key, value):
                 self.blackboard[key] = value
-                self.walk(self.root, lambda node: self.offer(node, key), first=False)
+                self.walk(self.root, lambda node: self.offer(node, key), stop_at_first=False)
             case ReturnItem():
                 self.handle_return(item)
             case TimerItem(timer):
@@ -286,14 +288,14 @@ class _Step:
                 raise _FaultError("a `cancel` that raised", node)
             self.release()
         elif item.raised:
-            self.raised.append(("failed", node))
+            self.events.append(("failed", node))
         else:
             if node.result is not None:
                 self.blackboard[node.result] = item.value
             if node.inside:
                 self.enter_inside(node)
             else:
-                self.raised.append(("succeeded", node))
+                self.events.append(("succeeded", node))
 
     def release(self) -> None:
         """Send every held start that no cancel still out holds back."""
@@ -307,8 +309,8 @@ class _Step:
 
     def drain(self) -> None:
         """Handle every event the engine raised, in the order raised."""
-        while self.raised:
-            event, node = self.raised.popleft()
+        while self.events:
+            event, node = self.events.popleft()
             if node.name not in self.active:
                 continue
             if event == "switch":
@@ -318,27 +320,23 @@ class _Step:
             else:
                 self.offer(node, event)
 
-    def walk(self, node: Node, offer: Callable[[Node], bool], first: bool) -> bool:
-        """Offer an event to a node, then to the active nodes inside it. The outermost wins.
-
-        With `first` the walk ends at the first transition taken. Without it, every child of a
-        parallel node is offered the event in turn.
-        """
+    def walk(self, node: Node, offer: Callable[[Node], bool], stop_at_first: bool) -> bool:
+        """Offer an event to a node, then to the active nodes inside it. The outermost wins."""
         if node.name not in self.active:
             return False
         if offer(node):
             return True
         taken = False
         for name in [name for name in node.inside if name in self.active]:
-            if self.walk(self.tree.nodes[name], offer, first):
-                if first:
+            if self.walk(self.tree.nodes[name], offer, stop_at_first):
+                if stop_at_first:
                     return True
                 taken = True
                 self.drain()
         return taken
 
     def offer(self, node: Node, trigger: str | None) -> bool:
-        """Take the first transition of a node on a trigger whose `if` passes."""
+        """Take the first transition of a node on a trigger whose guard passes."""
         for transition in node.transitions:
             if transition.trigger != trigger or transition.after is not None:
                 continue
@@ -353,7 +351,7 @@ class _Step:
             trigger = transition.trigger
             if trigger is None or trigger not in self.tree.events:
                 continue
-            if self.true(node, self.tree.events[trigger]) and self.passes(node, transition):
+            if self.holds(node, self.tree.events[trigger]) and self.passes(node, transition):
                 self.take(node, transition, trigger)
                 return True
         return False
@@ -386,7 +384,7 @@ class _Step:
             return
         parent = self.tree.parent[node.name]
         if goto == "failed" or not any(name in self.active for name in parent.parallel):
-            self.raised.append((goto, parent))
+            self.events.append((goto, parent))
 
     def leave_inside(self, node: Node, graceful: bool) -> None:
         for name in node.inside:
@@ -430,7 +428,7 @@ class _Step:
         if node.result is not None:
             self.blackboard.pop(node.result, None)
         uses = activity.resources
-        phase: Literal["held", "sent"] = "held" if self.held_back(uses) else "sent"
+        phase: CallPhase = "held" if self.held_back(uses) else "sent"
         call = self.call(node, "start", phase, uses, activity.start, args)
         if phase == "sent":
             self.effects.append(SendStart(call))
@@ -441,15 +439,15 @@ class _Step:
         for name in node.parallel:
             self.enter(self.tree.nodes[name])
         if node.is_switch:
-            self.raised.append(("switch", node))
+            self.events.append(("switch", node))
 
     def failed_check(self, node: Node, checks: tuple[Check, ...]) -> Check | None:
         for check in checks:
-            if not all(self.true(node, source) for source in check.expect):
+            if not all(self.holds(node, source) for source in check.expect):
                 return check
         return None
 
-    def fallback(self, node: Node, check: Check, kind: str) -> Node:
+    def fallback(self, node: Node, check: Check, kind: Literal["requires", "ensures"]) -> Node:
         if check.fallback is None:
             raise _FaultError(f"a failed `{kind}` check with no fallback", node)
         self.effects.append(TransitionRecord(node.name, kind, check.fallback))
@@ -458,8 +456,8 @@ class _Step:
     def call(
         self,
         node: Node,
-        kind: Literal["start", "cancel"],
-        phase: Literal["held", "sent"],
+        kind: CallKind,
+        phase: CallPhase,
         uses: frozenset[str],
         rpc: str,
         args: Mapping[str, Plain],
@@ -490,11 +488,11 @@ class _Step:
             raise _FaultError(f"an expression error: `{source}` gave {value!r}, not a number", node)
         return value
 
-    def true(self, node: Node, source: str) -> bool:
+    def holds(self, node: Node, source: str) -> bool:
         try:
             return evaluate_bool(self.expressions[source], self.blackboard)
         except ExpressionError as error:
             raise _FaultError(f"an expression error: {error}", node) from None
 
     def passes(self, node: Node, transition: Transition) -> bool:
-        return transition.if_ is None or self.true(node, transition.if_)
+        return transition.if_ is None or self.holds(node, transition.if_)
