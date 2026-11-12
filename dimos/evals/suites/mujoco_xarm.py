@@ -63,8 +63,7 @@ SUITE: Suite = [
         id="xarm_cube_in_bowl",
         inputs=f"Pick up the red cube and put it in the blue bowl. {SCENE}",
         environment=environment(),
-        # The blue bowl's floor is 10.4 x 14.4 cm inside; a cube resting on it has its
-        # centre 2.8 cm above the bowl's origin.
+        # Bowl floor 10.4 x 14.4 cm; a resting cube's centre is 2.8 cm above the bowl.
         grade=inside("red_cube", "blue_bowl", half_extents_m=(0.052, 0.072), rise_m=(0.02, 0.04)),
         timeout_s=900.0,
         threshold=0.5,

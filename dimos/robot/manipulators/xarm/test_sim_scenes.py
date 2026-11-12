@@ -61,7 +61,6 @@ def test_shapes_stay_on_the_table(scene: str) -> None:
         if model.body_jntnum[b]
         and model.jnt_type[model.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE
     ]
-    # The scene's 7 loose shapes; update this when adding or removing one.
     assert len(shapes) == 7, f"expected the 7 loose shapes, found {shapes}"
     for name in shapes:
         assert data.body(name).xpos[2] > 0.12, f"{name} fell off the table"
