@@ -2,7 +2,17 @@ root = "Patrol"
 resources = ["base"]
 
 [constants]
-route = [{ x = 2.0, y = 0.0 }, { x = 2.0, y = 2.0 }, { x = 0.0, y = 0.0 }]
+route = [
+    { x = 4.0, y = 4.0 },
+    { x = 7.4, y = 4.0 },
+    { x = 9.5, y = 5.0 },
+    { x = 8.0, y = 8.0 },
+    { x = 8.5, y = 11.3 },
+    { x = 6.5, y = 11.3 },
+    { x = 3.5, y = 10.0 },
+    { x = 3.0, y = 7.1 },
+    { x = 1.0, y = 1.0 },
+]
 pause_s = 3.0
 retry_s = 1.0
 PREEMPTED = 2
