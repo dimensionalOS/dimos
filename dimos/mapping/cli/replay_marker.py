@@ -145,8 +145,9 @@ def main(
         # Each 3D detection gets its own entity path so it persists from its
         # ts onward — earlier detections stay visible as new ones appear.
         # Color by ts (turbo) across the recording's full image-time range.
-        ts_min = color_image.first().ts
-        ts_max = color_image.last().ts
+        # A shared recording window can precede the camera's first frame.
+        ts_min = color_image.first().ts if n_img else 0.0
+        ts_max = color_image.last().ts if n_img else 0.0
         ts_span = ts_max - ts_min if ts_max > ts_min else 1.0
         n_det = 0
         for det_obs in pipeline.transform(xf):
