@@ -15,14 +15,10 @@
 """The Python API guide an eval agent gets as DIMOS.md.
 
 In an eval, dimOS is already running when the agent starts, so the guide covers
-connecting to it. ``python_guide`` adds the sections for the robot's kinds. When the
-API changes, update these and the matching docs together: docs/usage/python-api.md
+connecting to it. An environment adds the sections for its robot, e.g.
+``PYTHON_API_GUIDE + MANIPULATION_GUIDE``. When the API changes, update these and the matching docs together: docs/usage/python-api.md
 and docs/capabilities/manipulation/python_api.md.
 """
-
-from typing import Literal
-
-RobotGuide = Literal["manipulation", "navigation"]
 
 PYTHON_API_GUIDE = """\
 # Driving the robot from Python
@@ -110,7 +106,7 @@ unsubscribe()
 The client must have the stream's message types installed.
 """
 
-MANIPULATION_GUIDE = """\
+MANIPULATION_GUIDE = """
 ## Robot arms
 
 For arm motion, use the `Arm` SDK. It picks the arm's planning group and blocks until
@@ -126,7 +122,7 @@ help(arm)              # every method
 ```
 """
 
-NAVIGATION_GUIDE = """\
+NAVIGATION_GUIDE = """
 ## Mobile robots
 
 Mobile robots take goals through skills. On the Go2, `move_to` blocks until the robot
@@ -139,9 +135,3 @@ app.skills.go_to(x=4.0, y=1.5)
 pose = app.peek_stream("odometry", 2.0)  # repeat until x, y stop changing
 ```
 """
-
-
-def python_guide(*robots: RobotGuide) -> str:
-    """The general guide, followed by the section for each kind of robot, in order."""
-    sections = {"manipulation": MANIPULATION_GUIDE, "navigation": NAVIGATION_GUIDE}
-    return "\n".join([PYTHON_API_GUIDE, *(sections[robot] for robot in robots)])

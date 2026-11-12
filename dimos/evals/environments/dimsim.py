@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.evals.environments.sim import Sim, SimConfig
-from dimos.evals.guide import RobotGuide
+from dimos.evals.guide import NAVIGATION_GUIDE, PYTHON_API_GUIDE
 from dimos.simulation.dimsim.config import DIMSIM_PORT
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class DimSimEnvironmentConfig(SimConfig):
-    robot_guides: tuple[RobotGuide, ...] = ("navigation",)
+    python_guide: str = PYTHON_API_GUIDE + NAVIGATION_GUIDE
     scene: str = "apartment"
     # Pinned on the launched dimos too, so scene setup reaches that simulator.
     port: int = DIMSIM_PORT

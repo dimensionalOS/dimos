@@ -23,6 +23,7 @@ The arm's address is the coordinator's ``addresses`` setting, here as an env ove
 from __future__ import annotations
 
 from dimos.evals.environments.hardware import HardwareEnvironment
+from dimos.evals.guide import MANIPULATION_GUIDE, PYTHON_API_GUIDE
 from dimos.evals.scorers import human
 from dimos.evals.types import EvalCase, Suite
 
@@ -35,7 +36,7 @@ SUITE: Suite = [
         environment=HardwareEnvironment(
             blueprint=["xarm-grasp", "observe-skill"],
             task=TASK,
-            robot_guides=("manipulation",),
+            python_guide=PYTHON_API_GUIDE + MANIPULATION_GUIDE,
             stop_tool="cancel",
             settle_on_joints=True,
             module_env={"MANIPULATIONMODULE__DEFAULT_SPEED_SCALE": "0.3"},

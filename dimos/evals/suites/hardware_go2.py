@@ -23,6 +23,7 @@ There is no stop tool: stopping dimos lays the Go2 down.
 from __future__ import annotations
 
 from dimos.evals.environments.hardware import HardwareEnvironment
+from dimos.evals.guide import NAVIGATION_GUIDE, PYTHON_API_GUIDE
 from dimos.evals.scorers import human
 from dimos.evals.types import EvalCase, Suite
 
@@ -35,7 +36,7 @@ SUITE: Suite = [
         environment=HardwareEnvironment(
             blueprint=["unitree-go2", "unitree-skill-container"],
             task=TASK,
-            robot_guides=("navigation",),
+            python_guide=PYTHON_API_GUIDE + NAVIGATION_GUIDE,
         ),
         grade=human(TASK),
         timeout_s=300.0,

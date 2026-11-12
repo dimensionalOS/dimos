@@ -26,7 +26,7 @@ from pydantic import Field
 
 from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
-from dimos.evals.guide import RobotGuide
+from dimos.evals.guide import MANIPULATION_GUIDE, PYTHON_API_GUIDE
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 class MujocoEnvironmentConfig(SimConfig):
-    robot_guides: tuple[RobotGuide, ...] = ("manipulation",)
+    python_guide: str = PYTHON_API_GUIDE + MANIPULATION_GUIDE
     tracked_bodies: tuple[str, ...] = ()
     settle_on_joints: bool = True
     module_env: dict[str, str] = Field(default_factory=dict)
