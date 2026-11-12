@@ -108,6 +108,15 @@ path; replaying the recorded commands open loop reproduces training to
 * The reference dt guard accepts 0.9-1.1 x the policy period: measured jitter is
   <0.3% (33.11 ms mean, 33.42 ms max over 149 ticks), while a dropped/doubled
   60 Hz tick is 50% off and is refused.
-* The current evaluation artifacts are actor **6000** updates. An actor 11000
-  run is not available: that checkpoint is no longer on disk (only its
-  evaluation receipts remain), so no 6000-vs-11000 integrated comparison exists.
+* Report the TCP error channels separately and never mix frames: `goal` and
+  `executed` are both the plant `arm_tcp` body (comparable), while `requested`
+  and `achievable` live in the deployed URDF `gripper` frame, which sits
+  ~0.08-0.10 m / ~100 deg away from `arm_tcp`. Cross-frame channels are printed
+  as such and are not tracking error. Orientation is the great-circle
+  quaternion angle from `tcp.quat_angle_deg` (degrees, converted exactly once).
+* Actor **6000** is the primary artifact; a separate **11000** artifact
+  (`actor_a00011000.pt`, ONNX, normalizer, manifest with its own checkpoint
+  hash) was exported from the frozen `preeval_a00011000_r000027550.pt` and run
+  through the same blueprint for a matched comparison. Note that local
+  presence/absence of a checkpoint on any one host says nothing about the
+  training producer's state.

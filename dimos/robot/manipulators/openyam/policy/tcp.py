@@ -23,6 +23,7 @@ it, so this module reads the TCP straight out of the frozen plant model.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,45 @@ from dimos.robot.manipulators.openyam.policy.contract import PolicyContractError
 TCP_BODY = "arm_tcp"
 #: Plant joint names, in ``JOINT_ORDER``.
 PLANT_JOINTS: tuple[str, ...] = tuple(f"arm_joint_{index}" for index in range(1, 7))
+
+
+def quat_angle_deg(left_wxyz: Any, right_wxyz: Any) -> float:
+    """Great-circle angle between two unit quaternions, **in degrees**.
+
+    This is the single conversion point: callers must use the returned value
+    as degrees and never wrap it in ``np.degrees``/``math.degrees`` again.
+    """
+    left = np.asarray(left_wxyz, dtype=np.float64).reshape(4)
+    right = np.asarray(right_wxyz, dtype=np.float64).reshape(4)
+    left_norm = float(np.linalg.norm(left))
+    right_norm = float(np.linalg.norm(right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        raise PolicyContractError("cannot compare a zero quaternion")
+    dot = abs(float(np.clip(np.dot(left / left_norm, right / right_norm), -1.0, 1.0)))
+    return math.degrees(2.0 * math.acos(dot))
+
+
+def pose_error_summary(
+    position_errors_m: NDArray[np.float64] | list[float],
+    orientation_errors_deg: NDArray[np.float64] | list[float],
+) -> dict[str, dict[str, float]]:
+    """Mean / P95 / max for one pose-error channel; degrees stay degrees."""
+    position = np.asarray(position_errors_m, dtype=np.float64).reshape(-1)
+    orientation = np.asarray(orientation_errors_deg, dtype=np.float64).reshape(-1)
+    if position.size == 0 or orientation.size == 0:
+        raise PolicyContractError("pose error summary needs at least one sample")
+    return {
+        "position_mm": {
+            "mean": float(np.nanmean(position) * 1000.0),
+            "p95": float(np.nanpercentile(position, 95) * 1000.0),
+            "max": float(np.nanmax(position) * 1000.0),
+        },
+        "orientation_deg": {
+            "mean": float(np.nanmean(orientation)),
+            "p95": float(np.nanpercentile(orientation, 95)),
+            "max": float(np.nanmax(orientation)),
+        },
+    }
 
 
 class MjcfTcpFk:

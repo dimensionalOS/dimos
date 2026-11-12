@@ -37,11 +37,13 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openyam.blueprints import policy as blueprint
 from dimos.robot.manipulators.openyam.policy.contract import JOINT_ORDER, PolicyContractError
+from dimos.robot.manipulators.openyam.policy.demo_clip_compare import compare
 from dimos.robot.manipulators.openyam.policy.quest_reference import (
     QuestReferenceGenerator,
     ReferenceRefusedError,
 )
 from dimos.robot.manipulators.openyam.policy.reference import ClipReference, ReferenceClip
+from dimos.robot.manipulators.openyam.policy.tcp import pose_error_summary, quat_angle_deg
 from dimos.utils.transform_utils import matrix_to_pose
 
 PERIOD = 1.0 / 30.0
@@ -269,3 +271,51 @@ def test_reference_clip_anchors_on_the_measured_pose_and_refuses_far_poses(
     np.testing.assert_allclose(next_row.q, clip.row(101).q)
     with pytest.raises(PolicyContractError):
         reference.update(None, PERIOD, tick_index=clip.length)
+
+
+def test_quat_angle_is_reported_in_degrees_exactly_once() -> None:
+    identity = np.array([1.0, 0.0, 0.0, 0.0])
+    quarter = np.pi / 4.0
+    rotate_90 = np.array([np.cos(quarter), 0.0, 0.0, np.sin(quarter)])
+    assert quat_angle_deg(identity, identity) == pytest.approx(0.0, abs=1e-9)
+    assert quat_angle_deg(identity, rotate_90) == pytest.approx(90.0, abs=1e-6)
+    # q and -q are the same rotation (double cover).
+    assert quat_angle_deg(identity, -rotate_90) == pytest.approx(90.0, abs=1e-6)
+
+    summary = pose_error_summary([0.001, 0.002, 0.003], [90.0, 0.0, 0.0])
+    assert summary["position_mm"]["mean"] == pytest.approx(2.0)
+    assert summary["orientation_deg"]["mean"] == pytest.approx(30.0)
+    assert summary["orientation_deg"]["max"] == pytest.approx(90.0)
+
+
+def test_clip_comparison_summarises_orientation_without_a_second_conversion() -> None:
+    """Regression: the old summary applied ``np.degrees`` to degrees (90 -> 5156.62)."""
+    identity = np.array([1.0, 0.0, 0.0, 0.0])
+    quarter = np.pi / 4.0
+    rotated = np.array([np.cos(quarter), 0.0, 0.0, np.sin(quarter)])
+    samples = 3
+    arrays = {
+        **{f"q{i}": np.zeros(samples) for i in range(6)},
+        "exec_x": np.zeros(samples),
+        "exec_y": np.zeros(samples),
+        "exec_z": np.zeros(samples),
+        **{f"exec_q{axis}": np.full(samples, rotated[index]) for index, axis in enumerate("wxyz")},
+        "goal_x": np.zeros(samples),
+        "goal_y": np.zeros(samples),
+        "goal_z": np.zeros(samples),
+        "active": np.ones(samples),
+        "tick": np.array([1.0, 2.0, 3.0]),
+    }
+    training = {
+        "q": np.zeros((samples, 1, 6)),
+        "full_q": np.zeros((samples, 1, 6)),
+        "goal": np.zeros((samples, 1, 7)),
+    }
+
+    def kinematics(q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return np.zeros(3), identity
+
+    result = compare(arrays, training, kinematics, env=0)
+    assert result["aligned_tick"]["tcp_orientation_mean_deg"] == pytest.approx(90.0, abs=1e-6)
+    assert result["aligned_tick"]["tcp_orientation_max_deg"] == pytest.approx(90.0, abs=1e-6)
+    assert result["aligned_tick"]["tcp_orientation_p95_deg"] == pytest.approx(90.0, abs=1e-6)

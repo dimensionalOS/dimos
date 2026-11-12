@@ -41,6 +41,7 @@ The command is ``demo_``-prefixed so pytest never collects it.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import hashlib
 import json
 import math
@@ -61,7 +62,11 @@ from dimos.robot.manipulators.openyam.blueprints.policy import (
     resolve_plant_path,
 )
 from dimos.robot.manipulators.openyam.policy.reference import ReferenceClip
-from dimos.robot.manipulators.openyam.policy.tcp import MjcfTcpFk
+from dimos.robot.manipulators.openyam.policy.tcp import (
+    MjcfTcpFk,
+    pose_error_summary,
+    quat_angle_deg,
+)
 from dimos.simulation.engines.mujoco_shm import ManipShmReader, shm_key_from_path
 
 PLANT_DT = 1.0 / 480.0
@@ -285,15 +290,10 @@ def closed_loop(
     return arrays, info
 
 
-def quat_angle_deg(left: np.ndarray, right: np.ndarray) -> float:
-    dot = abs(float(np.clip(np.dot(left, right), -1.0, 1.0)))
-    return math.degrees(2.0 * math.acos(dot))
-
-
 def compare(
     arrays: dict[str, np.ndarray],
     training: dict[str, np.ndarray],
-    kinematics: MjcfTcpFk,
+    kinematics: Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]],
     env: int,
 ) -> dict[str, Any]:
     """Compare the integrated rollout with the recorded training rollout.
@@ -348,14 +348,17 @@ def compare(
             goal_errors.append(np.linalg.norm(goal_track[sample] - at(train_goal, index)[:3]))
             tracking.append(np.linalg.norm(exec_track[sample] - goal_track[sample]))
         joint = np.asarray(joint_errors)
+        tcp = pose_error_summary(position_errors, orientation_errors)
         result[label] = {
             "joint_mean_abs_rad": float(np.abs(joint).mean()),
             "joint_max_abs_rad": float(np.abs(joint).max()),
             "joint_rmse_rad": float(np.sqrt((joint**2).mean())),
-            "tcp_position_mean_mm": float(np.mean(position_errors) * 1000.0),
-            "tcp_position_max_mm": float(np.max(position_errors) * 1000.0),
-            "tcp_orientation_mean_deg": float(np.degrees(np.mean(orientation_errors))),
-            "tcp_orientation_max_deg": float(np.degrees(np.max(orientation_errors))),
+            "tcp_position_mean_mm": tcp["position_mm"]["mean"],
+            "tcp_position_p95_mm": tcp["position_mm"]["p95"],
+            "tcp_position_max_mm": tcp["position_mm"]["max"],
+            "tcp_orientation_mean_deg": tcp["orientation_deg"]["mean"],
+            "tcp_orientation_p95_deg": tcp["orientation_deg"]["p95"],
+            "tcp_orientation_max_deg": tcp["orientation_deg"]["max"],
             "dim_goal_vs_training_goal_mean_mm": float(np.mean(goal_errors) * 1000.0),
             "dim_exec_to_dim_goal_mean_mm": float(np.mean(tracking) * 1000.0),
         }

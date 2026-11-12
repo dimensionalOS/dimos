@@ -58,7 +58,11 @@ from dimos.robot.manipulators.openyam.blueprints.policy import (
     resolve_plant_path,
 )
 from dimos.robot.manipulators.openyam.policy.contract import JOINT_ORDER
-from dimos.robot.manipulators.openyam.policy.tcp import MjcfTcpFk
+from dimos.robot.manipulators.openyam.policy.tcp import (
+    MjcfTcpFk,
+    pose_error_summary,
+    quat_angle_deg,
+)
 from dimos.simulation.engines.mujoco_shm import ManipShmReader, shm_key_from_path
 
 #: Sampling rate for the log; the policy itself still runs at its trained 30 Hz.
@@ -201,15 +205,31 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "goal_x",
             "goal_y",
             "goal_z",
+            "goal_qw",
+            "goal_qx",
+            "goal_qy",
+            "goal_qz",
             "exec_x",
             "exec_y",
             "exec_z",
+            "exec_qw",
+            "exec_qx",
+            "exec_qy",
+            "exec_qz",
             "req_x",
             "req_y",
             "req_z",
+            "req_qw",
+            "req_qx",
+            "req_qy",
+            "req_qz",
             "ach_x",
             "ach_y",
             "ach_z",
+            "ach_qw",
+            "ach_qx",
+            "ach_qy",
+            "ach_qz",
             "dt_s",
             "projection_m",
             "projection_rad",
@@ -255,8 +275,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
         except Exception as exc:
             faults.append(f"state_snapshot: {type(exc).__name__}: {exc}")
-        executed, _ = kinematics(q)
+        executed, executed_quat = kinematics(q)
         reference = snapshot.get("reference") or {}
+        goal_position = _as_array(snapshot.get("goal_position"), 3)
+        goal_quat = _as_array(snapshot.get("goal_quaternion_wxyz"), 4)
+        requested_position = _as_array(reference.get("requested_position"), 3)
+        requested_quat = _as_array(reference.get("requested_quaternion_wxyz"), 4)
+        achievable_position = _as_array(reference.get("achievable_position"), 3)
+        achievable_quat = _as_array(reference.get("achievable_quaternion_wxyz"), 4)
         values = {
             "t": [time.monotonic() - started],
             **{f"q{i}": [q[i]] for i in range(6)},
@@ -265,18 +291,34 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 f"cmd{i}": [[float(x) for x in _as_array(snapshot.get("last_command"), 6)][i]]
                 for i in range(6)
             },
-            "goal_x": [(snapshot.get("goal_position") or [np.nan] * 3)[0]],
-            "goal_y": [(snapshot.get("goal_position") or [np.nan] * 3)[1]],
-            "goal_z": [(snapshot.get("goal_position") or [np.nan] * 3)[2]],
+            "goal_x": [goal_position[0]],
+            "goal_y": [goal_position[1]],
+            "goal_z": [goal_position[2]],
+            "goal_qw": [goal_quat[0]],
+            "goal_qx": [goal_quat[1]],
+            "goal_qy": [goal_quat[2]],
+            "goal_qz": [goal_quat[3]],
             "exec_x": [executed[0]],
             "exec_y": [executed[1]],
             "exec_z": [executed[2]],
-            "req_x": [(reference.get("requested_position") or [np.nan] * 3)[0]],
-            "req_y": [(reference.get("requested_position") or [np.nan] * 3)[1]],
-            "req_z": [(reference.get("requested_position") or [np.nan] * 3)[2]],
-            "ach_x": [(reference.get("achievable_position") or [np.nan] * 3)[0]],
-            "ach_y": [(reference.get("achievable_position") or [np.nan] * 3)[1]],
-            "ach_z": [(reference.get("achievable_position") or [np.nan] * 3)[2]],
+            "exec_qw": [executed_quat[0]],
+            "exec_qx": [executed_quat[1]],
+            "exec_qy": [executed_quat[2]],
+            "exec_qz": [executed_quat[3]],
+            "req_x": [requested_position[0]],
+            "req_y": [requested_position[1]],
+            "req_z": [requested_position[2]],
+            "req_qw": [requested_quat[0]],
+            "req_qx": [requested_quat[1]],
+            "req_qy": [requested_quat[2]],
+            "req_qz": [requested_quat[3]],
+            "ach_x": [achievable_position[0]],
+            "ach_y": [achievable_position[1]],
+            "ach_z": [achievable_position[2]],
+            "ach_qw": [achievable_quat[0]],
+            "ach_qx": [achievable_quat[1]],
+            "ach_qy": [achievable_quat[2]],
+            "ach_qz": [achievable_quat[3]],
             "dt_s": [float(reference.get("dt_s", np.nan))],
             "projection_m": [float(reference.get("projection_error_m", np.nan))],
             "projection_rad": [float(reference.get("projection_error_rad", np.nan))],
@@ -387,6 +429,49 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "mean_mm": float(np.nanmean(goal_error) * 1000.0),
             "max_mm": float(np.nanmax(goal_error) * 1000.0),
         }
+        positions = {
+            "goal": goal_track,
+            "exec": exec_track,
+            "req": np.stack([arrays["req_x"], arrays["req_y"], arrays["req_z"]], axis=1),
+            "ach": np.stack([arrays["ach_x"], arrays["ach_y"], arrays["ach_z"]], axis=1),
+        }
+        quaternions = {
+            name: np.stack(
+                [
+                    arrays[f"{name}_qw"],
+                    arrays[f"{name}_qx"],
+                    arrays[f"{name}_qy"],
+                    arrays[f"{name}_qz"],
+                ],
+                axis=1,
+            )
+            for name in ("goal", "exec", "req", "ach")
+        }
+        active_rows = np.flatnonzero(active)
+
+        def channel(left: str, right: str) -> dict[str, dict[str, float]]:
+            position_errors = [
+                float(np.linalg.norm(positions[left][row] - positions[right][row]))
+                for row in active_rows
+            ]
+            orientation_errors = [
+                quat_angle_deg(quaternions[left][row], quaternions[right][row])
+                for row in active_rows
+            ]
+            return pose_error_summary(position_errors, orientation_errors)
+
+        summary["tcp_channels"] = {
+            "requested_vs_achievable": channel("req", "ach"),
+            "achievable_vs_executed": channel("ach", "exec"),
+            "goal_vs_executed": channel("goal", "exec"),
+            "requested_vs_executed": channel("req", "exec"),
+        }
+        summary["tcp_channels_note"] = (
+            "requested = operator/input target, achievable = IK projection of it, "
+            "goal = policy goal frame (plant arm_tcp FK of q_ref), executed = plant arm_tcp "
+            "FK of measured q; orientation is the great-circle quaternion angle in degrees "
+            "(single conversion)."
+        )
         summary["requested_vs_achievable"] = {
             "mean_mm": float(np.nanmean(projection) * 1000.0),
             "max_mm": float(np.nanmax(projection) * 1000.0),
