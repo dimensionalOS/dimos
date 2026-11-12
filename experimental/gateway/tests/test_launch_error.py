@@ -23,6 +23,13 @@ SHUTDOWN = "12:00:00.002 [inf][worker_manager_python.py] All workers shut down"
 TRACEBACK = 'Traceback (most recent call last):\n  File "/x/demo.py", line 3, in start\n    run()'
 ERROR = "12:00:00.001 [err][a.py] worker failed"
 CRITICAL = "12:00:00.001 [cri][a.py] out of memory"
+UNCAUGHT = "12:00:00.001 [err][dimos/utils/logging_config.py ] Uncaught exception occurred"
+BOXED = (
+    "╭─ Traceback (most recent call last) ─╮\n"
+    "│ /x/demo.py:3 in                     │\n"
+    "│ start                               │\n"
+    "╰─────────────────────────────────────╯"
+)
 
 
 @pytest.mark.parametrize(
@@ -54,10 +61,10 @@ CRITICAL = "12:00:00.001 [cri][a.py] out of memory"
             id="error-log-before-exception",
         ),
         pytest.param(
-            f"{ABORT}\n"
+            f"{ERROR}\n"
             '12:00:00.002 [inf][health.py] captured "[err]", "[cri]", "*** Terminating app"\n'
             f"{SHUTDOWN}\n",
-            ABORT,
+            ERROR,
             id="quoted-severity-after-cause",
         ),
         pytest.param(
@@ -73,16 +80,32 @@ CRITICAL = "12:00:00.001 [cri][a.py] out of memory"
         pytest.param(f"{ERROR}\n{SHUTDOWN}\n", ERROR, id="error-level"),
         pytest.param(f"{CRITICAL}\n{SHUTDOWN}\n", CRITICAL, id="critical-level"),
         pytest.param(
-            "12:00:00.001 [err][dimos/utils/logging_config.py ] Uncaught exception occurred\n"
-            "╭─ Traceback (most recent call last) ─╮\n"
-            "│ /x/demo.py:3 in                     │\n"
-            "│ start                               │\n"
-            "╰─────────────────────────────────────╯\n"
-            f"RuntimeError: boom\n{SHUTDOWN}\n",
+            f"{ABORT}\n"
+            "12:00:00.001 [err][worker_manager_python.py] health_check: worker died worker_id=0\n"
+            f"{SHUTDOWN}\n{UNCAUGHT}\n{BOXED}\n"
+            "RuntimeError: health check failed, a worker process died\n",
+            ABORT,
+            id="abort-before-failed-health-check",
+        ),
+        pytest.param(
+            f"{UNCAUGHT}\n{BOXED}\nRuntimeError: boom\n{SHUTDOWN}\n",
             "RuntimeError: boom",
             id="boxed-traceback-after-uncaught-record",
         ),
         pytest.param(
+            f"{UNCAUGHT}\n{BOXED}\n"
+            "Exception: Demo has a module reference requesting a module that\n"
+            "satisfies the WheelSpec spec. No module met that spec.\n"
+            "2026-10-22T05:28:53.624185Z  WARN ThreadId(01) zenoh::net: closing\n",
+            "Exception: Demo has a module reference requesting a module that "
+            "satisfies the WheelSpec spec. No module met that spec.",
+            id="boxed-traceback-with-wrapped-exception",
+        ),
+        pytest.param(
+            "12:00:00.001 [err][zenohrpc.py] Exception in RPC handler for Demo/start: failed\n"
+            f"{SHUTDOWN}\n{UNCAUGHT}\n{BOXED}\n"
+            "ExceptionGroup: safe_thread_map failed (1 sub-exception)\n"
+            "\n"
             "╭─ Sub-exception #1 ──────────────────────╮\n"
             "│ ╭─ Traceback (most recent call last) ─╮ │\n"
             "│ │ /x/demo.py:3 in                     │ │\n"
@@ -92,7 +115,7 @@ CRITICAL = "12:00:00.001 [cri][a.py] out of memory"
             "│ failed: a password is required          │\n"
             "╰─────────────────────────────────────────╯\n",
             "RuntimeError: `sudo ifconfig lo0 alias` failed: a password is required",
-            id="panel-only-wrapped-exception",
+            id="failed-module-in-exception-group",
         ),
         pytest.param(
             "Usage: dimos [OPTIONS] COMMAND [ARGS]...\n"

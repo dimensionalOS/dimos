@@ -381,33 +381,43 @@ def _save(record: dict[str, Any]) -> None:
 
 # dimos' console format: `HH:MM:SS.mmm [lvl][file]`
 FATAL_LOG_LINE = re.compile(r"^\d\d:\d\d:\d\d\.\d+ \[(?:err|cri)\]")
+# a record of dimos' console, or of a native library (zenoh's start with an ISO date)
+LOG_LINE = re.compile(r"^(?:\d\d:\d\d:\d\d\.\d+ \[|\d{4}-\d\d-\d\dT)")
 EXCEPTION_LINE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:: .*)?")
 
 
 def last_error(output: str) -> str:
-    """The cause of a failed launch: the last fatal line, or the exception ending the last traceback.
+    """The cause of a failed launch: a native abort, else the last fatal line or the exception
+    ending the last traceback.
 
     Shutdown chatter (`Stopping module...`, `All workers shut down`) follows a crash, so the
     last line alone names the wrong thing. The last recognized cause wins, including shutdown
-    errors. Without a recognized cause, the last line still stands, as before.
+    errors. A native abort wins over all that follows it: dimos reports the worker it killed
+    as a failed health check. Without a recognized cause, the last line still stands, as before.
 
     Rich draws tracebacks and CLI errors in panels. A panel's text is read without its frame,
     a wrapped message as one line, and a border is never the answer."""
     lines: list[str] = []
-    framed = False  # the line before was text inside a panel
+    wraps = False  # the line before is text Rich may have wrapped onto this one
     for line in output.splitlines()[1:]:
-        text = line.strip("│ ") if line.startswith("│") else line.rstrip()
-        wrapped, framed = framed, line.startswith("│") and text[:1] not in ("", "╭", "╰")
-        if wrapped and framed:
+        framed = line.startswith("│")
+        text = line.strip("│ ") if framed else line.rstrip()
+        is_text = text[:1] not in ("", "╭", "╰") and not LOG_LINE.match(text)
+        if wraps and is_text:
             lines[-1] += f" {text}"
-        elif text:
+            continue
+        # Rich wraps the text inside a panel, and the exception it prints right below one.
+        wraps = is_text and (framed or (bool(lines) and lines[-1].startswith("╰")))
+        if text:
             lines.append(text)
     cause = None
     in_traceback = False
     for above, line in pairwise(["", *lines]):
         if line.startswith("Traceback (most recent call last):"):
             in_traceback = True
-        elif line.startswith("*** Terminating app") or FATAL_LOG_LINE.match(line):
+        elif line.startswith("*** Terminating app"):
+            return line
+        elif FATAL_LOG_LINE.match(line):
             cause = line.strip()
         # Rich prints the exception right below the panel of frames.
         elif (in_traceback or above.startswith("╰")) and EXCEPTION_LINE.fullmatch(line):
