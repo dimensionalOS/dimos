@@ -32,7 +32,7 @@ Usage:
     python -m dimos.manipulation.control.coordinator_client --task traj_right
 
 How it works:
-    1. Connects to ControlCoordinator via LCM RPC
+    1. Discovers ControlCoordinator through the running DimOS coordinator
     2. Queries available hardware/tasks/joints
     3. You add waypoints (joint positions)
     4. Generates trajectory with trapezoidal velocity profile
@@ -54,10 +54,10 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionResult,
     TrajectoryExecutionStatus,
 )
-from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
+from dimos.porcelain.remote_module_source import RemoteModuleSource
 
 if TYPE_CHECKING:
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -93,7 +93,14 @@ class CoordinatorClient:
 
     def __init__(self) -> None:
         """Initialize connection to coordinator via RPC."""
-        self._rpc = RPCClient(None, ControlCoordinator)
+        self._source = RemoteModuleSource()
+        try:
+            self._rpc = cast(
+                "ControlCoordinator", self._source.get_module(ControlCoordinator.__name__)
+            )
+        except BaseException:
+            self._source.close()
+            raise
 
         # Per-task state
         self._current_task: str | None = None
@@ -102,7 +109,7 @@ class CoordinatorClient:
 
     def stop(self) -> None:
         """Stop the RPC client."""
-        self._rpc.stop_rpc_client()
+        self._source.close()
 
     def list_hardware(self) -> list[str]:
         """List all hardware IDs."""
@@ -126,17 +133,11 @@ class CoordinatorClient:
 
     def execute_trajectory(self, trajectory: JointTrajectory) -> TrajectoryExecutionResult:
         """Execute through the coordinator's sole trajectory task."""
-        return cast(
-            "TrajectoryExecutionResult",
-            self._rpc.execute_trajectory(trajectory),
-        )
+        return self._rpc.execute_trajectory(trajectory)
 
     def cancel_trajectory(self) -> TrajectoryCancellationResult:
         """Cancel the coordinator's sole trajectory task."""
-        return cast(
-            "TrajectoryCancellationResult",
-            self._rpc.cancel_trajectory(),
-        )
+        return self._rpc.cancel_trajectory()
 
     def select_task(self, task_name: str) -> bool:
         """
