@@ -163,18 +163,31 @@ def policy_hardware(plant: Path) -> HardwareComponent:
 
 
 def policy_task_config(
-    *, model_dir: Path, manifest_path: Path, reference_source: str = "teleop"
+    *,
+    model_dir: Path,
+    manifest_path: Path,
+    reference_source: str = "teleop",
+    clip_path: Path | None = None,
+    clip_anchor_index: int | None = None,
 ) -> TaskConfig:
     """The coordinator task entry for the trained policy."""
+    params: dict[str, Any] = {
+        "model_dir": str(model_dir),
+        "manifest_path": str(manifest_path),
+        "reference_source": reference_source,
+    }
+    if reference_source == "clip":
+        if clip_path is None:
+            raise ValueError("reference_source='clip' requires a reference clip path")
+        params["clip_path"] = str(clip_path)
+        params["clip_anchor_index"] = clip_anchor_index
     return TaskConfig(
         name=POLICY_TASK_NAME,
         type="openyam_policy",
         joint_names=policy_joint_names(),
         priority=40,
         params={
-            "model_dir": str(model_dir),
-            "manifest_path": str(manifest_path),
-            "reference_source": reference_source,
+            **params,
             # Two coordinator ticks per actor tick: a true 30 Hz actor cadence.
             "every_n_ticks": ACTOR_EVERY_N_TICKS,
             "feedback_timeout_s": 0.2,
@@ -186,7 +199,11 @@ def policy_task_config(
 
 
 def sim_module(
-    plant: Path, *, headless: bool = True, initial_positions: Sequence[float] | None = None
+    plant: Path,
+    *,
+    headless: bool = True,
+    initial_positions: Sequence[float] | None = None,
+    initial_velocities: Sequence[float] | None = None,
 ) -> Blueprint:
     """The trained plant in-process; the arm adapter attaches to it over SHM."""
     return MujocoSimModule.blueprint(
@@ -195,6 +212,9 @@ def sim_module(
         dof=len(JOINT_ORDER),
         reset_joint_positions=(
             list(initial_positions) if initial_positions is not None else list(OPENYAM_HOME_JOINTS)
+        ),
+        reset_joint_velocities=(
+            list(initial_velocities) if initial_velocities is not None else None
         ),
         enable_color=False,
         enable_depth=False,
@@ -229,36 +249,57 @@ def _policy_sim(
     replay: bool,
     strict: bool = True,
     initial_positions: Sequence[float] | None = None,
+    initial_velocities: Sequence[float] | None = None,
     replay_config: Mapping[str, Any] | None = None,
     isolate: bool = True,
+    reference_source: str = "teleop",
+    clip_path: str | Path | None = None,
+    clip_anchor_index: int | None = None,
 ) -> Blueprint:
     resolved_manifest = resolve_manifest_path(model_dir, manifest_path)
     resolved_model_dir = Path(model_dir) if model_dir is not None else resolved_manifest.parent
     plant = resolve_plant_path(resolved_model_dir, resolved_manifest, strict=strict)
 
-    if replay:
-        input_module = WebXRReplayModule.blueprint(**(dict(replay_config or {})))
-        input_remap = (WebXRReplayModule, "right_controller_output", "right_cartesian_command")
-    else:
-        input_module = ArmTeleopModule.blueprint(zero_button="B")
-        input_remap = (ArmTeleopModule, "right_controller_output", "right_cartesian_command")
-
-    blueprint = autoconnect(
-        input_module,
-        sim_module(plant, headless=headless, initial_positions=initial_positions),
+    modules: list[Any] = [
+        sim_module(
+            plant,
+            headless=headless,
+            initial_positions=initial_positions,
+            initial_velocities=initial_velocities,
+        ),
         coordinator(
             hardware=[policy_hardware(plant)],
             tasks=[
                 policy_task_config(
                     model_dir=resolved_model_dir,
                     manifest_path=resolved_manifest,
+                    reference_source=reference_source,
+                    clip_path=Path(clip_path) if clip_path is not None else None,
+                    clip_anchor_index=clip_anchor_index,
                 )
             ],
             tick_rate=COORDINATOR_TICK_RATE,
             cls=TeleopControlCoordinator,
             instance_name="ControlCoordinator",
         ),
-    ).remappings([input_remap])
+    ]
+    remaps: list[tuple[Any, str, str]] = []
+    if reference_source == "clip":
+        # The recorded reference needs no controller: the actor is driven from
+        # the frozen clip, which is how the integrated chain is compared with
+        # the original training rollout.
+        if replay:
+            raise ValueError("reference_source='clip' does not take a WebXR replay input")
+    elif replay:
+        modules.insert(0, WebXRReplayModule.blueprint(**(dict(replay_config or {}))))
+        remaps.append((WebXRReplayModule, "right_controller_output", "right_cartesian_command"))
+    else:
+        modules.insert(0, ArmTeleopModule.blueprint(zero_button="B"))
+        remaps.append((ArmTeleopModule, "right_controller_output", "right_cartesian_command"))
+
+    blueprint = autoconnect(*modules)
+    if remaps:
+        blueprint = blueprint.remappings(remaps)
     if isolate:
         blueprint = blueprint.global_config(**transport_isolation())
     return blueprint
@@ -321,6 +362,41 @@ def openyam_policy_sim_replay(
         initial_positions=initial_positions,
         replay_config=replay_config,
         isolate=isolate,
+    )
+
+
+def openyam_policy_sim_clip(
+    *,
+    clip_path: str | Path,
+    clip_anchor_index: int,
+    model_dir: str | Path | None = None,
+    manifest_path: str | Path | None = None,
+    headless: bool = True,
+    initial_positions: Sequence[float] | None = None,
+    initial_velocities: Sequence[float] | None = None,
+    isolate: bool = True,
+) -> Blueprint:
+    """Same stack driven by the recorded reference clip the training used.
+
+    This is the comparison variant: the reference generator is a frozen
+    :class:`~dimos.robot.manipulators.openyam.policy.reference.ClipReference`
+    (``q_ref``, ``dq_ref`` and the recorded TCP goal at the same 30 Hz tick)
+    and no WebXR input is constructed. It exists to run the integrated
+    DimOS chain from the same clip, plant and initial state as the original
+    training rollout, so the two can be compared - it is not a deployment
+    input path and does not replace the Quest blueprint.
+    """
+    return _policy_sim(
+        model_dir=model_dir,
+        manifest_path=manifest_path,
+        headless=headless,
+        replay=False,
+        initial_positions=initial_positions,
+        initial_velocities=initial_velocities,
+        isolate=isolate,
+        reference_source="clip",
+        clip_path=clip_path,
+        clip_anchor_index=clip_anchor_index,
     )
 
 

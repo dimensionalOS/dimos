@@ -546,7 +546,7 @@ def _build_reference(
         )
 
         assert params.clip_path is not None
-        clip = ReferenceClip(params.clip_path, hz=manifest.timing.policy_hz)
+        clip = ReferenceClip(params.clip_path, policy_hz=manifest.timing.policy_hz)
         return ClipReference(
             clip, anchor_index=params.clip_anchor_index, hz=manifest.timing.policy_hz
         )

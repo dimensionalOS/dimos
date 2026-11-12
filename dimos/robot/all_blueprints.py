@@ -393,6 +393,7 @@ all_modules = {
     "voxel-grid-mapper": "dimos.mapping.voxels.module.VoxelGridMapper",
     "wavefront-frontier-explorer": "dimos.navigation.experimental.frontier_exploration.wavefront_frontier_goal_selector.WavefrontFrontierExplorer",
     "web-input": "dimos.agents.web_human_input.WebInput",
+    "web-xr-replay-module": "dimos.teleop.webxr.replay.WebXRReplayModule",
     "web-xr-teleop-module": "dimos.teleop.webxr.module.WebXRTeleopModule",
     "webcam-module": "dimos.hardware.sensors.camera.module.WebcamModule",
     "websocket-vis-module": "dimos.web.websocket_vis.websocket_vis_module.WebsocketVisModule",

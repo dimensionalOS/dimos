@@ -57,12 +57,26 @@ MUJOCO_GL=egl python -m dimos.cli run openyam-policy-sim-replay \
     --model-dir /path/to/openyam_policy
 ```
 
-Closed-loop evidence run (writes `closed_loop.npz/json` + `demo.mp4`):
+Closed-loop evidence run (writes `closed_loop.npz/json`, `demo.webm` (VP9
+yuv420p, plays everywhere) and `demo.mp4`):
 
 ```bash
 MUJOCO_GL=egl python -m dimos.robot.manipulators.openyam.policy.demo_policy_sim \
     --model-dir /path/to/openyam_policy --output-dir ./evidence --duration 9
 ```
+
+## Training-chain comparison (evidence only, not a deployment input)
+
+`openyam_policy_sim_clip` / `demo_clip_compare.py` run the same stack from a
+frozen recorded reference clip instead of WebXR input, with the clip start index
+resolved from the measured reset pose. The shipped clip is recorded at **60 Hz**
+and decimated by the policy rate (`ReferenceClip` infers this; a 30 Hz
+assumption is wrong). Result on env 0 (anchor 50 = `start_tick`, initial qpos
+diff 0.0): actor 30.16 Hz, physics 466.6 Hz, joint error 19.6 mrad mean vs the
+training rollout, TCP 13.9 mm mean. Not claimed equivalent: the training chain
+had 8 joints (fingers parked within 0.0546-0.0556 rad) and a different command
+path; replaying the recorded commands open loop reproduces training to
+13.2 mrad mean but not exactly.
 
 ## Operator contract
 
@@ -91,3 +105,9 @@ MUJOCO_GL=egl python -m dimos.robot.manipulators.openyam.policy.demo_policy_sim 
   generator clips every reference into `sim_lower+0.015 .. sim_upper-0.015`.
 * The coordinator runs at 60 Hz with the actor decimated to every second tick;
   the measured cadence is 30 Hz, physics ~465 Hz on this host (480 configured).
+* The reference dt guard accepts 0.9-1.1 x the policy period: measured jitter is
+  <0.3% (33.11 ms mean, 33.42 ms max over 149 ticks), while a dropped/doubled
+  60 Hz tick is 50% off and is refused.
+* The current evaluation artifacts are actor **6000** updates. An actor 11000
+  run is not available: that checkpoint is no longer on disk (only its
+  evaluation receipts remain), so no 6000-vs-11000 integrated comparison exists.

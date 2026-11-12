@@ -81,7 +81,7 @@ class ReferenceClip:
         self,
         path: str | Path,
         *,
-        hz: float,
+        policy_hz: float,
         expected_sha256: str | None = None,
         episode_ticks: int = EPISODE_TICKS,
     ) -> None:
@@ -101,11 +101,42 @@ class ReferenceClip:
             self._dq = self._read(data["dq"], "dq")
             self._tcp_pos = self._read(data["tcp_pos"], "tcp_pos")
             self._tcp_quat = self._read(data["tcp_quat"], "tcp_quat")
-        self.hz = float(hz)
+        # The recorded bank rows are *not* necessarily at the policy rate: the
+        # training reference motion here is 60 Hz while the actor runs at 30 Hz
+        # and takes every second row. Derive the file rate from the time axis
+        # instead of assuming it, then decimate by an integer stride.
+        self.file_period_s = self._infer_period()
+        self.file_hz = 1.0 / self.file_period_s
+        self.policy_hz = float(policy_hz)
+        ratio = self.file_hz / self.policy_hz
+        self.stride = int(round(ratio))
+        if self.stride < 1 or abs(ratio - self.stride) > 1e-3:
+            raise PolicyContractError(
+                f"reference clip rate {self.file_hz:.3f} Hz is not an integer multiple of the "
+                f"{self.policy_hz:.3f} Hz policy rate"
+            )
         self.episode_ticks = int(episode_ticks)
         self._validate()
         for array in (self._time, self._q, self._dq, self._tcp_pos, self._tcp_quat):
             array.setflags(write=False)
+
+    def _infer_period(self) -> float:
+        steps = np.diff(self._time)
+        if steps.size == 0:
+            raise PolicyContractError("reference clip has fewer than two ticks")
+        period = float(np.median(steps))
+        # The recorded bank ends mid-interval (its last row is truncated), so the
+        # final step is allowed to be short; every interior step must be uniform.
+        interior = steps[:-1]
+        if (
+            period <= 0.0
+            or steps[-1] <= 0.0
+            or (interior.size and not np.allclose(interior, period, atol=1e-4))
+        ):
+            raise PolicyContractError(
+                f"reference clip is not uniformly sampled (median step {period:.6f}s)"
+            )
+        return period
 
     @staticmethod
     def _read(array: NDArray[np.float64], name: str) -> NDArray[np.float32]:
@@ -115,42 +146,51 @@ class ReferenceClip:
         return np.array(values, dtype=np.float32, copy=True)
 
     def _validate(self) -> None:
-        length = self._time.shape[0]
-        if length < self.episode_ticks + 1:
+        rows = self._time.shape[0]
+        needed = self.stride * self.episode_ticks + 1
+        if rows < needed:
             raise PolicyContractError(
-                f"reference clip has {length} ticks, needs at least {self.episode_ticks + 1}"
+                f"reference clip has {rows} rows ({self.file_hz:.1f} Hz), needs at least "
+                f"{needed} for {self.episode_ticks} ticks at {self.policy_hz:.1f} Hz"
             )
-        if self._q.shape != (length, 6) or self._dq.shape != (length, 6):
-            raise PolicyContractError("reference clip q/dq must be (ticks, 6)")
-        if self._tcp_pos.shape != (length, 3) or self._tcp_quat.shape != (length, 4):
-            raise PolicyContractError("reference clip tcp pose must be (ticks, 3) and (ticks, 4)")
-        steps = np.diff(self._time)
-        if not (np.abs(steps - 1.0 / self.hz) <= 1e-3).all():
-            raise PolicyContractError(
-                f"reference clip is not uniform at {self.hz} Hz (step "
-                f"{float(np.median(steps)) if steps.size else 0.0:.6f}s)"
-            )
-        if not np.allclose(self._time, np.arange(length, dtype=np.float32) / self.hz, atol=1e-3):
+        if self._q.shape != (rows, 6) or self._dq.shape != (rows, 6):
+            raise PolicyContractError("reference clip q/dq must be (rows, 6)")
+        if self._tcp_pos.shape != (rows, 3) or self._tcp_quat.shape != (rows, 4):
+            raise PolicyContractError("reference clip tcp pose must be (rows, 3) and (rows, 4)")
+        if abs(float(self._time[0])) > 1e-4:
             raise PolicyContractError("reference clip time axis does not start at zero")
+        if not (np.diff(self._time) > 0.0).all():
+            raise PolicyContractError("reference clip time axis is not strictly increasing")
         norms = np.linalg.norm(self._tcp_quat, axis=1)
         if not (np.abs(norms - 1.0) <= 1e-3).all():
             raise PolicyContractError("reference clip quaternions are not unit length")
 
     @property
-    def length(self) -> int:
+    def rows(self) -> int:
+        """Recorded rows in the file (at :attr:`file_hz`)."""
         return int(self._time.shape[0])
 
+    @property
+    def length(self) -> int:
+        """Usable reference ticks at the policy rate."""
+        return (self.rows - 1) // self.stride + 1
+
     def row(self, index: int) -> ReferenceRow:
-        """The reference tick at ``index``; out-of-range ticks are a contract error."""
+        """The policy tick at ``index``; out-of-range ticks are a contract error.
+
+        Tick ``index`` is recorded row ``index * stride``; the reported
+        ``time_s`` is the tick time at the *policy* rate.
+        """
         if not 0 <= index < self.length:
             raise PolicyContractError(f"reference tick {index} outside 0..{self.length - 1}")
+        source = index * self.stride
         return ReferenceRow(
             index=index,
-            time_s=float(self._time[index]),
-            q=self._q[index].copy(),
-            dq=self._dq[index].copy(),
-            goal_position=self._tcp_pos[index].copy(),
-            goal_quaternion_wxyz=self._tcp_quat[index].copy(),
+            time_s=index / self.policy_hz,
+            q=self._q[source].copy(),
+            dq=self._dq[source].copy(),
+            goal_position=self._tcp_pos[source].copy(),
+            goal_quaternion_wxyz=self._tcp_quat[source].copy(),
         )
 
     def anchor(
@@ -174,7 +214,8 @@ class ReferenceClip:
         last = self.length - self.episode_ticks - 1
         if last < 0:
             raise PolicyContractError("reference clip is shorter than one episode")
-        distance = np.abs(self._q[: last + 1] - q).max(axis=1)
+        candidates = self._q[:: self.stride][: last + 1]
+        distance = np.abs(candidates - q).max(axis=1)
         best = int(np.argmin(distance))
         if float(distance[best]) > tolerance:
             raise PolicyContractError(
@@ -185,7 +226,8 @@ class ReferenceClip:
 
     def q_range(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Minimum and maximum reference positions per joint, for envelope audits."""
-        return self._q.min(axis=0), self._q.max(axis=0)
+        ticks = self._q[:: self.stride]
+        return ticks.min(axis=0), ticks.max(axis=0)
 
 
 class ClipReference:

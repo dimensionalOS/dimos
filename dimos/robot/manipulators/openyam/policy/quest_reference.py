@@ -148,7 +148,7 @@ class QuestReferenceGenerator:
         joint_names: tuple[str, ...],
         solver_joint_names: tuple[str, ...] | None = None,
         tool_frame: str = TOOL_FRAME,
-        dt_band: tuple[float, float] = (0.6, 1.5),
+        dt_band: tuple[float, float] = (0.9, 1.1),
         envelope_margin_rad: float = 0.015,
         max_reference_velocity_rad_s: float | None = None,
     ) -> None:
@@ -162,9 +162,10 @@ class QuestReferenceGenerator:
         self._tool_frame = tool_frame
         self._period_s = manifest.tick_period_s
         #: Accepted ratio of the actual tick interval to the nominal period. The
-        #: coordinator delivers ~30 Hz with a few milliseconds of jitter, so the
-        #: reference is differenced over the *actual* interval; anything outside
-        #: this band is a stalled or doubled tick, not a policy period.
+        #: coordinator delivers the 30 Hz actor cadence with a measured jitter
+        #: below 0.3% (run 225: 33.11 ms mean, 33.42 ms max over 149 ticks), so a
+        #: +-10% band is ~30x that jitter while still refusing any dropped or
+        #: doubled coordinator tick (one 60 Hz tick = 50% of the period).
         self._dt_min_ratio = float(min(dt_band))
         self._dt_max_ratio = float(max(dt_band))
         #: The trained joint envelope, pulled in by more than the measured

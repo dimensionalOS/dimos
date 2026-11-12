@@ -81,8 +81,13 @@ def _render_video(
     fps: float,
     width: int = 640,
     height: int = 360,
-) -> str:
-    """Render the recorded closed-loop trajectory offscreen into an mp4."""
+) -> dict[str, str]:
+    """Render the recorded closed-loop trajectory offscreen into WebM and MP4.
+
+    The WebM is VP9 in yuv420p 8-bit because that is what plays back everywhere
+    (the MPEG-4 MP4 produced earlier does not); the MP4 is kept as well so the
+    source clip stays available next to it.
+    """
     import cv2
     import mujoco
 
@@ -97,9 +102,19 @@ def _render_video(
     camera.distance = 1.5
     camera.azimuth = 140.0
     camera.elevation = -15.0
-    writer = cv2.VideoWriter(str(output), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-    if not writer.isOpened():
-        raise RuntimeError(f"could not open video writer for {output}")
+    mp4_path = output
+    webm_path = output.with_suffix(".webm")
+    writers = {
+        str(mp4_path): cv2.VideoWriter(
+            str(mp4_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+        ),
+        str(webm_path): cv2.VideoWriter(
+            str(webm_path), cv2.VideoWriter_fourcc(*"VP90"), fps, (width, height)
+        ),
+    }
+    for path, writer in writers.items():
+        if not writer.isOpened():
+            raise RuntimeError(f"could not open video writer for {path}")
     try:
         with mujoco.Renderer(model, height=height, width=width) as renderer:
             for index, q in enumerate(q_track):
@@ -120,10 +135,13 @@ def _render_video(
                 cv2.putText(
                     image, label, (12, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (245, 245, 245), 1
                 )
-                writer.write(image)
+                for writer in writers.values():
+                    writer.write(image)
     finally:
-        writer.release()
-    return str(output)
+        for writer in writers.values():
+            writer.release()
+    decoded = {name: str(path) for name, path in (("mp4", mp4_path), ("webm", webm_path))}
+    return decoded
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
