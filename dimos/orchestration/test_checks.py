@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 import pytest
 
-pytest.importorskip("cel_expr_python")
+if sys.version_info < (3, 11):
+    pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
 
 from dimos.orchestration.checks import check
 from dimos.orchestration.definition import (
