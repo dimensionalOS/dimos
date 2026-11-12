@@ -403,8 +403,12 @@ class TestMCPNoServer:
         assert result.exit_code == 1
         assert "no running" in result.output.lower() or "error" in result.output.lower()
 
-    def test_cli_names_a_running_blueprint_without_mcp_server(self) -> None:
+    def test_cli_names_a_running_blueprint_without_mcp_server(
+        self, mcp_url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A live run without McpServer is not reported as DimOS not running."""
+        # The CLI's fallback URL: this session's port, not a server a developer runs on 9990.
+        monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.DEFAULT_MCP_URL", mcp_url)
         RunEntry(
             run_id="no-mcp",
             pid=os.getpid(),
