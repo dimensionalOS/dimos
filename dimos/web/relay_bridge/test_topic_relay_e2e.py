@@ -31,6 +31,7 @@ from dimos.protocol.service.zenoh_wire import make_zenoh_config
 from dimos.utils.asyncio_timeout import timeout
 from dimos.utils.deno import ensure_deno
 from dimos.web.relay_bridge import topic_service, topic_transform
+from dimos.web.relay_bridge.locate import relay_run_cmd
 from dimos.web.relay_bridge.protocol import FrameHeader, ProtocolError, encode_data_frame
 from dimos.web.relay_bridge.relay_process import RelayProcess, RelayReadyInfo
 from dimos.web.relay_bridge.topic_metadata import METADATA_PREFIX, DescriptorSnapshot
@@ -105,16 +106,9 @@ def managed_child(tmp_path):
 
 async def test_managed_relay_exits_when_its_parent_pipe_closes(managed_child):
     web = Path(__file__).parents[3] / "web"
+    # Use the production flags so startup cannot install the workspace's frontend dependencies.
     async with managed_child(
-        ensure_deno(),
-        "run",
-        "--allow-net",
-        "--allow-read",
-        "relay/main.ts",
-        "--port",
-        "0",
-        "--exit-on-stdin-eof",
-        cwd=web,
+        *relay_run_cmd(ensure_deno(), web, "--port", "0", "--exit-on-stdin-eof"),
     ) as process:
         async with timeout(5):
             while True:
