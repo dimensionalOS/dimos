@@ -20,11 +20,12 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 from dimos.orchestration.checks import CheckedDefinition
-from dimos.orchestration.definition import Check, Node, Transition
+from dimos.orchestration.definition import Check, Node, Outcome, Transition
 from dimos.orchestration.expressions import ExpressionError, Plain, evaluate, evaluate_bool
 
 CallKind = Literal["start", "cancel"]
 CallPhase = Literal["held", "sent"]
+EngineEvent = Outcome | Literal["succeeded"]
 
 
 @dataclass(frozen=True)
@@ -121,9 +122,8 @@ class ClearTimer:
 
 @dataclass(frozen=True)
 class TransitionRecord:
-    """One transition taken, or one redirect to a fallback.
-
-    `trigger` is None for a switch, `after` for a timer, and the check kind for a redirect.
+    """One transition taken, or one redirect to a fallback. `trigger` is None for a switch,
+    `after` for a timer and the check kind for a redirect.
     """
 
     node: str
@@ -212,7 +212,7 @@ class _Step:
         self.timers = list(runtime.timers)
         self.calls_made = runtime.calls_made
         self.effects: list[Effect] = []
-        self.events: deque[tuple[str, Node]] = deque()
+        self.raised_events: deque[tuple[EngineEvent | None, Node]] = deque()
         self.taken = 0
 
     def run(self, event: str, action: Callable[[], None]) -> tuple[Runtime, list[Effect]]:
@@ -288,14 +288,14 @@ class _Step:
                 raise _FaultError("a `cancel` that raised", node)
             self.release()
         elif item.raised:
-            self.events.append(("failed", node))
+            self.raised_events.append(("failed", node))
         else:
             if node.result is not None:
                 self.blackboard[node.result] = item.value
             if node.inside:
                 self.enter_inside(node)
             else:
-                self.events.append(("succeeded", node))
+                self.raised_events.append(("succeeded", node))
 
     def release(self) -> None:
         """Send every held start that no cancel still out holds back."""
@@ -309,13 +309,11 @@ class _Step:
 
     def drain(self) -> None:
         """Handle every event the engine raised, in the order raised."""
-        while self.events:
-            event, node = self.events.popleft()
+        while self.raised_events:
+            event, node = self.raised_events.popleft()
             if node.name not in self.active:
                 continue
-            if event == "switch":
-                self.offer(node, None)
-            elif event == "failed":
+            if event == "failed":
                 self.fail(node)
             else:
                 self.offer(node, event)
@@ -382,9 +380,10 @@ class _Step:
         if goto in self.tree.nodes:
             self.enter(self.tree.nodes[goto])
             return
+        outcome: Outcome = "failed" if goto == "failed" else "done"
         parent = self.tree.parent[node.name]
-        if goto == "failed" or not any(name in self.active for name in parent.parallel):
-            self.events.append((goto, parent))
+        if outcome == "failed" or not any(name in self.active for name in parent.parallel):
+            self.raised_events.append((outcome, parent))
 
     def leave_inside(self, node: Node, graceful: bool) -> None:
         for name in node.inside:
@@ -405,7 +404,7 @@ class _Step:
         activity = self.tree.activity(node)
         if activity is None or activity.cancel is None:
             return
-        call = self.call(node, "cancel", "sent", activity.resources, activity.cancel, {})
+        call = self.track_call(node, "cancel", "sent", activity.resources, activity.cancel, {})
         self.effects.append(SendCancel(call))
         due = self.now + self.limits.cancel_deadline_s
         self.set_timer(CancelDeadline(node.name, due, call.id))
@@ -429,7 +428,7 @@ class _Step:
             self.blackboard.pop(node.result, None)
         uses = activity.resources
         phase: CallPhase = "held" if self.held_back(uses) else "sent"
-        call = self.call(node, "start", phase, uses, activity.start, args)
+        call = self.track_call(node, "start", phase, uses, activity.start, args)
         if phase == "sent":
             self.effects.append(SendStart(call))
 
@@ -439,7 +438,7 @@ class _Step:
         for name in node.parallel:
             self.enter(self.tree.nodes[name])
         if node.is_switch:
-            self.events.append(("switch", node))
+            self.raised_events.append((None, node))
 
     def failed_check(self, node: Node, checks: tuple[Check, ...]) -> Check | None:
         for check in checks:
@@ -453,7 +452,7 @@ class _Step:
         self.effects.append(TransitionRecord(node.name, kind, check.fallback))
         return self.tree.nodes[check.fallback]
 
-    def call(
+    def track_call(
         self,
         node: Node,
         kind: CallKind,
