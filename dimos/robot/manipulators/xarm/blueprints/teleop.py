@@ -94,6 +94,7 @@ keyboard_teleop_xarm6 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(XARM6_SIM_PATH, len(_xarm6_hw.joints)),
 )
 
 keyboard_teleop_xarm7 = autoconnect(
@@ -126,6 +127,7 @@ keyboard_teleop_xarm7 = autoconnect(
         ),
         visualization={"backend": "viser"},
     ),
+    *mujoco_if_sim(XARM7_SIM_PATH, len(_xarm7_hw.joints)),
 )
 
 _lite6_hw = lite6_hardware("arm", gripper=True, mock_without_address=True)
