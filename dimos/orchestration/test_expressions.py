@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
 import pytest
-
-# TODO: remove this skip once the pin is cel-expr-python 0.1.4, which supports Python 3.10.
-if sys.version_info < (3, 11):
-    pytest.skip("cel-expr-python 0.1.3 needs Python 3.11", allow_module_level=True)
 
 from dimos.orchestration.expressions import (
     UNKNOWN,
