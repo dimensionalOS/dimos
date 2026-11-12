@@ -23,7 +23,12 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 import os
 from pathlib import Path
-import tomllib
+import sys
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from dimos.cli.bake.errors import BakeError
 from dimos.constants import DIMOS_PROJECT_ROOT

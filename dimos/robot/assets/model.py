@@ -23,7 +23,7 @@ import math
 import os
 from pathlib import Path
 import re
-from typing import Annotated, Self
+from typing import Annotated
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -31,6 +31,7 @@ from numpy.typing import NDArray
 from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from scipy.spatial.transform import Rotation
+from typing_extensions import Self
 
 from dimos.robot.assets.xacro import expand_xacro
 from dimos.utils.logging_config import setup_logger

@@ -682,7 +682,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        pyver: ['3.11', '3.12', '3.13', '3.14']
+        pyver: ['3.10', '3.11', '3.12', '3.13', '3.14']
         os: ["macos-latest", "ubuntu-latest"]
         experimental: [false]
         include:

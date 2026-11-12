@@ -34,6 +34,9 @@ from dimos.navigation.go2.loop_closure.pgo import (
     _pose3_to_transform,
 )
 
+# TODO(PY311): drop; the mapping extra has no gtsam-extended wheels on py3.10 Linux.
+pytest.importorskip("gtsam")
+
 
 def _random_R(rng: np.random.Generator) -> np.ndarray:
     """Random uniform rotation matrix via random quaternion."""

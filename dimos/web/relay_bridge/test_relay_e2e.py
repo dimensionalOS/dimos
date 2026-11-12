@@ -19,7 +19,6 @@ single xdist worker.
 """
 
 import asyncio
-from asyncio import timeout
 from collections.abc import AsyncIterator, Iterator, Sequence
 import hashlib
 import json
@@ -31,6 +30,7 @@ import urllib.request
 
 import pytest
 
+from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, wait_subs
 from dimos.web.relay_bridge.protocol import (
     DataFrame,

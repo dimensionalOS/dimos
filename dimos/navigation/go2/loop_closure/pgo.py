@@ -50,9 +50,8 @@ from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from typing import Unpack
-
     import gtsam  # type: ignore[import-not-found,import-untyped]
+    from typing_extensions import Unpack  # TODO(PY311): import from typing
 
     from dimos.navigation.go2.loop_closure.premap import Premap
 

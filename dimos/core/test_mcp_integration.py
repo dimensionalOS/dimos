@@ -26,7 +26,7 @@ once per test.  Only classes that explicitly manage their own lifecycle
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import json
 import os
 
@@ -90,10 +90,10 @@ def mcp_entry(mcp_shared: ModuleCoordinator, tmp_path: object) -> Iterator[RunEn
 
     log_dir = Path(str(tmp_path)) / "stress-logs"
     entry = RunEntry(
-        run_id=f"stress-{datetime.now(UTC).strftime('%H%M%S%f')}",
+        run_id=f"stress-{datetime.now(timezone.utc).strftime('%H%M%S%f')}",
         pid=os.getpid(),
         blueprint="stress-test",
-        started_at=datetime.now(UTC).isoformat(),
+        started_at=datetime.now(timezone.utc).isoformat(),
         log_dir=str(log_dir),
         cli_args=["stress-test"],
         config_overrides={"n_workers": 1},
@@ -352,7 +352,7 @@ class TestDaemonMCPRecovery:
             run_id="crashed-mcp-test",
             pid=99999999,
             blueprint="stress-test",
-            started_at=datetime.now(UTC).isoformat(),
+            started_at=datetime.now(timezone.utc).isoformat(),
             log_dir="/tmp/ghost",
             cli_args=[],
             config_overrides={},

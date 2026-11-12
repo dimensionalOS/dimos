@@ -15,13 +15,13 @@
 """Pieces shared by the topic end-to-end tests: the provider and wire helpers."""
 
 import asyncio
-from asyncio import timeout
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TypeVar
 
 import zenoh
 
+from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge.protocol import Msg
 from dimos.web.relay_bridge.relay_process import RelayReadyInfo
 from dimos.web.relay_bridge.topic_catalog import TopicCatalog

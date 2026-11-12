@@ -21,12 +21,13 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
 import math
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import ConfigDict, Field, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.trigonometry import angle_diff

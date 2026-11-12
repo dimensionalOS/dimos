@@ -14,11 +14,13 @@
 
 from pathlib import Path
 
-import gtsam
 import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
+
+# TODO(PY311): drop. Skip before importing test_pgo, which skips mid-import without gtsam.
+gtsam = pytest.importorskip("gtsam")
 
 from dimos.navigation.go2.loop_closure.pgo_map import PGOMap
 from dimos.navigation.go2.loop_closure.premap import ROS_GTSAM_SWAP, Premap

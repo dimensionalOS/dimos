@@ -91,7 +91,7 @@ async def run_child(
         stdout, stderr = await asyncio.wait_for(
             child.communicate(json.dumps(stdin).encode()), timeout
         )
-    except TimeoutError:
+    except asyncio.TimeoutError:
         kill_group(child.pid)
         await child.wait()
         raise IntrospectError(f"introspecting {' '.join(args)} took over {timeout:.0f} s")

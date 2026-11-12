@@ -28,7 +28,7 @@ get_loop), which corrupts pytest-asyncio's function-scoped loop teardown.
 
 import asyncio
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ipaddress import IPv4Address
 import json
 from pathlib import Path
@@ -669,7 +669,7 @@ def _self_signed_cert(directory: Path) -> tuple[Path, Path]:
     PEM files (certificate, PKCS#8 key)."""
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "dimos relay e2e")])
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name)

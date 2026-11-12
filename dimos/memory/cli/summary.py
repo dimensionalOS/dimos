@@ -20,7 +20,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from math import log
 from typing import TYPE_CHECKING, Any
 
@@ -118,7 +118,7 @@ def main(
             type_name,
             _heat(f"{n:,}", n, items_col),
             _heat(f"{rate:.1f}", rate, hz_col) if rate > 0 else "—",
-            datetime.fromtimestamp(t0, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
+            datetime.fromtimestamp(t0, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             if t0 is not None
             else "—",
             f"{dur:.1f}s" if dur is not None else "—",

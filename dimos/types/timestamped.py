@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
@@ -81,7 +81,7 @@ def to_datetime(ts: TimeLike, tz=None) -> datetime:  # type: ignore[no-untyped-d
     if isinstance(ts, datetime):
         if ts.tzinfo is None:
             # Assume UTC for naive datetime
-            ts = ts.replace(tzinfo=UTC)
+            ts = ts.replace(tzinfo=timezone.utc)
         if tz is not None:
             return ts.astimezone(tz)
         return ts.astimezone()  # Convert to local tz
@@ -104,7 +104,7 @@ class Timestamped:
         self.ts = ts
 
     def dt(self) -> datetime:
-        return datetime.fromtimestamp(self.ts, tz=UTC).astimezone()
+        return datetime.fromtimestamp(self.ts, tz=timezone.utc).astimezone()
 
     def ros_timestamp(self) -> list[int]:
         """Convert timestamp to ROS-style list [sec, nanosec]."""

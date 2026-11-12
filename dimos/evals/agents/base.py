@@ -20,9 +20,10 @@ from abc import ABC, abstractmethod
 import os
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_validator, model_validator
+from typing_extensions import Self
 
 from dimos.evals.constants import MAX_TOOL_SECONDS, NO_DIMOS_KEYWORDS
 from dimos.evals.types import RunningEnvironment, Trajectory

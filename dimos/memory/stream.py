@@ -25,8 +25,6 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import TypeVar
 
-from datetime import UTC
-
 from dimos.core.resource import CompositeResource
 from dimos.memory.backend import Backend
 from dimos.memory.buffer import BackpressureBuffer, KeepLast
@@ -525,7 +523,7 @@ class Stream(CompositeResource, Generic[T, O]):
 
     def summary(self) -> str:
         """Return a short human-readable summary: count, time range, avg frequency, size."""
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         sz = self.size_bytes()
         size = f", {human_bytes(sz)}" if sz is not None else ""
@@ -536,8 +534,8 @@ class Stream(CompositeResource, Generic[T, O]):
 
         t0, t1 = self.get_time_range()
         fmt = "%Y-%m-%d %H:%M:%S"
-        dt0 = datetime.fromtimestamp(t0, tz=UTC).strftime(fmt)
-        dt1 = datetime.fromtimestamp(t1, tz=UTC).strftime(fmt)
+        dt0 = datetime.fromtimestamp(t0, tz=timezone.utc).strftime(fmt)
+        dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
         dur = t1 - t0
         hz = f", {(n - 1) / dur:.2f} Hz" if dur > 0 else ""
         return f"{self}: {n} items, {dt0} to {dt1} ({dur:.1f}s{hz}{size})"

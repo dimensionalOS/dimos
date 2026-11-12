@@ -17,10 +17,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Self
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 _CONFIG = ConfigDict(extra="forbid", validate_default=True)
 

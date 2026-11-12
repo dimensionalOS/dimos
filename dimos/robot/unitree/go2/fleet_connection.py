@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Self
+import sys
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
 
@@ -29,6 +30,11 @@ from dimos.robot.unitree.go2.connection import (
     make_connection,
 )
 from dimos.utils.logging_config import setup_logger
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Twist import Twist

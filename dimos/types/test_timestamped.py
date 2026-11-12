@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import os
 import platform
 import time
@@ -61,7 +61,7 @@ def test_to_ros_stamp() -> None:
     assert result.nanosec == 0
 
     # Test with datetime object
-    dt = datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=UTC)
+    dt = datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=timezone.utc)
     result = to_ros_stamp(dt)
     assert result.sec == 1234567890
     assert abs(result.nanosec - 123456000) < 1000  # Allow small rounding error
@@ -93,7 +93,7 @@ def test_to_datetime() -> None:
     assert abs(dt.timestamp() - expected_ts) < 1e-6
 
     # Test with datetime (already has timezone)
-    dt_input = datetime(2009, 2, 13, 23, 31, 30, tzinfo=UTC)
+    dt_input = datetime(2009, 2, 13, 23, 31, 30, tzinfo=timezone.utc)
     dt_result = to_datetime(dt_input)
     assert dt_result.tzinfo is not None
     # Should convert to local timezone by default
@@ -104,8 +104,8 @@ def test_to_datetime() -> None:
     assert dt_result.tzinfo is not None
 
     # Test with specific timezone
-    dt_utc = to_datetime(ts_float, tz=UTC)
-    assert dt_utc.tzinfo == UTC
+    dt_utc = to_datetime(ts_float, tz=timezone.utc)
+    assert dt_utc.tzinfo == timezone.utc
     assert abs(dt_utc.timestamp() - ts_float) < 1e-6
 
 

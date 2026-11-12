@@ -128,7 +128,7 @@ async def _stop_stale_bluez_scan() -> None:
         )
         try:
             await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             proc.kill()
     except (FileNotFoundError, OSError):
         pass
@@ -183,7 +183,7 @@ async def find_robots(
 
     try:
         await asyncio.wait_for(_collect(), timeout=timeout)
-    except TimeoutError:
+    except asyncio.TimeoutError:
         pass
     return list(out.values())
 
@@ -306,7 +306,7 @@ async def provision_wifi(
         await session.write(build_packet(INST_SERIAL, bytes([0])))
         try:
             await asyncio.wait_for(session.event.wait(), 2.0)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             pass
         session.event.clear()
 

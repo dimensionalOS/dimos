@@ -359,12 +359,12 @@ detect_gpu() {
 }
 
 detect_python() {
-    for cmd in python3.14 python3.13 python3.12 python3.11 python3; do
+    for cmd in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
         if has_cmd "$cmd"; then
             local ver; ver="$("$cmd" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")"
             if [[ -n "$ver" ]]; then
                 local major minor; major="$(echo "$ver" | cut -d. -f1)"; minor="$(echo "$ver" | cut -d. -f2)"
-                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 11 && "$minor" -lt 15 ]]; then
+                if [[ "$major" -eq 3 ]] && [[ "$minor" -ge 10 && "$minor" -lt 15 ]]; then
                     DETECTED_PYTHON="$(command -v "$cmd")"; DETECTED_PYTHON_VER="$ver"; return
                 fi
             fi

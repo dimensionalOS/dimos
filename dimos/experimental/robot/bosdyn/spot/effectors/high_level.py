@@ -625,7 +625,7 @@ class SpotHighLevel(StaticTfPublisher):
                     asyncio.open_connection(candidate, SPOT_API_PORT),
                     timeout=REACHABILITY_PROBE_TIMEOUT_S,
                 )
-            except (TimeoutError, OSError):
+            except (OSError, asyncio.TimeoutError):
                 continue
             # A successful TCP handshake is all we need. Close without awaiting
             # wait_closed(); the API port speaks TLS and never completes a clean

@@ -15,11 +15,11 @@
 """Opt-in fixtures for native Damiao connection tests."""
 
 from types import SimpleNamespace
-from typing import Self
 
 import can_motor_control
 from pydantic import model_validator
 import pytest
+from typing_extensions import Self
 
 from dimos.robot.manipulators.damiao import arm as arm_module
 from dimos.robot.manipulators.damiao._damiao_native_test_helpers import (

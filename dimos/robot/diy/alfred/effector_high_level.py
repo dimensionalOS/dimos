@@ -254,7 +254,7 @@ class AlfredHighLevel(Module):
     async def _wait_or_stop(self, seconds: float) -> None:
         try:
             await asyncio.wait_for(self._odometry_stop.wait(), seconds)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             pass
 
 

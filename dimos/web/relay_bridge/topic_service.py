@@ -587,7 +587,7 @@ async def serve(config: TopicServiceConfig, stop: asyncio.Event) -> None:
                     )
                     raise
                 logger.warning("topic source still registered; retrying", source=config.source)
-            except (TimeoutError, OSError):  # OSError covers ConnectionError
+            except (OSError, asyncio.TimeoutError):  # OSError covers ConnectionError
                 logger.warning("topic relay disconnected; retrying", source=config.source)
             if not stop.is_set():
                 with suppress(asyncio.TimeoutError):

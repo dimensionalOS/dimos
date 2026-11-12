@@ -16,7 +16,6 @@
 network: frames are fed straight into the protocol callbacks)."""
 
 import asyncio
-from asyncio import timeout
 import errno
 
 from aioquic.quic.connection import QuicConnection
@@ -24,6 +23,7 @@ from aioquic.quic.events import StreamDataReceived, StreamReset
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.utils.asyncio_timeout import timeout
 from dimos.web.relay_bridge._wt_session import (
     _CONTROL_QUEUE_MAX,
     _FRAME_QUEUE_MAX,

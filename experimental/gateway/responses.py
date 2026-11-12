@@ -15,10 +15,10 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Literal, NotRequired
+from typing import Any, Literal
 
 from pydantic import ConfigDict, with_config
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 # Under pytest (which exports PYTEST_VERSION, as dimos's .env rule uses) a field a response
 # doesn't declare fails the test; a running gateway passes it through rather than drop it.
