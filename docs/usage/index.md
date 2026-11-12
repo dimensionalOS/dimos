@@ -11,3 +11,7 @@ This page explains general dimOS concepts that you'd use to build applications: 
 - [RPC](/docs/usage/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
 - [Skills](/docs/usage/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
 - [Agents](/docs/usage/agent.md): AI that has an objective, access to stream data, and is capable of calling skills as tools.
+
+## Use dimOS as a library
+
+- [Use dimOS as a library](/docs/use-dimos-as-a-library/README.md): add custom messages, modules and blueprints to your own Python package built against an installed dimOS.

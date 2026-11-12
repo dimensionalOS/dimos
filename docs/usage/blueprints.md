@@ -1,44 +1,22 @@
 # Blueprints
 
-Blueprints (`BlueprintAtom`) are instructions for how to initialize a `Module`.
+A blueprint describes the modules that make up a stack and the connections
+between them. dimOS builds it as one unit and runs it.
 
-You don't typically want to run a single module, so multiple blueprints are handled together in `Blueprint`.
+[Run your modules with a
+blueprint](/docs/use-dimos-as-a-library/external-blueprint.md) is the
+end-to-end tutorial for defining and composing a blueprint in your own package,
+registering its name and starting it with `dimos run`. The sections below cover
+the composition rules and runtime options that apply to external and
+in-repository blueprints alike.
 
-You create a `Blueprint` from a single module (say `ConnectionModule`) with:
+## Example modules used below
 
-```python session=blueprint-ex1
-from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-
-class ConnectionConfig(ModuleConfig):
-    arg1: int
-    arg2: str = "value"
-
-class ConnectionModule(Module):
-    config: ConnectionConfig
-
-blueprint = Blueprint.create(ConnectionModule, arg1=5, arg2="foo")
-```
-
-But the same thing can be accomplished more succinctly as:
-
-```python session=blueprint-ex1
-connection = ConnectionModule.blueprint
-```
-
-Now you can create the blueprint with:
-
-```python session=blueprint-ex1
-blueprint = connection(arg1=5, arg2="foo")
-```
-
-## Linking blueprints
-
-You can link multiple blueprints together with `autoconnect`:
+The snippets on this page reuse these module classes:
 
 ```python session=blueprint-ex1
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.module import Module, ModuleConfig
 
 class Config(ModuleConfig):
     arg1: int = 42
@@ -46,89 +24,29 @@ class Config(ModuleConfig):
 class Module1(Module):
     config: Config
 
-class Module2(Module):
-    ...
-
-class Module3(Module):
-    ...
+class Module2(Module): ...
+class Module4(Module): ...
+class Module5(Module): ...
 
 module1 = Module1.blueprint
 module2 = Module2.blueprint
-module3 = Module3.blueprint
-
-blueprint = autoconnect(
-    module1(),
-    module2(),
-    module3(),
-)
-```
-
-`blueprint` itself is a `Blueprint` so you can link it with other modules:
-
-```python session=blueprint-ex1
-class Module4(Module):
-    ...
-
-class Module5(Module):
-    ...
-
 module4 = Module4.blueprint
 module5 = Module5.blueprint
-
-expanded_blueprint = autoconnect(
-    blueprint,
-    module4(),
-    module5(),
-)
 ```
-
-Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
 
 ## Publishing external blueprints
 
-dimOS can discover runnable blueprints from installed Python packages. External
-packages declare entry points in the `dimos.blueprints` group:
+dimOS discovers runnable blueprints from installed Python packages that declare
+entry points in the `dimos.blueprints` group. External names are always
+`<distribution-namespace>.<entry-point-name>`, and `dimos list` lists them
+separately from built-ins.
 
-```toml
-[project]
-name = "my-robot-stack"
+[Run your modules with a
+blueprint](/docs/use-dimos-as-a-library/external-blueprint.md) covers the
+package layout, the `pyproject.toml` entry point, the naming rules and the
+`dimos run` command end to end.
 
-[project.entry-points."dimos.blueprints"]
-go2 = "my_robot_stack.go2:go2_blueprint"
-keyboard-teleop = "my_robot_stack.teleop:KeyboardTeleop"
-```
-
-After the package is installed in the same Python environment as dimOS, users can run
-those blueprints by fully qualified name:
-
-```bash
-dimos run my-robot-stack.go2
-dimos run unitree-go2 my-robot-stack.keyboard-teleop
-```
-
-External names are always `<canonical-distribution-namespace>.<external-local-blueprint-name>`:
-
-- The namespace comes from the installed distribution name. dimOS lowercases it and
-  collapses runs of `-`, `_`, and `.` into `-`, so `My_Robot.Stack` becomes
-  `my-robot-stack`.
-- The local blueprint name is the entry point name. It must be lowercase kebab-case
-  matching `^[a-z0-9]+(-[a-z0-9]+)*$`, such as `go2` or `keyboard-teleop`.
-
-Entry point targets may be either:
-
-- a `Blueprint` object, such as a module-level `go2_blueprint`; or
-- a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
-  `.blueprint()`.
-
-`dimos list` includes external names from package metadata without importing the target
-modules. `dimos run my-robot-stack.go2` imports only the requested entry point target.
-
-Remote coordinator resolution happens in the coordinator environment. If a client asks
-a coordinator to load `my-robot-stack.go2`, the `my-robot-stack` package must be
-installed where the coordinator performs name resolution; installing it only in the
-client environment is not enough.
-
-### Duplicate module handling
+## Duplicate module handling
 
 If the same module appears multiple times in `autoconnect`, the **later blueprint wins** and overrides earlier ones:
 

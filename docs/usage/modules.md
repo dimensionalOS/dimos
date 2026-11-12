@@ -10,6 +10,8 @@ Some examples of modules are:
 
 Below is an example of a structure for controlling a robot. Black blocks represent modules, and colored lines are connections and message types. It's okay if this doesn't make sense now. It will by the end of this document.
 
+A module in your own installed package uses the same API and lifecycle. [Add a module in your own project](/docs/use-dimos-as-a-library/external-module.md) covers the package, install and discovery side.
+
 > **Prerequisite:** Blueprint visualization (both SVG export and the Rerun Graph tab) requires Graphviz:
 > ```bash
 > sudo apt install graphviz   # Ubuntu/Debian
@@ -156,77 +158,12 @@ class HeavyModule(Module):
 
 If declaring dedicated modules would push the pool past half-dedicated, the coordinator auto-grows it so non-dedicated workers always at least match the dedicated count.
 
-## Sync input handlers
+## Module authoring patterns
 
-If you don't need an asyncio loop, subscribe to your `In[T]` streams from `start()` and register the unsubscribe with `register_disposable` so cleanup happens automatically at `stop()`.
-
-```python
-from reactivex.disposable import Disposable
-
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.stream import In
-from dimos.msgs.std_msgs.Int32 import Int32
-
-
-class Counter(Module):
-    value: In[Int32]
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._total = 0
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
-
-    def _on_value(self, msg: Int32) -> None:
-        self._total += msg.data
-```
-
-`In.subscribe(cb)` returns an *unsubscribe function*, not a `DisposableBase`. Wrap it in `Disposable(...)` so `register_disposable` can dispose it on `stop()`. Without this, your handler keeps running after `stop()` and tests will fail thread-leak checks.
-
-The callback runs on whatever thread emits the message, so guard mutable state with a lock if multiple inputs share it.
-
-## Triggering side effects via Specs
-
-A common pattern is "subscribe to a stream, react by calling another module". Declare the other module's protocol as a `Spec` field (single-underscore, private). The coordinator binds the proxy at deploy time, so handlers can call it directly with no extra wiring:
-
-```python
-from typing import Protocol
-
-from reactivex.disposable import Disposable
-
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.stream import In
-from dimos.msgs.std_msgs.Int32 import Int32
-from dimos.spec.utils import Spec
-
-
-class NotifierSpec(Spec, Protocol):
-    def notify(self, text: str) -> None: ...
-
-
-class Watchdog(Module):
-    value: In[Int32]
-
-    _notifier: NotifierSpec
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
-
-    def _on_value(self, msg: Int32) -> None:
-        if msg.data > 100:
-            self._notifier.notify(f"value={msg.data}")
-```
-
-The Spec must match the target module's `@rpc` signatures. Sync and async are interchangeable (see [Async modules](#async-modules-lock-free-state)).
-
-To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
+Sync input handlers and spec-driven side effects are documented with the
+external package tutorial, which walks through the same module lifecycle from a
+package you install: [More module
+patterns](/docs/use-dimos-as-a-library/external-module.md#more-module-patterns).
 
 ## Testing modules
 
