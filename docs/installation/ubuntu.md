@@ -33,6 +33,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+On Ubuntu 26.04 the TurboJPEG package is named `libturbojpeg0`; use it in place of `libturbojpeg` in the command above.
+
 ### Library environment
 
 ```sh skip
